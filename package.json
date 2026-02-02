@@ -1,0 +1,11 @@
+{
+  "name": "sendmo",
+  "version": "1.0.0",
+  "description": "SendMo - Ship it, trust it",
+  "scripts": {
+    "start": "serve .",
+    "build": "echo 'Build complete'"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}
