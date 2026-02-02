@@ -1,0 +1,1102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SendMo - Ship it, trust it</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --primary: #0A0E27;
+            --primary-light: #1A1F3A;
+            --accent: #00E5CC;
+            --accent-dark: #00B8A3;
+            --text: #E8EAED;
+            --text-muted: #9BA3AF;
+            --surface: #14192D;
+            --border: #2A3144;
+            --error: #FF6B6B;
+            --success: #51CF66;
+        }
+
+        body {
+            font-family: 'DM Sans', -apple-system, sans-serif;
+            background: var(--primary);
+            color: var(--text);
+            line-height: 1.6;
+            min-height: 100vh;
+        }
+
+        .app {
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Header */
+        .header {
+            padding: 1.5rem 2rem;
+            border-bottom: 1px solid var(--border);
+            background: var(--primary);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            backdrop-filter: blur(10px);
+        }
+
+        .header-content {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .logo {
+            font-size: 1.5rem;
+            font-weight: 700;
+            font-family: 'Space Mono', monospace;
+            color: var(--accent);
+            letter-spacing: -0.02em;
+        }
+
+        .tagline {
+            font-size: 0.875rem;
+            color: var(--text-muted);
+            font-family: 'Space Mono', monospace;
+        }
+
+        /* Main Content */
+        .main {
+            flex: 1;
+            padding: 3rem 2rem;
+        }
+
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        /* Cards */
+        .card {
+            background: var(--surface);
+            border-radius: 16px;
+            padding: 2rem;
+            border: 1px solid var(--border);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+        }
+
+        .card-header {
+            margin-bottom: 2rem;
+        }
+
+        .card-title {
+            font-size: 1.75rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+            color: var(--text);
+        }
+
+        .card-description {
+            color: var(--text-muted);
+            font-size: 0.95rem;
+        }
+
+        /* Form Elements */
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+
+        .label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 500;
+            font-size: 0.875rem;
+            color: var(--text);
+        }
+
+        .input, .textarea, .select {
+            width: 100%;
+            padding: 0.875rem 1rem;
+            background: var(--primary-light);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text);
+            font-size: 0.95rem;
+            font-family: 'DM Sans', sans-serif;
+            transition: all 0.2s;
+        }
+
+        .input:focus, .textarea:focus, .select:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(0, 229, 204, 0.1);
+        }
+
+        .textarea {
+            resize: vertical;
+            min-height: 80px;
+        }
+
+        .input::placeholder {
+            color: var(--text-muted);
+        }
+
+        /* Buttons */
+        .btn {
+            padding: 0.875rem 1.5rem;
+            border: none;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 0.95rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-family: 'DM Sans', sans-serif;
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: var(--primary);
+            width: 100%;
+        }
+
+        .btn-primary:hover {
+            background: var(--accent-dark);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(0, 229, 204, 0.3);
+        }
+
+        .btn-secondary {
+            background: var(--primary-light);
+            color: var(--text);
+            border: 1px solid var(--border);
+        }
+
+        .btn-secondary:hover {
+            background: var(--surface);
+        }
+
+        /* Package Size Selection */
+        .size-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 0.75rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .size-option {
+            padding: 1rem;
+            background: var(--primary-light);
+            border: 2px solid var(--border);
+            border-radius: 8px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .size-option:hover {
+            border-color: var(--accent);
+        }
+
+        .size-option.active {
+            background: rgba(0, 229, 204, 0.1);
+            border-color: var(--accent);
+        }
+
+        .size-label {
+            font-weight: 600;
+            font-size: 0.875rem;
+            display: block;
+            margin-bottom: 0.25rem;
+        }
+
+        .size-dims {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+
+        /* Success View */
+        .success-container {
+            text-align: center;
+        }
+
+        .success-icon {
+            width: 80px;
+            height: 80px;
+            background: rgba(0, 229, 204, 0.1);
+            border-radius: 50%;
+            margin: 0 auto 1.5rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2.5rem;
+        }
+
+        .link-box {
+            background: var(--primary-light);
+            border: 2px dashed var(--border);
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin: 2rem 0;
+            text-align: center;
+        }
+
+        .link-url {
+            font-family: 'Space Mono', monospace;
+            font-size: 0.95rem;
+            color: var(--accent);
+            word-break: break-all;
+            margin-bottom: 1rem;
+            display: block;
+        }
+
+        .copy-btn {
+            background: var(--accent);
+            color: var(--primary);
+            padding: 0.625rem 1.25rem;
+            border: none;
+            border-radius: 6px;
+            font-weight: 600;
+            font-size: 0.875rem;
+            cursor: pointer;
+            font-family: 'DM Sans', sans-serif;
+        }
+
+        .copy-btn:hover {
+            background: var(--accent-dark);
+        }
+
+        /* Shipping Details */
+        .shipping-summary {
+            background: var(--primary-light);
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .summary-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 0.75rem;
+        }
+
+        .summary-row:last-child {
+            margin-bottom: 0;
+            padding-top: 0.75rem;
+            border-top: 1px solid var(--border);
+            font-weight: 600;
+        }
+
+        .summary-label {
+            color: var(--text-muted);
+            font-size: 0.875rem;
+        }
+
+        .summary-value {
+            font-weight: 500;
+        }
+
+        /* Footer */
+        .footer {
+            padding: 2rem;
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 0.875rem;
+            border-top: 1px solid var(--border);
+        }
+
+        .mock-badge {
+            display: inline-block;
+            background: rgba(255, 107, 107, 0.1);
+            color: var(--error);
+            padding: 0.375rem 0.75rem;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            font-family: 'Space Mono', monospace;
+        }
+
+        /* Animations */
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .card {
+            animation: fadeIn 0.4s ease-out;
+        }
+
+        /* Print Label View */
+        .label-preview {
+            background: white;
+            color: black;
+            padding: 2rem;
+            border-radius: 8px;
+            margin: 2rem 0;
+            border: 2px solid var(--border);
+        }
+
+        .label-header {
+            text-align: center;
+            margin-bottom: 2rem;
+            padding-bottom: 1rem;
+            border-bottom: 3px solid #000;
+        }
+
+        .label-company {
+            font-size: 1.5rem;
+            font-weight: 700;
+            font-family: 'Space Mono', monospace;
+        }
+
+        .label-service {
+            font-size: 0.875rem;
+            color: #666;
+            margin-top: 0.25rem;
+        }
+
+        .label-addresses {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 2rem;
+            margin-bottom: 2rem;
+        }
+
+        .label-address {
+            padding: 1rem;
+            background: #f5f5f5;
+        }
+
+        .label-address-title {
+            font-weight: 700;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            margin-bottom: 0.5rem;
+            color: #666;
+        }
+
+        .label-address-content {
+            font-size: 0.95rem;
+            line-height: 1.4;
+        }
+
+        .label-barcode {
+            text-align: center;
+            padding: 1rem;
+            background: #000;
+            color: white;
+            font-family: 'Space Mono', monospace;
+            font-size: 1.25rem;
+            letter-spacing: 0.2em;
+        }
+
+        @media print {
+            .header, .footer, .mock-badge, .btn {
+                display: none;
+            }
+            body {
+                background: white;
+            }
+            .card {
+                border: none;
+                box-shadow: none;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        // EasyPost Configuration
+        const EASYPOST_API_KEY = 'EZTK25198dc7a7e3453ebe9744913bf235c4nwchpRx1ddf1fwkFWav1yg';
+        const EASYPOST_API_URL = 'https://api.easypost.com/v2';
+
+        // Package size configurations with dimensions and weights
+        const PACKAGE_SIZES = [
+            { 
+                id: 'small', 
+                label: 'Small', 
+                dims: '6×4×2"',
+                length: 6,
+                width: 4,
+                height: 2,
+                weight: 8 // oz
+            },
+            { 
+                id: 'medium', 
+                label: 'Medium', 
+                dims: '12×9×6"',
+                length: 12,
+                width: 9,
+                height: 6,
+                weight: 16 // oz
+            },
+            { 
+                id: 'large', 
+                label: 'Large', 
+                dims: '18×12×10"',
+                length: 18,
+                width: 12,
+                height: 10,
+                weight: 32 // oz
+            }
+        ];
+
+        // EasyPost API Functions
+        async function createEasyPostShipment(fromAddress, toAddress, parcel) {
+            try {
+                const response = await fetch(`${EASYPOST_API_URL}/shipments`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${EASYPOST_API_KEY}`
+                    },
+                    body: JSON.stringify({
+                        shipment: {
+                            from_address: fromAddress,
+                            to_address: toAddress,
+                            parcel: parcel
+                        }
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to create shipment');
+                }
+
+                return await response.json();
+            } catch (error) {
+                console.error('EasyPost API error:', error);
+                throw error;
+            }
+        }
+
+        async function buyShipment(shipmentId, rateId) {
+            try {
+                const response = await fetch(`${EASYPOST_API_URL}/shipments/${shipmentId}/buy`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${EASYPOST_API_KEY}`
+                    },
+                    body: JSON.stringify({
+                        rate: { id: rateId }
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to buy shipment');
+                }
+
+                return await response.json();
+            } catch (error) {
+                console.error('EasyPost buy error:', error);
+                throw error;
+            }
+        }
+
+        function App() {
+            const [view, setView] = useState('buyer'); // buyer, success, seller, print
+            const [formData, setFormData] = useState({
+                itemDescription: '',
+                destinationAddress: '',
+                destinationCity: '',
+                destinationState: '',
+                destinationZip: '',
+                originAddress: '',
+                originCity: '',
+                originState: '',
+                originZip: '',
+                packageSize: 'medium'
+            });
+            const [shareLink, setShareLink] = useState('');
+            const [rates, setRates] = useState([]);
+            const [selectedRate, setSelectedRate] = useState(null);
+            const [loading, setLoading] = useState(false);
+            const [error, setError] = useState('');
+            const [shipmentData, setShipmentData] = useState(null);
+
+            useEffect(() => {
+                // Check if this is a seller link
+                const urlParams = new URLSearchParams(window.location.search);
+                if (urlParams.get('id')) {
+                    setView('seller');
+                }
+            }, []);
+
+            const parseAddress = (addressString) => {
+                const lines = addressString.trim().split('\n').filter(l => l.trim());
+                
+                if (lines.length === 0) {
+                    return { street: '', city: '', state: '', zip: '' };
+                }
+                
+                // First line is always street
+                const street = lines[0].trim();
+                
+                // Last line should be city, state zip
+                const lastLine = lines[lines.length - 1];
+                
+                // Try to parse "City, State Zip" or "City State Zip"
+                let city = '', state = '', zip = '';
+                
+                // Split by comma first
+                const commaParts = lastLine.split(',').map(s => s.trim());
+                
+                if (commaParts.length >= 2) {
+                    // Format: "City, State Zip"
+                    city = commaParts[0];
+                    const stateZipParts = commaParts[1].split(/\s+/).filter(s => s);
+                    state = stateZipParts[0] || '';
+                    zip = stateZipParts[1] || stateZipParts[0]; // Handle if no space
+                } else {
+                    // Format: "City State Zip" (no comma)
+                    const parts = lastLine.split(/\s+/).filter(s => s);
+                    if (parts.length >= 3) {
+                        zip = parts[parts.length - 1];
+                        state = parts[parts.length - 2];
+                        city = parts.slice(0, parts.length - 2).join(' ');
+                    } else if (parts.length === 2) {
+                        state = parts[0];
+                        zip = parts[1];
+                    }
+                }
+                
+                return { street, city, state, zip };
+            };
+
+            const handleInputChange = (e) => {
+                setFormData({
+                    ...formData,
+                    [e.target.name]: e.target.value
+                });
+            };
+
+            const handleSizeSelect = (sizeId) => {
+                setFormData({
+                    ...formData,
+                    packageSize: sizeId
+                });
+            };
+
+            const handleCreateLabel = async () => {
+                setLoading(true);
+                setError('');
+
+                try {
+                    // Parse destination address
+                    const destAddr = parseAddress(formData.destinationAddress);
+                    
+                    if (!destAddr.street || !destAddr.zip) {
+                        throw new Error('Please enter at least a street address and ZIP code');
+                    }
+                    
+                    // Use sensible defaults if city/state missing
+                    if (!destAddr.city) destAddr.city = 'Unknown';
+                    if (!destAddr.state) destAddr.state = 'CA';
+
+                    // Get package dimensions
+                    const packageConfig = PACKAGE_SIZES.find(s => s.id === formData.packageSize);
+
+                    // Create EasyPost addresses and parcel
+                    const toAddress = {
+                        street1: destAddr.street,
+                        city: destAddr.city,
+                        state: destAddr.state,
+                        zip: destAddr.zip,
+                        country: 'US'
+                    };
+
+                    // Use origin city if provided, otherwise use placeholder
+                    const originCity = formData.originCity || 'San Francisco';
+                    const fromAddress = {
+                        street1: '123 Placeholder St',
+                        city: originCity,
+                        state: 'CA',
+                        zip: '94102',
+                        country: 'US'
+                    };
+
+                    const parcel = {
+                        length: packageConfig.length,
+                        width: packageConfig.width,
+                        height: packageConfig.height,
+                        weight: packageConfig.weight
+                    };
+
+                    // Create shipment and get rates
+                    const shipment = await createEasyPostShipment(fromAddress, toAddress, parcel);
+                    
+                    if (!shipment.rates || shipment.rates.length === 0) {
+                        throw new Error('No shipping rates available');
+                    }
+
+                    // Store shipment data and rates
+                    setShipmentData(shipment);
+                    setRates(shipment.rates);
+                    setSelectedRate(shipment.rates[0]); // Select cheapest by default
+
+                    // Generate mock share link
+                    const mockId = shipment.id;
+                    const link = `${window.location.origin}?id=${mockId}`;
+                    setShareLink(link);
+                    setView('success');
+
+                } catch (err) {
+                    setError(err.message || 'Failed to create shipping label. Please try again.');
+                    console.error('Error creating label:', err);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const handlePrintLabel = async () => {
+                setLoading(true);
+                setError('');
+
+                try {
+                    // Parse origin address
+                    const originAddr = parseAddress(formData.originAddress);
+                    
+                    if (!originAddr.street || !originAddr.zip) {
+                        throw new Error('Please enter at least a street address and ZIP code');
+                    }
+                    
+                    // Use sensible defaults if city/state missing
+                    if (!originAddr.city) originAddr.city = 'Unknown';
+                    if (!originAddr.state) originAddr.state = 'CA';
+
+                    // Update shipment with actual origin address
+                    const packageConfig = PACKAGE_SIZES.find(s => s.id === formData.packageSize);
+                    
+                    const fromAddress = {
+                        street1: originAddr.street,
+                        city: originAddr.city,
+                        state: originAddr.state,
+                        zip: originAddr.zip,
+                        country: 'US'
+                    };
+
+                    const destAddr = parseAddress(formData.destinationAddress);
+                    const toAddress = {
+                        street1: destAddr.street,
+                        city: destAddr.city,
+                        state: destAddr.state,
+                        zip: destAddr.zip,
+                        country: 'US'
+                    };
+
+                    const parcel = {
+                        length: packageConfig.length,
+                        width: packageConfig.width,
+                        height: packageConfig.height,
+                        weight: packageConfig.weight
+                    };
+
+                    // Create new shipment with real addresses
+                    const shipment = await createEasyPostShipment(fromAddress, toAddress, parcel);
+                    
+                    if (!shipment.rates || shipment.rates.length === 0) {
+                        throw new Error('No shipping rates available');
+                    }
+
+                    // Buy the cheapest rate
+                    const cheapestRate = shipment.rates[0];
+                    const purchasedShipment = await buyShipment(shipment.id, cheapestRate.id);
+                    
+                    if (!purchasedShipment.postage_label) {
+                        throw new Error('Failed to generate label');
+                    }
+
+                    // Store shipment and open label in new window
+                    setShipmentData(purchasedShipment);
+                    window.open(purchasedShipment.postage_label.label_url, '_blank');
+                    
+                    setView('print');
+
+                } catch (err) {
+                    setError(err.message || 'Failed to generate label. Please try again.');
+                    console.error('Error generating label:', err);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const copyToClipboard = () => {
+                navigator.clipboard.writeText(shareLink);
+                alert('Link copied to clipboard!');
+            };
+
+            const downloadLabel = () => {
+                window.print();
+            };
+
+            // Buyer View
+            if (view === 'buyer') {
+                return (
+                    <div className="app">
+                        <header className="header">
+                            <div className="header-content">
+                                <div>
+                                    <div className="logo">SendMo</div>
+                                    <div className="tagline">ship it, trust it</div>
+                                </div>
+                            </div>
+                        </header>
+
+                        <main className="main">
+                            <div className="container">
+                                <div className="mock-badge">✨ LIVE MODE - Real EasyPost Integration</div>
+                                
+                                <div className="card">
+                                    <div className="card-header">
+                                        <h1 className="card-title">Create Shipping Label</h1>
+                                        <p className="card-description">
+                                            Generate a shipping label and share it with your seller
+                                        </p>
+                                    </div>
+
+                                    {error && (
+                                        <div style={{
+                                            padding: '1rem',
+                                            background: 'rgba(255, 107, 107, 0.1)',
+                                            border: '1px solid rgba(255, 107, 107, 0.3)',
+                                            borderRadius: '8px',
+                                            marginBottom: '1.5rem',
+                                            color: '#FF6B6B'
+                                        }}>
+                                            {error}
+                                        </div>
+                                    )}
+
+                                    <div className="form-group">
+                                        <label className="label">What are you receiving?</label>
+                                        <input 
+                                            type="text"
+                                            name="itemDescription"
+                                            className="input"
+                                            placeholder="e.g., Backpack, iPhone 14, etc."
+                                            value={formData.itemDescription}
+                                            onChange={handleInputChange}
+                                        />
+                                    </div>
+
+                                    <div className="form-group">
+                                        <label className="label">Your shipping address (where you're receiving)</label>
+                                        <textarea 
+                                            name="destinationAddress"
+                                            className="textarea"
+                                            placeholder="231 Canyon Dr&#10;Portola Valley CA 94028"
+                                            value={formData.destinationAddress}
+                                            onChange={handleInputChange}
+                                        />
+                                        <small style={{fontSize: '0.75rem', color: '#9BA3AF', marginTop: '0.5rem', display: 'block'}}>
+                                            Enter street on first line, then city, state and ZIP on second line
+                                        </small>
+                                    </div>
+
+                                    <div className="form-group">
+                                        <label className="label">Seller's city (if known) - helps estimate cost</label>
+                                        <input 
+                                            type="text"
+                                            name="originCity"
+                                            className="input"
+                                            placeholder="e.g., Danville"
+                                            value={formData.originCity}
+                                            onChange={handleInputChange}
+                                        />
+                                    </div>
+
+                                    <div className="form-group">
+                                        <label className="label">Estimated package size</label>
+                                        <div className="size-grid">
+                                            {PACKAGE_SIZES.map(size => (
+                                                <div 
+                                                    key={size.id}
+                                                    className={`size-option ${formData.packageSize === size.id ? 'active' : ''}`}
+                                                    onClick={() => handleSizeSelect(size.id)}
+                                                >
+                                                    <span className="size-label">{size.label}</span>
+                                                    <span className="size-dims">{size.dims}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    {rates.length > 0 && (
+                                        <div className="shipping-summary">
+                                            <div className="summary-row">
+                                                <span className="summary-label">Estimated carrier</span>
+                                                <span className="summary-value">{selectedRate.carrier} {selectedRate.service}</span>
+                                            </div>
+                                            <div className="summary-row">
+                                                <span className="summary-label">Estimated delivery</span>
+                                                <span className="summary-value">{selectedRate.delivery_days} business days</span>
+                                            </div>
+                                            <div className="summary-row">
+                                                <span className="summary-label">Estimated cost</span>
+                                                <span className="summary-value">${selectedRate.rate}</span>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    <button 
+                                        className="btn btn-primary" 
+                                        onClick={handleCreateLabel}
+                                        disabled={loading}
+                                    >
+                                        {loading ? 'Getting Rates...' : 'Create Label & Get Link'}
+                                    </button>
+                                </div>
+                            </div>
+                        </main>
+
+                        <footer className="footer">
+                            SendMo © 2026 · Ship safely
+                        </footer>
+                    </div>
+                );
+            }
+
+            // Success View (after creating label)
+            if (view === 'success') {
+                return (
+                    <div className="app">
+                        <header className="header">
+                            <div className="header-content">
+                                <div className="logo">SendMo</div>
+                            </div>
+                        </header>
+
+                        <main className="main">
+                            <div className="container">
+                                <div className="card">
+                                    <div className="success-container">
+                                        <div className="success-icon">✓</div>
+                                        <h1 className="card-title">Label Ready!</h1>
+                                        <p className="card-description">
+                                            Share this link with your seller so they can print the label
+                                        </p>
+
+                                        <div className="link-box">
+                                            <code className="link-url">{shareLink}</code>
+                                            <button className="copy-btn" onClick={copyToClipboard}>
+                                                Copy Link
+                                            </button>
+                                        </div>
+
+                                        <p style={{color: 'var(--text-muted)', fontSize: '0.875rem'}}>
+                                            💡 Paste this link in Facebook Messenger, text, or email
+                                        </p>
+
+                                        <button 
+                                            className="btn btn-secondary" 
+                                            style={{marginTop: '2rem'}}
+                                            onClick={() => {
+                                                setView('buyer');
+                                                setFormData({
+                                                    itemDescription: '',
+                                                    destinationAddress: '',
+                                                    originCity: '',
+                                                    packageSize: 'medium',
+                                                    senderAddress: ''
+                                                });
+                                            }}
+                                        >
+                                            Create Another Label
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </main>
+
+                        <footer className="footer">
+                            SendMo © 2026
+                        </footer>
+                    </div>
+                );
+            }
+
+            // Seller View (clicked link)
+            if (view === 'seller') {
+                return (
+                    <div className="app">
+                        <header className="header">
+                            <div className="header-content">
+                                <div className="logo">SendMo</div>
+                            </div>
+                        </header>
+
+                        <main className="main">
+                            <div className="container">
+                                <div className="mock-badge">✨ LIVE MODE - Real Label Generation</div>
+                                
+                                <div className="card">
+                                    <div className="card-header">
+                                        <h1 className="card-title">Print Your Shipping Label</h1>
+                                        <p className="card-description">
+                                            Buyer is receiving: <strong>{formData.itemDescription || 'Item'}</strong>
+                                        </p>
+                                    </div>
+
+                                    {error && (
+                                        <div style={{
+                                            padding: '1rem',
+                                            background: 'rgba(255, 107, 107, 0.1)',
+                                            border: '1px solid rgba(255, 107, 107, 0.3)',
+                                            borderRadius: '8px',
+                                            marginBottom: '1.5rem',
+                                            color: '#FF6B6B'
+                                        }}>
+                                            {error}
+                                        </div>
+                                    )}
+
+                                    <div className="shipping-summary">
+                                        <div className="summary-row">
+                                            <span className="summary-label">Shipping to</span>
+                                            <span className="summary-value">{formData.destinationCity || 'Destination'}</span>
+                                        </div>
+                                        <div className="summary-row">
+                                            <span className="summary-label">Estimated cost</span>
+                                            <span className="summary-value">(paid by receiver)</span>
+                                        </div>
+                                    </div>
+
+                                    <div className="form-group">
+                                        <label className="label">Your shipping address (where you're sending from)</label>
+                                        <textarea 
+                                            name="originAddress"
+                                            className="textarea"
+                                            placeholder="92 Amberfield Lane&#10;Danville CA 94526"
+                                            value={formData.originAddress}
+                                            onChange={handleInputChange}
+                                        />
+                                        <small style={{fontSize: '0.75rem', color: '#9BA3AF', marginTop: '0.5rem', display: 'block'}}>
+                                            Enter street on first line, then city, state and ZIP on second line
+                                        </small>
+                                    </div>
+
+                                    <button 
+                                        className="btn btn-primary" 
+                                        onClick={handlePrintLabel}
+                                        disabled={loading}
+                                    >
+                                        {loading ? 'Generating Label...' : 'Generate & Print Label'}
+                                    </button>
+
+                                    <p style={{textAlign: 'center', marginTop: '1rem', color: 'var(--text-muted)', fontSize: '0.875rem'}}>
+                                        💡 This will create a real shipping label and open it in a new window
+                                    </p>
+                                </div>
+                            </div>
+                        </main>
+
+                        <footer className="footer">
+                            SendMo © 2026
+                        </footer>
+                    </div>
+                );
+            }
+
+            // Print View
+            if (view === 'print') {
+                return (
+                    <div className="app">
+                        <header className="header">
+                            <div className="header-content">
+                                <div className="logo">SendMo</div>
+                            </div>
+                        </header>
+
+                        <main className="main">
+                            <div className="container">
+                                <div className="card">
+                                    <div className="success-container">
+                                        <div className="success-icon">✓</div>
+                                        <h1 className="card-title">Label Generated!</h1>
+                                        <p className="card-description">
+                                            Your shipping label has been created and opened in a new window.
+                                        </p>
+
+                                        {shipmentData && (
+                                            <div className="shipping-summary" style={{marginTop: '2rem', textAlign: 'left'}}>
+                                                <div className="summary-row">
+                                                    <span className="summary-label">Tracking Number</span>
+                                                    <span className="summary-value" style={{fontFamily: 'Space Mono, monospace'}}>
+                                                        {shipmentData.tracking_code}
+                                                    </span>
+                                                </div>
+                                                <div className="summary-row">
+                                                    <span className="summary-label">Carrier</span>
+                                                    <span className="summary-value">
+                                                        {shipmentData.selected_rate?.carrier} {shipmentData.selected_rate?.service}
+                                                    </span>
+                                                </div>
+                                                <div className="summary-row">
+                                                    <span className="summary-label">Cost</span>
+                                                    <span className="summary-value">
+                                                        ${shipmentData.selected_rate?.rate}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {shipmentData?.postage_label?.label_url && (
+                                            <button 
+                                                className="btn btn-primary"
+                                                style={{marginTop: '2rem'}}
+                                                onClick={() => window.open(shipmentData.postage_label.label_url, '_blank')}
+                                            >
+                                                Open Label Again
+                                            </button>
+                                        )}
+
+                                        <p style={{marginTop: '2rem', color: 'var(--text-muted)', fontSize: '0.875rem'}}>
+                                            💡 Print the label, attach it to your package, and drop it off at {shipmentData?.selected_rate?.carrier || 'carrier'}
+                                        </p>
+
+                                        <button 
+                                            className="btn btn-secondary" 
+                                            style={{marginTop: '1rem'}}
+                                            onClick={() => {
+                                                setView('buyer');
+                                                setFormData({
+                                                    itemDescription: '',
+                                                    destinationAddress: '',
+                                                    originAddress: '',
+                                                    originCity: '',
+                                                    packageSize: 'medium'
+                                                });
+                                                setShipmentData(null);
+                                                setRates([]);
+                                            }}
+                                        >
+                                            Create Another Label
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </main>
+                    </div>
+                );
+            }
+        }
+
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
