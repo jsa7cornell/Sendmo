@@ -1,0 +1,321 @@
+// Prisma Schema for SendMo
+// Generalized data model for trust platform (shipping, escrow, local pickup, services, etc.)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// User Model (Optional accounts)
+// ============================================
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  phone     String?
+  
+  // Auth
+  emailVerified DateTime?
+  image         String?
+  
+  // Verification status
+  verificationStatus String @default("unverified") // unverified, linked, verified
+  verifiedAt        DateTime?
+  verificationMethod String? // tracking_click, email_link, google_oauth
+  
+  // Preferences
+  defaultShippingAddressId String? @unique
+  defaultShippingAddress   Address? @relation("DefaultAddress", fields: [defaultShippingAddressId], references: [id])
+  
+  // Stripe
+  stripeCustomerId       String? @unique
+  stripePaymentMethodId  String?
+  
+  // Stats
+  totalRequestsAsPayer    Int @default(0) // as buyer/receiver/client
+  totalRequestsAsProvider Int @default(0) // as seller/sender/freelancer
+  totalSpentCents         Int @default(0)
+  totalEarnedCents        Int @default(0)
+  
+  // Relations
+  addressesOwned    Address[]  @relation("UserAddresses")
+  requestsAsPayer   Request[]  @relation("PayerRequests")
+  requestsAsProvider Request[] @relation("ProviderRequests")
+  sessions          Session[]
+  accounts          Account[]
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  lastLoginAt DateTime?
+
+  @@index([email])
+}
+
+// NextAuth tables
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ============================================
+// Address Model (Verified addresses)
+// ============================================
+
+model Address {
+  id     String @id @default(cuid())
+  userId String?
+  user   User?  @relation("UserAddresses", fields: [userId], references: [id])
+  
+  // Address fields
+  street1 String
+  street2 String?
+  city    String
+  state   String
+  zip     String
+  country String @default("US")
+  
+  // Verification
+  verified         Boolean  @default(false)
+  verifiedAt       DateTime?
+  easypostId       String?  @unique
+  verificationData Json?
+  
+  // Metadata
+  nickname String?
+  
+  // Usage tracking
+  usedAsOriginCount      Int @default(0)
+  usedAsDestinationCount Int @default(0)
+  lastUsedAt             DateTime?
+  
+  // Relations
+  requestsAsOrigin      Request[] @relation("OriginAddress")
+  requestsAsDestination Request[] @relation("DestinationAddress")
+  defaultForUser        User?     @relation("DefaultAddress")
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([easypostId])
+  @@index([zip])
+}
+
+// ============================================
+// Request Model (Generic - all transaction types)
+// ============================================
+
+model Request {
+  id         String @id @default(cuid())
+  shareToken String @unique @default(cuid())
+  
+  // Request type determines which fields are used
+  // shipping: Label only, no payment
+  // escrow: Payment held, no shipping
+  // shipping_escrow: Full service (payment + shipping)
+  // local_pickup: Payment held until in-person exchange
+  // digital: Payment held until digital delivery (domain, license, etc.)
+  // service: Payment held until service completion
+  requestType String @default("shipping")
+  
+  // Metadata (generic across all types)
+  title       String  // "Backpack", "Logo design", "Domain transfer", "House cleaning"
+  description String? // Additional details
+  
+  // Payer (creates request, initiates transaction)
+  // Shipping: Receiver/buyer
+  // Escrow: Buyer
+  // Service: Client
+  payerUserId String?
+  payerUser   User?   @relation("PayerRequests", fields: [payerUserId], references: [id])
+  payerEmail  String?
+  payerName   String?
+  
+  // Provider (fulfills request)
+  // Shipping: Sender/seller
+  // Escrow: Seller
+  // Service: Freelancer/contractor
+  providerUserId String?
+  providerUser   User?   @relation("ProviderRequests", fields: [providerUserId], references: [id])
+  providerEmail  String?
+  providerName   String?
+  providerPhone  String?
+  
+  // Addresses (null for non-shipping requests)
+  destinationAddressId String?
+  destinationAddress   Address? @relation("DestinationAddress", fields: [destinationAddressId], references: [id])
+  
+  originAddressId String?
+  originAddress   Address? @relation("OriginAddress", fields: [originAddressId], references: [id])
+  originCity      String? // Pre-filled hint
+  
+  // Shipping details (null for non-shipping requests)
+  estimatedPackageSize       String? // envelope, small, medium, large
+  estimatedPackageDimensions Json?
+  estimatedPackageWeightOz   Int?
+  
+  actualPackageSize       String?
+  actualPackageDimensions Json?
+  actualPackageWeightOz   Int?
+  
+  sizeMismatch Boolean @default(false)
+  
+  // Carrier info (null for non-shipping)
+  selectedCarrier String?
+  selectedService String?
+  selectedSpeed   String? // overnight, fast, standard, economy
+  
+  estimatedShippingCostCents Int?
+  actualShippingCostCents    Int?
+  shippingCostPaidCents      Int?
+  
+  estimatedDeliveryDays Int?
+  
+  // EasyPost (null for non-shipping)
+  easypostShipmentId String? @unique
+  easypostRateId     String?
+  easypostTrackerId  String?
+  labelUrl           String?
+  trackingNumber     String?
+  
+  // Payment (used for escrow requests)
+  paymentStatus         String @default("unpaid") // unpaid, paid, held, released, refunded
+  paymentAmountCents    Int? // Total amount held in escrow
+  itemPriceCents        Int? // Item price (separate from shipping)
+  platformFeeCents      Int? // SendMo's cut
+  stripePaymentIntentId String?
+  stripeChargeId        String?
+  paymentReleasedAt     DateTime?
+  
+  // Milestone tracking (for service requests)
+  milestones Json? // [{ title: "Design draft", status: "pending", amount: 5000 }]
+  
+  // Status (generic across all request types)
+  status String @default("pending")
+  // Shipping: pending, label_generated, in_transit, delivered, cancelled, error
+  // Escrow: pending, paid, held, completed, disputed, refunded
+  // Service: pending, in_progress, review, completed, disputed
+  
+  // Timestamps
+  createdAt        DateTime  @default(now())
+  acceptedAt       DateTime? // When provider accepts
+  startedAt        DateTime? // When work/shipping starts
+  completedAt      DateTime? // When delivered/service done
+  expiresAt        DateTime  @default(dbgenerated("NOW() + INTERVAL '7 days'"))
+  
+  // Metadata
+  userAgent      String?
+  ipAddress      String?
+  referralSource String?
+  
+  // Relations
+  events        Event[]
+  notifications Notification[]
+  
+  updatedAt DateTime @updatedAt
+
+  @@index([shareToken])
+  @@index([payerUserId])
+  @@index([providerUserId])
+  @@index([status])
+  @@index([requestType])
+  @@index([trackingNumber])
+  @@index([createdAt])
+}
+
+// ============================================
+// Event Model (Generic tracking events)
+// ============================================
+
+model Event {
+  id        String  @id @default(cuid())
+  requestId String
+  request   Request @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  
+  eventType    String // Varies by request type
+  // Shipping: shipped, in_transit, out_for_delivery, delivered, exception
+  // Escrow: payment_received, payment_held, payment_released, dispute_opened
+  // Service: milestone_completed, review_submitted, work_started
+  
+  eventStatus  String? // success, failure, pending
+  eventMessage String? // Human-readable description
+  location     String? // For shipping events
+  
+  source String @default("system") // system, easypost, stripe, user, admin
+  
+  // External IDs
+  easypostTrackerId String?
+  stripeEventId     String?
+  
+  // Raw data for debugging
+  rawData Json?
+  
+  createdAt DateTime @default(now())
+
+  @@index([requestId])
+  @@index([eventType])
+  @@index([createdAt])
+}
+
+// ============================================
+// Notification Model
+// ============================================
+
+model Notification {
+  id        String   @id @default(cuid())
+  requestId String?
+  request   Request? @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  userId    String?
+  
+  notificationType String // email, sms
+  recipientEmail   String?
+  recipientPhone   String?
+  
+  templateName String
+  subject      String?
+  
+  status String @default("pending") // pending, sent, failed, bounced
+  
+  provider          String?
+  providerMessageId String?
+  
+  sentAt    DateTime?
+  openedAt  DateTime?
+  clickedAt DateTime?
+  
+  errorMessage String?
+  
+  createdAt DateTime @default(now())
+
+  @@index([requestId])
+  @@index([userId])
+  @@index([status])
+}
