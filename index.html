@@ -1,0 +1,907 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SendMo - Ship it, trust it</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --primary: #0A0E27;
+            --primary-light: #1A1F3A;
+            --accent: #00E5CC;
+            --accent-dark: #00B8A3;
+            --text: #E8EAED;
+            --text-muted: #9BA3AF;
+            --surface: #14192D;
+            --border: #2A3144;
+            --error: #FF6B6B;
+            --success: #51CF66;
+        }
+
+        body {
+            font-family: 'DM Sans', -apple-system, sans-serif;
+            background: var(--primary);
+            color: var(--text);
+            line-height: 1.6;
+            min-height: 100vh;
+        }
+
+        .app {
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Header */
+        .header {
+            padding: 1.5rem 2rem;
+            border-bottom: 1px solid var(--border);
+            background: var(--primary);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            backdrop-filter: blur(10px);
+            background: rgba(10, 14, 39, 0.9);
+        }
+
+        .header-content {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logo {
+            font-family: 'Space Mono', monospace;
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--accent);
+            letter-spacing: -0.02em;
+        }
+
+        .tagline {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-top: -0.25rem;
+        }
+
+        /* Hero Section */
+        .hero {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
+            padding: 4rem 2rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .hero-content {
+            max-width: 900px;
+            margin: 0 auto;
+            text-align: center;
+        }
+
+        .hero-title {
+            font-size: 3rem;
+            font-weight: 700;
+            line-height: 1.1;
+            margin-bottom: 1rem;
+            background: linear-gradient(135deg, var(--text) 0%, var(--accent) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .hero-subtitle {
+            font-size: 1.25rem;
+            color: var(--text-muted);
+            margin-bottom: 2rem;
+            line-height: 1.6;
+        }
+
+        .hero-illustration {
+            margin: 3rem 0;
+            padding: 2rem;
+            background: var(--surface);
+            border-radius: 16px;
+            border: 1px solid var(--border);
+        }
+
+        /* How It Works */
+        .how-it-works {
+            padding: 4rem 2rem;
+            background: var(--primary);
+        }
+
+        .how-it-works-content {
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+
+        .how-it-works-title {
+            text-align: center;
+            font-size: 2rem;
+            font-weight: 700;
+            margin-bottom: 3rem;
+        }
+
+        .steps {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 2rem;
+            margin-bottom: 3rem;
+        }
+
+        .step {
+            background: var(--surface);
+            padding: 2rem;
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            transition: all 0.3s ease;
+        }
+
+        .step:hover {
+            border-color: var(--accent);
+            transform: translateY(-4px);
+        }
+
+        .step-number {
+            display: inline-block;
+            width: 40px;
+            height: 40px;
+            background: var(--accent);
+            color: var(--primary);
+            border-radius: 50%;
+            font-weight: 700;
+            font-size: 1.25rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 1rem;
+        }
+
+        .step-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin-bottom: 0.75rem;
+            color: var(--text);
+        }
+
+        .step-description {
+            color: var(--text-muted);
+            line-height: 1.6;
+        }
+
+        .step-emoji {
+            font-size: 2rem;
+            margin-bottom: 1rem;
+        }
+
+        /* CTA */
+        .cta-button {
+            display: inline-block;
+            background: var(--accent);
+            color: var(--primary);
+            padding: 1rem 2.5rem;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 1.1rem;
+            text-decoration: none;
+            transition: all 0.3s ease;
+            border: none;
+            cursor: pointer;
+            margin: 0 auto;
+            display: block;
+            width: fit-content;
+        }
+
+        .cta-button:hover {
+            background: var(--accent-dark);
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(0, 229, 204, 0.3);
+        }
+
+        /* Main Content */
+        .main {
+            flex: 1;
+            padding: 3rem 1.5rem;
+        }
+
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        /* Mock badge */
+        .mock-badge {
+            background: rgba(0, 229, 204, 0.1);
+            color: var(--accent);
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            font-size: 0.875rem;
+            font-weight: 500;
+            text-align: center;
+            margin-bottom: 2rem;
+            border: 1px solid rgba(0, 229, 204, 0.2);
+        }
+
+        /* Card */
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 2rem;
+            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
+        }
+
+        .card-header {
+            margin-bottom: 2rem;
+        }
+
+        .card-title {
+            font-size: 1.75rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+            color: var(--text);
+        }
+
+        .card-description {
+            color: var(--text-muted);
+            font-size: 0.95rem;
+        }
+
+        /* Form */
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+
+        .label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 500;
+            color: var(--text);
+            font-size: 0.95rem;
+        }
+
+        .input, .textarea {
+            width: 100%;
+            padding: 0.875rem;
+            background: var(--primary-light);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text);
+            font-size: 1rem;
+            font-family: inherit;
+            transition: all 0.2s;
+        }
+
+        .input:focus, .textarea:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(0, 229, 204, 0.1);
+        }
+
+        .textarea {
+            resize: vertical;
+            min-height: 80px;
+            font-family: 'Space Mono', monospace;
+        }
+
+        /* Size selector */
+        .size-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 0.75rem;
+        }
+
+        .size-option {
+            padding: 1rem;
+            background: var(--primary-light);
+            border: 2px solid var(--border);
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-align: center;
+        }
+
+        .size-option:hover {
+            border-color: var(--accent);
+            background: rgba(0, 229, 204, 0.05);
+        }
+
+        .size-option.active {
+            border-color: var(--accent);
+            background: rgba(0, 229, 204, 0.1);
+        }
+
+        .size-label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 0.25rem;
+            color: var(--text);
+        }
+
+        .size-dims {
+            display: block;
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+
+        /* Shipping summary */
+        .shipping-summary {
+            background: var(--primary-light);
+            padding: 1.25rem;
+            border-radius: 8px;
+            margin-bottom: 1.5rem;
+        }
+
+        .summary-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.5rem 0;
+        }
+
+        .summary-label {
+            color: var(--text-muted);
+            font-size: 0.9rem;
+        }
+
+        .summary-value {
+            color: var(--text);
+            font-weight: 500;
+        }
+
+        /* Buttons */
+        .btn {
+            width: 100%;
+            padding: 1rem;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-family: inherit;
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: var(--primary);
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            background: var(--accent-dark);
+            transform: translateY(-1px);
+        }
+
+        .btn-secondary {
+            background: transparent;
+            color: var(--text);
+            border: 1px solid var(--border);
+        }
+
+        .btn-secondary:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+
+        /* Success view */
+        .success-container {
+            text-align: center;
+        }
+
+        .success-icon {
+            width: 80px;
+            height: 80px;
+            background: var(--accent);
+            color: var(--primary);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin: 0 auto 1.5rem;
+        }
+
+        .share-link {
+            background: var(--primary-light);
+            padding: 1rem;
+            border-radius: 8px;
+            margin: 1.5rem 0;
+            word-break: break-all;
+            font-family: 'Space Mono', monospace;
+            font-size: 0.9rem;
+            color: var(--accent);
+        }
+
+        /* Footer */
+        .footer {
+            padding: 2rem;
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 0.875rem;
+            border-top: 1px solid var(--border);
+            margin-top: auto;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .hero-title {
+                font-size: 2rem;
+            }
+            
+            .hero-subtitle {
+                font-size: 1rem;
+            }
+
+            .steps {
+                grid-template-columns: 1fr;
+            }
+
+            .size-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        // EasyPost Configuration
+        const EASYPOST_API_KEY = 'EZTK25198dc7a7e3453ebe9744913bf235c4nwchpRx1ddf1fwkFWav1yg';
+        const EASYPOST_API_URL = 'https://api.easypost.com/v2';
+
+        const PACKAGE_SIZES = [
+            { 
+                id: 'small', 
+                label: 'Small', 
+                dims: '6×4×2"',
+                length: 6,
+                width: 4,
+                height: 2,
+                weight: 8
+            },
+            { 
+                id: 'medium', 
+                label: 'Medium', 
+                dims: '12×9×6"',
+                length: 12,
+                width: 9,
+                height: 6,
+                weight: 16
+            },
+            { 
+                id: 'large', 
+                label: 'Large', 
+                dims: '18×12×10"',
+                length: 18,
+                width: 12,
+                height: 10,
+                weight: 32
+            }
+        ];
+
+        async function createEasyPostShipment(fromAddress, toAddress, parcel) {
+            try {
+                const response = await fetch(`${EASYPOST_API_URL}/shipments`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${EASYPOST_API_KEY}`
+                    },
+                    body: JSON.stringify({
+                        shipment: {
+                            from_address: fromAddress,
+                            to_address: toAddress,
+                            parcel: parcel
+                        }
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to create shipment');
+                }
+
+                return await response.json();
+            } catch (error) {
+                console.error('EasyPost API error:', error);
+                throw error;
+            }
+        }
+
+        async function buyShipment(shipmentId, rateId) {
+            try {
+                const response = await fetch(`${EASYPOST_API_URL}/shipments/${shipmentId}/buy`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${EASYPOST_API_KEY}`
+                    },
+                    body: JSON.stringify({
+                        rate: { id: rateId }
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to buy shipment');
+                }
+
+                return await response.json();
+            } catch (error) {
+                console.error('EasyPost buy error:', error);
+                throw error;
+            }
+        }
+
+        function LandingPage({ onGetStarted }) {
+            return (
+                <div className="app">
+                    <header className="header">
+                        <div className="header-content">
+                            <div>
+                                <div className="logo">SendMo</div>
+                                <div className="tagline">ship it, trust it</div>
+                            </div>
+                        </div>
+                    </header>
+
+                    <section className="hero">
+                        <div className="hero-content">
+                            <h1 className="hero-title">
+                                Ship anything safely on Facebook Marketplace
+                            </h1>
+                            <p className="hero-subtitle">
+                                Create prepaid shipping labels for your online sales. No more sketchy meetups, 
+                                complicated payment apps, or shipping hassles. Just click, ship, done.
+                            </p>
+                            
+                            <div className="hero-illustration">
+                                <svg width="100%" height="200" viewBox="0 0 600 200" style={{maxWidth: '600px', margin: '0 auto', display: 'block'}}>
+                                    {/* Person 1 (Receiver) */}
+                                    <circle cx="100" cy="100" r="30" fill="#00E5CC" opacity="0.2"/>
+                                    <circle cx="100" cy="90" r="20" fill="#00E5CC"/>
+                                    <text x="100" y="97" textAnchor="middle" fill="#0A0E27" fontSize="20">👤</text>
+                                    <text x="100" y="150" textAnchor="middle" fill="#9BA3AF" fontSize="14">You (Receiver)</text>
+                                    
+                                    {/* Arrow 1 */}
+                                    <path d="M 130 100 L 220 100" stroke="#00E5CC" strokeWidth="2" fill="none" markerEnd="url(#arrowhead)"/>
+                                    <text x="175" y="90" textAnchor="middle" fill="#00E5CC" fontSize="12">Creates label</text>
+                                    
+                                    {/* Box (Label) */}
+                                    <rect x="240" y="75" width="50" height="50" fill="#14192D" stroke="#00E5CC" strokeWidth="2" rx="4"/>
+                                    <text x="265" y="105" textAnchor="middle" fill="#00E5CC" fontSize="24">📦</text>
+                                    <text x="265" y="150" textAnchor="middle" fill="#9BA3AF" fontSize="14">Shipping Label</text>
+                                    
+                                    {/* Arrow 2 */}
+                                    <path d="M 310 100 L 400 100" stroke="#00E5CC" strokeWidth="2" fill="none" markerEnd="url(#arrowhead)"/>
+                                    <text x="355" y="90" textAnchor="middle" fill="#00E5CC" fontSize="12">Shares link</text>
+                                    
+                                    {/* Person 2 (Sender) */}
+                                    <circle cx="500" cy="100" r="30" fill="#00E5CC" opacity="0.2"/>
+                                    <circle cx="500" cy="90" r="20" fill="#00E5CC"/>
+                                    <text x="500" y="97" textAnchor="middle" fill="#0A0E27" fontSize="20">👤</text>
+                                    <text x="500" y="150" textAnchor="middle" fill="#9BA3AF" fontSize="14">Seller (Sender)</text>
+                                    
+                                    <defs>
+                                        <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+                                            <polygon points="0 0, 10 3, 0 6" fill="#00E5CC"/>
+                                        </marker>
+                                    </defs>
+                                </svg>
+                            </div>
+
+                            <button className="cta-button" onClick={onGetStarted}>
+                                Create Your First Label
+                            </button>
+                        </div>
+                    </section>
+
+                    <section className="how-it-works">
+                        <div className="how-it-works-content">
+                            <h2 className="how-it-works-title">How It Works</h2>
+                            
+                            <div className="steps">
+                                <div className="step">
+                                    <div className="step-emoji">📋</div>
+                                    <div className="step-number">1</div>
+                                    <h3 className="step-title">You create the label</h3>
+                                    <p className="step-description">
+                                        Enter what you're receiving and where it's going. 
+                                        We'll get real shipping rates from USPS, UPS, and FedEx.
+                                    </p>
+                                </div>
+                                
+                                <div className="step">
+                                    <div className="step-emoji">🔗</div>
+                                    <div className="step-number">2</div>
+                                    <h3 className="step-title">Share the link</h3>
+                                    <p className="step-description">
+                                        Send the label link to your seller via text, email, or Facebook Messenger. 
+                                        No apps to download, no accounts needed.
+                                    </p>
+                                </div>
+                                
+                                <div className="step">
+                                    <div className="step-emoji">📦</div>
+                                    <div className="step-number">3</div>
+                                    <h3 className="step-title">They ship it</h3>
+                                    <p className="step-description">
+                                        Seller clicks the link, prints the prepaid label, and drops it at USPS/UPS. 
+                                        You get tracking automatically.
+                                    </p>
+                                </div>
+                            </div>
+
+                            <div style={{textAlign: 'center', color: 'var(--text-muted)', marginTop: '2rem'}}>
+                                <p><strong>No more:</strong> Meeting strangers in parking lots · Venmo requests · "I'll ship it tomorrow" excuses</p>
+                                <p style={{marginTop: '0.5rem'}}><strong>Just:</strong> Click, ship, track, done. ✨</p>
+                            </div>
+                        </div>
+                    </section>
+
+                    <footer className="footer">
+                        SendMo © 2026 · Ship safely
+                    </footer>
+                </div>
+            );
+        }
+
+        function App() {
+            const [showLanding, setShowLanding] = useState(true);
+            const [view, setView] = useState('buyer');
+            const [formData, setFormData] = useState({
+                itemDescription: '',
+                destinationAddress: '',
+                destinationCity: '',
+                destinationState: '',
+                destinationZip: '',
+                originAddress: '',
+                originCity: '',
+                originState: '',
+                originZip: '',
+                packageSize: 'medium'
+            });
+            const [shareLink, setShareLink] = useState('');
+            const [rates, setRates] = useState([]);
+            const [selectedRate, setSelectedRate] = useState(null);
+            const [loading, setLoading] = useState(false);
+            const [error, setError] = useState('');
+            const [shipmentData, setShipmentData] = useState(null);
+
+            useEffect(() => {
+                const urlParams = new URLSearchParams(window.location.search);
+                if (urlParams.get('id')) {
+                    setShowLanding(false);
+                    setView('seller');
+                }
+            }, []);
+
+            const parseAddress = (addressString) => {
+                const lines = addressString.trim().split('\n').filter(l => l.trim());
+                
+                if (lines.length === 0) {
+                    return { street: '', city: '', state: '', zip: '' };
+                }
+                
+                const street = lines[0].trim();
+                const lastLine = lines[lines.length - 1];
+                
+                let city = '', state = '', zip = '';
+                
+                const commaParts = lastLine.split(',').map(s => s.trim());
+                
+                if (commaParts.length >= 2) {
+                    city = commaParts[0];
+                    const stateZipParts = commaParts[1].split(/\s+/).filter(s => s);
+                    state = stateZipParts[0] || '';
+                    zip = stateZipParts[1] || stateZipParts[0];
+                } else {
+                    const parts = lastLine.split(/\s+/).filter(s => s);
+                    if (parts.length >= 3) {
+                        zip = parts[parts.length - 1];
+                        state = parts[parts.length - 2];
+                        city = parts.slice(0, parts.length - 2).join(' ');
+                    } else if (parts.length === 2) {
+                        state = parts[0];
+                        zip = parts[1];
+                    }
+                }
+                
+                return { street, city, state, zip };
+            };
+
+            const handleInputChange = (e) => {
+                setFormData({
+                    ...formData,
+                    [e.target.name]: e.target.value
+                });
+            };
+
+            const handleSizeSelect = (sizeId) => {
+                setFormData({
+                    ...formData,
+                    packageSize: sizeId
+                });
+            };
+
+            const handleCreateLabel = async () => {
+                setLoading(true);
+                setError('');
+
+                try {
+                    const destAddr = parseAddress(formData.destinationAddress);
+                    
+                    if (!destAddr.street || !destAddr.zip) {
+                        throw new Error('Please enter at least a street address and ZIP code');
+                    }
+                    
+                    if (!destAddr.city) destAddr.city = 'Unknown';
+                    if (!destAddr.state) destAddr.state = 'CA';
+
+                    const packageConfig = PACKAGE_SIZES.find(s => s.id === formData.packageSize);
+
+                    const toAddress = {
+                        street1: destAddr.street,
+                        city: destAddr.city,
+                        state: destAddr.state,
+                        zip: destAddr.zip,
+                        country: 'US'
+                    };
+
+                    const originCity = formData.originCity || 'San Francisco';
+                    const fromAddress = {
+                        street1: '123 Placeholder St',
+                        city: originCity,
+                        state: 'CA',
+                        zip: '94102',
+                        country: 'US'
+                    };
+
+                    const parcel = {
+                        length: packageConfig.length,
+                        width: packageConfig.width,
+                        height: packageConfig.height,
+                        weight: packageConfig.weight
+                    };
+
+                    const shipment = await createEasyPostShipment(fromAddress, toAddress, parcel);
+                    
+                    if (!shipment.rates || shipment.rates.length === 0) {
+                        throw new Error('No shipping rates available');
+                    }
+
+                    setShipmentData(shipment);
+                    setRates(shipment.rates);
+                    setSelectedRate(shipment.rates[0]);
+
+                    const mockId = shipment.id;
+                    const link = `${window.location.origin}?id=${mockId}`;
+                    setShareLink(link);
+                    setView('success');
+
+                } catch (err) {
+                    setError(err.message || 'Failed to create shipping label. Please try again.');
+                    console.error('Error creating label:', err);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const handlePrintLabel = async () => {
+                setLoading(true);
+                setError('');
+
+                try {
+                    const originAddr = parseAddress(formData.originAddress);
+                    
+                    if (!originAddr.street || !originAddr.zip) {
+                        throw new Error('Please enter at least a street address and ZIP code');
+                    }
+                    
+                    if (!originAddr.city) originAddr.city = 'Unknown';
+                    if (!originAddr.state) originAddr.state = 'CA';
+
+                    const packageConfig = PACKAGE_SIZES.find(s => s.id === formData.packageSize);
+                    
+                    const fromAddress = {
+                        street1: originAddr.street,
+                        city: originAddr.city,
+                        state: originAddr.state,
+                        zip: originAddr.zip,
+                        country: 'US'
+                    };
+
+                    const destAddr = parseAddress(formData.destinationAddress);
+                    const toAddress = {
+                        street1: destAddr.street,
+                        city: destAddr.city,
+                        state: destAddr.state,
+                        zip: destAddr.zip,
+                        country: 'US'
+                    };
+
+                    const parcel = {
+                        length: packageConfig.length,
+                        width: packageConfig.width,
+                        height: packageConfig.height,
+                        weight: packageConfig.weight
+                    };
+
+                    const shipment = await createEasyPostShipment(fromAddress, toAddress, parcel);
+                    
+                    if (!shipment.rates || shipment.rates.length === 0) {
+                        throw new Error('No shipping rates available');
+                    }
+
+                    const cheapestRate = shipment.rates[0];
+                    const purchasedShipment = await buyShipment(shipment.id, cheapestRate.id);
+                    
+                    if (!purchasedShipment.postage_label) {
+                        throw new Error('Failed to generate label');
+                    }
+
+                    setShipmentData(purchasedShipment);
+                    window.open(purchasedShipment.postage_label.label_url, '_blank');
+                    
+                    setView('print');
+
+                } catch (err) {
+                    setError(err.message || 'Failed to generate label. Please try again.');
+                    console.error('Error generating label:', err);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const copyToClipboard = () => {
+                navigator.clipboard.writeText(shareLink);
+                alert('Link copied to clipboard!');
+            };
+
+            if (showLanding) {
+                return <LandingPage onGetStarted={() => setShowLanding(false)} />;
+            }
+
+            // Rest of your existing buyer/seller/success views go here
+            // (I'll include them in the next part to keep this organized)
+            
+            return (
+                <div className="app">
+                    <header className="header">
+                        <div className="header-content">
+                            <div>
+                                <div className="logo">SendMo</div>
+                                <div className="tagline">ship it, trust it</div>
+                            </div>
+                        </div>
+                    </header>
+                    <main className="main">
+                        <div className="container">
+                            <p>Form views coming next...</p>
+                        </div>
+                    </main>
+                </div>
+            );
+        }
+
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
