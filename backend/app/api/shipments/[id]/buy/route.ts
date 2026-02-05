@@ -13,7 +13,7 @@ const BuyShipmentSchema = z.object({
 
 export async function POST(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     if (!EASYPOST_API_KEY) {
@@ -23,7 +23,7 @@ export async function POST(
       );
     }
 
-    const shipmentId = params.id;
+    const { id: shipmentId } = await params;
     if (!shipmentId) {
       return NextResponse.json(
         { success: false, error: { message: 'Shipment ID is required' } },
