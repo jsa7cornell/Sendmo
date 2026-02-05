@@ -1,6 +1,6 @@
 {
-  "buildCommand": "echo 'Static site'",
-  "outputDirectory": ".",
+  "buildCommand": "mkdir -p dist && cp index.html dist/",
+  "outputDirectory": "dist",
   "rewrites": [
     { "source": "/(.*)", "destination": "/index.html" }
   ]
