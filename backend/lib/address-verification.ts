@@ -1,8 +1,12 @@
 // Address Verification Service
 import { PrismaClient } from '@prisma/client';
 
-const prisma = new PrismaClient();
-const EASYPOST_API_KEY = process.env.EASYPOST_API_KEY!;
+// Singleton pattern to prevent connection pool exhaustion in serverless
+const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
+const prisma = globalForPrisma.prisma ?? new PrismaClient();
+if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
+
+const EASYPOST_API_KEY = process.env.EASYPOST_API_KEY;
 const EASYPOST_API_URL = 'https://api.easypost.com/v2';
 
 export interface AddressInput {
@@ -29,6 +33,14 @@ export async function verifyAddress(
   address: AddressInput,
   userId?: string
 ): Promise<VerificationResult> {
+  if (!EASYPOST_API_KEY) {
+    return {
+      valid: false,
+      verified: false,
+      errors: ['EASYPOST_API_KEY is not configured']
+    };
+  }
+
   try {
     const cached = await findCachedAddress(address);
     if (cached) {
@@ -169,14 +181,24 @@ export function parseAddressString(addressString: string): AddressInput | null {
   const lines = addressString.trim().split('\n').filter(l => l.trim());
   if (lines.length === 0) return null;
   const street1 = lines[0].trim();
-  const lastLine = lines[lines.length - 1];
+  const lastLine = lines[lines.length - 1].trim();
   let city = '', state = '', zip = '';
   const commaParts = lastLine.split(',').map(s => s.trim());
   if (commaParts.length >= 2) {
     city = commaParts[0];
     const stateZipParts = commaParts[1].split(/\s+/).filter(s => s);
-    state = stateZipParts[0] || '';
-    zip = stateZipParts[1] || stateZipParts[0];
+    if (stateZipParts.length >= 2) {
+      state = stateZipParts[0];
+      zip = stateZipParts[1];
+    } else if (stateZipParts.length === 1) {
+      // Single token — determine if it's a state or zip
+      const token = stateZipParts[0];
+      if (/^\d{5}(-\d{4})?$/.test(token)) {
+        zip = token;
+      } else {
+        state = token;
+      }
+    }
   } else {
     const parts = lastLine.split(/\s+/).filter(s => s);
     if (parts.length >= 3) {
@@ -189,5 +211,5 @@ export function parseAddressString(addressString: string): AddressInput | null {
     }
   }
   if (!street1 || !zip) return null;
-  return { street1, city: city || 'Unknown', state: state || 'CA', zip, country: 'US' };
+  return { street1, city: city || 'Unknown', state: state || '', zip, country: 'US' };
 }
