@@ -51,7 +51,7 @@ export async function POST(req: NextRequest) {
     }
     
     // Verify address
-        const result = await verifyAddress(addressObj, userId);
+    const result = await verifyAddress(addressObj, userId);
     
     // Accept address if we got data back from EasyPost (even without verification)
     if (result.corrected && result.cachedAddressId) {

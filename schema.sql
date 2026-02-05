@@ -79,8 +79,8 @@ CREATE TABLE shipping_requests (
     actual_package_weight_oz INT,
     
     -- If actual differs significantly from estimated, flag for review
-    size_mismatch BOOLEAN DEFAULT FALSE
-    
+    size_mismatch BOOLEAN DEFAULT FALSE,
+
     -- Shipping selection
     selected_carrier VARCHAR(50), -- 'USPS', 'UPS', 'FedEx', etc.
     selected_service VARCHAR(100), -- 'Priority Mail', 'Ground', etc.
