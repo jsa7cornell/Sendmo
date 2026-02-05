@@ -28,7 +28,7 @@ export async function POST(req: NextRequest) {
     
     // Get user session (optional - works without login too)
     const session = await getServerSession();
-    const userId = session?.user?.id;
+    const userId = (session?.user as { id?: string } | undefined)?.id;
     
     // Parse address if it's a string
     let addressObj;
