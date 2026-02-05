@@ -1,8 +1,9 @@
 // API Route: /api/shipments
-// POST - Create a shipment and get rates (proxies to EasyPost)
+// POST - Create a shipment and get rates (proxies to EasyPost, or returns demo rates)
 
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
+import crypto from 'crypto';
 
 const EASYPOST_API_KEY = process.env.EASYPOST_API_KEY;
 const EASYPOST_API_URL = 'https://api.easypost.com/v2';
@@ -29,18 +30,70 @@ const CreateShipmentSchema = z.object({
   parcel: ParcelSchema
 });
 
+function generateMockRates(weight: number) {
+  const basePrice = Math.max(3.5, weight * 0.35);
+  const id = crypto.randomUUID();
+
+  return {
+    id: `shp_demo_${id}`,
+    mode: 'demo',
+    rates: [
+      {
+        id: `rate_usps_priority_${id}`,
+        carrier: 'USPS',
+        service: 'Priority Mail',
+        rate: (basePrice * 1.2).toFixed(2),
+        delivery_days: 3,
+        est_delivery_days: 3,
+      },
+      {
+        id: `rate_usps_ground_${id}`,
+        carrier: 'USPS',
+        service: 'Ground Advantage',
+        rate: basePrice.toFixed(2),
+        delivery_days: 5,
+        est_delivery_days: 5,
+      },
+      {
+        id: `rate_ups_ground_${id}`,
+        carrier: 'UPS',
+        service: 'Ground',
+        rate: (basePrice * 1.4).toFixed(2),
+        delivery_days: 5,
+        est_delivery_days: 5,
+      },
+      {
+        id: `rate_usps_express_${id}`,
+        carrier: 'USPS',
+        service: 'Express Mail',
+        rate: (basePrice * 2.5).toFixed(2),
+        delivery_days: 1,
+        est_delivery_days: 1,
+      },
+      {
+        id: `rate_fedex_ground_${id}`,
+        carrier: 'FedEx',
+        service: 'Ground',
+        rate: (basePrice * 1.5).toFixed(2),
+        delivery_days: 5,
+        est_delivery_days: 5,
+      },
+    ],
+  };
+}
+
 export async function POST(req: NextRequest) {
   try {
-    if (!EASYPOST_API_KEY) {
-      return NextResponse.json(
-        { success: false, error: { message: 'Shipping service is not configured' } },
-        { status: 503 }
-      );
-    }
-
     const body = await req.json();
     const data = CreateShipmentSchema.parse(body);
 
+    // Demo mode — return mock rates when no EasyPost key is configured
+    if (!EASYPOST_API_KEY) {
+      const mockShipment = generateMockRates(data.parcel.weight);
+      return NextResponse.json(mockShipment);
+    }
+
+    // Live mode — proxy to EasyPost
     const response = await fetch(`${EASYPOST_API_URL}/shipments`, {
       method: 'POST',
       headers: {
