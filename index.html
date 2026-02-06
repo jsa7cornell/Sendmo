@@ -575,6 +575,26 @@
             }
         }
 
+        async function verifyAddress(address) {
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/address/verify`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(address)
+                });
+
+                if (!response.ok) {
+                    return { valid: false, corrected: address, suggestions: [], errors: ['Could not verify address'] };
+                }
+
+                return await response.json();
+            } catch (error) {
+                console.error('Address verification error:', error);
+                // On network error, just return the address as-is (don't block the flow)
+                return { valid: true, corrected: address, suggestions: [], errors: [] };
+            }
+        }
+
         function LandingPage({ onGetStarted }) {
             return (
                 <div className="app">
@@ -707,6 +727,7 @@
             const [rates, setRates] = useState([]);
             const [selectedRate, setSelectedRate] = useState(null);
             const [loading, setLoading] = useState(false);
+            const [addressSuggestion, setAddressSuggestion] = useState(null); // { original, corrected, suggestions }
             const [error, setError] = useState('');
             const [shipmentData, setShipmentData] = useState(null);
 
@@ -876,35 +897,59 @@
                 });
             };
 
-            const handleCreateLabel = async () => {
+            const handleCreateLabel = async (useVerifiedAddress = null) => {
                 setLoading(true);
                 setError('');
+                setAddressSuggestion(null);
 
                 try {
                     const destAddr = parseAddress(formData.destinationAddress);
 
+                    // Minimal validation - just need street OR zip to proceed
                     if (!destAddr.street && !destAddr.zip) {
-                        throw new Error('Please enter your full address including street and ZIP code');
+                        throw new Error('Please enter at least a street address or ZIP code');
                     }
-                    if (!destAddr.street) {
-                        throw new Error('Could not find street address. Please include your street number and name.');
-                    }
-                    if (!destAddr.zip) {
-                        throw new Error('Could not find ZIP code. Please include your 5-digit ZIP code.');
-                    }
-                    
-                    if (!destAddr.city) destAddr.city = 'Unknown';
-                    if (!destAddr.state) destAddr.state = 'CA';
 
-                    const packageConfig = PACKAGE_SIZES.find(s => s.id === formData.packageSize);
-
-                    const toAddress = {
-                        street1: destAddr.street,
-                        city: destAddr.city,
-                        state: destAddr.state,
-                        zip: destAddr.zip,
+                    // Build address object for verification
+                    let toAddress = useVerifiedAddress || {
+                        street1: destAddr.street || '',
+                        city: destAddr.city || '',
+                        state: destAddr.state || '',
+                        zip: destAddr.zip || '',
                         country: 'US'
                     };
+
+                    // If not already verified, verify the address first
+                    if (!useVerifiedAddress) {
+                        const verification = await verifyAddress(toAddress);
+
+                        // If there are corrections, show them to user for confirmation
+                        if (verification.suggestions && verification.suggestions.length > 0) {
+                            setAddressSuggestion({
+                                original: toAddress,
+                                corrected: verification.corrected,
+                                suggestions: verification.suggestions
+                            });
+                            setLoading(false);
+                            return; // Wait for user to confirm
+                        }
+
+                        // If there are errors and no valid address, show error
+                        if (verification.errors && verification.errors.length > 0 && !verification.valid) {
+                            throw new Error(verification.errors[0]);
+                        }
+
+                        // Use corrected address (may have filled in city/state from ZIP)
+                        if (verification.corrected) {
+                            toAddress = verification.corrected;
+                        }
+                    }
+
+                    // Fill in any missing fields with defaults
+                    if (!toAddress.city) toAddress.city = 'Unknown';
+                    if (!toAddress.state) toAddress.state = 'CA';
+
+                    const packageConfig = PACKAGE_SIZES.find(s => s.id === formData.packageSize);
 
                     const originCity = formData.originCity || 'San Francisco';
                     const fromAddress = {
@@ -923,18 +968,19 @@
                     };
 
                     const shipment = await createEasyPostShipment(fromAddress, toAddress, parcel);
-                    
+
                     if (!shipment.rates || shipment.rates.length === 0) {
-                        throw new Error('No shipping rates available');
+                        throw new Error('No shipping rates available for this address');
                     }
 
                     setShipmentData(shipment);
                     setRates(shipment.rates);
                     setSelectedRate(shipment.rates[0]);
 
-                    // Encode shipment data into share link so seller can complete
+                    // Encode VERIFIED address into share link
+                    const verifiedAddressStr = `${toAddress.street1}\n${toAddress.city}, ${toAddress.state} ${toAddress.zip}`;
                     const shipmentInfo = {
-                        dest: formData.destinationAddress,
+                        dest: verifiedAddressStr,
                         item: formData.itemDescription,
                         size: formData.packageSize
                     };
@@ -951,50 +997,63 @@
                 }
             };
 
-            const handlePrintLabel = async () => {
+            const handlePrintLabel = async (useVerifiedAddress = null) => {
                 setLoading(true);
                 setError('');
+                setAddressSuggestion(null);
 
                 try {
                     const originAddr = parseAddress(formData.originAddress);
 
+                    // Minimal validation - just need street OR zip
                     if (!originAddr.street && !originAddr.zip) {
-                        throw new Error('Please enter your full address including street and ZIP code');
+                        throw new Error('Please enter at least a street address or ZIP code');
                     }
-                    if (!originAddr.street) {
-                        throw new Error('Could not find street address. Please include your street number and name.');
-                    }
-                    if (!originAddr.zip) {
-                        throw new Error('Could not find ZIP code. Please include your 5-digit ZIP code.');
-                    }
-                    
-                    if (!originAddr.city) originAddr.city = 'Unknown';
-                    if (!originAddr.state) originAddr.state = 'CA';
 
-                    const packageConfig = PACKAGE_SIZES.find(s => s.id === formData.packageSize);
-                    
-                    const fromAddress = {
-                        street1: originAddr.street,
-                        city: originAddr.city,
-                        state: originAddr.state,
-                        zip: originAddr.zip,
+                    // Build address for verification
+                    let fromAddress = useVerifiedAddress || {
+                        street1: originAddr.street || '',
+                        city: originAddr.city || '',
+                        state: originAddr.state || '',
+                        zip: originAddr.zip || '',
                         country: 'US'
                     };
 
-                    const destAddr = parseAddress(formData.destinationAddress);
+                    // If not already verified, verify the address
+                    if (!useVerifiedAddress) {
+                        const verification = await verifyAddress(fromAddress);
 
-                    // Validate destination address
-                    if (!destAddr.street || !destAddr.zip) {
-                        throw new Error('The destination address appears to be incomplete. Please ask the buyer to resend the link with a valid address.');
+                        // If there are corrections, show them for confirmation
+                        if (verification.suggestions && verification.suggestions.length > 0) {
+                            setAddressSuggestion({
+                                original: fromAddress,
+                                corrected: verification.corrected,
+                                suggestions: verification.suggestions,
+                                isSeller: true // Flag to know which handler to call
+                            });
+                            setLoading(false);
+                            return;
+                        }
+
+                        // Use corrected address if available
+                        if (verification.corrected) {
+                            fromAddress = verification.corrected;
+                        }
                     }
-                    if (!destAddr.city) destAddr.city = 'Unknown';
-                    if (!destAddr.state) destAddr.state = 'CA';
 
+                    // Fill in defaults
+                    if (!fromAddress.city) fromAddress.city = 'Unknown';
+                    if (!fromAddress.state) fromAddress.state = 'CA';
+
+                    const packageConfig = PACKAGE_SIZES.find(s => s.id === formData.packageSize);
+
+                    // Destination was already verified by buyer, just parse it
+                    const destAddr = parseAddress(formData.destinationAddress);
                     const toAddress = {
-                        street1: destAddr.street,
-                        city: destAddr.city,
-                        state: destAddr.state,
-                        zip: destAddr.zip,
+                        street1: destAddr.street || '',
+                        city: destAddr.city || 'Unknown',
+                        state: destAddr.state || 'CA',
+                        zip: destAddr.zip || '',
                         country: 'US'
                     };
 
@@ -1067,6 +1126,62 @@
                                     fontSize: '0.9rem'
                                 }}>
                                     {error}
+                                </div>
+                            )}
+
+                            {/* Address Correction Suggestion */}
+                            {addressSuggestion && (
+                                <div className="card" style={{marginBottom: '1.5rem', borderColor: 'var(--accent)'}}>
+                                    <div className="card-header">
+                                        <h2 className="card-title" style={{fontSize: '1.25rem'}}>Address Correction</h2>
+                                        <p className="card-description">We found a better format for your address:</p>
+                                    </div>
+
+                                    <div style={{marginBottom: '1rem'}}>
+                                        {addressSuggestion.suggestions.map((s, i) => (
+                                            <div key={i} style={{
+                                                padding: '0.5rem 0.75rem',
+                                                background: 'rgba(0, 229, 204, 0.1)',
+                                                borderRadius: '4px',
+                                                marginBottom: '0.5rem',
+                                                fontSize: '0.9rem',
+                                                color: 'var(--accent)'
+                                            }}>
+                                                {s}
+                                            </div>
+                                        ))}
+                                    </div>
+
+                                    <div className="shipping-summary" style={{marginBottom: '1rem'}}>
+                                        <div className="summary-row">
+                                            <span className="summary-label">Corrected address</span>
+                                        </div>
+                                        <div style={{fontFamily: 'Space Mono', fontSize: '0.9rem', marginTop: '0.5rem'}}>
+                                            {addressSuggestion.corrected.street1}<br/>
+                                            {addressSuggestion.corrected.city}, {addressSuggestion.corrected.state} {addressSuggestion.corrected.zip}
+                                        </div>
+                                    </div>
+
+                                    <div style={{display: 'flex', gap: '0.75rem'}}>
+                                        <button
+                                            className="btn btn-primary"
+                                            style={{flex: 1}}
+                                            onClick={() => addressSuggestion.isSeller
+                                                ? handlePrintLabel(addressSuggestion.corrected)
+                                                : handleCreateLabel(addressSuggestion.corrected)}
+                                        >
+                                            Use Corrected Address
+                                        </button>
+                                        <button
+                                            className="btn btn-secondary"
+                                            style={{flex: 1}}
+                                            onClick={() => addressSuggestion.isSeller
+                                                ? handlePrintLabel(addressSuggestion.original)
+                                                : handleCreateLabel(addressSuggestion.original)}
+                                        >
+                                            Keep Original
+                                        </button>
+                                    </div>
                                 </div>
                             )}
 
