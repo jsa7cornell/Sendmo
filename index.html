@@ -707,52 +707,95 @@
 
                 const text = addressString.trim();
 
+                // Valid US state abbreviations
+                const US_STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY','DC'];
+
                 // Try to extract ZIP code (5 digits or 5+4 format)
                 const zipMatch = text.match(/\b(\d{5}(?:-\d{4})?)\b/);
                 const zip = zipMatch ? zipMatch[1] : '';
 
-                // Try to extract state (2 letter code before or after zip)
-                const stateMatch = text.match(/\b([A-Z]{2})\b(?:\s*\d{5})?/i);
-                const state = stateMatch ? stateMatch[1].toUpperCase() : '';
+                // Extract state - look for valid 2-letter state code near ZIP or at end
+                let state = '';
+                // First try: state right before ZIP (e.g., "CA 90210")
+                const stateBeforeZip = text.match(/\b([A-Z]{2})\s*\d{5}/i);
+                if (stateBeforeZip && US_STATES.includes(stateBeforeZip[1].toUpperCase())) {
+                    state = stateBeforeZip[1].toUpperCase();
+                }
+                // Second try: any valid state abbreviation in the text
+                if (!state) {
+                    for (const st of US_STATES) {
+                        const stateRegex = new RegExp(`\\b${st}\\b`, 'i');
+                        if (stateRegex.test(text)) {
+                            state = st;
+                            break;
+                        }
+                    }
+                }
 
                 // Split into lines
                 const lines = text.split('\n').map(l => l.trim()).filter(l => l);
 
-                // First line is typically street address
-                let street = lines[0] || '';
-
-                // If single line, try to extract street before city/state/zip
-                if (lines.length === 1) {
-                    // Try format: "123 Main St, City, ST 12345"
-                    const parts = text.split(',').map(s => s.trim());
-                    if (parts.length >= 2) {
-                        street = parts[0];
-                    }
-                }
-
-                // Extract city - usually after street, before state
+                let street = '';
                 let city = '';
+
                 if (lines.length >= 2) {
+                    // Multi-line format: first line is street, last line has city/state/zip
+                    street = lines[0];
                     const lastLine = lines[lines.length - 1];
                     // Remove zip and state from last line to get city
                     city = lastLine
-                        .replace(/\b\d{5}(-\d{4})?\b/, '')
-                        .replace(/\b[A-Z]{2}\b/i, '')
+                        .replace(/\b\d{5}(-\d{4})?\b/g, '')
+                        .replace(new RegExp(`\\b${state}\\b`, 'i'), '')
                         .replace(/,/g, '')
                         .trim();
                 } else {
-                    // Single line - try to extract city
+                    // Single line - try to parse "123 Main St, City, ST 12345"
                     const parts = text.split(',').map(s => s.trim());
                     if (parts.length >= 2) {
-                        // City is usually the second part
-                        city = parts[1]
-                            .replace(/\b\d{5}(-\d{4})?\b/, '')
-                            .replace(/\b[A-Z]{2}\b/i, '')
+                        street = parts[0];
+                        // City is typically second-to-last or second part
+                        const cityPart = parts.length >= 3 ? parts[1] : parts[1];
+                        city = cityPart
+                            .replace(/\b\d{5}(-\d{4})?\b/g, '')
+                            .replace(new RegExp(`\\b${state}\\b`, 'i'), '')
                             .trim();
+                    } else {
+                        // No commas - try to extract street (everything before city/state/zip)
+                        // Pattern: "123 Main St Austin TX 78701"
+                        const noZip = text.replace(/\b\d{5}(-\d{4})?\b/g, '').trim();
+                        const noState = state ? noZip.replace(new RegExp(`\\b${state}\\b`, 'i'), '').trim() : noZip;
+
+                        // Try to find where city starts (capitalized word near the end)
+                        const words = noState.split(/\s+/);
+                        if (words.length >= 2) {
+                            // Assume last 1-2 words are city, rest is street
+                            // Simple heuristic: if last word looks like a city name
+                            const lastWord = words[words.length - 1];
+                            const secondLastWord = words.length > 1 ? words[words.length - 2] : '';
+
+                            // Check if last 2 words could be city (like "Los Angeles", "New York")
+                            if (words.length > 2 && /^[A-Z]/.test(secondLastWord)) {
+                                city = secondLastWord + ' ' + lastWord;
+                                street = words.slice(0, -2).join(' ');
+                            } else {
+                                city = lastWord;
+                                street = words.slice(0, -1).join(' ');
+                            }
+                        } else {
+                            street = noState;
+                        }
                     }
                 }
 
-                return { street, city: city || 'Unknown', state: state || '', zip };
+                // Clean up street - remove trailing commas
+                street = street.replace(/,+$/, '').trim();
+
+                return {
+                    street: street || '',
+                    city: city || 'Unknown',
+                    state: state || '',
+                    zip: zip || ''
+                };
             };
 
             const handleInputChange = (e) => {
@@ -775,9 +818,15 @@
 
                 try {
                     const destAddr = parseAddress(formData.destinationAddress);
-                    
-                    if (!destAddr.street || !destAddr.zip) {
-                        throw new Error('Please enter at least a street address and ZIP code');
+
+                    if (!destAddr.street && !destAddr.zip) {
+                        throw new Error('Please enter your full address including street and ZIP code');
+                    }
+                    if (!destAddr.street) {
+                        throw new Error('Could not find street address. Please include your street number and name.');
+                    }
+                    if (!destAddr.zip) {
+                        throw new Error('Could not find ZIP code. Please include your 5-digit ZIP code.');
                     }
                     
                     if (!destAddr.city) destAddr.city = 'Unknown';
@@ -844,9 +893,15 @@
 
                 try {
                     const originAddr = parseAddress(formData.originAddress);
-                    
-                    if (!originAddr.street || !originAddr.zip) {
-                        throw new Error('Please enter at least a street address and ZIP code');
+
+                    if (!originAddr.street && !originAddr.zip) {
+                        throw new Error('Please enter your full address including street and ZIP code');
+                    }
+                    if (!originAddr.street) {
+                        throw new Error('Could not find street address. Please include your street number and name.');
+                    }
+                    if (!originAddr.zip) {
+                        throw new Error('Could not find ZIP code. Please include your 5-digit ZIP code.');
                     }
                     
                     if (!originAddr.city) originAddr.city = 'Unknown';
