@@ -498,12 +498,27 @@
             }
         ];
 
+        // Safe JSON stringify that handles circular references
+        function safeStringify(obj) {
+            const seen = new WeakSet();
+            return JSON.stringify(obj, (key, value) => {
+                if (typeof value === 'object' && value !== null) {
+                    if (seen.has(value)) return '[Circular]';
+                    seen.add(value);
+                }
+                // Skip DOM elements and React internals
+                if (value instanceof Element) return '[Element]';
+                if (key.startsWith('__react')) return undefined;
+                return value;
+            });
+        }
+
         async function createEasyPostShipment(fromAddress, toAddress, parcel) {
             try {
                 const response = await fetch(`${API_BASE_URL}/api/shipments`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
+                    body: safeStringify({
                         from_address: fromAddress,
                         to_address: toAddress,
                         parcel: parcel
@@ -549,7 +564,7 @@
                 const response = await fetch(`${API_BASE_URL}/api/shipments/${shipmentId}/buy`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ rate_id: rateId })
+                    body: safeStringify({ rate_id: rateId })
                 });
 
                 if (!response.ok) {
@@ -580,7 +595,7 @@
                 const response = await fetch(`${API_BASE_URL}/api/address/verify`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(address)
+                    body: safeStringify(address)
                 });
 
                 if (!response.ok) {
@@ -993,7 +1008,7 @@
                         item: formData.itemDescription,
                         size: formData.packageSize
                     };
-                    const encoded = btoa(JSON.stringify(shipmentInfo));
+                    const encoded = btoa(safeStringify(shipmentInfo));
                     const link = `${window.location.origin}?data=${encoded}`;
                     setShareLink(link);
                     setView('success');
