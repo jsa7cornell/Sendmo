@@ -701,37 +701,58 @@
             }, []);
 
             const parseAddress = (addressString) => {
-                const lines = addressString.trim().split('\n').filter(l => l.trim());
-                
-                if (lines.length === 0) {
+                if (!addressString || !addressString.trim()) {
                     return { street: '', city: '', state: '', zip: '' };
                 }
-                
-                const street = lines[0].trim();
-                const lastLine = lines[lines.length - 1];
-                
-                let city = '', state = '', zip = '';
-                
-                const commaParts = lastLine.split(',').map(s => s.trim());
-                
-                if (commaParts.length >= 2) {
-                    city = commaParts[0];
-                    const stateZipParts = commaParts[1].split(/\s+/).filter(s => s);
-                    state = stateZipParts[0] || '';
-                    zip = stateZipParts[1] || stateZipParts[0];
-                } else {
-                    const parts = lastLine.split(/\s+/).filter(s => s);
-                    if (parts.length >= 3) {
-                        zip = parts[parts.length - 1];
-                        state = parts[parts.length - 2];
-                        city = parts.slice(0, parts.length - 2).join(' ');
-                    } else if (parts.length === 2) {
-                        state = parts[0];
-                        zip = parts[1];
+
+                const text = addressString.trim();
+
+                // Try to extract ZIP code (5 digits or 5+4 format)
+                const zipMatch = text.match(/\b(\d{5}(?:-\d{4})?)\b/);
+                const zip = zipMatch ? zipMatch[1] : '';
+
+                // Try to extract state (2 letter code before or after zip)
+                const stateMatch = text.match(/\b([A-Z]{2})\b(?:\s*\d{5})?/i);
+                const state = stateMatch ? stateMatch[1].toUpperCase() : '';
+
+                // Split into lines
+                const lines = text.split('\n').map(l => l.trim()).filter(l => l);
+
+                // First line is typically street address
+                let street = lines[0] || '';
+
+                // If single line, try to extract street before city/state/zip
+                if (lines.length === 1) {
+                    // Try format: "123 Main St, City, ST 12345"
+                    const parts = text.split(',').map(s => s.trim());
+                    if (parts.length >= 2) {
+                        street = parts[0];
                     }
                 }
-                
-                return { street, city, state, zip };
+
+                // Extract city - usually after street, before state
+                let city = '';
+                if (lines.length >= 2) {
+                    const lastLine = lines[lines.length - 1];
+                    // Remove zip and state from last line to get city
+                    city = lastLine
+                        .replace(/\b\d{5}(-\d{4})?\b/, '')
+                        .replace(/\b[A-Z]{2}\b/i, '')
+                        .replace(/,/g, '')
+                        .trim();
+                } else {
+                    // Single line - try to extract city
+                    const parts = text.split(',').map(s => s.trim());
+                    if (parts.length >= 2) {
+                        // City is usually the second part
+                        city = parts[1]
+                            .replace(/\b\d{5}(-\d{4})?\b/, '')
+                            .replace(/\b[A-Z]{2}\b/i, '')
+                            .trim();
+                    }
+                }
+
+                return { street, city: city || 'Unknown', state: state || '', zip };
             };
 
             const handleInputChange = (e) => {
