@@ -897,6 +897,15 @@
                 });
             };
 
+            // Helper to create clean address object (no circular refs)
+            const cleanAddress = (addr) => ({
+                street1: String(addr?.street1 || ''),
+                city: String(addr?.city || ''),
+                state: String(addr?.state || ''),
+                zip: String(addr?.zip || ''),
+                country: String(addr?.country || 'US')
+            });
+
             const handleCreateLabel = async (useVerifiedAddress = null) => {
                 setLoading(true);
                 setError('');
@@ -926,9 +935,9 @@
                         // If there are corrections, show them to user for confirmation
                         if (verification.suggestions && verification.suggestions.length > 0) {
                             setAddressSuggestion({
-                                original: toAddress,
-                                corrected: verification.corrected,
-                                suggestions: verification.suggestions
+                                original: cleanAddress(toAddress),
+                                corrected: cleanAddress(verification.corrected),
+                                suggestions: [...verification.suggestions]
                             });
                             setLoading(false);
                             return; // Wait for user to confirm
@@ -1026,9 +1035,9 @@
                         // If there are corrections, show them for confirmation
                         if (verification.suggestions && verification.suggestions.length > 0) {
                             setAddressSuggestion({
-                                original: fromAddress,
-                                corrected: verification.corrected,
-                                suggestions: verification.suggestions,
+                                original: cleanAddress(fromAddress),
+                                corrected: cleanAddress(verification.corrected),
+                                suggestions: [...verification.suggestions],
                                 isSeller: true // Flag to know which handler to call
                             });
                             setLoading(false);
@@ -1166,18 +1175,20 @@
                                         <button
                                             className="btn btn-primary"
                                             style={{flex: 1}}
-                                            onClick={() => addressSuggestion.isSeller
-                                                ? handlePrintLabel(addressSuggestion.corrected)
-                                                : handleCreateLabel(addressSuggestion.corrected)}
+                                            onClick={() => {
+                                                const addr = cleanAddress(addressSuggestion.corrected);
+                                                addressSuggestion.isSeller ? handlePrintLabel(addr) : handleCreateLabel(addr);
+                                            }}
                                         >
                                             Use Corrected Address
                                         </button>
                                         <button
                                             className="btn btn-secondary"
                                             style={{flex: 1}}
-                                            onClick={() => addressSuggestion.isSeller
-                                                ? handlePrintLabel(addressSuggestion.original)
-                                                : handleCreateLabel(addressSuggestion.original)}
+                                            onClick={() => {
+                                                const addr = cleanAddress(addressSuggestion.original);
+                                                addressSuggestion.isSeller ? handlePrintLabel(addr) : handleCreateLabel(addr);
+                                            }}
                                         >
                                             Keep Original
                                         </button>
