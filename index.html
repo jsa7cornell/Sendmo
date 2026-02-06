@@ -765,21 +765,38 @@
                         const noZip = text.replace(/\b\d{5}(-\d{4})?\b/g, '').trim();
                         const noState = state ? noZip.replace(new RegExp(`\\b${state}\\b`, 'i'), '').trim() : noZip;
 
-                        // Try to find where city starts (capitalized word near the end)
+                        // Common street suffixes - don't treat these as city names
+                        const streetSuffixes = ['st', 'street', 'ave', 'avenue', 'rd', 'road', 'blvd', 'boulevard', 'dr', 'drive', 'ln', 'lane', 'way', 'ct', 'court', 'pl', 'place', 'cir', 'circle', 'pkwy', 'parkway', 'hwy', 'highway', 'nw', 'ne', 'sw', 'se', 'n', 's', 'e', 'w'];
+
                         const words = noState.split(/\s+/);
                         if (words.length >= 2) {
-                            // Assume last 1-2 words are city, rest is street
-                            // Simple heuristic: if last word looks like a city name
-                            const lastWord = words[words.length - 1];
-                            const secondLastWord = words.length > 1 ? words[words.length - 2] : '';
+                            // Find where street ends and city begins
+                            // Work backwards, skipping street suffixes
+                            let cityStartIndex = words.length - 1;
 
-                            // Check if last 2 words could be city (like "Los Angeles", "New York")
-                            if (words.length > 2 && /^[A-Z]/.test(secondLastWord)) {
-                                city = secondLastWord + ' ' + lastWord;
-                                street = words.slice(0, -2).join(' ');
+                            // Check if last word is a street suffix
+                            while (cityStartIndex > 0 && streetSuffixes.includes(words[cityStartIndex].toLowerCase())) {
+                                cityStartIndex--;
+                            }
+
+                            // Now cityStartIndex points to the last non-suffix word
+                            // Assume this and any following non-suffix words are the city
+                            if (cityStartIndex > 0) {
+                                // Check if we should include 2 words for city (Los Angeles, New York)
+                                const potentialCity = words[cityStartIndex];
+                                const wordBefore = words[cityStartIndex - 1];
+
+                                if (cityStartIndex > 1 && /^[A-Z]/.test(wordBefore) && !streetSuffixes.includes(wordBefore.toLowerCase())) {
+                                    city = wordBefore + ' ' + potentialCity;
+                                    street = words.slice(0, cityStartIndex - 1).join(' ');
+                                } else {
+                                    city = potentialCity;
+                                    street = words.slice(0, cityStartIndex).join(' ');
+                                }
                             } else {
-                                city = lastWord;
-                                street = words.slice(0, -1).join(' ');
+                                // All words look like street parts
+                                street = noState;
+                                city = 'Unknown';
                             }
                         } else {
                             street = noState;
