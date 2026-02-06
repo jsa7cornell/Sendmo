@@ -1,0 +1,48 @@
+name: Auto-Fix Failing Tests
+
+on:
+  workflow_run:
+    workflows: ["Tests"]
+    types: [completed]
+
+jobs:
+  fix-tests:
+    # Only run when tests fail
+    if: github.event.workflow_run.conclusion == 'failure'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_branch }}
+          fetch-depth: 0
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            REPO: ${{ github.repository }}
+            BRANCH: ${{ github.event.workflow_run.head_branch }}
+            WORKFLOW RUN: ${{ github.event.workflow_run.id }}
+
+            The Playwright test suite has failed. Please:
+
+            1. Check the workflow run logs to identify which tests failed
+            2. Read the test file and the code being tested
+            3. Analyze the error messages and stack traces
+            4. Fix the code (not the tests, unless the tests are wrong)
+            5. Run the tests locally to verify your fix works
+            6. Commit and push your changes with a clear message
+
+            Important:
+            - The frontend is in index.html (vanilla React with Babel)
+            - The backend is in backend/ (Next.js API routes)
+            - Tests are in tests/shipping-flow.spec.ts
+            - Focus on fixing actual bugs, not just making tests pass
+
+          max_turns: 20
+          timeout_minutes: 15
