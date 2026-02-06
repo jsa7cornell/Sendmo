@@ -678,7 +678,23 @@
 
             useEffect(() => {
                 const urlParams = new URLSearchParams(window.location.search);
-                if (urlParams.get('id')) {
+                const data = urlParams.get('data');
+                if (data) {
+                    try {
+                        const decoded = JSON.parse(atob(data));
+                        setFormData(prev => ({
+                            ...prev,
+                            destinationAddress: decoded.dest || '',
+                            itemDescription: decoded.item || '',
+                            packageSize: decoded.size || 'medium'
+                        }));
+                        setShowLanding(false);
+                        setView('seller');
+                    } catch (e) {
+                        console.error('Failed to decode share link data:', e);
+                    }
+                } else if (urlParams.get('id')) {
+                    // Legacy fallback
                     setShowLanding(false);
                     setView('seller');
                 }
@@ -782,8 +798,14 @@
                     setRates(shipment.rates);
                     setSelectedRate(shipment.rates[0]);
 
-                    const mockId = shipment.id;
-                    const link = `${window.location.origin}?id=${mockId}`;
+                    // Encode shipment data into share link so seller can complete
+                    const shipmentInfo = {
+                        dest: formData.destinationAddress,
+                        item: formData.itemDescription,
+                        size: formData.packageSize
+                    };
+                    const encoded = btoa(JSON.stringify(shipmentInfo));
+                    const link = `${window.location.origin}?data=${encoded}`;
                     setShareLink(link);
                     setView('success');
 
@@ -975,6 +997,21 @@
                                         <h2 className="card-title">Print & Ship</h2>
                                         <p className="card-description">A prepaid label has been created for you. Enter your address and print it.</p>
                                     </div>
+
+                                    {formData.itemDescription && (
+                                        <div className="shipping-summary" style={{marginBottom: '1.5rem'}}>
+                                            <div className="summary-row">
+                                                <span className="summary-label">Item</span>
+                                                <span className="summary-value">{formData.itemDescription}</span>
+                                            </div>
+                                            {formData.destinationAddress && (
+                                                <div className="summary-row">
+                                                    <span className="summary-label">Shipping to</span>
+                                                    <span className="summary-value">{formData.destinationAddress.split('\n').pop()}</span>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
 
                                     <div className="form-group">
                                         <label className="label">Your address (origin)</label>
