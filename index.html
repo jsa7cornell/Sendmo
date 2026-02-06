@@ -512,12 +512,34 @@
 
                 if (!response.ok) {
                     const err = await response.json().catch(() => ({}));
-                    throw new Error(err.error?.message || 'Failed to create shipment');
+                    const apiMessage = err.error?.message || '';
+
+                    // Translate API errors to user-friendly messages
+                    if (response.status === 400) {
+                        if (apiMessage.toLowerCase().includes('address')) {
+                            throw new Error('The address could not be verified. Please check the street, city, state, and ZIP code are correct.');
+                        }
+                        if (apiMessage.toLowerCase().includes('zip') || apiMessage.toLowerCase().includes('postal')) {
+                            throw new Error('Invalid ZIP code. Please enter a valid 5-digit US ZIP code.');
+                        }
+                        throw new Error('Invalid shipping information. Please check all fields and try again.');
+                    }
+                    if (response.status === 401 || response.status === 403) {
+                        throw new Error('Service temporarily unavailable. Please try again later.');
+                    }
+                    if (response.status >= 500) {
+                        throw new Error('Our shipping service is experiencing issues. Please try again in a few minutes.');
+                    }
+                    throw new Error(apiMessage || 'Unable to get shipping rates. Please verify your address and try again.');
                 }
 
                 return await response.json();
             } catch (error) {
                 console.error('Shipment API error:', error);
+                // Handle network errors
+                if (error.name === 'TypeError' && error.message.includes('fetch')) {
+                    throw new Error('Unable to connect to shipping service. Please check your internet connection.');
+                }
                 throw error;
             }
         }
@@ -532,12 +554,23 @@
 
                 if (!response.ok) {
                     const err = await response.json().catch(() => ({}));
-                    throw new Error(err.error?.message || 'Failed to buy shipment');
+                    const apiMessage = err.error?.message || '';
+
+                    if (response.status === 400) {
+                        throw new Error('Unable to purchase this shipping label. The rate may have expired. Please refresh and try again.');
+                    }
+                    if (response.status >= 500) {
+                        throw new Error('Our shipping service is experiencing issues. Please try again in a few minutes.');
+                    }
+                    throw new Error(apiMessage || 'Unable to purchase shipping label. Please try again.');
                 }
 
                 return await response.json();
             } catch (error) {
                 console.error('Shipment buy error:', error);
+                if (error.name === 'TypeError' && error.message.includes('fetch')) {
+                    throw new Error('Unable to connect to shipping service. Please check your internet connection.');
+                }
                 throw error;
             }
         }
@@ -949,6 +982,14 @@
                     };
 
                     const destAddr = parseAddress(formData.destinationAddress);
+
+                    // Validate destination address
+                    if (!destAddr.street || !destAddr.zip) {
+                        throw new Error('The destination address appears to be incomplete. Please ask the buyer to resend the link with a valid address.');
+                    }
+                    if (!destAddr.city) destAddr.city = 'Unknown';
+                    if (!destAddr.state) destAddr.state = 'CA';
+
                     const toAddress = {
                         street1: destAddr.street,
                         city: destAddr.city,
