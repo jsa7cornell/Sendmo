@@ -274,6 +274,74 @@ test.describe('Address Parsing', () => {
   });
 });
 
+test.describe('Address Correction Flow', () => {
+  test('Clicking Use Corrected Address does not cause errors', async ({ page }) => {
+    await page.goto('/');
+    await page.getByRole('button', { name: /create a shipping label/i }).click();
+    await page.fill('input[name="itemDescription"]', 'Test item for correction');
+    // Enter address that might trigger correction
+    await page.fill('textarea[name="destinationAddress"]', '123 main st\naustin tx 78701');
+    await page.click('.size-option:has-text("Small")');
+    await page.getByRole('button', { name: /create shipping label/i }).click();
+
+    // Wait for either success or correction dialog
+    await page.waitForTimeout(3000);
+
+    // Check if correction dialog appeared
+    const correctionDialog = page.locator('text=Address Correction');
+    if (await correctionDialog.isVisible()) {
+      // Click Use Corrected Address
+      await page.getByRole('button', { name: /use corrected address/i }).click();
+
+      // Should not have circular reference error - verify success
+      await expect(page.locator('.success-icon')).toBeVisible({ timeout: 10000 });
+    } else {
+      // No correction needed, should see success directly
+      await expect(page.locator('.success-icon')).toBeVisible({ timeout: 10000 });
+    }
+  });
+
+  test('Clicking Keep Original does not cause errors', async ({ page }) => {
+    await page.goto('/');
+    await page.getByRole('button', { name: /create a shipping label/i }).click();
+    await page.fill('input[name="itemDescription"]', 'Test item for original');
+    await page.fill('textarea[name="destinationAddress"]', '456 oak ave\nlos angeles ca 90001');
+    await page.click('.size-option:has-text("Medium")');
+    await page.getByRole('button', { name: /create shipping label/i }).click();
+
+    await page.waitForTimeout(3000);
+
+    const correctionDialog = page.locator('text=Address Correction');
+    if (await correctionDialog.isVisible()) {
+      // Click Keep Original
+      await page.getByRole('button', { name: /keep original/i }).click();
+
+      // Should not have circular reference error
+      await expect(page.locator('.success-icon')).toBeVisible({ timeout: 10000 });
+    } else {
+      await expect(page.locator('.success-icon')).toBeVisible({ timeout: 10000 });
+    }
+  });
+
+  test('No JavaScript errors on page', async ({ page }) => {
+    const errors: string[] = [];
+    page.on('pageerror', err => errors.push(err.message));
+
+    await page.goto('/');
+    await page.getByRole('button', { name: /create a shipping label/i }).click();
+    await page.fill('input[name="itemDescription"]', 'Error test item');
+    await page.fill('textarea[name="destinationAddress"]', '789 pine rd\nseattle wa 98101');
+    await page.click('.size-option:has-text("Large")');
+    await page.getByRole('button', { name: /create shipping label/i }).click();
+
+    await page.waitForTimeout(5000);
+
+    // Check if any errors contain "circular"
+    const circularErrors = errors.filter(e => e.toLowerCase().includes('circular'));
+    expect(circularErrors).toHaveLength(0);
+  });
+});
+
 test.describe('Mobile Responsiveness', () => {
   test.use({ viewport: { width: 375, height: 667 } });
 
