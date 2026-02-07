@@ -1,4 +1,10 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, Page } from '@playwright/test';
+
+// Helper to navigate and wait for page to be interactive
+async function gotoAndWait(page: Page, path: string = '/') {
+  await page.goto(path);
+  await page.waitForLoadState('networkidle');
+}
 
 // Test addresses - real format addresses for testing
 const TEST_ADDRESSES = {
@@ -61,13 +67,13 @@ const TEST_ITEMS = [
 
 test.describe('SendMo Shipping Flow', () => {
   test('Landing page loads correctly', async ({ page }) => {
-    await page.goto('/');
+    await gotoAndWait(page);
     await expect(page.locator('.logo')).toContainText('SendMo');
     await expect(page.getByRole('heading', { name: /ship smarter/i })).toBeVisible();
   });
 
   test('Buyer can create a shipping label and get share link', async ({ page }) => {
-    await page.goto('/');
+    await gotoAndWait(page);
 
     // Click "Create a Shipping Label" button
     await page.getByRole('button', { name: /create a shipping label/i }).click();
@@ -98,7 +104,7 @@ test.describe('SendMo Shipping Flow', () => {
 
   test('Seller can open share link and see shipment details', async ({ page }) => {
     // First, create a label as buyer
-    await page.goto('/');
+    await gotoAndWait(page);
     await page.getByRole('button', { name: /create a shipping label/i }).click();
     await page.fill('input[name="itemDescription"]', 'Nintendo Switch console');
     await page.fill('textarea[name="destinationAddress"]', '100 Universal City Plaza\nLos Angeles, CA 91608');
@@ -110,7 +116,7 @@ test.describe('SendMo Shipping Flow', () => {
     const shareLinkText = await page.locator('.share-link').textContent();
 
     // Navigate to share link (seller flow)
-    await page.goto(shareLinkText!);
+    await gotoAndWait(page, shareLinkText!);
 
     // Verify seller view loads with item details
     await expect(page.getByRole('heading', { name: /print & ship/i })).toBeVisible();
@@ -120,7 +126,7 @@ test.describe('SendMo Shipping Flow', () => {
 
   test('Full buyer -> seller flow works end to end', async ({ page }) => {
     // === BUYER FLOW ===
-    await page.goto('/');
+    await gotoAndWait(page);
     await page.getByRole('button', { name: /create a shipping label/i }).click();
 
     // Fill buyer details
@@ -136,7 +142,7 @@ test.describe('SendMo Shipping Flow', () => {
     const shareLinkText = await page.locator('.share-link').textContent();
 
     // === SELLER FLOW ===
-    await page.goto(shareLinkText!);
+    await gotoAndWait(page, shareLinkText!);
 
     // Verify seller view
     await expect(page.getByRole('heading', { name: /print & ship/i })).toBeVisible();
@@ -159,7 +165,7 @@ test.describe('SendMo Shipping Flow', () => {
 
     test(`Cross-country shipment: ${seller.name} to ${buyer.name}`, async ({ page }) => {
       // Buyer creates label
-      await page.goto('/');
+      await gotoAndWait(page);
       await page.getByRole('button', { name: /create a shipping label/i }).click();
       await page.fill('input[name="itemDescription"]', item);
       await page.fill('textarea[name="destinationAddress"]', buyer.address);
@@ -170,7 +176,7 @@ test.describe('SendMo Shipping Flow', () => {
       const shareLinkText = await page.locator('.share-link').textContent();
 
       // Seller completes shipment
-      await page.goto(shareLinkText!);
+      await gotoAndWait(page, shareLinkText!);
       await expect(page.getByRole('heading', { name: /print & ship/i })).toBeVisible();
       await page.fill('textarea[name="originAddress"]', seller.address);
       await page.getByRole('button', { name: /print shipping label/i }).click();
@@ -180,13 +186,13 @@ test.describe('SendMo Shipping Flow', () => {
   }
 
   test('Demo mode badge is visible', async ({ page }) => {
-    await page.goto('/');
+    await gotoAndWait(page);
     await page.getByRole('button', { name: /create a shipping label/i }).click();
     await expect(page.locator('.mock-badge')).toContainText('Demo Mode');
   });
 
   test('Error shown for empty form submission', async ({ page }) => {
-    await page.goto('/');
+    await gotoAndWait(page);
     await page.getByRole('button', { name: /create a shipping label/i }).click();
 
     // The button should be disabled when form is empty
@@ -195,7 +201,7 @@ test.describe('SendMo Shipping Flow', () => {
   });
 
   test('Different package sizes are selectable', async ({ page }) => {
-    await page.goto('/');
+    await gotoAndWait(page);
     await page.getByRole('button', { name: /create a shipping label/i }).click();
 
     // Test each package size
@@ -210,7 +216,7 @@ test.describe('SendMo Shipping Flow', () => {
     // Grant clipboard permissions
     await context.grantPermissions(['clipboard-read', 'clipboard-write']);
 
-    await page.goto('/');
+    await gotoAndWait(page);
     await page.getByRole('button', { name: /create a shipping label/i }).click();
     await page.fill('input[name="itemDescription"]', 'Test item');
     await page.fill('textarea[name="destinationAddress"]', '123 Test St\nTest City, CA 90210');
@@ -230,7 +236,7 @@ test.describe('SendMo Shipping Flow', () => {
 
 test.describe('Address Parsing', () => {
   test('Handles standard two-line address', async ({ page }) => {
-    await page.goto('/');
+    await gotoAndWait(page);
     await page.getByRole('button', { name: /create a shipping label/i }).click();
     await page.fill('input[name="itemDescription"]', 'Test item');
     await page.fill('textarea[name="destinationAddress"]', '123 Main Street\nNew York, NY 10001');
@@ -241,7 +247,7 @@ test.describe('Address Parsing', () => {
   });
 
   test('Handles address without comma before state', async ({ page }) => {
-    await page.goto('/');
+    await gotoAndWait(page);
     await page.getByRole('button', { name: /create a shipping label/i }).click();
     await page.fill('input[name="itemDescription"]', 'Test item');
     await page.fill('textarea[name="destinationAddress"]', '456 Oak Ave\nLos Angeles CA 90001');
@@ -252,7 +258,7 @@ test.describe('Address Parsing', () => {
   });
 
   test('Handles single line address', async ({ page }) => {
-    await page.goto('/');
+    await gotoAndWait(page);
     await page.getByRole('button', { name: /create a shipping label/i }).click();
     await page.fill('input[name="itemDescription"]', 'Test item');
     await page.fill('textarea[name="destinationAddress"]', '789 Pine Rd, Chicago, IL 60601');
@@ -263,7 +269,7 @@ test.describe('Address Parsing', () => {
   });
 
   test('Handles ZIP+4 format', async ({ page }) => {
-    await page.goto('/');
+    await gotoAndWait(page);
     await page.getByRole('button', { name: /create a shipping label/i }).click();
     await page.fill('input[name="itemDescription"]', 'Test item');
     await page.fill('textarea[name="destinationAddress"]', '100 Broadway\nNew York, NY 10005-1234');
@@ -276,7 +282,7 @@ test.describe('Address Parsing', () => {
 
 test.describe('Address Correction Flow', () => {
   test('Clicking Use Corrected Address does not cause errors', async ({ page }) => {
-    await page.goto('/');
+    await gotoAndWait(page);
     await page.getByRole('button', { name: /create a shipping label/i }).click();
     await page.fill('input[name="itemDescription"]', 'Test item for correction');
     // Enter address that might trigger correction
@@ -302,7 +308,7 @@ test.describe('Address Correction Flow', () => {
   });
 
   test('Clicking Keep Original does not cause errors', async ({ page }) => {
-    await page.goto('/');
+    await gotoAndWait(page);
     await page.getByRole('button', { name: /create a shipping label/i }).click();
     await page.fill('input[name="itemDescription"]', 'Test item for original');
     await page.fill('textarea[name="destinationAddress"]', '456 oak ave\nlos angeles ca 90001');
@@ -327,7 +333,7 @@ test.describe('Address Correction Flow', () => {
     const errors: string[] = [];
     page.on('pageerror', err => errors.push(err.message));
 
-    await page.goto('/');
+    await gotoAndWait(page);
     await page.getByRole('button', { name: /create a shipping label/i }).click();
     await page.fill('input[name="itemDescription"]', 'Error test item');
     await page.fill('textarea[name="destinationAddress"]', '789 pine rd\nseattle wa 98101');
@@ -346,13 +352,13 @@ test.describe('Mobile Responsiveness', () => {
   test.use({ viewport: { width: 375, height: 667 } });
 
   test('Landing page is usable on mobile', async ({ page }) => {
-    await page.goto('/');
+    await gotoAndWait(page);
     await expect(page.locator('.logo')).toBeVisible();
     await expect(page.getByRole('button', { name: /create a shipping label/i })).toBeVisible();
   });
 
   test('Form is usable on mobile', async ({ page }) => {
-    await page.goto('/');
+    await gotoAndWait(page);
     await page.getByRole('button', { name: /create a shipping label/i }).click();
 
     // Verify form elements are visible and accessible

@@ -76,7 +76,21 @@ export async function POST(
     });
 
     try {
-      const purchasedShipment = await client.Shipment.buy(shipmentId, rate_id);
+      // First retrieve the shipment to get the full rate object
+      const shipment = await client.Shipment.retrieve(shipmentId);
+
+      // Find the matching rate
+      const rate = shipment.rates?.find((r: { id: string }) => r.id === rate_id);
+      if (!rate) {
+        console.error('[Shipment Buy] Rate not found:', { shipmentId, rateId: rate_id });
+        return NextResponse.json(
+          { success: false, error: { message: 'Rate not found or expired' } },
+          { status: 400 }
+        );
+      }
+
+      // Buy with the full rate object
+      const purchasedShipment = await client.Shipment.buy(shipmentId, rate);
       console.log('[Shipment Buy] Success:', {
         id: purchasedShipment.id,
         trackingCode: purchasedShipment.tracking_code,
