@@ -58,16 +58,18 @@ describe('EasyPost SDK Integration', () => {
   });
 
   describe('Shipment.buy', () => {
-    it('purchases a shipment with full rate object', async () => {
+    it('purchases a shipment with USPS rate', async () => {
       // First create a shipment
       const shipment = await client.Shipment.create({
         from_address: {
           name: 'Test Sender',
+          company: 'Test Company',
           street1: '123 Main St',
           city: 'San Francisco',
           state: 'CA',
           zip: '94102',
-          country: 'US'
+          country: 'US',
+          phone: '4155551234'
         },
         to_address: {
           name: 'Test Recipient',
@@ -86,9 +88,12 @@ describe('EasyPost SDK Integration', () => {
       });
 
       expect(shipment.rates!.length).toBeGreaterThan(0);
-      const rate = shipment.rates![0]; // Full rate object, not just ID
 
-      // Buy with the full rate object
+      // Use USPS rate to avoid EndShipper requirements from other carriers
+      const uspsRate = shipment.rates!.find(r => r.carrier === 'USPS');
+      const rate = uspsRate || shipment.rates![0];
+
+      // Buy with the rate object
       const purchased = await client.Shipment.buy(shipment.id, rate);
 
       expect(purchased.id).toBe(shipment.id);
@@ -102,11 +107,13 @@ describe('EasyPost SDK Integration', () => {
       const shipment = await client.Shipment.create({
         from_address: {
           name: 'Test Sender',
+          company: 'Test Company',
           street1: '123 Main St',
           city: 'San Francisco',
           state: 'CA',
           zip: '94102',
-          country: 'US'
+          country: 'US',
+          phone: '4155551234'
         },
         to_address: {
           name: 'Test Recipient',
@@ -124,8 +131,9 @@ describe('EasyPost SDK Integration', () => {
         }
       });
 
-      // Store the rate from creation (rates may not be returned on retrieve)
-      const rate = shipment.rates![0];
+      // Use USPS rate to avoid EndShipper requirements
+      const uspsRate = shipment.rates!.find(r => r.carrier === 'USPS');
+      const rate = uspsRate || shipment.rates![0];
 
       // Retrieve shipment (simulates what our API does)
       const retrieved = await client.Shipment.retrieve(shipment.id);
