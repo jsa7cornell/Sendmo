@@ -70,12 +70,29 @@ export async function POST(
     // Live mode — use EasyPost SDK
     const client = new EasyPostClient(EASYPOST_API_KEY);
 
+    console.log('[Shipment Buy] Request:', {
+      shipmentId,
+      rateId: rate_id
+    });
+
     try {
       const purchasedShipment = await client.Shipment.buy(shipmentId, { id: rate_id });
+      console.log('[Shipment Buy] Success:', {
+        id: purchasedShipment.id,
+        trackingCode: purchasedShipment.tracking_code,
+        hasLabel: !!purchasedShipment.postage_label
+      });
       return NextResponse.json(purchasedShipment);
     } catch (easypostError: unknown) {
-      console.error('EasyPost buy error:', easypostError);
-      const err = easypostError as { message?: string; statusCode?: number };
+      const err = easypostError as { message?: string; statusCode?: number; code?: string };
+      console.error('[Shipment Buy] EasyPost Error:', {
+        shipmentId,
+        rateId: rate_id,
+        message: err.message,
+        statusCode: err.statusCode,
+        code: err.code,
+        fullError: JSON.stringify(easypostError)
+      });
       return NextResponse.json(
         {
           success: false,

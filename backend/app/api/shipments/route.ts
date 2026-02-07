@@ -96,16 +96,31 @@ export async function POST(req: NextRequest) {
     // Live mode — use EasyPost SDK
     const client = new EasyPostClient(EASYPOST_API_KEY);
 
+    console.log('[Shipment Create] Request:', {
+      from: `${data.from_address.city}, ${data.from_address.state} ${data.from_address.zip}`,
+      to: `${data.to_address.city}, ${data.to_address.state} ${data.to_address.zip}`,
+      parcel: data.parcel
+    });
+
     try {
       const shipment = await client.Shipment.create({
         from_address: data.from_address,
         to_address: data.to_address,
         parcel: data.parcel
       });
+      console.log('[Shipment Create] Success:', {
+        id: shipment.id,
+        ratesCount: shipment.rates?.length || 0
+      });
       return NextResponse.json(shipment);
     } catch (easypostError: unknown) {
-      console.error('EasyPost create error:', easypostError);
-      const err = easypostError as { message?: string; statusCode?: number };
+      const err = easypostError as { message?: string; statusCode?: number; code?: string };
+      console.error('[Shipment Create] EasyPost Error:', {
+        message: err.message,
+        statusCode: err.statusCode,
+        code: err.code,
+        fullError: JSON.stringify(easypostError)
+      });
       return NextResponse.json(
         {
           success: false,

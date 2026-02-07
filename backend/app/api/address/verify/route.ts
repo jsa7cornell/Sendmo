@@ -84,6 +84,13 @@ export async function POST(req: NextRequest) {
     }
 
     // Live mode - use EasyPost verification
+    console.log('[Address Verify] Request:', {
+      street1: address.street1,
+      city: address.city,
+      state: address.state,
+      zip: address.zip
+    });
+
     const response = await fetch(`${EASYPOST_API_URL}/addresses`, {
       method: 'POST',
       headers: {
@@ -105,6 +112,10 @@ export async function POST(req: NextRequest) {
 
     if (!response.ok) {
       const error = await response.json().catch(() => ({}));
+      console.error('[Address Verify] EasyPost Error:', {
+        status: response.status,
+        error: error
+      });
       return NextResponse.json({
         valid: false,
         corrected: address,
