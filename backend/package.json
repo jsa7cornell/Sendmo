@@ -10,6 +10,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@easypost/api": "^8.5.0",
     "@prisma/client": "5.9.0",
     "next": "14.2.35",
     "next-auth": "4.24.11",

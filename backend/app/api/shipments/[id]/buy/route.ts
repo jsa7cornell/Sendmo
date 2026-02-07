@@ -4,9 +4,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import crypto from 'crypto';
+import EasyPostClient from '@easypost/api';
 
 const EASYPOST_API_KEY = process.env.EASYPOST_API_KEY;
-const EASYPOST_API_URL = 'https://api.easypost.com/v2';
 
 const BuyShipmentSchema = z.object({
   rate_id: z.string().min(1)
@@ -67,28 +67,42 @@ export async function POST(
       return NextResponse.json(mockPurchase);
     }
 
-    // Live mode — proxy to EasyPost
-    const response = await fetch(`${EASYPOST_API_URL}/shipments/${shipmentId}/buy`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Basic ${Buffer.from(EASYPOST_API_KEY + ':').toString('base64')}`
-      },
-      body: JSON.stringify({
-        rate: { id: rate_id }
-      })
+    // Live mode — use EasyPost SDK
+    const client = new EasyPostClient(EASYPOST_API_KEY);
+
+    console.log('[Shipment Buy] Request:', {
+      shipmentId,
+      rateId: rate_id
     });
 
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({}));
+    try {
+      const purchasedShipment = await client.Shipment.buy(shipmentId, { id: rate_id });
+      console.log('[Shipment Buy] Success:', {
+        id: purchasedShipment.id,
+        trackingCode: purchasedShipment.tracking_code,
+        hasLabel: !!purchasedShipment.postage_label
+      });
+      return NextResponse.json(purchasedShipment);
+    } catch (easypostError: unknown) {
+      const err = easypostError as { message?: string; statusCode?: number; code?: string };
+      console.error('[Shipment Buy] EasyPost Error:', {
+        shipmentId,
+        rateId: rate_id,
+        message: err.message,
+        statusCode: err.statusCode,
+        code: err.code,
+        fullError: JSON.stringify(easypostError)
+      });
       return NextResponse.json(
-        { success: false, error: { message: error.error?.message || 'Failed to purchase shipment' } },
-        { status: response.status }
+        {
+          success: false,
+          error: {
+            message: err.message || 'Failed to purchase shipment'
+          }
+        },
+        { status: err.statusCode || 500 }
       );
     }
-
-    const purchasedShipment = await response.json();
-    return NextResponse.json(purchasedShipment);
 
   } catch (error) {
     console.error('Buy shipment error:', error);
