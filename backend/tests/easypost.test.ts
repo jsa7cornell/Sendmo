@@ -55,7 +55,7 @@ describeWithKey('EasyPost SDK Integration', () => {
   });
 
   describe('Shipment.buy', () => {
-    it('purchases a shipment with rate ID string', async () => {
+    it('purchases a shipment with full rate object', async () => {
       // First create a shipment
       const shipment = await client.Shipment.create({
         from_address: {
@@ -81,10 +81,10 @@ describeWithKey('EasyPost SDK Integration', () => {
       });
 
       expect(shipment.rates!.length).toBeGreaterThan(0);
-      const rateId = shipment.rates![0].id;
+      const rate = shipment.rates![0]; // Full rate object, not just ID
 
-      // Buy with just the rate ID string (not an object!)
-      const purchased = await client.Shipment.buy(shipment.id, rateId);
+      // Buy with the full rate object
+      const purchased = await client.Shipment.buy(shipment.id, rate);
 
       expect(purchased.id).toBe(shipment.id);
       expect(purchased.tracking_code).toBeDefined();
@@ -92,7 +92,8 @@ describeWithKey('EasyPost SDK Integration', () => {
       expect(purchased.selected_rate).toBeDefined();
     });
 
-    it('fails when passing rate as object instead of string', async () => {
+    it('can retrieve shipment and buy with rate from it', async () => {
+      // Create shipment
       const shipment = await client.Shipment.create({
         from_address: {
           street1: '123 Main St',
@@ -118,11 +119,15 @@ describeWithKey('EasyPost SDK Integration', () => {
 
       const rateId = shipment.rates![0].id;
 
-      // This is the WRONG way - passing { id: rateId } instead of rateId
-      // This test documents the bug we had
-      await expect(
-        client.Shipment.buy(shipment.id, { id: rateId } as any)
-      ).rejects.toThrow();
+      // Retrieve shipment (simulates what our API does)
+      const retrieved = await client.Shipment.retrieve(shipment.id);
+      const rate = retrieved.rates?.find((r: { id: string }) => r.id === rateId);
+
+      expect(rate).toBeDefined();
+
+      // Buy with retrieved rate
+      const purchased = await client.Shipment.buy(shipment.id, rate);
+      expect(purchased.tracking_code).toBeDefined();
     });
   });
 
