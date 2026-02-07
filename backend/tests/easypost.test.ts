@@ -111,7 +111,8 @@ describe('EasyPost SDK Integration', () => {
       }
 
       // Always pass EndShipper ID - required for platform accounts
-      const purchased = await client.Shipment.buy(shipment.id, carrierRate, endShipperId);
+      // Signature: buy(shipmentId, rate, insuranceAmount, endShipperId)
+      const purchased = await client.Shipment.buy(shipment.id, carrierRate, null, endShipperId);
       return purchased;
     }
 
@@ -174,7 +175,8 @@ describe('EasyPost SDK Integration', () => {
       expect(retrieved.id).toBe(shipment.id);
 
       // Buy with EndShipper ID - required for platform accounts
-      const purchased = await client.Shipment.buy(shipment.id, rate, endShipperId);
+      // Signature: buy(shipmentId, rate, insuranceAmount, endShipperId)
+      const purchased = await client.Shipment.buy(shipment.id, rate, null, endShipperId);
       expect(purchased.tracking_code).toBeDefined();
     });
   });
