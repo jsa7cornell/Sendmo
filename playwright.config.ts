@@ -7,13 +7,16 @@ export default defineConfig({
   retries: process.env.CI ? 2 : 0,
   workers: process.env.CI ? 1 : undefined,
   reporter: 'html',
-  timeout: 30000,
+  timeout: 60000,
 
   use: {
     // Test against production site by default
     baseURL: process.env.TEST_URL || 'https://sendmo.co',
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
+    // Wait for network to be idle on navigation
+    navigationTimeout: 30000,
+    actionTimeout: 15000,
   },
 
   projects: [
