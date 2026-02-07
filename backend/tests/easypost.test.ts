@@ -6,14 +6,17 @@ import EasyPostClient from '@easypost/api';
 
 const EASYPOST_API_KEY = process.env.EASYPOST_API_KEY;
 
-// Skip tests if no API key (CI without secrets)
-const describeWithKey = EASYPOST_API_KEY ? describe : describe.skip;
-
-describeWithKey('EasyPost SDK Integration', () => {
+describe('EasyPost SDK Integration', () => {
   let client: InstanceType<typeof EasyPostClient>;
 
   beforeAll(() => {
-    client = new EasyPostClient(EASYPOST_API_KEY!);
+    if (!EASYPOST_API_KEY) {
+      throw new Error(
+        'EASYPOST_API_KEY environment variable is required for backend tests. ' +
+        'Make sure it is configured in GitHub Secrets (Settings → Secrets → Actions → EASYPOST_API_KEY)'
+      );
+    }
+    client = new EasyPostClient(EASYPOST_API_KEY);
   });
 
   describe('Shipment.create', () => {
