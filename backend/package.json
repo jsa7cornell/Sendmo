@@ -7,7 +7,9 @@
     "build": "prisma generate && next build",
     "postinstall": "prisma generate",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@easypost/api": "^8.5.0",
@@ -23,6 +25,7 @@
     "@types/react": "18.2.48",
     "@types/react-dom": "18.2.18",
     "prisma": "5.9.0",
-    "typescript": "5.3.3"
+    "typescript": "5.3.3",
+    "vitest": "^4.0.18"
   }
 }
