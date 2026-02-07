@@ -73,7 +73,7 @@ export async function verifyAddress(
     const response = await fetch(`${EASYPOST_API_URL}/addresses`, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${EASYPOST_API_KEY}`,
+        'Authorization': `Basic ${Buffer.from(EASYPOST_API_KEY + ':').toString('base64')}`,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({

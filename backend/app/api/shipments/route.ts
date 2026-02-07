@@ -98,7 +98,7 @@ export async function POST(req: NextRequest) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${EASYPOST_API_KEY}`
+        'Authorization': `Basic ${Buffer.from(EASYPOST_API_KEY + ':').toString('base64')}`
       },
       body: JSON.stringify({
         shipment: {
