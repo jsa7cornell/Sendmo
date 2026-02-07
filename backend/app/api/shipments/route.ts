@@ -4,9 +4,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import crypto from 'crypto';
+import EasyPostClient from '@easypost/api';
 
 const EASYPOST_API_KEY = process.env.EASYPOST_API_KEY;
-const EASYPOST_API_URL = 'https://api.easypost.com/v2';
 
 const AddressSchema = z.object({
   street1: z.string().min(1),
@@ -93,32 +93,27 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(mockShipment);
     }
 
-    // Live mode — proxy to EasyPost
-    const response = await fetch(`${EASYPOST_API_URL}/shipments`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Basic ${Buffer.from(EASYPOST_API_KEY + ':').toString('base64')}`
-      },
-      body: JSON.stringify({
-        shipment: {
-          from_address: data.from_address,
-          to_address: data.to_address,
-          parcel: data.parcel
-        }
-      })
-    });
+    // Live mode — use EasyPost SDK
+    const client = new EasyPostClient(EASYPOST_API_KEY);
 
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({}));
+    try {
+      const shipment = await client.Shipment.create({
+        from_address: data.from_address,
+        to_address: data.to_address,
+        parcel: data.parcel
+      });
+      return NextResponse.json(shipment);
+    } catch (easypostError: unknown) {
+      console.error('EasyPost create error:', easypostError);
+      const err = easypostError as { message?: string; statusCode?: number };
       return NextResponse.json(
-        { success: false, error: { message: error.error?.message || 'Failed to create shipment' } },
-        { status: response.status }
+        {
+          success: false,
+          error: { message: err.message || 'Failed to create shipment' }
+        },
+        { status: err.statusCode || 500 }
       );
     }
-
-    const shipment = await response.json();
-    return NextResponse.json(shipment);
 
   } catch (error) {
     console.error('Create shipment error:', error);
