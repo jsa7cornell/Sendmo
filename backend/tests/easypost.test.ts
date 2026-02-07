@@ -39,7 +39,7 @@ const TEST_PARCEL = {
 
 describe('EasyPost SDK Integration', () => {
   let client: InstanceType<typeof EasyPostClient>;
-  let endShipperId: string | null = null;
+  let endShipperId: string;
 
   beforeAll(async () => {
     if (!EASYPOST_API_KEY) {
@@ -50,27 +50,21 @@ describe('EasyPost SDK Integration', () => {
     }
     client = new EasyPostClient(EASYPOST_API_KEY);
 
-    // Create an EndShipper for UPS/FedEx purchases
-    // EndShipper is required by some carriers when purchasing labels
-    try {
-      const endShipper = await client.EndShipper.create({
-        name: TEST_FROM_ADDRESS.name,
-        company: TEST_FROM_ADDRESS.company,
-        street1: TEST_FROM_ADDRESS.street1,
-        city: TEST_FROM_ADDRESS.city,
-        state: TEST_FROM_ADDRESS.state,
-        zip: TEST_FROM_ADDRESS.zip,
-        country: TEST_FROM_ADDRESS.country,
-        phone: TEST_FROM_ADDRESS.phone,
-        email: TEST_FROM_ADDRESS.email
-      });
-      endShipperId = endShipper.id;
-      console.log('EndShipper created:', endShipperId);
-    } catch (err) {
-      // EndShipper API may not be available for all accounts
-      // Tests will still work for USPS without it
-      console.log('EndShipper creation skipped (may not be enabled for this account):', err);
-    }
+    // Create an EndShipper - required for platform accounts when purchasing labels
+    // EndShipper represents the actual shipper and is required by EasyPost for all carriers
+    const endShipper = await client.EndShipper.create({
+      name: TEST_FROM_ADDRESS.name,
+      company: TEST_FROM_ADDRESS.company,
+      street1: TEST_FROM_ADDRESS.street1,
+      city: TEST_FROM_ADDRESS.city,
+      state: TEST_FROM_ADDRESS.state,
+      zip: TEST_FROM_ADDRESS.zip,
+      country: TEST_FROM_ADDRESS.country,
+      phone: TEST_FROM_ADDRESS.phone,
+      email: TEST_FROM_ADDRESS.email
+    });
+    endShipperId = endShipper.id;
+    console.log('EndShipper created:', endShipperId);
   });
 
   describe('Shipment.create', () => {
@@ -116,21 +110,8 @@ describe('EasyPost SDK Integration', () => {
         return null;
       }
 
-      // UPS and FedEx require EndShipper
-      const needsEndShipper = ['UPS', 'FedEx', 'FEDEX'].includes(carrierName);
-
-      let purchased;
-      if (needsEndShipper && endShipperId) {
-        // Pass EndShipper ID as third parameter for UPS/FedEx
-        purchased = await client.Shipment.buy(shipment.id, carrierRate, endShipperId);
-      } else if (needsEndShipper && !endShipperId) {
-        console.log(`Skipping ${carrierName} - EndShipper not available`);
-        return null;
-      } else {
-        // USPS doesn't need EndShipper
-        purchased = await client.Shipment.buy(shipment.id, carrierRate);
-      }
-
+      // Always pass EndShipper ID - required for platform accounts
+      const purchased = await client.Shipment.buy(shipment.id, carrierRate, endShipperId);
       return purchased;
     }
 
@@ -158,8 +139,7 @@ describe('EasyPost SDK Integration', () => {
         expect(purchased.selected_rate?.carrier).toBe('UPS');
         console.log('UPS purchase successful:', purchased.tracking_code);
       } else {
-        // UPS may not be available or EndShipper not configured
-        console.log('UPS purchase skipped (rates or EndShipper not available)');
+        console.log('UPS rates not available');
       }
     });
 
@@ -173,8 +153,7 @@ describe('EasyPost SDK Integration', () => {
         expect(['FedEx', 'FEDEX']).toContain(purchased.selected_rate?.carrier);
         console.log('FedEx purchase successful:', purchased.tracking_code);
       } else {
-        // FedEx may not be available or EndShipper not configured
-        console.log('FedEx purchase skipped (rates or EndShipper not available)');
+        console.log('FedEx rates not available');
       }
     });
 
@@ -194,19 +173,8 @@ describe('EasyPost SDK Integration', () => {
       const retrieved = await client.Shipment.retrieve(shipment.id);
       expect(retrieved.id).toBe(shipment.id);
 
-      // Determine if EndShipper is needed
-      const needsEndShipper = ['UPS', 'FedEx', 'FEDEX'].includes(rate.carrier!);
-
-      let purchased;
-      if (needsEndShipper && endShipperId) {
-        purchased = await client.Shipment.buy(shipment.id, rate, endShipperId);
-      } else if (needsEndShipper) {
-        console.log('Skipping buy - EndShipper required but not available');
-        return;
-      } else {
-        purchased = await client.Shipment.buy(shipment.id, rate);
-      }
-
+      // Buy with EndShipper ID - required for platform accounts
+      const purchased = await client.Shipment.buy(shipment.id, rate, endShipperId);
       expect(purchased.tracking_code).toBeDefined();
     });
   });
