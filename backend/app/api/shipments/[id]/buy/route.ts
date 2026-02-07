@@ -76,7 +76,7 @@ export async function POST(
     });
 
     try {
-      const purchasedShipment = await client.Shipment.buy(shipmentId, { id: rate_id });
+      const purchasedShipment = await client.Shipment.buy(shipmentId, rate_id);
       console.log('[Shipment Buy] Success:', {
         id: purchasedShipment.id,
         trackingCode: purchasedShipment.tracking_code,
