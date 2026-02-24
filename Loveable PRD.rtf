@@ -1,0 +1,3034 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2867
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fmodern\fcharset0 Courier;}
+{\colortbl;\red255\green255\blue255;\red255\green255\blue255;}
+{\*\expandedcolortbl;;\cssrgb\c100000\c100000\c100000;}
+\margl1440\margr1440\vieww11520\viewh8400\viewkind0
+\deftab720
+\pard\pardeftab720\partightenfactor0
+
+\f0\fs26 \cf2 \expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 # SendMo \'e2\'80\'94 Product Requirements Document\
+\
+> **Status**: Production-Ready PRD v1.0\
+> **Last Updated**: 2026-02-12\
+> **Purpose**: Complete implementation guide for Claude Code to build the full-stack SendMo application\
+> **Based On**: Prototype (Lovable) + Product Specification (Draft v5)\
+\
+---\
+\
+## Table of Contents\
+\
+1. [Product Vision & Overview](#1-product-vision--overview)\
+2. [Key Concepts & Terminology](#2-key-concepts--terminology)\
+3. [Target Users & Use Cases](#3-target-users--use-cases)\
+4. [Technology Stack & Architecture](#4-technology-stack--architecture)\
+5. [Design System & Brand Guidelines](#5-design-system--brand-guidelines)\
+6. [Site Map & Navigation](#6-site-map--navigation)\
+7. [Landing Page (Index)](#7-landing-page-index)\
+8. [Recipient Onboarding Flow](#8-recipient-onboarding-flow)\
+9. [Sender Flow](#9-sender-flow)\
+10. [Dashboard (Authenticated)](#10-dashboard-authenticated)\
+11. [FAQ & Help Page](#11-faq--help-page)\
+12. [Authentication & Account System](#12-authentication--account-system)\
+13. [Database Schema & Data Models](#13-database-schema--data-models)\
+14. [API Endpoints](#14-api-endpoints)\
+15. [Third-Party Integrations](#15-third-party-integrations)\
+16. [Payment System](#16-payment-system)\
+17. [Shipping & Label Generation](#17-shipping--label-generation)\
+18. [Email Notifications](#18-email-notifications)\
+19. [Security Requirements](#19-security-requirements)\
+20. [Logging, Analytics & Event Tracking](#20-logging-analytics--event-tracking)\
+21. [Error Handling & Edge Cases](#21-error-handling--edge-cases)\
+22. [Performance & Scalability](#22-performance--scalability)\
+23. [Mobile Responsive Design & Touch Interactions](#23-mobile-responsive-design--touch-interactions)\
+24. [Post-MVP Features](#24-post-mvp-features)\
+25. [Success Metrics](#25-success-metrics)\
+26. [Appendix A: Component Inventory](#appendix-a-component-inventory)\
+27. [Appendix B: Competitive Positioning](#appendix-b-competitive-positioning)\
+28. [Appendix C: Open Questions](#appendix-c-open-questions)\
+\
+---\
+\
+## 1. Product Vision & Overview\
+\
+### 1.1 One-Liner\
+\
+**SendMo makes shipping between people effortless \'e2\'80\'94 no more exchanging addresses or figuring out shipping costs.**\
+\
+### 1.2 Marketing Taglines\
+\
+- "Get it delivered to you"\
+- "When you need something delivered to you"\
+- "Shareable shipping label links that help you get things delivered to you"\
+- "Make it easy for people to ship things to you \'e2\'80\'94 marketplace purchases, returned items, and more"\
+\
+**For Senders/Sellers:**\
+- "Marketplace sellers: SendMo enables buyers to create and pay for the shipping label, so you can get the product out the door"\
+\
+### 1.3 The Problem\
+\
+Shipping between individuals is unnecessarily complicated:\
+\
+1. **Address exchange**: Recipients have to share their address with every sender \'e2\'80\'94 privacy concern and friction.\
+2. **Cost confusion**: Senders have to figure out box sizes, carrier options, and costs.\
+3. **Back-and-forth**: Both parties go back and forth on shipping estimates.\
+4. **No visibility**: Neither party has visibility once the package is in transit.\
+\
+### 1.4 The Solution\
+\
+**SendMo Label Links.** Recipients create a link once, share it with anyone who needs to send them something. Senders click, enter package details, and print a label. Done.\
+\
+**Two simple steps:**\
+1. Configure your shipping label link\
+2. Share it with the sender for them to finalize and print\
+\
+### 1.5 Value Proposition\
+\
+| Audience | Value |\
+|----------|-------|\
+| **Recipients** | Control over shipping \'e2\'80\'94 set preferences once, share a link, receive packages. No more sending your address to everyone. |\
+| **Senders** | Dead simple shipping \'e2\'80\'94 click a link, enter package info, print label, drop off. No address lookup, no rate shopping, no guesswork. |\
+| **Privacy** | Recipients can keep their address private until the label is printed. |\
+\
+### 1.6 How SendMo Makes Money\
+\
+```\
+Display Price = EasyPost Rate \'c3\'97 1.15  (Standard \'e2\'80\'94 15% margin)\
+Display Price = EasyPost Rate \'c3\'97 1.10  (With SendMo Balance \'e2\'80\'94 10% margin)\
+```\
+\
+- The SendMo fee is **never shown separately** \'e2\'80\'94 users see a single "Shipping" price.\
+- Upsell: "Save 5% on shipping with a SendMo Balance" \'e2\'86\'92 Coming soon post-MVP.\
+\
+---\
+\
+## 2. Key Concepts & Terminology\
+\
+### 2.1 Core Terms\
+\
+| Term | Definition |\
+|------|------------|\
+| **Recipient** | Person receiving the package. Creates and owns SendMo links. Pays for shipping. |\
+| **Sender** | Person shipping the package. Clicks the link, enters package details, prints label. Does NOT pay. |\
+| **SendMo Link** | A shareable URL (e.g., `sendmo.co/s/k8Hj2mNp4x`) that enables shipping to a recipient. |\
+| **Label Link** | A type of SendMo Link that generates a printable shipping label for the sender. |\
+| **Price Cap** | Maximum shipping cost the recipient is willing to pay (default: $100). |\
+| **Card Hold** | An authorization hold placed on the recipient's payment method when a label is created. |\
+\
+### 2.2 Types of SendMo Links (MVP + Future)\
+\
+| Type | Description | Address Visible to Sender? | MVP? |\
+|------|-------------|---------------------------|------|\
+| **Label Link (Flexible)** | Reusable link with default settings. Sender configures package details. | Yes (on printed label) | \'e2\'9c\'85 |\
+| **Label Link (One-Time)** | Pre-configured for specific shipment. Fixed package size, origin area, etc. | Yes (on printed label) | \'e2\uc0\u157 \'8c |\
+| **Private Shipment Link** | Sender gets QR code instead of label. Must drop off at carrier location. | No | \'e2\uc0\u157 \'8c |\
+\
+**MVP focuses exclusively on Flexible Label Links.**\
+\
+### 2.3 Link Configuration (Recipient Controls)\
+\
+**Basic Settings:**\
+- **Ship-to address**: Defaults to primary address (private, only shown on label)\
+- **Speed preference**: Any / Economy / Standard / Express (default: Any)\
+- **Price cap**: Maximum shipping cost (default: $100)\
+\
+**Advanced Settings (Collapsible):**\
+- **Preferred carrier**: Any / USPS / UPS / FedEx (default: Any)\
+- **Insurance**: On/Off (default: Off, adds ~$3\'e2\'80\'935 to cost)\
+\
+### 2.4 Link States\
+\
+| State | Description | Sender Experience |\
+|-------|-------------|-------------------|\
+| **Pending** | Link created but payment method not added or not verified | Sender sees "This link is pending payment. Contact [Recipient] to complete setup." |\
+| **Active** | Payment authorized, link ready for use | Sender can complete full flow and print label |\
+| **Paused** | Recipient manually paused the link | Sender sees "This link is currently paused." |\
+| **Deactivated** | Recipient permanently deactivated | Sender sees 404-style "Link not found" |\
+\
+---\
+\
+## 3. Target Users & Use Cases\
+\
+### 3.1 Primary Users: Recipients\
+\
+- **Marketplace buyers** (Facebook Marketplace, Craigslist, OfferUp) who need sellers to ship items\
+- **Office managers / administrators** who need employees, vendors, or customers to send documents/items\
+- **Frequent travelers** who left items at hotels/Airbnbs\
+- **Anyone** who wants a simpler way to receive shipped items without sharing their address repeatedly\
+\
+**B2B Use Case**: SendMo is effectively a **pre-paid label system** for businesses. An office manager shares their link with vendors, remote employees, or customers who need to send items to the office.\
+\
+### 3.2 Secondary Users: Senders\
+\
+- Marketplace sellers\
+- Friends/family sending items\
+- Hotels returning forgotten items\
+- Employees/vendors sending to a business\
+- Anyone who needs to ship something to someone\
+\
+### 3.3 Use Case Stories (from prototype)\
+\
+| User | Quote | Context |\
+|------|-------|---------|\
+| Sarah T. | "Finally, an easy and safe way to arrange shipping for the things I buy and sell on Facebook Marketplace" | Marketplace seller |\
+| James R. | "It's a great way to enable employees to return office items" | HR Manager |\
+| Maria L. | "When I left my glasses at the AirBnB, I used SendMo to make it easy for the host to ship them back to me quickly" | Frequent traveler |\
+\
+---\
+\
+## 4. Technology Stack & Architecture\
+\
+### 4.1 Frontend\
+\
+| Technology | Purpose |\
+|------------|---------|\
+| **React 18** | UI framework |\
+| **TypeScript** | Type safety |\
+| **Vite** | Build tool and dev server |\
+| **Tailwind CSS** | Utility-first styling |\
+| **shadcn/ui** | Component library (Radix UI primitives) |\
+| **Framer Motion** | Animations and transitions |\
+| **React Router v6** | Client-side routing |\
+| **TanStack Query** | Server state management |\
+| **React Hook Form + Zod** | Form management and validation |\
+| **Lucide React** | Icon library |\
+| **Sonner** | Toast notifications |\
+| **Recharts** | Charts (dashboard analytics, future) |\
+\
+### 4.2 Backend\
+\
+| Technology | Purpose |\
+|------------|---------|\
+| **Supabase** | PostgreSQL database, auth, edge functions, storage, realtime |\
+| **Supabase Auth** | Magic link (passwordless) authentication, optional Google OAuth |\
+| **Supabase Edge Functions** (Deno) | Server-side logic, API routes, webhook handlers |\
+| **Supabase Storage** | Label PDFs, QR code images |\
+| **Supabase Realtime** | Live tracking updates on dashboard |\
+\
+### 4.3 Third-Party Services\
+\
+| Service | Purpose | Priority |\
+|---------|---------|----------|\
+| **EasyPost** | Address verification, shipping rates, label generation, tracking | MVP |\
+| **Stripe** | Payment authorization, capture, payment methods (Stripe Elements) | MVP |\
+| **SendGrid** | Email notifications, verification codes, tracking updates | MVP |\
+| **Plaid** | ACH bank linking for SendMo Balance | Post-MVP |\
+\
+### 4.4 Architecture Diagram\
+\
+```\
+\'e2\'94\'8c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\uc0\u144 \
+\'e2\'94\'82                        FRONTEND (React/Vite)                       \'e2\'94\'82\
+\'e2\'94\'82                                                                    \'e2\'94\'82\
+\'e2\'94\'82  \'e2\'94\'8c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\uc0\u144   \'e2\'94\'8c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\u144   \'e2\'94\'8c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\u144   \'e2\'94\'8c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\u144   \'e2\'94\'82\
+\'e2\'94\'82  \'e2\'94\'82 Landing  \'e2\'94\'82  \'e2\'94\'82  Recipient   \'e2\'94\'82  \'e2\'94\'82   Sender   \'e2\'94\'82  \'e2\'94\'82 Dashboard \'e2\'94\'82  \'e2\'94\'82\
+\'e2\'94\'82  \'e2\'94\'82  Page    \'e2\'94\'82  \'e2\'94\'82  Onboarding  \'e2\'94\'82  \'e2\'94\'82   Flow     \'e2\'94\'82  \'e2\'94\'82           \'e2\'94\'82  \'e2\'94\'82\
+\'e2\'94\'82  \'e2\'94\'94\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'98  \'e2\'94\'94\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'98  \'e2\'94\'94\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'98  \'e2\'94\'94\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'98  \'e2\'94\'82\
+\'e2\'94\'82                                                                    \'e2\'94\'82\
+\'e2\'94\'82  \'e2\'94\'8c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\uc0\u144   \'e2\'94\'8c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\u144                                     \'e2\'94\'82\
+\'e2\'94\'82  \'e2\'94\'82    FAQ    \'e2\'94\'82  \'e2\'94\'82  Not Found \'e2\'94\'82                                    \'e2\'94\'82\
+\'e2\'94\'82  \'e2\'94\'94\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'98  \'e2\'94\'94\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'98                                    \'e2\'94\'82\
+\'e2\'94\'94\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'ac\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'98\
+                         \'e2\'94\'82\
+                    Supabase Client\
+                         \'e2\'94\'82\
+\'e2\'94\'8c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'bc\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\uc0\u144 \
+\'e2\'94\'82                   SUPABASE BACKEND                                \'e2\'94\'82\
+\'e2\'94\'82                                                                    \'e2\'94\'82\
+\'e2\'94\'82  \'e2\'94\'8c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\uc0\u144   \'e2\'94\'8c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\u144   \'e2\'94\'8c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\u144   \'e2\'94\'82\
+\'e2\'94\'82  \'e2\'94\'82  PostgreSQL  \'e2\'94\'82  \'e2\'94\'82   Auth       \'e2\'94\'82  \'e2\'94\'82   Edge Functions        \'e2\'94\'82  \'e2\'94\'82\
+\'e2\'94\'82  \'e2\'94\'82  Database    \'e2\'94\'82  \'e2\'94\'82  (Magic Link \'e2\'94\'82  \'e2\'94\'82                         \'e2\'94\'82  \'e2\'94\'82\
+\'e2\'94\'82  \'e2\'94\'82             \'e2\'94\'82  \'e2\'94\'82   + Google)   \'e2\'94\'82  \'e2\'94\'82  - /api/rates          \'e2\'94\'82  \'e2\'94\'82\
+\'e2\'94\'82  \'e2\'94\'82  - users    \'e2\'94\'82  \'e2\'94\'94\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'98  \'e2\'94\'82  - /api/labels         \'e2\'94\'82  \'e2\'94\'82\
+\'e2\'94\'82  \'e2\'94\'82  - links    \'e2\'94\'82                    \'e2\'94\'82  - /api/addresses      \'e2\'94\'82  \'e2\'94\'82\
+\'e2\'94\'82  \'e2\'94\'82  - shipments\'e2\'94\'82  \'e2\'94\'8c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\uc0\u144   \'e2\'94\'82  - /api/payments       \'e2\'94\'82  \'e2\'94\'82\
+\'e2\'94\'82  \'e2\'94\'82  - payments \'e2\'94\'82  \'e2\'94\'82   Storage     \'e2\'94\'82  \'e2\'94\'82  - /api/webhooks      \'e2\'94\'82  \'e2\'94\'82\
+\'e2\'94\'82  \'e2\'94\'82  - addresses\'e2\'94\'82  \'e2\'94\'82  (Label PDFs) \'e2\'94\'82  \'e2\'94\'82  - /api/email         \'e2\'94\'82  \'e2\'94\'82\
+\'e2\'94\'82  \'e2\'94\'82  - etc.     \'e2\'94\'82  \'e2\'94\'94\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'98  \'e2\'94\'94\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'98  \'e2\'94\'82\
+\'e2\'94\'82  \'e2\'94\'94\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'98                                                  \'e2\'94\'82\
+\'e2\'94\'94\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'ac\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'98\
+                         \'e2\'94\'82\
+          \'e2\'94\'8c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'bc\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\uc0\u144 \
+          \'e2\'94\'82              \'e2\'94\'82              \'e2\'94\'82\
+     \'e2\'94\'8c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'96\'bc\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\uc0\u144    \'e2\'94\'8c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'96\'bc\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\u144    \'e2\'94\'8c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'96\'bc\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\u144 \
+     \'e2\'94\'82 EasyPost\'e2\'94\'82   \'e2\'94\'82 Stripe  \'e2\'94\'82   \'e2\'94\'82SendGrid \'e2\'94\'82\
+     \'e2\'94\'82  API    \'e2\'94\'82   \'e2\'94\'82  API    \'e2\'94\'82   \'e2\'94\'82  API    \'e2\'94\'82\
+     \'e2\'94\'94\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'98   \'e2\'94\'94\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'98   \'e2\'94\'94\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'98\
+```\
+\
+### 4.5 Environment & Deployment\
+\
+- **Frontend**: Deployed via Lovable (or any static host \'e2\'80\'94 Vercel, Netlify)\
+- **Backend**: Supabase Cloud (managed PostgreSQL, Auth, Edge Functions)\
+- **Domain**: `sendmo.co` (published URL: `sendmo.lovable.app` for prototype)\
+- **SSL**: Enforced on all routes\
+\
+---\
+\
+## 5. Design System & Brand Guidelines\
+\
+### 5.1 Brand Identity\
+\
+- **Name**: SendMo\
+- **Logo**: Custom SVG resembling a shipping label with barcode and QR code elements\
+- **Aesthetic**: Facebook Marketplace-inspired \'e2\'80\'94 clean, trustworthy, blue accents\
+- **Border radius**: 8px (`--radius: 8px`)\
+- **Typography**: Inter (400, 500, 600, 700)\
+\
+### 5.2 Color System (HSL tokens)\
+\
+All colors are defined as CSS custom properties in HSL format and consumed via Tailwind semantic classes. **Never use raw color values in components.**\
+\
+#### Light Mode\
+\
+```css\
+:root \{\
+  --background: 0 0% 96%;           /* Light gray page background */\
+  --foreground: 210 11% 15%;        /* Near-black text */\
+  --card: 0 0% 100%;                /* White cards */\
+  --card-foreground: 210 11% 15%;   /* Card text */\
+  --popover: 0 0% 100%;             /* Popover background */\
+  --popover-foreground: 210 11% 15%;/* Popover text */\
+  --primary: 214 89% 52%;           /* SendMo brand blue */\
+  --primary-foreground: 0 0% 100%;  /* White text on blue */\
+  --secondary: 210 14% 93%;         /* Light gray secondary */\
+  --secondary-foreground: 210 11% 15%;\
+  --muted: 210 14% 95%;             /* Muted backgrounds */\
+  --muted-foreground: 210 7% 46%;   /* Gray text */\
+  --accent: 214 89% 52%;            /* Same as primary */\
+  --accent-foreground: 0 0% 100%;\
+  --destructive: 0 72% 51%;         /* Red for errors */\
+  --destructive-foreground: 0 0% 100%;\
+  --border: 210 14% 89%;            /* Light gray borders */\
+  --input: 210 14% 89%;             /* Input borders */\
+  --ring: 214 89% 52%;              /* Focus ring */\
+  --success: 142 71% 45%;           /* Green for success states */\
+  --success-foreground: 0 0% 100%;\
+  --radius: 8px;                    /* Global border radius */\
+\}\
+```\
+\
+#### Dark Mode\
+\
+```css\
+.dark \{\
+  --background: 210 11% 10%;\
+  --foreground: 210 14% 93%;\
+  --card: 210 11% 14%;\
+  --card-foreground: 210 14% 93%;\
+  --popover: 210 11% 14%;\
+  --popover-foreground: 210 14% 93%;\
+  --primary: 214 89% 57%;\
+  --primary-foreground: 0 0% 100%;\
+  --secondary: 210 11% 18%;\
+  --secondary-foreground: 210 14% 93%;\
+  --muted: 210 11% 18%;\
+  --muted-foreground: 210 7% 56%;\
+  --accent: 214 89% 57%;\
+  --accent-foreground: 0 0% 100%;\
+  --destructive: 0 63% 31%;\
+  --destructive-foreground: 0 0% 100%;\
+  --border: 210 11% 20%;\
+  --input: 210 11% 20%;\
+  --ring: 214 89% 57%;\
+\}\
+```\
+\
+### 5.3 Typography\
+\
+```css\
+body \{\
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;\
+\}\
+```\
+\
+| Element | Size | Weight | Class |\
+|---------|------|--------|-------|\
+| Page title (h1) | 2xl\'e2\'80\'935xl | Bold (700) | `text-2xl md:text-5xl font-bold` |\
+| Section heading (h2) | 2xl | Bold (700) | `text-2xl font-bold` |\
+| Card heading (h3) | sm\'e2\'80\'93lg | Semibold (600) | `text-sm font-medium` or `text-lg font-semibold` |\
+| Body text | sm\'e2\'80\'93base | Normal (400) | `text-sm` or `text-base` |\
+| Muted/helper | xs\'e2\'80\'93sm | Normal (400) | `text-xs text-muted-foreground` |\
+| Monospace (links, IDs) | sm | Normal (400) | `font-mono text-sm` |\
+\
+### 5.4 Component Patterns\
+\
+All components use **shadcn/ui** with Tailwind semantic tokens. Key patterns from the prototype:\
+\
+#### Cards\
+```\
+bg-card rounded-lg border border-border p-5 space-y-3\
+```\
+\
+#### Selection Cards (radio-style)\
+```tsx\
+// Selected\
+"border-primary bg-primary/5"\
+// Unselected\
+"border-border hover:border-primary/40"\
+```\
+\
+#### Progress Steps\
+- Active: `bg-primary text-primary-foreground` (filled circle)\
+- Done: `bg-success text-success-foreground` (checkmark)\
+- Pending: `bg-muted text-muted-foreground`\
+\
+#### Verified State\
+```\
+text-success bg-success/10 rounded-md px-3 py-2\
+```\
+With `CheckCircle2` icon.\
+\
+#### Info Banners\
+```\
+bg-primary/5 border border-primary/20 rounded-lg p-4\
+```\
+\
+#### Lock/Security Notes\
+```\
+text-xs text-muted-foreground with Lock icon\
+```\
+\
+### 5.5 Layout Constraints\
+\
+| Context | Max Width | Class |\
+|---------|-----------|-------|\
+| Landing page | 5xl (1024px) | `container max-w-5xl` |\
+| Flows (recipient, sender) | 2xl (672px) | `container max-w-2xl` |\
+| Dashboard | 4xl (896px) | `container max-w-4xl` |\
+| FAQ | 3xl (768px) | `container max-w-3xl` |\
+\
+### 5.6 Animation Patterns (Framer Motion)\
+\
+#### Step Transitions\
+```tsx\
+<AnimatePresence mode="wait">\
+  <motion.div\
+    key=\{currentStep\}\
+    initial=\{\{ opacity: 0, x: 20 \}\}\
+    animate=\{\{ opacity: 1, x: 0 \}\}\
+    exit=\{\{ opacity: 0, x: -20 \}\}\
+    transition=\{\{ duration: 0.2 \}\}\
+  >\
+    \{renderStep()\}\
+  </motion.div>\
+</AnimatePresence>\
+```\
+\
+#### Price Range Animation\
+```tsx\
+<motion.span\
+  key=\{value\}\
+  initial=\{\{ opacity: 0, y: -6 \}\}\
+  animate=\{\{ opacity: 1, y: 0 \}\}\
+/>\
+```\
+\
+#### Sticky Bar Scale Pulse\
+```tsx\
+<motion.div\
+  animate=\{changed ? \{ scale: [1, 1.02, 1] \} : \{\}\}\
+  transition=\{\{ duration: 0.4 \}\}\
+/>\
+```\
+\
+### 5.7 Logo Specification\
+\
+The SendMo logo is a custom SVG that resembles a shipping label:\
+- Outer rounded rectangle with dashed inner border\
+- Faint world map suggestion (ellipses)\
+- QR code element (top left)\
+- Globe icon (top right)\
+- "SendMo" text centered in Inter Bold\
+- Barcode element (bottom)\
+- Brand blue stroke: `hsl(214, 89%, 30%)`\
+- Available in 3 sizes: sm (120\'c3\'9752), md (150\'c3\'9765), lg (200\'c3\'9786)\
+\
+---\
+\
+## 6. Site Map & Navigation\
+\
+### 6.1 Route Structure\
+\
+```\
+/                       \'e2\'86\'92 Landing page (Index)\
+/get-started            \'e2\'86\'92 Recipient onboarding flow (4 steps)\
+/send/:linkId           \'e2\'86\'92 Sender flow (5 steps)\
+/dashboard              \'e2\'86\'92 Authenticated recipient dashboard\
+/faq                    \'e2\'86\'92 FAQ & Help page\
+/*                      \'e2\'86\'92 404 Not Found\
+```\
+\
+### 6.2 Navigation Hierarchy\
+\
+```\
+\'e2\'94\'8c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\uc0\u144 \
+\'e2\'94\'82  HEADER (sticky, bg-card, border-b)                              \'e2\'94\'82\
+\'e2\'94\'82                                                                   \'e2\'94\'82\
+\'e2\'94\'82  [SendMo Logo]                              [Log in] [Get started]\'e2\'94\'82\
+\'e2\'94\'94\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'98\
+\
+\'e2\'94\'8c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\uc0\u144 \
+\'e2\'94\'82  FOOTER (bg-card, border-t)                                       \'e2\'94\'82\
+\'e2\'94\'82                                                                   \'e2\'94\'82\
+\'e2\'94\'82  [SendMo Logo]          [FAQ & Help]  [Sender experience]         \'e2\'94\'82\
+\'e2\'94\'94\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'98\
+```\
+\
+### 6.3 Navigation Rules\
+\
+- **Primary CTA**: "Create your shipping label link" \'e2\'86\'92 `/get-started`\
+- **Log in** \'e2\'86\'92 `/dashboard` (requires auth)\
+- **Sender experience** link is in the footer (intentionally de-prioritized on landing page)\
+- **FAQ & Help** accessible from footer and header on sub-pages\
+- **Back to home** breadcrumb on FAQ page\
+\
+### 6.4 Header Variants\
+\
+| Page | Left | Right |\
+|------|------|-------|\
+| Landing | SendMo Logo (link to /) | Log in + Get started |\
+| Recipient Flow | "SendMo" text (link to /) | "Create your link" label |\
+| Sender Flow | "SendMo" text (link to /) | "Shipping to [Name]" label |\
+| Dashboard | "SendMo" text (link to /) | Settings button |\
+| FAQ | SendMo Logo (link to /) | Get started button |\
+\
+---\
+\
+## 7. Landing Page (Index)\
+\
+**Route**: `/`\
+**Max width**: `max-w-5xl`\
+\
+### 7.1 Sections (top to bottom)\
+\
+#### 7.1.1 Hero Section\
+\
+```\
+\'e2\'94\'8c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\uc0\u144 \
+\'e2\'94\'82  bg-card, border-b, py-16 md:py-24                            \'e2\'94\'82\
+\'e2\'94\'82                                                                \'e2\'94\'82\
+\'e2\'94\'82  "Get it delivered to you"                      (h1, 4xl-5xl) \'e2\'94\'82\
+\'e2\'94\'82                                                                \'e2\'94\'82\
+\'e2\'94\'82  "Create a shipping label link and share it     (text-lg,     \'e2\'94\'82\
+\'e2\'94\'82   with anyone who needs to send you something.   muted)       \'e2\'94\'82\
+\'e2\'94\'82   No more exchanging addresses or figuring                     \'e2\'94\'82\
+\'e2\'94\'82   out costs."                                                  \'e2\'94\'82\
+\'e2\'94\'82                                                                \'e2\'94\'82\
+\'e2\'94\'82  [Create your shipping label link \'e2\'86\'92]            (Button, lg)   \'e2\'94\'82\
+\'e2\'94\'94\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'98\
+```\
+\
+- Left-aligned text, max-w-2xl within the container\
+- Single CTA button links to `/get-started`\
+\
+#### 7.1.2 How It Works\
+\
+3-column grid (`md:grid-cols-3`), each card with:\
+- Numbered circle (1, 2, 3) with `bg-primary/10 text-primary`\
+- Title (font-semibold, text-lg)\
+- Description (text-sm, text-muted-foreground)\
+\
+| Step | Title | Description |\
+|------|-------|-------------|\
+| 1 | Create your link | Enter your address, set shipping preferences, and add a payment method. Takes 60 seconds. |\
+| 2 | Share it | Send your link to anyone who needs to ship something to you \'e2\'80\'94 marketplace sellers, friends, coworkers. |\
+| 3 | They print & ship | The sender enters package details, prints a label, and drops it off. You get tracking updates automatically. |\
+\
+#### 7.1.3 Value Props\
+\
+3-column grid (`md:grid-cols-3`) on `bg-card` with `border-y`:\
+- Each has an icon (Package, Zap, Shield) in `bg-primary/10`\
+- Title + description\
+\
+| Icon | Title | Description |\
+|------|-------|-------------|\
+| Package | For Recipients | Set your preferences once, share a link, receive packages. You control the cost and carrier. |\
+| Zap | For Senders | Click a link, enter package info, print a label. No address exchange, no rate shopping. |\
+| Shield | Private & Secure | Your address stays private until the label is printed. Payment is pre-authorized and capped. |\
+\
+#### 7.1.4 Real Stories (Testimonials)\
+\
+3-column grid (`md:grid-cols-3`), each card with:\
+- Image (w-full h-40 object-cover)\
+- Quote icon (lucide `Quote`)\
+- Italic quote text\
+- Name + context in footer with `border-t`\
+\
+**Images**: Stored in `src/assets/`:\
+- `usecase-marketplace.jpg`\
+- `usecase-office.jpg`\
+- `usecase-airbnb.jpg`\
+\
+#### 7.1.5 CTA Section\
+\
+Full-width `bg-primary` section:\
+- "Ready to simplify shipping?" (h2, primary-foreground)\
+- "Create your SendMo link in under 60 seconds."\
+- Button: "Get your link \'e2\'86\'92" (variant="secondary")\
+\
+#### 7.1.6 Footer\
+\
+```\
+[SendMo Logo]     [FAQ & Help] [Sender experience] [Prototype \'e2\'80\'94 Not a live product]\
+```\
+\
+- `border-t border-border py-8 bg-card`\
+- Flex row, items center, justify between\
+\
+---\
+\
+## 8. Recipient Onboarding Flow\
+\
+**Route**: `/get-started`\
+**Max width**: `max-w-2xl`\
+\
+### 8.1 Overview\
+\
+A 4-step interactive flow that creates the recipient's SendMo Label Link:\
+\
+```\
+Step 1: Destination (Address + Email)\
+    \'e2\'86\'93\
+Step 2: Shipping Info (Preferences)\
+    \'e2\'86\'93\
+Step 3: Payment & Verification (Email OTP + Payment method)\
+    \'e2\'86\'93\
+Step 4: Label & Link (Success + shareable link)\
+```\
+\
+### 8.2 Progress Bar\
+\
+The progress bar uses 4 visual steps that map to 5 internal steps:\
+\
+| Progress Step | Icon | Label | Internal Steps |\
+|---------------|------|-------|----------------|\
+| 0 | MapPin | Destination | Step 0 (Address) |\
+| 1 | Sliders | Shipping Info | Step 1 (Shipping config) |\
+| 2 | CreditCard | Payment & Verification | Steps 2\'e2\'80\'933 (Verify email + Payment) |\
+| 3 | Tag | Label & Link | Step 4 (Success/activated) |\
+\
+**Progress bar behavior:**\
+- Active step: `bg-primary text-primary-foreground` (filled circle with icon)\
+- Completed step: `bg-success text-success-foreground` (filled circle with Check icon)\
+- Future step: `bg-muted text-muted-foreground` (filled circle with icon)\
+- Connecting lines: completed = `bg-success`, pending = `bg-border`\
+- **Clickable**: Users can click back to previously completed steps (but not forward)\
+- Step labels are hidden on mobile (`hidden sm:inline`)\
+\
+### 8.3 Step 1: Destination (Address + Email)\
+\
+**Component**: `RecipientStepAddress`\
+\
+**Header:**\
+- h1: "Get it delivered to you"\
+- Subtitle: "Create your shipping label link in seconds. Share it with anyone who needs to send you something."\
+\
+**Card 1 \'e2\'80\'94 Address Input:**\
+- Icon: MapPin (primary)\
+- Label: "Where should packages be delivered?"\
+- Single freeform text input: `placeholder="Type or paste your full address..."`\
+- **Address verification**: Mock verification triggers when `address.length > 15`\
+  - **Production**: Use EasyPost Address Verification API\
+  - Shows green verified state: `text-success bg-success/10` with CheckCircle2 icon\
+  - Example: "Verified: 123 Main St Apt 4B, San Francisco, CA 94102-1234"\
+- Helper text: "We'll verify it automatically. Your address is only shown on the printed label."\
+\
+**Card 2 \'e2\'80\'94 Email Input:**\
+- Icon: Mail (primary)\
+- Label: "Your email address"\
+- Type: email, `placeholder="you@example.com"`\
+- Helper text: "We'll verify your email in the next step."\
+\
+**Button**: "Continue to shipping preferences \'e2\'86\'92" (full width, lg)\
+\
+**Validation:**\
+- Address must be verified (non-empty, API-verified)\
+- Email must be valid format\
+- Both required to proceed\
+\
+**API Calls (Production):**\
+1. `POST /api/addresses/verify` \'e2\'80\'94 Real-time as user types\
+2. No email verification yet (happens in Step 3)\
+\
+### 8.4 Step 2: Shipping Info\
+\
+**Component**: `RecipientStepShipping`\
+\
+**Header:**\
+- h1: "Configure shipping preferences"\
+- Subtitle: "These defaults apply to your link. The sender finalizes details when they ship."\
+\
+**Sticky Price Range Bar (top, z-20):**\
+```\
+\'e2\'94\'8c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\uc0\u144 \
+\'e2\'94\'82  Estimated shipping cost                             \'e2\'94\'82\
+\'e2\'94\'82                                                      \'e2\'94\'82\
+\'e2\'94\'82  $5                                           $45    \'e2\'94\'82\
+\'e2\'94\'82   \'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\uc0\u129 \'e2\'94\u129 \'e2\'94\u129 \'e2\'94\u129 \'e2\'94\u129 \'e2\'94\u129 \'e2\'94\u129 \'e2\'94\u129 \'e2\'94\u129 \'e2\'94\u129 \'e2\'94\u129 \'e2\'94\u129 \'e2\'94\u129 \'e2\'94\u129 \'e2\'94\u129 \'e2\'94\u129 \'e2\'94\u129 \'e2\'94\u129 \'e2\'94\u129 \'e2\'94\u129 \'e2\'94\u129 \'e2\'94\u129 \'e2\'94\u129 \'e2\'94\u129 \'e2\'94\u129 \'e2\'94\u129 \'e2\'94\u129 \'e2\'94\u129 \'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'a4    \'e2\'94\'82\
+\'e2\'94\'82                                                      \'e2\'94\'82\
+\'e2\'94\'82  Small & slow                          Large & fast  \'e2\'94\'82\
+\'e2\'94\'94\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'98\
+```\
+\
+- Animated price values (Framer Motion, fade in from top)\
+- Scale pulse animation when values change\
+- Progress bar fill using `motion.div` with spring animation\
+- Range calculation based on size + speed + insurance selections:\
+\
+```typescript\
+const computeRange = (size: string, speed: string, insurance: boolean) => \{\
+  let lo = 5, hi = 45;\
+  if (size === "letter") \{ lo = 4; hi = 12; \}\
+  else if (size === "shoebox") \{ lo = 8; hi = 22; \}\
+  else if (size === "computer") \{ lo = 14; hi = 38; \}\
+  if (speed === "economy") \{ hi = Math.round(hi * 0.8); \}\
+  else if (speed === "express") \{ lo = Math.round(lo * 1.3); hi = Math.round(hi * 1.4); \}\
+  if (insurance) \{ lo += 3; hi += 5; \}\
+  return \{ lo, hi \};\
+\};\
+```\
+\
+**Production**: Replace mock computation with EasyPost rate estimates.\
+\
+**Card 1 \'e2\'80\'94 Package Size** (2-column grid):\
+| ID | Label | Description |\
+|----|-------|-------------|\
+| `unsure` | Unsure | I don't know yet |\
+| `letter` | Letter | Envelope / flat |\
+| `shoebox` | Shoebox | ~1 lb small box |\
+| `computer` | Computer | ~5 lb medium box |\
+\
+- Selection card pattern: `border-primary bg-primary/5` when selected\
+- "Optional" badge in header\
+\
+**Card 2 \'e2\'80\'94 Sender Location:**\
+- Input: `placeholder='e.g., Los Angeles, CA or "East Coast"'`\
+- "Optional" badge\
+- **Production**: Use for distance-based rate estimation\
+\
+**Card 3 \'e2\'80\'94 Shipping Speed** (2-column grid):\
+| ID | Label | Description |\
+|----|-------|-------------|\
+| `any` | Any speed | Default |\
+| `economy` | Economy | 5\'e2\'80\'937 days |\
+| `standard` | Standard | 3\'e2\'80\'935 days |\
+| `express` | Express | 1\'e2\'80\'932 days |\
+\
+- "Optional" badge\
+\
+**Collapsible \'e2\'80\'94 Advanced Preferences:**\
+- Toggle: "Advanced preferences" with ChevronDown/Up\
+- **Preferred Carrier** (2-column grid): Any / USPS / UPS / FedEx\
+- **Insurance Toggle**: Switch component, description: "Adds ~$3\'e2\'80\'935 to shipping cost"\
+\
+**Updated Range Note:**\
+- Appears when any selection deviates from defaults\
+- Blue info banner: `bg-primary/5 border border-primary/20`\
+- Shows: "Updated range: **$X \'e2\'80\'93 $Y**"\
+- Animated in/out with Framer Motion\
+\
+**Buttons:**\
+- "\'e2\'86\uc0\u144  Back" (outline)\
+- "Continue to payment \'e2\'86\'92" (primary, flex-1)\
+\
+**Data passed to next step**: `ShippingConfig` interface:\
+```typescript\
+interface ShippingConfig \{\
+  size: string;      // "unsure" | "letter" | "shoebox" | "computer"\
+  speed: string;     // "any" | "economy" | "standard" | "express"\
+  carrier: string;   // "any" | "usps" | "ups" | "fedex"\
+  insurance: boolean;\
+  lowRange: number;\
+  highRange: number;\
+\}\
+```\
+\
+### 8.5 Step 3a: Email Verification\
+\
+**Component**: `RecipientStepVerify`\
+**Internal step**: 2\
+\
+**Header:**\
+- h1: "Verify your email"\
+- Subtitle: "We sent a 5-character verification code to your email."\
+\
+**Card:**\
+- Shows current email in `bg-muted` display bar with "Use different email" ghost button\
+- **OTP Input**: 5-character code using `InputOTP` component (from `input-otp` library)\
+- Centered layout\
+- "Resend code" ghost button with RotateCcw icon (disabled during sending)\
+\
+**Verification States:**\
+- **Unverified**: OTP input shown, button disabled with text "Enter code to continue"\
+- **Verified**: Green success banner: "[email] verified" with CheckCircle2\
+\
+**Change Email Dialog:**\
+- Modal with email input\
+- "Update & resend code" button\
+- Resets OTP state when email changes\
+- Toast: "Email updated! Enter the new verification code."\
+\
+**Production API Calls:**\
+1. `POST /api/auth/magic-link` \'e2\'80\'94 Send verification code on step mount\
+2. `POST /api/auth/verify` \'e2\'80\'94 Verify OTP code\
+3. Resend: Same as #1\
+\
+**Buttons:**\
+- "\'e2\'86\uc0\u144  Back" (outline)\
+- "Continue to payment \'e2\'86\'92" (primary, flex-1, disabled until verified)\
+\
+### 8.6 Step 3b: Payment & Activation\
+\
+**Component**: `RecipientStepPayment`\
+**Internal step**: 3\
+\
+**Header:**\
+- h1: "Almost done!"\
+- Subtitle: "Add your payment method to activate your label link."\
+\
+**Tabbed Payment Form:**\
+\
+```\
+[\'f0\'9f\'92\'b3 Credit card] [\'e2\'9c\'a8 SendMo balance]\
+```\
+\
+**Tab 1 \'e2\'80\'94 Credit Card:**\
+- Card number input: `placeholder="4242 4242 4242 4242"`\
+- Expiry + CVC in 2-column grid\
+- **Production**: Replace with Stripe Elements (CardElement)\
+\
+**Hold Amount Info Banner:**\
+```\
+Your shipment will cost roughly $X \'e2\'80\'93 $Y.\
+We will place a hold on your card for $Z when a label is created.\
+You're only charged the actual shipping cost.\
+```\
+- Hold amount = `Math.round(highRange * 1.1)` (10% buffer over high range)\
+\
+**Security Note:**\
+- Lock icon + "Your card is authorized but not charged until someone ships to you. Secured with Stripe."\
+\
+**Tab 2 \'e2\'80\'94 SendMo Balance:**\
+- Header: "Pay with SendMo balance & save 5%" with Sparkles icon\
+- Load amount input (min $10, default $50, dollar prefix)\
+- "Link your bank with Plaid" button (Landmark icon)\
+- **Discounted pricing**: 5% off shown with strikethrough on original prices\
+  ```\
+  $X \'e2\'80\'93 $Y (strikethrough) \'e2\'86\'92 $discountedX \'e2\'80\'93 $discountedY (bold primary)\
+  Hold: $Z (strikethrough) \'e2\'86\'92 $discountedZ (bold primary)\
+  ```\
+- Security note: "Bank linking is secured via Plaid. Your balance is only used when someone ships to you."\
+\
+**Activation Button**: "Add payment & activate label link" (full width, lg)\
+\
+**Back Button**: "\'e2\'86\uc0\u144  Back" (outline)\
+\
+**Production API Calls:**\
+1. `POST /api/payment-methods` \'e2\'80\'94 Create Stripe payment method\
+2. `POST /api/onboarding/payment` \'e2\'80\'94 Authorize and activate link\
+3. Create user account automatically (magic link auth with verified email)\
+\
+### 8.7 Step 4: Label & Link (Success)\
+\
+**Component**: `RecipientStepPayment` (isActivated=true)\
+**Internal step**: 4\
+\
+**Header:**\
+- h1: "Your label link is ready!"\
+- Subtitle: "Share it with anyone who needs to send you a package."\
+\
+**Card 1 \'e2\'80\'94 Shareable Link:**\
+- Icon: Share2 (primary)\
+- Link display in monospace: `sendmo.co/s/k8Hj2mNp4x`\
+- "Copy" button (outline, sm) \'e2\'80\'94 copies `https://sendmo.co/s/k8Hj2mNp4x` to clipboard\
+- "Preview label" button (secondary, sm, with Eye icon)\
+- QR code placeholder (32\'c3\'9732 div with QrCode icon)\
+  - **Production**: Generate actual QR code using a library (e.g., `qrcode.react`)\
+\
+**Card 2 \'e2\'80\'94 Shipment Details:**\
+- Icon: Package (primary)\
+- Shipment ID: `SM-XXXXXXXX` (8 random alphanumeric chars)\
+- Detail rows:\
+  | Field | Value |\
+  |-------|-------|\
+  | To | 123 Main St, San Francisco, CA |\
+  | From | *Waiting for sender* (italic, muted) |\
+  | Delivery time | [speed time range] |\
+  | Speed | [speed label] |\
+  | Size | [size label] |\
+  | Carrier | [carrier label] |\
+  | Estimated cost | $X \'e2\'80\'93 $Y (primary color) |\
+\
+**CTA Button**: "Go to your account page \'e2\'86\'92" (full width, lg, links to `/dashboard`)\
+\
+---\
+\
+## 9. Sender Flow\
+\
+**Route**: `/send/:linkId`\
+**Max width**: `max-w-2xl`\
+\
+### 9.1 Overview\
+\
+The sender flow is what happens when someone clicks a SendMo Label Link. It requires **no account** \'e2\'80\'94 the sender just fills in package details and prints a label.\
+\
+```\
+Step 0: Intro (Welcome)\
+    \'e2\'86\'93\
+Step 1: Origin & Package Details\
+    \'e2\'86\'93\
+Step 2: Choose Shipping Method\
+    \'e2\'86\'93\
+Step 3: Review & Confirm\
+    \'e2\'86\'93\
+Step 4: Print Label\
+```\
+\
+### 9.2 Progress Bar\
+\
+5-step progress bar:\
+\
+| Step | Icon | Label |\
+|------|------|-------|\
+| 0 | Package | Start |\
+| 1 | Package | Package |\
+| 2 | Truck | Method |\
+| 3 | Check | Confirm |\
+| 4 | Printer | Print |\
+\
+- Same visual style as recipient flow but **not clickable** (no back-navigation via progress bar)\
+- Step labels hidden on mobile\
+\
+### 9.3 Header\
+\
+```\
+[SendMo]                           Shipping to Sarah Chen\
+```\
+\
+- `recipientName` is loaded from the link data (`/api/s/:shortId`)\
+\
+### 9.4 Step 0: Intro\
+\
+**Component**: `SenderStepIntro`\
+\
+**Content:**\
+- h1: "You're sending a package to \{recipientName\}"\
+- Subtitle: "\{recipientName\} will pay for shipping. Just enter your package details and print the label."\
+\
+**How It Works Card:**\
+Numbered list (1-2-3):\
+1. Enter your address and package details\
+2. Review shipping rate\
+3. Print your label and drop off\
+\
+**Button**: "Get Started \'e2\'86\'92" (full width, lg)\
+\
+**Edge Cases:**\
+- If link is in **Pending** state: Show message "This link is pending payment. Contact \{recipientName\} to complete setup." with no Get Started button.\
+- If link is **Paused**: Show "This link is currently paused."\
+- If link is **Deactivated**: Show 404-style page.\
+\
+### 9.5 Step 1: Origin & Package Details\
+\
+**Component**: `SenderStepOriginPackage`\
+\
+This step consolidates origin address and package information (inspired by Pirate Ship).\
+\
+**Header:**\
+- h2: "Origin & package details"\
+- Subtitle: "Enter your shipping address and describe your package."\
+\
+**Card 1 \'e2\'80\'94 Ship From:**\
+- Icon: MapPin (primary)\
+- Label: "Ship from"\
+- Single freeform address input: `placeholder="Type or paste your full address..."`\
+- Same verification UX as recipient: green verified state when > 15 chars\
+  - **Production**: EasyPost Address Verification API\
+  - Shows: "Verified: 123 Main St, San Francisco, CA 94102"\
+\
+**Card 2 \'e2\'80\'94 Type of Packaging:**\
+- Icon: Package (primary)\
+- Label: "Type of packaging"\
+- Radio-style selection cards with radio dot indicator:\
+\
+| ID | Icon | Label | Description |\
+|----|------|-------|-------------|\
+| `box` | Box | Box or Rigid Packaging | Any custom box or thick parcel |\
+| `envelope` | Mail | Envelope, Poly Bag, or Soft Pack | Measure the length and width of the envelope before putting anything in it |\
+| `irregular` | Cylinder | Tube or Irregular Packaging | Tubes, luggage, golf or ski bags, crates, tires, etc. |\
+\
+- Radio dot: `w-5 h-5 rounded-full border-2` with inner dot `w-2.5 h-2.5 rounded-full bg-primary` when selected\
+\
+**Card 3 \'e2\'80\'94 Package Dimensions:**\
+- Label: "Package dimensions (inches)"\
+- Grid layout: 3 columns (box/irregular) or 2 columns (envelope \'e2\'80\'94 no height)\
+- Inputs: Length, Width, Height (number type, `placeholder="0"`)\
+- Height hidden when `selectedType === "envelope"`\
+\
+**Card 4 \'e2\'80\'94 Package Weight:**\
+- Label: "Package weight"\
+- 2-column grid: Pounds, Ounces (number type, `placeholder="0"`)\
+\
+**Card 5 \'e2\'80\'94 Item Description:**\
+- Label: "Item description" with "Optional" badge\
+- Input: `placeholder="e.g., Books, electronics, clothing..."`\
+\
+**Buttons:**\
+- "\'e2\'86\uc0\u144  Back" (outline)\
+- "See rates \'e2\'86\'92" (primary, flex-1, lg)\
+\
+**Production API Calls:**\
+1. `POST /api/addresses/verify` \'e2\'80\'94 Verify origin address\
+2. `POST /api/s/:shortId/shipment` \'e2\'80\'94 Create shipment with package details\
+\
+### 9.6 Step 2: Choose Shipping Method\
+\
+**Component**: `SenderStepRate`\
+\
+**IMPORTANT DESIGN CONSTRAINT**: Recipients manage all shipping costs and carrier preferences. This step displays delivery times but **excludes all pricing information**. The recipient's preferred option is pre-selected and highlighted.\
+\
+**Header:**\
+- h2: "Choose shipping method"\
+- Subtitle: "Pick the method that works best for you."\
+\
+**Method List:**\
+Radio-style selection cards, each with:\
+- Circle indicator: `bg-primary text-primary-foreground` with Check when selected, `bg-muted text-muted-foreground` with Truck when not\
+- Carrier name (bold) + service name (muted)\
+- Delivery estimate (e.g., "5\'e2\'80\'937 days")\
+- "Preferred by \{recipientName\}" badge on the pre-selected option:\
+  ```\
+  \'e2\'ad\uc0\u144  Preferred by Sarah Chen\
+  ```\
+  - Badge style: `text-primary bg-primary/10 px-2 py-0.5 rounded-full` with filled Star icon\
+\
+**Mock Methods (prototype):**\
+\
+| ID | Carrier | Service | Days | Preferred |\
+|----|---------|---------|------|-----------|\
+| usps-ground | USPS | Ground Advantage | 5\'e2\'80\'937 days | No |\
+| ups-ground | UPS | Ground | 4\'e2\'80\'936 days | No |\
+| usps-priority | USPS | Priority Mail | 2\'e2\'80\'933 days | **Yes** |\
+| fedex-home | FedEx | Home Delivery | 3\'e2\'80\'935 days | No |\
+\
+**Production**: Fetch from `GET /api/s/:shortId/rates` \'e2\'80\'94 returns methods filtered by recipient preferences, with the preferred one marked.\
+\
+**Buttons:**\
+- "\'e2\'86\uc0\u144  Back" (outline)\
+- "Continue \'e2\'86\'92" (primary, flex-1, lg)\
+\
+### 9.7 Step 3: Review & Confirm\
+\
+**Component**: `SenderStepEmail`\
+\
+**Header:**\
+- h2: "Review & confirm"\
+- Subtitle: "Double-check everything before generating your label."\
+\
+**Card 1 \'e2\'80\'94 Package Details Summary:**\
+- Icon: Package (primary)\
+- "Edit" ghost button \'e2\'86\'92 navigates back to step 1\
+- 2-column grid showing:\
+  | Field | Value |\
+  |-------|-------|\
+  | From | 123 Main St, San Francisco, CA |\
+  | Type | Box or Rigid Packaging |\
+  | Dimensions | 12 \'c3\'97 10 \'c3\'97 8 in |\
+  | Weight | 3 lbs 0 oz |\
+\
+**Card 2 \'e2\'80\'94 Shipping Method Summary:**\
+- Icon: Truck (primary)\
+- "Edit" ghost button \'e2\'86\'92 navigates back to step 2\
+- 2-column grid showing:\
+  | Field | Value |\
+  |-------|-------|\
+  | Carrier | USPS Priority Mail |\
+  | Delivery | 2\'e2\'80\'933 days |\
+  | To | Sarah Chen |\
+\
+**Card 3 \'e2\'80\'94 Email & Preferences:**\
+- Email input: `type="email" placeholder="you@example.com"`\
+- Helper: "We'll send tracking updates to this email."\
+- **Checkbox 1** (default checked): "**Save my information** to get shipping notifications and to use SendMo later"\
+- **Checkbox 2** (default unchecked): "Share my contact info with the recipient"\
+\
+**Buttons:**\
+- "\'e2\'86\uc0\u144  Back" (outline)\
+- "Confirm and generate label \'e2\'86\'92" (primary, flex-1, lg)\
+\
+**Confirmation Dialog (AlertDialog):**\
+- Triggers on button click\
+- Title: "Are you sure?"\
+- Description: "You're about to generate a shipping label for Sarah Chen via USPS Priority Mail. This can't be undone."\
+- "Go back" (cancel) + "Yes, generate label" (action)\
+\
+**Production API Calls (on confirm):**\
+1. `POST /api/s/:shortId/buy` \'e2\'80\'94 Purchase label (captures payment from recipient)\
+2. If `saveInfo`: Create lightweight sender profile\
+3. Send tracking email to sender\
+\
+### 9.8 Step 4: Print Label\
+\
+**Component**: `SenderStepLabel`\
+\
+**Success Banner:**\
+- `bg-success/10 border border-success/30`\
+- CheckCircle2 icon (success color, w-8 h-8)\
+- h2: "Label ready!"\
+- Subtitle: "Your shipping label has been generated."\
+\
+**Label Preview Card:**\
+- Black header bar: "Shipping Label Preview" (`bg-foreground text-background`)\
+- 2-column layout:\
+  - **FROM**: Name + address\
+  - **TO**: Name + address\
+- Dashed separator line\
+- Bottom row: Service name + price (left), Tracking # in monospace (right)\
+\
+**Print Button**: "Print Label (PDF)" (full width, lg, with Printer icon)\
+\
+**Drop-off Instructions Card:**\
+- Title: "Drop-off instructions" (text-primary)\
+- MapPin: "Drop off at any \{carrier\} location or schedule a pickup"\
+- Package: "Attach the printed label securely to your package"\
+- Footer: "Tracking updates will be sent to your email."\
+\
+**Production:**\
+- Label PDF generated via EasyPost API\
+- Print button triggers PDF download\
+- Tracking number is real, from EasyPost\
+- "Schedule a pickup" links to carrier website\
+\
+---\
+\
+## 10. Dashboard (Authenticated)\
+\
+**Route**: `/dashboard`\
+**Max width**: `max-w-4xl`\
+**Requires**: Authentication\
+\
+### 10.1 Overview\
+\
+The dashboard is the recipient's home base with three sections:\
+1. **My Label Link** \'e2\'80\'94 Quick copy + management\
+2. **My Wallet** \'e2\'80\'94 Payment method overview\
+3. **Shipments** \'e2\'80\'94 Table of all shipments with tracking\
+\
+### 10.2 Header\
+\
+```\
+[SendMo]                                          [\'e2\'9a\'99 Settings]\
+```\
+\
+### 10.3 Section 0: My Label Link\
+\
+```\
+\'e2\'94\'8c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\uc0\u144 \
+\'e2\'94\'82  \'f0\'9f\'94\'97 My Label Link                                             \'e2\'94\'82\
+\'e2\'94\'82     https://sendmo.co/s/k8Hj2mNp4x                           \'e2\'94\'82\
+\'e2\'94\'82                                                                \'e2\'94\'82\
+\'e2\'94\'82                          [Copy Link] [+ New Link] [\'e2\'9a\'99]        \'e2\'94\'82\
+\'e2\'94\'94\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'98\
+```\
+\
+- Left: Link2 icon in `bg-primary/10` circle + "My Label Link" title + link URL (truncated, muted)\
+- Right: 3 buttons:\
+  - **Copy Link** (primary, sm) \'e2\'80\'94 Copies full URL to clipboard, shows "Link copied!" toast\
+  - **+ New Link** (outline, sm) \'e2\'80\'94 Creates new label link (future: opens config modal)\
+  - **\'e2\'9a\'99** (outline, icon-only) \'e2\'80\'94 Opens link settings\
+\
+### 10.4 Section 1: My Wallet\
+\
+Clickable card that opens a dialog:\
+\
+```\
+\'e2\'94\'8c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\uc0\u144 \
+\'e2\'94\'82  \'f0\'9f\'92\'b3 My Wallet                                                 \'e2\'94\'82\
+\'e2\'94\'82     Visa \'c2\'b7\'c2\'b7\'c2\'b74242 \'c2\'b7 Balance: $0.00                       [>]  \'e2\'94\'82\
+\'e2\'94\'94\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'98\
+```\
+\
+- Left: Wallet icon in `bg-primary/10` + title + payment info\
+- Right: ChevronRight that animates to primary on hover\
+- Hover: `border-primary/40`\
+\
+**Wallet Dialog:**\
+- Title: "My Wallet"\
+- Description: "Manage your payment methods and balance."\
+- Card display: `Visa ending in 4242` with "Default" badge\
+- Balance display: `$0.00` (font-semibold)\
+- Buttons: "Add Balance" + "Edit Methods" (both outline, sm)\
+\
+### 10.5 Section 2: Shipments Table\
+\
+```\
+\'e2\'94\'8c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\uc0\u144 \
+\'e2\'94\'82  \'f0\'9f\'93\'a6 Shipments                                    6 total     \'e2\'94\'82\
+\'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'a4\
+\'e2\'94\'82  ID       To              Status            Carrier  Shipped \'e2\'94\'82\
+\'e2\'94\'82                                                       ETA    \'e2\'94\'82\
+\'e2\'94\'82                                                     Tracking \'e2\'94\'82\
+\'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'a4\
+\'e2\'94\'82  SM-4821  Alex Rivera    \'e2\'9c\'85 Delivered        USPS   Feb 8   \'e2\'94\'82\
+\'e2\'94\'82                                                     Feb 10  \'e2\'94\'82\
+\'e2\'94\'82                                                     Track \'e2\'86\'92 \'e2\'94\'82\
+\'e2\'94\'82  SM-4807  Jordan Wu      \'f0\'9f\'9a\'9a In Transit      UPS    Feb 10  \'e2\'94\'82\
+\'e2\'94\'82                                                     Feb 13  \'e2\'94\'82\
+\'e2\'94\'82                                                     Track \'e2\'86\'92 \'e2\'94\'82\
+\'e2\'94\'82  SM-4750  Sam Nguyen     \'f0\'9f\'95\uc0\u144  Waiting for     USPS   Feb 12  \'e2\'94\'82\
+\'e2\'94\'82                             Dropoff                 Feb 15  \'e2\'94\'82\
+\'e2\'94\'82                                                     Track \'e2\'86\'92 \'e2\'94\'82\
+\'e2\'94\'94\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'98\
+```\
+\
+**Table Columns:**\
+| Column | Content |\
+|--------|---------|\
+| ID | Shipment ID (monospace, xs, font-medium) |\
+| To | Sender name |\
+| Status | Badge with icon |\
+| Carrier | Carrier name (muted) |\
+| Shipped | Date shipped |\
+| ETA | Estimated arrival |\
+| Tracking | External link to `track.sendmo.co/\{trackingId\}` |\
+\
+**Status Badges:**\
+\
+| Status | Label | Icon | Colors |\
+|--------|-------|------|--------|\
+| `delivered` | Delivered | CheckCircle2 | `bg-emerald-500/10 text-emerald-600 border-emerald-500/20` |\
+| `in_transit` | In Transit | Truck | `bg-blue-500/10 text-blue-600 border-blue-500/20` |\
+| `waiting` | Waiting for Dropoff | Clock | `bg-purple-500/10 text-purple-600 border-purple-500/20` |\
+| `exception` | Exception | AlertCircle | `bg-amber-500/10 text-amber-600 border-amber-500/20` |\
+\
+**Note**: Status badge colors use direct Tailwind classes (not semantic tokens) for status-specific coloring. This is acceptable for status indicators.\
+\
+**Production Data:**\
+- Fetch from `GET /api/shipments`\
+- Real-time updates via Supabase Realtime subscriptions\
+- Tracking links point to actual carrier tracking pages (or SendMo tracking proxy)\
+\
+---\
+\
+## 11. FAQ & Help Page\
+\
+**Route**: `/faq`\
+**Max width**: `max-w-3xl`\
+\
+### 11.1 Structure\
+\
+```\
+[Header]\
+\'e2\'86\uc0\u144  Back to home\
+FAQ & Help (h1)\
+Common questions about how SendMo works. (subtitle)\
+[Search bar]\
+[Accordion FAQ list]\
+[Still need help? \'e2\'86\'92 Email support]\
+[Footer]\
+```\
+\
+### 11.2 Search\
+\
+- Search icon (left) + clear button (right, shows when search has text)\
+- `placeholder="Search FAQ & Help\'e2\'80\'a6"`\
+- **Real-time filtering**: Filters FAQ items by matching question OR answer text\
+- **Auto-expand**: When search is active, all matching items are expanded\
+- **No results**: Shows "No results found for '[query]'" with suggestion to contact support\
+\
+### 11.3 FAQ Content\
+\
+Using `Accordion` (type="multiple"):\
+\
+| Question | Answer |\
+|----------|--------|\
+| What is SendMo? | SendMo lets you create a personal shipping label link. Share it with anyone who needs to send you something \'e2\'80\'94 they get a pre-paid label instantly, and you control the cost, carrier, and destination. |\
+| Who pays for shipping? | You (the recipient) pay for shipping. When you set up your link, you add a payment method and set a price cap. The sender never has to pay anything. |\
+| How does SendMo make money? | SendMo adds a small convenience fee on top of carrier rates. There are no subscription fees or hidden charges. |\
+| Is my address visible to the sender? | No. Your address is only printed on the label itself. The sender never sees your full address in the app \'e2\'80\'94 they just print and ship. |\
+| What carriers are supported? | We support USPS, UPS, and FedEx. When setting up your link, you can choose preferred carriers and shipping speeds. |\
+| Can I set a maximum shipping cost? | Yes. You set a price cap when creating your link. If a package would exceed your cap, the sender is notified and the label won't be generated. |\
+| What if the sender enters the wrong package dimensions? | Carriers may adjust the price after pickup if the actual dimensions differ. Any adjustment is charged to your payment method, up to your price cap. |\
+| Can I use SendMo for international shipping? | Not yet \'e2\'80\'94 SendMo currently supports domestic US shipping only. International support is on our roadmap. |\
+| How do I get tracking updates? | You'll receive tracking updates via email as soon as the sender drops off the package. Real-time tracking is available in your dashboard. |\
+| Can I cancel or deactivate my link? | Yes. You can pause or delete your link at any time from your dashboard. Any unused labels will be voided. |\
+\
+### 11.4 Support Section\
+\
+```\
+Still need help?\
+Can't find what you're looking for? Our support team is happy to help.\
+[\'f0\'9f\'93\'a7 Email support] \'e2\'86\'92 mailto:support@sendmo.com\
+```\
+\
+- No live chat (intentionally removed)\
+\
+### 11.5 Production Enhancements\
+\
+- **FAQ Search Analytics**: Track all search queries (even with no results)\
+- **Article click tracking**: Log which questions users expand\
+- **Contact form**: Replace mailto with actual form submission\
+- **Admin dashboard**: Weekly report of top unanswered searches\
+\
+**API Calls:**\
+1. `POST /api/faq/search` \'e2\'80\'94 Log search query + results count\
+2. `POST /api/faq/contact` \'e2\'80\'94 Submit contact form (with email, subject, message)\
+\
+---\
+\
+## 12. Authentication & Account System\
+\
+### 12.1 Strategy\
+\
+- **Primary**: Magic link (passwordless email-based authentication)\
+- **Future**: Google OAuth, optional password\
+- **Senders**: No account required (optional lightweight profile)\
+\
+### 12.2 Magic Link Flow\
+\
+```\
+User enters email \'e2\'86\'92 System sends magic link email\
+    \'e2\'86\'92 User clicks link in email \'e2\'86\'92 Session created\
+    \'e2\'86\'92 Redirected to /dashboard\
+```\
+\
+### 12.3 Account Creation\
+\
+Accounts are created **automatically** during the recipient onboarding flow:\
+1. User enters email in Step 1\
+2. Email verified via OTP in Step 3a\
+3. Payment method added in Step 3b\
+4. Account created with verified email + payment method\
+5. User lands in dashboard\
+\
+### 12.4 Session Management\
+\
+- Use Supabase Auth sessions\
+- JWT-based with refresh tokens\
+- Session persists across browser sessions (local storage)\
+- Protected routes: `/dashboard` requires valid session \'e2\'86\'92 redirect to `/` if not authenticated\
+\
+### 12.5 Sender "Save My Info"\
+\
+When a sender checks "Save my information":\
+- Create lightweight profile with email + origin address\
+- Link to shipments sent through SendMo\
+- No password, no full account \'e2\'80\'94 just enough for notifications\
+- Can upgrade to full account later\
+\
+### 12.6 Supabase Auth Configuration\
+\
+```sql\
+-- Enable magic link authentication\
+-- Configure in Supabase dashboard:\
+-- Auth \'e2\'86\'92 Providers \'e2\'86\'92 Email \'e2\'86\'92 Enable Magic Link\
+-- Auth \'e2\'86\'92 Email Templates \'e2\'86\'92 Magic Link template\
+\
+-- Enable Google OAuth (future)\
+-- Auth \'e2\'86\'92 Providers \'e2\'86\'92 Google \'e2\'86\'92 Enable\
+```\
+\
+### 12.7 Protected Routes Implementation\
+\
+```tsx\
+// Route guard component\
+const ProtectedRoute = (\{ children \}) => \{\
+  const \{ user, loading \} = useAuth();\
+  if (loading) return <LoadingSpinner />;\
+  if (!user) return <Navigate to="/" replace />;\
+  return children;\
+\};\
+```\
+\
+---\
+\
+## 13. Database Schema & Data Models\
+\
+### 13.1 Core Entities\
+\
+```sql\
+-- ============================================\
+-- USERS (extends Supabase auth.users)\
+-- ============================================\
+CREATE TABLE public.profiles (\
+  id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,\
+  email TEXT NOT NULL,\
+  full_name TEXT,\
+  avatar_url TEXT,\
+  default_address_id UUID,\
+  created_at TIMESTAMPTZ DEFAULT NOW(),\
+  updated_at TIMESTAMPTZ DEFAULT NOW()\
+);\
+\
+-- ============================================\
+-- ADDRESSES\
+-- ============================================\
+CREATE TABLE public.addresses (\
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\
+  user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,\
+  label TEXT, -- "Home", "Office", etc.\
+  street1 TEXT NOT NULL,\
+  street2 TEXT,\
+  city TEXT NOT NULL,\
+  state TEXT NOT NULL,\
+  zip TEXT NOT NULL,\
+  country TEXT DEFAULT 'US',\
+  verified BOOLEAN DEFAULT FALSE,\
+  easypost_address_id TEXT, -- EasyPost address reference\
+  is_primary BOOLEAN DEFAULT TRUE,\
+  created_at TIMESTAMPTZ DEFAULT NOW(),\
+  updated_at TIMESTAMPTZ DEFAULT NOW()\
+);\
+\
+-- ============================================\
+-- SENDMO LINKS\
+-- ============================================\
+CREATE TABLE public.sendmo_links (\
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\
+  user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,\
+  short_id TEXT UNIQUE NOT NULL, -- e.g., "k8Hj2mNp4x" (min 10 chars, crypto-random)\
+  type TEXT DEFAULT 'flexible', -- 'flexible', 'one_time', 'private'\
+  status TEXT DEFAULT 'pending', -- 'pending', 'active', 'paused', 'deactivated'\
+  \
+  -- Shipping preferences\
+  address_id UUID NOT NULL REFERENCES public.addresses(id),\
+  speed_preference TEXT DEFAULT 'any', -- 'any', 'economy', 'standard', 'express'\
+  carrier_preference TEXT DEFAULT 'any', -- 'any', 'usps', 'ups', 'fedex'\
+  size_hint TEXT DEFAULT 'unsure', -- 'unsure', 'letter', 'shoebox', 'computer'\
+  insurance_required BOOLEAN DEFAULT FALSE,\
+  price_cap DECIMAL(10,2) DEFAULT 100.00,\
+  estimated_low DECIMAL(10,2),\
+  estimated_high DECIMAL(10,2),\
+  \
+  -- Payment\
+  payment_method_id UUID REFERENCES public.payment_methods(id),\
+  \
+  created_at TIMESTAMPTZ DEFAULT NOW(),\
+  updated_at TIMESTAMPTZ DEFAULT NOW()\
+);\
+\
+-- ============================================\
+-- PAYMENT METHODS\
+-- ============================================\
+CREATE TABLE public.payment_methods (\
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\
+  user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,\
+  stripe_payment_method_id TEXT NOT NULL,\
+  type TEXT NOT NULL, -- 'card', 'bank_account'\
+  brand TEXT, -- 'visa', 'mastercard', etc.\
+  last4 TEXT NOT NULL,\
+  exp_month INTEGER,\
+  exp_year INTEGER,\
+  is_default BOOLEAN DEFAULT FALSE,\
+  created_at TIMESTAMPTZ DEFAULT NOW()\
+);\
+\
+-- ============================================\
+-- PAYMENT AUTHORIZATIONS\
+-- ============================================\
+CREATE TABLE public.payment_authorizations (\
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\
+  link_id UUID NOT NULL REFERENCES public.sendmo_links(id) ON DELETE CASCADE,\
+  payment_method_id UUID NOT NULL REFERENCES public.payment_methods(id),\
+  stripe_payment_intent_id TEXT NOT NULL,\
+  amount DECIMAL(10,2) NOT NULL, -- Authorization amount (price cap or hold)\
+  status TEXT DEFAULT 'pending', -- 'pending', 'authorized', 'captured', 'canceled', 'failed'\
+  authorized_at TIMESTAMPTZ,\
+  captured_at TIMESTAMPTZ,\
+  captured_amount DECIMAL(10,2),\
+  created_at TIMESTAMPTZ DEFAULT NOW()\
+);\
+\
+-- ============================================\
+-- SHIPMENTS\
+-- ============================================\
+CREATE TABLE public.shipments (\
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\
+  shipment_id TEXT UNIQUE NOT NULL, -- "SM-XXXXXXXX"\
+  link_id UUID NOT NULL REFERENCES public.sendmo_links(id),\
+  \
+  -- Sender info\
+  sender_email TEXT,\
+  sender_name TEXT,\
+  sender_address_id UUID REFERENCES public.addresses(id),\
+  sender_profile_id UUID, -- If sender saved info\
+  share_contact_with_recipient BOOLEAN DEFAULT FALSE,\
+  \
+  -- Package\
+  packaging_type TEXT, -- 'box', 'envelope', 'irregular'\
+  length_in DECIMAL(6,2),\
+  width_in DECIMAL(6,2),\
+  height_in DECIMAL(6,2),\
+  weight_lbs DECIMAL(6,2),\
+  weight_oz DECIMAL(6,2),\
+  item_description TEXT,\
+  \
+  -- Shipping\
+  carrier TEXT NOT NULL, -- 'usps', 'ups', 'fedex'\
+  service TEXT NOT NULL, -- 'Ground Advantage', 'Priority Mail', etc.\
+  delivery_days TEXT, -- '2-3 days'\
+  \
+  -- EasyPost\
+  easypost_shipment_id TEXT,\
+  easypost_rate_id TEXT,\
+  \
+  -- Label\
+  label_url TEXT, -- URL to label PDF in storage\
+  tracking_number TEXT,\
+  tracking_url TEXT, -- Public tracking URL\
+  \
+  -- Pricing\
+  easypost_rate DECIMAL(10,2), -- Raw carrier rate\
+  display_price DECIMAL(10,2), -- Rate \'c3\'97 1.15 (or 1.10)\
+  sendmo_fee DECIMAL(10,2), -- Our margin\
+  \
+  -- Payment\
+  payment_authorization_id UUID REFERENCES public.payment_authorizations(id),\
+  payment_captured BOOLEAN DEFAULT FALSE,\
+  \
+  -- Status\
+  status TEXT DEFAULT 'waiting', -- 'waiting', 'in_transit', 'delivered', 'exception', 'returned'\
+  shipped_at TIMESTAMPTZ,\
+  delivered_at TIMESTAMPTZ,\
+  \
+  created_at TIMESTAMPTZ DEFAULT NOW(),\
+  updated_at TIMESTAMPTZ DEFAULT NOW()\
+);\
+\
+-- ============================================\
+-- RATE ADJUSTMENTS\
+-- ============================================\
+CREATE TABLE public.rate_adjustments (\
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\
+  shipment_id UUID NOT NULL REFERENCES public.shipments(id),\
+  original_amount DECIMAL(10,2) NOT NULL,\
+  adjusted_amount DECIMAL(10,2) NOT NULL,\
+  difference DECIMAL(10,2) NOT NULL,\
+  reason TEXT,\
+  stripe_charge_id TEXT,\
+  charge_status TEXT, -- 'succeeded', 'failed', 'pending'\
+  created_at TIMESTAMPTZ DEFAULT NOW()\
+);\
+\
+-- ============================================\
+-- SENDER PROFILES (lightweight, no auth)\
+-- ============================================\
+CREATE TABLE public.sender_profiles (\
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\
+  email TEXT NOT NULL,\
+  full_name TEXT,\
+  default_address_id UUID,\
+  notification_preferences JSONB DEFAULT '\{"tracking": true\}'::jsonb,\
+  created_at TIMESTAMPTZ DEFAULT NOW()\
+);\
+\
+-- ============================================\
+-- FAQ SEARCHES (analytics)\
+-- ============================================\
+CREATE TABLE public.faq_searches (\
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\
+  query TEXT NOT NULL,\
+  results_count INTEGER NOT NULL,\
+  clicked_article_index INTEGER, -- Which FAQ item they clicked (null if none)\
+  session_id TEXT, -- Anonymous session ID for grouping\
+  created_at TIMESTAMPTZ DEFAULT NOW()\
+);\
+\
+-- ============================================\
+-- CONTACT SUBMISSIONS\
+-- ============================================\
+CREATE TABLE public.contact_submissions (\
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\
+  email TEXT NOT NULL,\
+  subject TEXT,\
+  message TEXT NOT NULL,\
+  status TEXT DEFAULT 'new', -- 'new', 'in_progress', 'resolved'\
+  created_at TIMESTAMPTZ DEFAULT NOW()\
+);\
+\
+-- ============================================\
+-- AUDIT LOG\
+-- ============================================\
+CREATE TABLE public.audit_log (\
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\
+  user_id UUID REFERENCES public.profiles(id),\
+  action TEXT NOT NULL, -- e.g., 'link.created', 'payment.captured'\
+  entity_type TEXT, -- 'link', 'shipment', 'payment_method'\
+  entity_id UUID,\
+  metadata JSONB,\
+  ip_address INET,\
+  created_at TIMESTAMPTZ DEFAULT NOW()\
+);\
+```\
+\
+### 13.2 Indexes\
+\
+```sql\
+CREATE INDEX idx_sendmo_links_short_id ON public.sendmo_links(short_id);\
+CREATE INDEX idx_sendmo_links_user_id ON public.sendmo_links(user_id);\
+CREATE INDEX idx_sendmo_links_status ON public.sendmo_links(status);\
+CREATE INDEX idx_shipments_link_id ON public.shipments(link_id);\
+CREATE INDEX idx_shipments_status ON public.shipments(status);\
+CREATE INDEX idx_shipments_sender_email ON public.shipments(sender_email);\
+CREATE INDEX idx_addresses_user_id ON public.addresses(user_id);\
+CREATE INDEX idx_payment_methods_user_id ON public.payment_methods(user_id);\
+CREATE INDEX idx_payment_authorizations_link_id ON public.payment_authorizations(link_id);\
+CREATE INDEX idx_faq_searches_created_at ON public.faq_searches(created_at);\
+CREATE INDEX idx_audit_log_user_id ON public.audit_log(user_id);\
+CREATE INDEX idx_audit_log_created_at ON public.audit_log(created_at);\
+```\
+\
+### 13.3 RLS Policies\
+\
+```sql\
+-- Profiles: Users can only read/update their own profile\
+ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;\
+CREATE POLICY "Users can view own profile" ON public.profiles FOR SELECT USING (auth.uid() = id);\
+CREATE POLICY "Users can update own profile" ON public.profiles FOR UPDATE USING (auth.uid() = id);\
+CREATE POLICY "Users can insert own profile" ON public.profiles FOR INSERT WITH CHECK (auth.uid() = id);\
+\
+-- Addresses: Users can only CRUD their own addresses\
+ALTER TABLE public.addresses ENABLE ROW LEVEL SECURITY;\
+CREATE POLICY "Users manage own addresses" ON public.addresses FOR ALL USING (auth.uid() = user_id);\
+\
+-- Links: Users can CRUD their own links. Public can read active links by short_id.\
+ALTER TABLE public.sendmo_links ENABLE ROW LEVEL SECURITY;\
+CREATE POLICY "Users manage own links" ON public.sendmo_links FOR ALL USING (auth.uid() = user_id);\
+CREATE POLICY "Public can read active links" ON public.sendmo_links FOR SELECT USING (status = 'active');\
+\
+-- Payment Methods: Users can only manage their own\
+ALTER TABLE public.payment_methods ENABLE ROW LEVEL SECURITY;\
+CREATE POLICY "Users manage own payment methods" ON public.payment_methods FOR ALL USING (auth.uid() = user_id);\
+\
+-- Shipments: Users can read shipments on their links. Senders can insert.\
+ALTER TABLE public.shipments ENABLE ROW LEVEL SECURITY;\
+CREATE POLICY "Recipients view own shipments" ON public.shipments FOR SELECT \
+  USING (link_id IN (SELECT id FROM public.sendmo_links WHERE user_id = auth.uid()));\
+CREATE POLICY "Anyone can create shipments on active links" ON public.shipments FOR INSERT\
+  WITH CHECK (link_id IN (SELECT id FROM public.sendmo_links WHERE status = 'active'));\
+\
+-- FAQ Searches: Anyone can insert (anonymous), only admins can read\
+ALTER TABLE public.faq_searches ENABLE ROW LEVEL SECURITY;\
+CREATE POLICY "Anyone can log searches" ON public.faq_searches FOR INSERT WITH CHECK (true);\
+\
+-- Contact Submissions: Anyone can insert\
+ALTER TABLE public.contact_submissions ENABLE ROW LEVEL SECURITY;\
+CREATE POLICY "Anyone can submit" ON public.contact_submissions FOR INSERT WITH CHECK (true);\
+\
+-- Audit Log: Users can read their own logs\
+ALTER TABLE public.audit_log ENABLE ROW LEVEL SECURITY;\
+CREATE POLICY "Users view own audit log" ON public.audit_log FOR SELECT USING (auth.uid() = user_id);\
+```\
+\
+---\
+\
+## 14. API Endpoints\
+\
+### 14.1 Authentication\
+\
+| Method | Endpoint | Description | Auth Required |\
+|--------|----------|-------------|---------------|\
+| POST | `/api/auth/magic-link` | Send magic link / OTP to email | No |\
+| POST | `/api/auth/verify` | Verify OTP code | No |\
+| POST | `/api/auth/google` | Google OAuth | No |\
+| POST | `/api/auth/set-password` | Optional password setup | Yes |\
+| GET | `/api/auth/me` | Get current user | Yes |\
+\
+### 14.2 Onboarding (Recipient Setup)\
+\
+| Method | Endpoint | Description | Auth Required |\
+|--------|----------|-------------|---------------|\
+| POST | `/api/onboarding/address` | Validate and save address | No* |\
+| POST | `/api/onboarding/email` | Send verification code | No |\
+| POST | `/api/onboarding/verify-email` | Verify email code | No |\
+| POST | `/api/onboarding/preferences` | Save shipping preferences | No* |\
+| POST | `/api/onboarding/payment` | Add payment + activate link | No* |\
+\
+*\\* These endpoints use a temporary session token issued during onboarding.*\
+\
+### 14.3 Links (Recipient)\
+\
+| Method | Endpoint | Description | Auth Required |\
+|--------|----------|-------------|---------------|\
+| GET | `/api/links` | List user's links | Yes |\
+| GET | `/api/links/:id` | Get link details | Yes |\
+| PUT | `/api/links/:id` | Update link settings | Yes |\
+| DELETE | `/api/links/:id` | Deactivate link | Yes |\
+| POST | `/api/links/:id/pause` | Pause link | Yes |\
+| POST | `/api/links/:id/resume` | Resume link | Yes |\
+\
+### 14.4 Public Link Access (Sender)\
+\
+| Method | Endpoint | Description | Auth Required |\
+|--------|----------|-------------|---------------|\
+| GET | `/api/s/:shortId` | Get link info (public) | No |\
+| POST | `/api/s/:shortId/shipment` | Start shipment (save package details) | No |\
+| GET | `/api/s/:shortId/rates` | Get available rates for shipment | No |\
+| POST | `/api/s/:shortId/buy` | Purchase label (captures payment) | No |\
+\
+### 14.5 Shipments (Recipient Dashboard)\
+\
+| Method | Endpoint | Description | Auth Required |\
+|--------|----------|-------------|---------------|\
+| GET | `/api/shipments` | List user's shipments | Yes |\
+| GET | `/api/shipments/:id` | Get shipment details | Yes |\
+| GET | `/api/shipments/:id/track` | Get tracking info | Yes |\
+\
+### 14.6 Payment Methods\
+\
+| Method | Endpoint | Description | Auth Required |\
+|--------|----------|-------------|---------------|\
+| GET | `/api/payment-methods` | List payment methods | Yes |\
+| POST | `/api/payment-methods` | Add payment method | Yes |\
+| DELETE | `/api/payment-methods/:id` | Remove payment method | Yes |\
+| PUT | `/api/payment-methods/:id/default` | Set as default | Yes |\
+\
+### 14.7 Addresses\
+\
+| Method | Endpoint | Description | Auth Required |\
+|--------|----------|-------------|---------------|\
+| GET | `/api/addresses` | List user's addresses | Yes |\
+| POST | `/api/addresses` | Add address | Yes |\
+| POST | `/api/addresses/verify` | Verify address via EasyPost | No |\
+| POST | `/api/addresses/parse` | Parse freeform text to structured | No |\
+\
+### 14.8 FAQ\
+\
+| Method | Endpoint | Description | Auth Required |\
+|--------|----------|-------------|---------------|\
+| GET | `/api/faq` | Get all FAQ items | No |\
+| GET | `/api/faq/search` | Search FAQ (logged) | No |\
+| POST | `/api/faq/contact` | Contact form submission | No |\
+\
+### 14.9 Webhooks\
+\
+| Method | Endpoint | Description |\
+|--------|----------|-------------|\
+| POST | `/api/webhooks/easypost` | Tracking updates, rate adjustments |\
+| POST | `/api/webhooks/stripe` | Payment events |\
+\
+---\
+\
+## 15. Third-Party Integrations\
+\
+### 15.1 EasyPost\
+\
+**Purpose**: Address verification, shipping rates, label generation, tracking\
+\
+**Key Operations:**\
+\
+#### Address Verification\
+```typescript\
+// Edge function: /api/addresses/verify\
+const easypost = new EasyPost(process.env.EASYPOST_API_KEY);\
+\
+const address = await easypost.Address.create(\{\
+  street1: parsedAddress.street1,\
+  street2: parsedAddress.street2,\
+  city: parsedAddress.city,\
+  state: parsedAddress.state,\
+  zip: parsedAddress.zip,\
+  country: 'US',\
+  verify: ['delivery'],\
+\});\
+\
+// Return verified address with corrections\
+return \{\
+  verified: address.verifications.delivery.success,\
+  corrected: \{\
+    street1: address.street1,\
+    city: address.city,\
+    state: address.state,\
+    zip: address.zip,\
+  \},\
+  easypost_id: address.id,\
+\};\
+```\
+\
+#### Rate Fetching\
+```typescript\
+// Edge function: /api/s/:shortId/rates\
+const shipment = await easypost.Shipment.create(\{\
+  to_address: recipientAddress,\
+  from_address: senderAddress,\
+  parcel: \{\
+    length: packageDetails.length,\
+    width: packageDetails.width,\
+    height: packageDetails.height,\
+    weight: packageDetails.weightOz, // Total weight in ounces\
+  \},\
+\});\
+\
+// Filter rates by recipient preferences\
+const filteredRates = shipment.rates.filter(rate => \{\
+  if (link.carrier_preference !== 'any' && rate.carrier !== link.carrier_preference.toUpperCase()) return false;\
+  if (link.speed_preference !== 'any') \{\
+    // Map speed to delivery days and filter\
+  \}\
+  return true;\
+\});\
+\
+// Apply markup\
+const displayRates = filteredRates.map(rate => (\{\
+  ...rate,\
+  displayPrice: (parseFloat(rate.rate) * 1.15).toFixed(2), // 15% markup\
+\}));\
+```\
+\
+#### Label Generation\
+```typescript\
+// Edge function: /api/s/:shortId/buy\
+const boughtShipment = await easypost.Shipment.buy(\
+  shipmentId,\
+  selectedRateId\
+);\
+\
+return \{\
+  labelUrl: boughtShipment.postage_label.label_url,\
+  trackingNumber: boughtShipment.tracking_code,\
+  trackingUrl: boughtShipment.tracker.public_url,\
+\};\
+```\
+\
+#### Tracking Webhook\
+```typescript\
+// Edge function: /api/webhooks/easypost\
+// EasyPost sends tracking events to this endpoint\
+// Update shipment status in database\
+// Send email notifications\
+```\
+\
+### 15.2 Stripe\
+\
+**Purpose**: Payment authorization, capture, payment method management\
+\
+**Key Operations:**\
+\
+#### Setup Payment Method\
+```typescript\
+// 1. Create SetupIntent (server-side)\
+const setupIntent = await stripe.setupIntents.create(\{\
+  customer: customerId,\
+  payment_method_types: ['card'],\
+\});\
+\
+// 2. Confirm on client with Stripe Elements\
+// 3. Attach payment method to customer\
+```\
+\
+#### Authorize Payment (at link activation)\
+```typescript\
+const paymentIntent = await stripe.paymentIntents.create(\{\
+  amount: Math.round(priceCap * 100), // cents\
+  currency: 'usd',\
+  customer: customerId,\
+  payment_method: paymentMethodId,\
+  capture_method: 'manual', // Authorize only, don't capture\
+  confirm: true,\
+\});\
+```\
+\
+#### Capture Payment (at label generation)\
+```typescript\
+const captured = await stripe.paymentIntents.capture(\
+  paymentIntentId,\
+  \{ amount_to_capture: Math.round(displayPrice * 100) \}\
+);\
+```\
+\
+#### Handle Adjustments\
+```typescript\
+// When carrier adjusts rate post-shipment\
+const charge = await stripe.charges.create(\{\
+  amount: Math.round(adjustmentAmount * 100),\
+  currency: 'usd',\
+  customer: customerId,\
+  source: paymentMethodId,\
+  description: `Rate adjustment for shipment $\{shipmentId\}`,\
+\});\
+```\
+\
+### 15.3 SendGrid\
+\
+**Purpose**: Email verification, tracking notifications, system alerts\
+\
+**Email Templates:**\
+\
+| Template | Trigger | Content |\
+|----------|---------|---------|\
+| Verification Code | Onboarding Step 3a | 5-character OTP code |\
+| Link Activated | After payment + activation | Confirmation + link URL |\
+| Label Generated | Sender prints label | Tracking number + carrier |\
+| Tracking Update | EasyPost webhook | Status change (in transit, delivered, etc.) |\
+| Payment Captured | Label purchase | Amount charged + shipment details |\
+| Rate Adjustment | Carrier billing change | Adjustment amount + reason |\
+| Payment Failed | Capture/charge fails | Instructions to update payment |\
+\
+### 15.4 Plaid (Post-MVP)\
+\
+**Purpose**: ACH bank linking for SendMo Balance\
+\
+```typescript\
+// 1. Create Link Token\
+const linkToken = await plaidClient.linkTokenCreate(\{\
+  user: \{ client_user_id: userId \},\
+  client_name: 'SendMo',\
+  products: ['auth'],\
+  country_codes: ['US'],\
+  language: 'en',\
+\});\
+\
+// 2. Exchange public token for access token (after user links bank)\
+const exchangeResponse = await plaidClient.itemPublicTokenExchange(\{\
+  public_token: publicToken,\
+\});\
+\
+// 3. Get account info for ACH transfers\
+```\
+\
+---\
+\
+## 16. Payment System\
+\
+### 16.1 Payment Flow\
+\
+```\
+Recipient adds payment method (Screen 3b)\
+    \'e2\'94\'82\
+    \'e2\'96\'bc\
+Card authorized for hold amount (highRange \'c3\'97 1.10)\
+    \'e2\'94\'82\
+    \'e2\'96\'bc\
+Link becomes "active"\
+    \'e2\'94\'82\
+    \'e2\'96\'bc\
+Sender generates label \'e2\'86\'92 System captures actual shipping cost\
+    \'e2\'94\'82\
+    \'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80 Capture succeeds \'e2\'86\'92 Label generated \'e2\'9c\'93\
+    \'e2\'94\'82\
+    \'e2\'94\'94\'e2\'94\'80\'e2\'94\'80 Capture fails \'e2\'86\'92 Error state\
+                          \'e2\'94\'82\
+                          \'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80 Notify recipient via email\
+                          \'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80 Shipment held\
+                          \'e2\'94\'94\'e2\'94\'80\'e2\'94\'80 "Update your payment method" \'e2\'86\'92 re-auth \'e2\'86\'92 retry\
+```\
+\
+### 16.2 Pricing Formula\
+\
+```\
+Standard Rate (no SendMo Balance):\
+  Display Price = EasyPost Rate \'c3\'97 1.15\
+  SendMo Fee = Display Price - EasyPost Rate\
+\
+Discounted Rate (with SendMo Balance - Post-MVP):\
+  Display Price = EasyPost Rate \'c3\'97 1.10\
+  SendMo Fee = Display Price - EasyPost Rate\
+```\
+\
+**CRITICAL**: Never show the SendMo fee separately. Show a single "Shipping" price.\
+\
+### 16.3 Hold Amount Calculation\
+\
+```\
+Hold Amount = highRange \'c3\'97 1.10 (10% buffer)\
+```\
+\
+The hold is placed on the recipient's card when a label is being generated. Only the actual shipping cost is captured.\
+\
+### 16.4 Price Cap\
+\
+- Default: $100\
+- Recipient can customize during setup\
+- If a shipment rate exceeds the cap, the sender sees an error: "This package exceeds the recipient's shipping budget."\
+- Cap applies to the display price (includes SendMo margin)\
+\
+### 16.5 SendMo Balance (Post-MVP)\
+\
+| Feature | Detail |\
+|---------|--------|\
+| Funding | ACH via Plaid (minimum $25, increments of $25) |\
+| Discount | 10% margin vs 15% standard |\
+| Auto-topup | When balance falls below threshold |\
+| Priority | Balance first \'e2\'86\'92 Card for remainder |\
+| Display | Strikethrough original price, show discounted price |\
+\
+### 16.6 Mid-Shipment Rate Adjustments\
+\
+```\
+Label generated with declared: 2 lbs, 12\'c3\'978\'c3\'974\
+    \'e2\'86\'92 Carrier weighs/measures: 3 lbs, 14\'c3\'9710\'c3\'975\
+    \'e2\'86\'92 Carrier adjustment: +$4.50\
+    \'e2\'86\'92 EasyPost bills SendMo\
+    \'e2\'86\'92 SendMo charges recipient's card for adjustment\
+        \'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80 Succeeds \'e2\'86\'92 Log, notify recipient\
+        \'e2\'94\'94\'e2\'94\'80\'e2\'94\'80 Fails \'e2\'86\'92 Flag for manual review\
+```\
+\
+---\
+\
+## 17. Shipping & Label Generation\
+\
+### 17.1 Carrier Support (MVP)\
+\
+| Carrier | Services |\
+|---------|----------|\
+| **USPS** | Ground Advantage, Priority Mail, Priority Mail Express |\
+| **UPS** | Ground, 3 Day Select, 2nd Day Air, Next Day Air |\
+| **FedEx** | Ground, Home Delivery, Express Saver, 2Day, Overnight |\
+\
+### 17.2 Geographic Scope\
+\
+- **MVP**: US domestic only\
+- **Future**: International shipping\
+\
+### 17.3 Label Generation Flow\
+\
+```\
+1. Sender selects rate \'e2\'86\'92 POST /api/s/:shortId/buy\
+2. Edge function:\
+   a. Verify link is still active\
+   b. Verify payment authorization is valid\
+   c. Capture payment via Stripe (actual amount)\
+   d. If capture succeeds:\
+      - Buy label via EasyPost\
+      - Store label PDF in Supabase Storage\
+      - Create shipment record\
+      - Send confirmation emails (sender + recipient)\
+      - Return label URL + tracking number\
+   e. If capture fails:\
+      - Return error\
+      - Notify recipient to update payment\
+```\
+\
+### 17.4 Label PDF Storage\
+\
+```sql\
+-- Supabase Storage bucket\
+INSERT INTO storage.buckets (id, name, public) VALUES ('labels', 'labels', false);\
+\
+-- RLS: Only the link owner can read label PDFs\
+CREATE POLICY "Recipients read own labels" ON storage.objects\
+  FOR SELECT USING (\
+    bucket_id = 'labels'\
+    AND (storage.foldername(name))[1] IN (\
+      SELECT id::text FROM public.sendmo_links WHERE user_id = auth.uid()\
+    )\
+  );\
+```\
+\
+### 17.5 Tracking\
+\
+- EasyPost provides tracking via webhooks\
+- Webhook endpoint: `POST /api/webhooks/easypost`\
+- Updates `shipments.status` in real-time\
+- Sends email notification on status change\
+- Dashboard uses Supabase Realtime for live updates\
+\
+### 17.6 Tracking Status Mapping\
+\
+| EasyPost Status | SendMo Status | Dashboard Label |\
+|-----------------|---------------|-----------------|\
+| `pre_transit` | `waiting` | Waiting for Dropoff |\
+| `in_transit` | `in_transit` | In Transit |\
+| `out_for_delivery` | `in_transit` | In Transit |\
+| `delivered` | `delivered` | Delivered |\
+| `return_to_sender` | `exception` | Exception |\
+| `failure` | `exception` | Exception |\
+\
+---\
+\
+## 18. Email Notifications\
+\
+### 18.1 Email Templates\
+\
+#### Verification Code (OTP)\
+**Subject**: "Your SendMo verification code"\
+**Body**:\
+```\
+Hi,\
+\
+Your verification code is: XXXXX\
+\
+Enter this code to verify your email and continue setting up your SendMo link.\
+\
+This code expires in 10 minutes.\
+\
+\'e2\'80\'94 SendMo\
+```\
+\
+#### Link Activated\
+**Subject**: "Your SendMo link is ready!"\
+**Body**:\
+```\
+Hi [Name],\
+\
+Your shipping label link is active and ready to share:\
+https://sendmo.co/s/[shortId]\
+\
+Share this link with anyone who needs to send you a package.\
+\
+Shipping preferences:\
+- Speed: [speed]\
+- Carrier: [carrier]\
+- Estimated range: $X \'e2\'80\'93 $Y\
+\
+\'e2\'80\'94 SendMo\
+```\
+\
+#### Label Generated (to Recipient)\
+**Subject**: "[Sender Name] is shipping you a package"\
+**Body**:\
+```\
+Hi [Recipient Name],\
+\
+[Sender Name] has generated a shipping label for you.\
+\
+Carrier: [carrier] [service]\
+Tracking: [tracking number]\
+Estimated delivery: [date range]\
+\
+Track your package: [tracking URL]\
+\
+Amount charged: $X.XX\
+\
+\'e2\'80\'94 SendMo\
+```\
+\
+#### Label Generated (to Sender)\
+**Subject**: "Your shipping label is ready"\
+**Body**:\
+```\
+Hi,\
+\
+Your shipping label for [Recipient Name] is ready.\
+\
+Tracking: [tracking number]\
+Carrier: [carrier] [service]\
+\
+Download your label: [label PDF URL]\
+\
+Drop-off instructions:\
+- Drop off at any [carrier] location\
+- Or schedule a pickup at [carrier website]\
+\
+\'e2\'80\'94 SendMo\
+```\
+\
+#### Tracking Update\
+**Subject**: "Package update: [status]"\
+**Body**: Status-specific content (in transit, delivered, exception)\
+\
+#### Payment Failed\
+**Subject**: "Action needed: Update your payment method"\
+**Body**: Instructions to update payment, link to dashboard\
+\
+### 18.2 Admin Notifications (MVP)\
+\
+For every transaction, send a summary email to the admin inbox with:\
+- Shipment ID\
+- Sender and recipient info\
+- Package details\
+- Carrier and service\
+- EasyPost rate vs display price vs SendMo fee\
+- Payment status\
+\
+---\
+\
+## 19. Security Requirements\
+\
+### 19.1 Link Security\
+\
+| Measure | Implementation |\
+|---------|----------------|\
+| **Random IDs** | Cryptographically secure, minimum 10 characters, mixed case + numbers |\
+| **Rate limiting** | Max 10 link lookups per IP per minute |\
+| **CAPTCHA** | After 5 failed lookups from same IP |\
+| **Enumeration prevention** | Generic 404 for invalid links (don't reveal if link exists but is inactive) |\
+\
+### 19.2 Payment Security\
+\
+| Measure | Implementation |\
+|---------|----------------|\
+| **Authorization** | Payment authorized at link activation |\
+| **Capture** | Exact amount captured at label generation |\
+| **Re-authorization** | When payment method changes |\
+| **PCI compliance** | Stripe Elements handles all card data (never touches our servers) |\
+| **Price cap** | Hard limit on maximum charge |\
+\
+### 19.3 Spam Prevention\
+\
+| Measure | Implementation |\
+|---------|----------------|\
+| **Link pause/deactivate** | Recipient can stop new shipments |\
+| **Sender blocking** | Block specific sender addresses (future) |\
+| **Shipment limits** | Configurable daily/weekly limits (future) |\
+| **Sender email required** | Creates accountability |\
+\
+### 19.4 Privacy\
+\
+| Measure | Implementation |\
+|---------|----------------|\
+| **Address privacy** | Recipient address only shown on printed label, never in UI |\
+| **Sender privacy** | Contact info not shared with recipient by default |\
+| **Data encryption** | All sensitive data encrypted at rest (Supabase default) |\
+| **HTTPS** | Enforced on all routes |\
+\
+### 19.5 Input Validation\
+\
+All user inputs must be validated on both client and server:\
+- Email: RFC 5322 format\
+- Address: EasyPost verification\
+- Package dimensions: Positive numbers, reasonable ranges (0.1\'e2\'80\'93120 inches)\
+- Weight: Positive numbers, reasonable range (0.1\'e2\'80\'93150 lbs)\
+- Price cap: Positive number, min $10, max $500\
+\
+---\
+\
+## 20. Logging, Analytics & Event Tracking\
+\
+### 20.1 Data Categories\
+\
+| Category | Examples | Storage | Retention |\
+|----------|----------|---------|-----------|\
+| **Click/Event Data** | Page views, button clicks, funnel steps | Analytics service | 1 year |\
+| **Transactional Data** | Shipments, payments, labels | PostgreSQL | Indefinite |\
+| **Audit Logs** | Auth events, setting changes | PostgreSQL | 2 years |\
+| **Error Logs** | API errors, payment failures | Structured logs | 90 days |\
+| **FAQ Searches** | Search queries, clicked articles | PostgreSQL | 1 year |\
+\
+### 20.2 Recommended Stack\
+\
+| Component | Tool | Rationale |\
+|-----------|------|-----------|\
+| **Event Tracking** | PostHog or Mixpanel | Funnels, feature flags |\
+| **Error Tracking** | Sentry | Exception tracking |\
+| **Transactional DB** | PostgreSQL (Supabase) | Already in use |\
+| **Dashboard** | Metabase | SQL-based BI |\
+\
+### 20.3 MVP Approach\
+\
+**Send admin email for every transaction** with full details. This is the simplest logging for launch.\
+\
+### 20.4 Events to Track\
+\
+#### User Events\
+- `user.signup` \'e2\'80\'94 Magic link account created\
+- `user.login` \'e2\'80\'94 User logged in\
+- `link.created` \'e2\'80\'94 New SendMo link created\
+- `link.copied` \'e2\'80\'94 Link copied to clipboard\
+- `link.shared` \'e2\'80\'94 Link shared (future)\
+- `link.settings_updated` \'e2\'80\'94 Link preferences changed\
+- `payment_method.added` \'e2\'80\'94 Payment method added\
+\
+#### Onboarding Events (Funnel)\
+- `onboarding.started` \'e2\'80\'94 User lands on /get-started\
+- `onboarding.address_entered` \'e2\'80\'94 Address typed\
+- `onboarding.address_verified` \'e2\'80\'94 EasyPost verified\
+- `onboarding.email_entered` \'e2\'80\'94 Email entered\
+- `onboarding.email_sent` \'e2\'80\'94 Verification code sent\
+- `onboarding.email_verified` \'e2\'80\'94 OTP confirmed\
+- `onboarding.preferences_set` \'e2\'80\'94 Shipping config saved\
+- `onboarding.payment_added` \'e2\'80\'94 Payment method added\
+- `onboarding.completed` \'e2\'80\'94 Link activated\
+\
+#### Sender Events (Funnel)\
+- `sender.link_viewed` \'e2\'80\'94 Sender opens link\
+- `sender.link_viewed_pending` \'e2\'80\'94 Link not yet activated\
+- `sender.started` \'e2\'80\'94 Clicked "Get Started"\
+- `sender.address_entered` \'e2\'80\'94 Origin address entered\
+- `sender.package_entered` \'e2\'80\'94 Package details filled\
+- `sender.rate_selected` \'e2\'80\'94 Shipping method chosen\
+- `sender.confirmed` \'e2\'80\'94 Clicked confirm\
+- `sender.label_generated` \'e2\'80\'94 Label successfully created\
+- `sender.saved_info` \'e2\'80\'94 Opted to save info\
+- `sender.remained_guest` \'e2\'80\'94 Did not save info\
+\
+#### FAQ Events\
+- `faq.searched` \'e2\'80\'94 Search query, results count\
+- `faq.article_viewed` \'e2\'80\'94 FAQ item expanded\
+- `faq.contact_submitted` \'e2\'80\'94 Contact form sent\
+\
+#### System Events\
+- `payment.authorized` \'e2\'80\'94 Card authorization succeeded\
+- `payment.captured` \'e2\'80\'94 Payment captured\
+- `payment.failed` \'e2\'80\'94 Payment failed\
+- `payment.adjustment` \'e2\'80\'94 Carrier rate adjustment\
+- `easypost.rate_fetched` \'e2\'80\'94 Rates returned\
+- `easypost.label_created` \'e2\'80\'94 Label generated\
+- `easypost.tracking_updated` \'e2\'80\'94 Tracking status change\
+\
+---\
+\
+## 21. Error Handling & Edge Cases\
+\
+### 21.1 Address Verification Failures\
+\
+| Scenario | Handling |\
+|----------|---------|\
+| Address not found | Show error: "We couldn't verify this address. Please check and try again." |\
+| Address partially verified | Show suggested corrections, allow user to accept or re-enter |\
+| EasyPost API down | Allow user to proceed with unverified address, flag for manual review |\
+\
+### 21.2 Payment Failures\
+\
+| Scenario | Handling |\
+|----------|---------|\
+| Card declined at activation | Show error, ask to try another card |\
+| Capture fails at label generation | Hold shipment, email recipient to update payment, notify sender |\
+| Insufficient funds for adjustment | Flag for manual review, email recipient |\
+| Stripe API down | Queue for retry, show "Processing payment..." with polling |\
+\
+### 21.3 Shipping Failures\
+\
+| Scenario | Handling |\
+|----------|---------|\
+| No rates available | Show message: "No shipping options available for this package. Check dimensions/weight." |\
+| All rates exceed price cap | Show message: "This package exceeds the recipient's shipping budget of $X." |\
+| EasyPost label generation fails | Retry up to 3 times, then show error and refund captured payment |\
+| Carrier tracking not updating | Show last known status with "Last updated: [time]" |\
+\
+### 21.4 Link State Edge Cases\
+\
+| Scenario | Handling |\
+|----------|---------|\
+| Link deactivated while sender is mid-flow | Show error at rate selection or label purchase |\
+| Payment method removed while link is active | Pause link, notify recipient to add new payment method |\
+| Multiple senders using link simultaneously | Each gets independent shipment \'e2\'80\'94 link is reusable |\
+\
+### 21.5 Network / Timeout Errors\
+\
+- All API calls should have timeouts (30s for external APIs, 10s for internal)\
+- Show user-friendly error messages with retry buttons\
+- Queue failed webhook processing for retry (exponential backoff)\
+\
+---\
+\
+## 22. Performance & Scalability\
+\
+### 22.1 Frontend Performance\
+\
+| Metric | Target |\
+|--------|--------|\
+| First Contentful Paint | < 1.5s |\
+| Largest Contentful Paint | < 2.5s |\
+| Time to Interactive | < 3s |\
+| Bundle size (gzipped) | < 200KB |\
+\
+**Strategies:**\
+- Code splitting by route (lazy loading)\
+- Image optimization (WebP, lazy loading)\
+- Prefetch next step data in multi-step flows\
+- Debounce address verification API calls (300ms)\
+\
+### 22.2 Backend Performance\
+\
+| Metric | Target |\
+|--------|--------|\
+| API response time (p95) | < 500ms |\
+| Label generation (p95) | < 5s |\
+| Rate fetching (p95) | < 3s |\
+\
+**Strategies:**\
+- Cache EasyPost rates for 5 minutes (same origin/destination/package)\
+- Connection pooling for PostgreSQL\
+- Edge function cold start optimization\
+\
+### 22.3 Scalability Considerations\
+\
+- Supabase handles horizontal scaling for auth and database\
+- Edge functions are stateless and auto-scale\
+- EasyPost/Stripe have their own rate limits \'e2\'80\'94 implement queuing if needed\
+- Label PDFs stored in Supabase Storage (S3-compatible, auto-scales)\
+\
+---\
+\
+## 23. Mobile Responsive Design & Touch Interactions\
+\
+### 23.1 Breakpoints & Layout Strategy\
+\
+SendMo uses a **mobile-first** approach. Tailwind's default breakpoints apply:\
+\
+| Breakpoint | Min Width | Usage |\
+|------------|-----------|-------|\
+| `(default)` | 0px | Mobile phones (portrait) |\
+| `sm` | 640px | Large phones (landscape), small tablets |\
+| `md` | 768px | Tablets (portrait) |\
+| `lg` | 1024px | Tablets (landscape), small laptops |\
+| `xl` | 1280px | Desktops |\
+\
+**Key layout shifts:**\
+\
+| Element | Mobile | `sm` (640px+) | `md` (768px+) |\
+|---------|--------|---------------|---------------|\
+| Landing hero | Stacked, `py-16` | \'e2\'80\'94 | Side padding increases, `py-24` |\
+| How it works grid | Single column | \'e2\'80\'94 | 3-column `md:grid-cols-3` |\
+| Value props grid | Single column | \'e2\'80\'94 | 3-column `md:grid-cols-3` |\
+| Testimonials grid | Single column | \'e2\'80\'94 | 3-column `md:grid-cols-3` |\
+| CTA buttons | Full width, stacked | Inline `sm:flex-row sm:w-auto` | \'e2\'80\'94 |\
+| Footer | Stacked center | Inline row `sm:flex-row` | \'e2\'80\'94 |\
+| Progress step labels | Hidden | Shown `sm:inline` | \'e2\'80\'94 |\
+| Flow containers | `max-w-2xl`, full bleed padding | \'e2\'80\'94 | Centered with side margins |\
+| Dashboard table | Horizontal scroll | \'e2\'80\'94 | Full table visible |\
+\
+### 23.2 Mobile-Specific Component Behavior\
+\
+#### Navigation Header\
+- **Mobile**: Logo + minimal right-side buttons (no labels on icon-only buttons)\
+- **Desktop**: Full text labels on all buttons\
+- Sticky (`sticky top-0 z-50`) on all sizes\
+\
+#### Progress Bars (Recipient & Sender Flows)\
+- **Mobile**: Icons only, step labels hidden (`hidden sm:inline`)\
+- **Desktop**: Icons + text labels\
+- Circle size: `w-7 h-7` (sender) / `w-8 h-8` (recipient) \'e2\'80\'94 consistent across breakpoints\
+- Connecting lines flex to fill available space\
+\
+#### Shipping Method Cards (Sender Step 2)\
+- Full width on all breakpoints (single column)\
+- Touch target: Entire card is clickable (`w-full`, `p-4`)\
+- Minimum 44px touch height (achieved via `p-4` padding)\
+\
+#### Selection Cards (Package Size, Speed, Carrier)\
+- **Mobile & Desktop**: 2-column grid (`grid-cols-2`)\
+- Minimum touch target: 44\'c3\'9744px (achieved via `p-3` padding)\
+- Clear active state with `border-primary bg-primary/5`\
+\
+#### Packaging Type Selection (Sender Step 1)\
+- Full width single column on all breakpoints\
+- Radio-dot indicator + icon + label + description\
+- Touch target: Full card row (44px+ height)\
+\
+#### Package Dimensions Grid\
+- **Box/Irregular**: 3-column grid (`grid-cols-3`) on all sizes\
+- **Envelope**: 2-column grid (`grid-cols-2`, no height field)\
+- Input fields use `type="number"` \'e2\'80\'94 mobile browsers show numeric keyboard\
+\
+#### OTP Input (Email Verification)\
+- 5-slot OTP using `InputOTP` component\
+- Centered layout, adequate spacing between slots\
+- Mobile: Auto-focuses, numeric keyboard triggered by `inputMode="numeric"`\
+- Each slot: minimum 40px wide for comfortable touch\
+\
+#### Dashboard \'e2\'80\'94 My Label Link\
+- **Mobile**: Link URL truncates (`truncate` class), buttons may stack\
+- **Desktop**: Full URL visible, buttons inline\
+- Copy button always accessible\
+\
+#### Dashboard \'e2\'80\'94 Shipments Table\
+- **Mobile**: Horizontal scroll enabled via `overflow-x-auto` on table container\
+- Column priority (always visible): ID, To, Status\
+- Secondary columns (scroll to see): Carrier, Shipped, ETA, Tracking\
+- Consider adding a card-based mobile view in future iterations\
+\
+#### Wallet Dialog\
+- Uses `DialogContent` with `sm:max-w-md`\
+- **Mobile**: Full-width dialog, slides up from bottom (via Radix Dialog)\
+- **Desktop**: Centered modal, max-width 448px\
+\
+### 23.3 Touch-Specific Interactions\
+\
+#### Tap Targets\
+All interactive elements meet the **44\'c3\'9744px minimum** touch target guideline:\
+\
+| Element | Implementation |\
+|---------|---------------|\
+| Buttons | `size="lg"` = 44px height; `size="sm"` = 36px (+ padding meets 44px) |\
+| Selection cards | `p-3` or `p-4` padding ensures 44px+ height |\
+| Checkboxes | Checkbox + label are both tappable (label wraps checkbox with `htmlFor`) |\
+| Radio cards | Entire card area is `<button>`, not just the radio dot |\
+| Accordion triggers | Full-width clickable row |\
+| Progress step circles | `w-7 h-7` or `w-8 h-8` circles (small but wrapped in larger `<button>` for recipient flow) |\
+| Table rows | Not currently tappable (future: add row click for shipment detail) |\
+\
+#### Swipe & Gesture Handling\
+- **Step transitions**: Framer Motion handles directional slide animations (`x: 20 \'e2\'86\'92 0 \'e2\'86\'92 -20`)\
+- No swipe-to-navigate between steps (Back/Next buttons only \'e2\'80\'94 prevents accidental navigation)\
+- **Shipments table**: Native horizontal scroll on mobile (CSS `overflow-x-auto`)\
+- **Pull-to-refresh**: Not implemented (use browser native or add in future)\
+\
+#### Input Handling on Mobile\
+\
+| Input Type | Keyboard | Behavior |\
+|------------|----------|----------|\
+| Address (text) | Default keyboard | Autocomplete suggestions from EasyPost |\
+| Email | Email keyboard (`type="email"`) | Shows `@` and `.com` keys |\
+| Dimensions / Weight | Numeric keyboard (`type="number"`) | Numbers + decimal only |\
+| OTP | Numeric keyboard (`inputMode="numeric"`) | Auto-advance on digit entry |\
+| Card number | Numeric keyboard (Stripe Elements handles) | Auto-formatting with spaces |\
+| Dollar amounts | Numeric keyboard (`type="number"`) | Prefix `$` shown via absolute-positioned span |\
+\
+#### Focus Management\
+- Step transitions: Auto-focus first input in new step (improves keyboard flow)\
+- Dialog open: Focus trapped inside dialog (Radix default)\
+- OTP: Auto-focus first slot on mount, auto-advance to next slot\
+- Confirmation dialog: Focus on "Go back" (cancel) button by default (safe action)\
+\
+#### Toast Notifications\
+- Uses Sonner, which auto-positions toasts:\
+  - **Mobile**: Bottom of screen, full width\
+  - **Desktop**: Bottom-right corner\
+- Swipe to dismiss on mobile (Sonner default)\
+- Auto-dismiss after 4 seconds\
+\
+### 23.4 Responsive Patterns by Page\
+\
+#### Landing Page (`/`)\
+```\
+Mobile (< 640px):\
+\'e2\'94\'8c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\uc0\u144 \
+\'e2\'94\'82 [Logo]    [Login][\'e2\'86\'92] \'e2\'94\'82  \'e2\'86\uc0\u144  Compact header\
+\'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'a4\
+\'e2\'94\'82                      \'e2\'94\'82\
+\'e2\'94\'82 Get it delivered     \'e2\'94\'82  \'e2\'86\uc0\u144  Full-width hero\
+\'e2\'94\'82 to you               \'e2\'94\'82\
+\'e2\'94\'82                      \'e2\'94\'82\
+\'e2\'94\'82 [CTA button \'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80]\'e2\'94\'82  \'e2\'86\uc0\u144  Full-width button\
+\'e2\'94\'82                      \'e2\'94\'82\
+\'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'a4\
+\'e2\'94\'82 \'e2\'94\'8c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\uc0\u144  \'e2\'94\'82  \'e2\'86\u144  Single column cards\
+\'e2\'94\'82 \'e2\'94\'82 1. Create link  \'e2\'94\'82 \'e2\'94\'82\
+\'e2\'94\'82 \'e2\'94\'94\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'98 \'e2\'94\'82\
+\'e2\'94\'82 \'e2\'94\'8c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\uc0\u144  \'e2\'94\'82\
+\'e2\'94\'82 \'e2\'94\'82 2. Share it     \'e2\'94\'82 \'e2\'94\'82\
+\'e2\'94\'82 \'e2\'94\'94\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'98 \'e2\'94\'82\
+\'e2\'94\'82 \'e2\'94\'8c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\uc0\u144  \'e2\'94\'82\
+\'e2\'94\'82 \'e2\'94\'82 3. Print & ship \'e2\'94\'82 \'e2\'94\'82\
+\'e2\'94\'82 \'e2\'94\'94\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'98 \'e2\'94\'82\
+\'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'a4\
+\'e2\'94\'82 [Testimonial 1]     \'e2\'94\'82  \'e2\'86\uc0\u144  Stacked testimonials\
+\'e2\'94\'82 [Testimonial 2]     \'e2\'94\'82\
+\'e2\'94\'82 [Testimonial 3]     \'e2\'94\'82\
+\'e2\'94\'94\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'98\
+\
+Desktop (768px+):\
+\'e2\'94\'8c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\uc0\u144 \
+\'e2\'94\'82 [Logo]                    [Login] [Get \'e2\'86\'92]  \'e2\'94\'82\
+\'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'a4\
+\'e2\'94\'82                                            \'e2\'94\'82\
+\'e2\'94\'82 Get it delivered to you                    \'e2\'94\'82\
+\'e2\'94\'82 Create a shipping label...                 \'e2\'94\'82\
+\'e2\'94\'82 [CTA button \'e2\'86\'92]                             \'e2\'94\'82\
+\'e2\'94\'82                                            \'e2\'94\'82\
+\'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'a4\
+\'e2\'94\'82 \'e2\'94\'8c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\uc0\u144  \'e2\'94\'8c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\u144  \'e2\'94\'8c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\u144    \'e2\'94\'82  \'e2\'86\u144  3-col grid\
+\'e2\'94\'82 \'e2\'94\'82 1. Link  \'e2\'94\'82 \'e2\'94\'82 2. Share \'e2\'94\'82 \'e2\'94\'82 3. Ship  \'e2\'94\'82   \'e2\'94\'82\
+\'e2\'94\'82 \'e2\'94\'94\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'98 \'e2\'94\'94\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'98 \'e2\'94\'94\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'98   \'e2\'94\'82\
+\'e2\'94\'94\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'98\
+```\
+\
+#### Recipient & Sender Flows (`/get-started`, `/send/:id`)\
+```\
+Mobile:\
+\'e2\'94\'8c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\uc0\u144 \
+\'e2\'94\'82 [SendMo]    [label] \'e2\'94\'82\
+\'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'a4\
+\'e2\'94\'82 [\'e2\'97\uc0\u143 ] \'e2\'94\'80\'e2\'94\'80 [\'e2\'97\'8b] \'e2\'94\'80\'e2\'94\'80 [\'e2\'97\'8b]  \'e2\'94\'82  \'e2\'86\u144  Icons only, no labels\
+\'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'a4\
+\'e2\'94\'82                      \'e2\'94\'82\
+\'e2\'94\'82 Step content         \'e2\'94\'82  \'e2\'86\uc0\u144  Full-width, edge-to-edge cards\
+\'e2\'94\'82 (max-w-2xl auto)     \'e2\'94\'82\
+\'e2\'94\'82                      \'e2\'94\'82\
+\'e2\'94\'82 [\'e2\'86\uc0\u144  Back] [Next \'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'86\'92]\'e2\'94\'82  \'e2\'86\u144  Buttons: back shrinks, next fills\
+\'e2\'94\'94\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'98\
+\
+Desktop:\
+\'e2\'94\'8c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\uc0\u144 \
+\'e2\'94\'82 [SendMo]                       [context]     \'e2\'94\'82\
+\'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'a4\
+\'e2\'94\'82  [\'e2\'97\uc0\u143  Start] \'e2\'94\'80\'e2\'94\'80 [\'e2\'97\'8b Package] \'e2\'94\'80\'e2\'94\'80 [\'e2\'97\'8b Method] \'e2\'94\'80\'e2\'94\'80  \'e2\'94\'82  \'e2\'86\u144  Icons + labels\
+\'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'a4\
+\'e2\'94\'82          \'e2\'94\'8c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\uc0\u144              \'e2\'94\'82\
+\'e2\'94\'82          \'e2\'94\'82                     \'e2\'94\'82             \'e2\'94\'82  \'e2\'86\uc0\u144  Centered, padded\
+\'e2\'94\'82          \'e2\'94\'82   Step content      \'e2\'94\'82             \'e2\'94\'82\
+\'e2\'94\'82          \'e2\'94\'82   (max-w-2xl)       \'e2\'94\'82             \'e2\'94\'82\
+\'e2\'94\'82          \'e2\'94\'82                     \'e2\'94\'82             \'e2\'94\'82\
+\'e2\'94\'82          \'e2\'94\'82  [\'e2\'86\uc0\u144  Back] [Next \'e2\'86\'92]  \'e2\'94\'82             \'e2\'94\'82\
+\'e2\'94\'82          \'e2\'94\'94\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'98             \'e2\'94\'82\
+\'e2\'94\'94\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'98\
+```\
+\
+#### Dashboard (`/dashboard`)\
+```\
+Mobile:\
+\'e2\'94\'8c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\uc0\u144 \
+\'e2\'94\'82 [SendMo]       [\'e2\'9a\'99]  \'e2\'94\'82\
+\'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'a4\
+\'e2\'94\'82 \'f0\'9f\'94\'97 My Label Link    \'e2\'94\'82\
+\'e2\'94\'82 sendmo.co/s/k8...   \'e2\'94\'82\
+\'e2\'94\'82 [Copy] [+New] [\'e2\'9a\'99]  \'e2\'94\'82  \'e2\'86\uc0\u144  Buttons may wrap\
+\'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'a4\
+\'e2\'94\'82 \'f0\'9f\'92\'b3 My Wallet    [>] \'e2\'94\'82\
+\'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'a4\
+\'e2\'94\'82 \'f0\'9f\'93\'a6 Shipments        \'e2\'94\'82\
+\'e2\'94\'82 \'e2\'94\'8c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'86\'92\'e2\'94\'82  \'e2\'86\uc0\u144  Horizontal scroll\
+\'e2\'94\'82 \'e2\'94\'82 ID  To  Status ...\'e2\'94\'82\
+\'e2\'94\'82 \'e2\'94\'94\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'86\'92\'e2\'94\'82\
+\'e2\'94\'94\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'98\
+\
+Desktop:\
+\'e2\'94\'8c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\uc0\u144 \
+\'e2\'94\'82 [SendMo]                          [\'e2\'9a\'99 Settings]\'e2\'94\'82\
+\'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'a4\
+\'e2\'94\'82 \'f0\'9f\'94\'97 My Label Link                              \'e2\'94\'82\
+\'e2\'94\'82    sendmo.co/s/k8Hj2mNp4x                    \'e2\'94\'82\
+\'e2\'94\'82                    [Copy Link] [+ New] [\'e2\'9a\'99]   \'e2\'94\'82\
+\'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'a4\
+\'e2\'94\'82 \'f0\'9f\'92\'b3 My Wallet \'c2\'b7 Visa \'c2\'b7\'c2\'b7\'c2\'b74242 \'c2\'b7 $0.00     [>] \'e2\'94\'82\
+\'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'a4\
+\'e2\'94\'82 \'f0\'9f\'93\'a6 Shipments                        6 total  \'e2\'94\'82\
+\'e2\'94\'82 ID      To          Status    Carrier  Ship.. \'e2\'94\'82\
+\'e2\'94\'82 SM-4821 Alex Rivera \'e2\'9c\'85 Del.   USPS    Feb 8  \'e2\'94\'82\
+\'e2\'94\'82 SM-4807 Jordan Wu   \'f0\'9f\'9a\'9a Trans  UPS     Feb 10 \'e2\'94\'82\
+\'e2\'94\'94\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'98\
+```\
+\
+#### FAQ (`/faq`)\
+```\
+Mobile:\
+\'e2\'94\'8c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\uc0\u144 \
+\'e2\'94\'82 [Logo]    [Get \'e2\'86\'92]    \'e2\'94\'82\
+\'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'a4\
+\'e2\'94\'82 \'e2\'86\uc0\u144  Back               \'e2\'94\'82\
+\'e2\'94\'82 FAQ & Help            \'e2\'94\'82\
+\'e2\'94\'82 [\'f0\'9f\'94\uc0\u141  Search \'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80] \'e2\'94\'82\
+\'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'a4\
+\'e2\'94\'82 \'e2\'96\'b8 What is SendMo?   \'e2\'94\'82  \'e2\'86\uc0\u144  Full-width accordions\
+\'e2\'94\'82 \'e2\'96\'b8 Who pays?          \'e2\'94\'82\
+\'e2\'94\'82 \'e2\'96\'b8 How does SendMo... \'e2\'94\'82\
+\'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'a4\
+\'e2\'94\'82 Still need help?     \'e2\'94\'82\
+\'e2\'94\'82 [\'f0\'9f\'93\'a7 Email support]  \'e2\'94\'82\
+\'e2\'94\'94\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'80\'e2\'94\'98\
+```\
+\
+### 23.5 Accessibility on Mobile\
+\
+| Requirement | Implementation |\
+|-------------|---------------|\
+| Font sizes | Minimum 14px body text (never below 12px for any element) |\
+| Contrast | All text meets WCAG AA (4.5:1 for normal, 3:1 for large) |\
+| Viewport meta | `<meta name="viewport" content="width=device-width, initial-scale=1">` |\
+| Orientation | Supports portrait and landscape; no orientation lock |\
+| Pinch zoom | Not disabled (`user-scalable=yes` or omitted) |\
+| Keyboard navigation | All interactive elements reachable via Tab |\
+| Screen reader | Semantic HTML (`header`, `main`, `nav`, `button`), proper `aria-label` on icon-only buttons |\
+| Reduced motion | Respect `prefers-reduced-motion` \'e2\'80\'94 disable Framer Motion animations |\
+\
+### 23.6 Reduced Motion Support\
+\
+```tsx\
+// Utility: detect reduced motion preference\
+import \{ useReducedMotion \} from "framer-motion";\
+\
+// In step transitions:\
+const shouldReduceMotion = useReducedMotion();\
+<motion.div\
+  initial=\{shouldReduceMotion ? false : \{ opacity: 0, x: 20 \}\}\
+  animate=\{\{ opacity: 1, x: 0 \}\}\
+  exit=\{shouldReduceMotion ? undefined : \{ opacity: 0, x: -20 \}\}\
+  transition=\{\{ duration: shouldReduceMotion ? 0 : 0.2 \}\}\
+/>\
+```\
+\
+### 23.7 Print Considerations\
+\
+The **Print Label** step (Sender Step 4) must handle printing gracefully:\
+\
+```css\
+@media print \{\
+  /* Hide everything except the label preview */\
+  header, footer, .progress-bar, .drop-off-instructions, button:not(.print-button) \{\
+    display: none !important;\
+  \}\
+\
+  /* Label preview should be full-page */\
+  .label-preview \{\
+    width: 100%;\
+    border: 2px solid black;\
+    page-break-inside: avoid;\
+  \}\
+\
+  /* Ensure proper sizing for 4\'c3\'976 thermal labels */\
+  @page \{\
+    size: 4in 6in;\
+    margin: 0;\
+  \}\
+\}\
+```\
+\
+- Primary action: Download PDF (works on all devices)\
+- Secondary: Browser print dialog (desktop only, may not format correctly for thermal printers)\
+- Mobile: PDF download only (no print dialog)\
+\
+---\
+\
+## 24. Post-MVP Features\
+\
+### 23.1 Immediate Post-Launch\
+\
+| Feature | Description | Priority |\
+|---------|-------------|----------|\
+| **SendMo Balance** | ACH funding via Plaid, 10% margin, auto-topup | High |\
+| **One-Time Links** | Pre-configured links for specific shipments | High |\
+| **Google OAuth** | Additional login option | Medium |\
+| **Password auth** | Optional password for convenience | Medium |\
+\
+### 23.2 Near-Term\
+\
+| Feature | Description |\
+|---------|-------------|\
+| **Sender blocking** | Block specific sender addresses |\
+| **Shipment limits** | Daily/weekly caps |\
+| **Multiple links** | One per address or preference set |\
+| **Link analytics** | Views, conversions, most common package types |\
+| **Contact form** | Replace mailto with in-app form |\
+\
+### 23.3 Future\
+\
+| Feature | Description |\
+|---------|-------------|\
+| **Private Shipment Links** | QR code via USPS Label Broker API |\
+| **International shipping** | Expand beyond US |\
+| **Sender-paid shipping** | Flip payment model |\
+| **Escrow payments** | Hold item price until delivery |\
+| **Marketplace integrations** | Browser extension for FB Marketplace |\
+| **Mobile apps** | iOS/Android native apps |\
+\
+---\
+\
+## 24. Success Metrics\
+\
+### 24.1 MVP Metrics\
+\
+| Metric | Target |\
+|--------|--------|\
+| Time to first link | < 60 seconds |\
+| Onboarding completion rate | > 60% |\
+| Sender completion rate (clicked \'e2\'86\'92 printed) | > 70% |\
+| Payment failure rate | < 5% |\
+| Payment auth failure at activation | < 2% |\
+\
+### 24.2 Business Metrics\
+\
+| Metric | Definition |\
+|--------|------------|\
+| Revenue | SendMo margin collected (15% or 10%) |\
+| GMV | Total shipping costs processed |\
+| MAU | Monthly active recipients |\
+| Shipments/user/month | Retention indicator |\
+| Sender return rate | % of senders who use SendMo again |\
+\
+### 24.3 Funnel Metrics\
+\
+**Recipient Funnel:**\
+```\
+Visit /get-started \'e2\'86\'92 Enter address \'e2\'86\'92 Verify email \'e2\'86\'92 Add payment \'e2\'86\'92 Activate link\
+```\
+\
+**Sender Funnel:**\
+```\
+Click link \'e2\'86\'92 Enter address \'e2\'86\'92 Enter package \'e2\'86\'92 Select rate \'e2\'86\'92 Confirm \'e2\'86\'92 Print label\
+```\
+\
+Track conversion at each step and identify drop-off points.\
+\
+---\
+\
+## Appendix A: Component Inventory\
+\
+### A.1 Pages\
+\
+| Component | Route | File |\
+|-----------|-------|------|\
+| `Index` | `/` | `src/pages/Index.tsx` |\
+| `RecipientOnboarding` | `/get-started` | `src/pages/RecipientOnboarding.tsx` |\
+| `SenderFlow` | `/send/:linkId` | `src/pages/SenderFlow.tsx` |\
+| `Dashboard` | `/dashboard` | `src/pages/Dashboard.tsx` |\
+| `FAQ` | `/faq` | `src/pages/FAQ.tsx` |\
+| `NotFound` | `/*` | `src/pages/NotFound.tsx` |\
+\
+### A.2 Recipient Flow Components\
+\
+| Component | Step | File |\
+|-----------|------|------|\
+| `RecipientStepAddress` | 1 - Destination | `src/components/recipient/RecipientStepAddress.tsx` |\
+| `RecipientStepShipping` | 2 - Shipping Info | `src/components/recipient/RecipientStepShipping.tsx` |\
+| `RecipientStepVerify` | 3a - Email Verification | `src/components/recipient/RecipientStepVerify.tsx` |\
+| `RecipientStepPayment` | 3b/4 - Payment + Success | `src/components/recipient/RecipientStepPayment.tsx` |\
+\
+### A.3 Sender Flow Components\
+\
+| Component | Step | File |\
+|-----------|------|------|\
+| `SenderStepIntro` | 0 - Welcome | `src/components/sender/SenderStepIntro.tsx` |\
+| `SenderStepOriginPackage` | 1 - Origin & Package | `src/components/sender/SenderStepOriginPackage.tsx` |\
+| `SenderStepRate` | 2 - Shipping Method | `src/components/sender/SenderStepRate.tsx` |\
+| `SenderStepEmail` | 3 - Review & Confirm | `src/components/sender/SenderStepEmail.tsx` |\
+| `SenderStepLabel` | 4 - Print Label | `src/components/sender/SenderStepLabel.tsx` |\
+\
+### A.4 Shared Components\
+\
+| Component | File |\
+|-----------|------|\
+| `SendMoLogo` | `src/components/SendMoLogo.tsx` |\
+| `NavLink` | `src/components/NavLink.tsx` |\
+\
+### A.5 shadcn/ui Components Used\
+\
+Accordion, AlertDialog, Badge, Button, Card, Checkbox, Collapsible, Dialog, Input, InputOTP, Label, Select, Separator, Slider, Switch, Table, Tabs, Toast/Sonner, Tooltip\
+\
+### A.6 Shared Interfaces\
+\
+```typescript\
+// ShippingConfig - passed between recipient onboarding steps\
+interface ShippingConfig \{\
+  size: string;      // "unsure" | "letter" | "shoebox" | "computer"\
+  speed: string;     // "any" | "economy" | "standard" | "express"\
+  carrier: string;   // "any" | "usps" | "ups" | "fedex"\
+  insurance: boolean;\
+  lowRange: number;\
+  highRange: number;\
+\}\
+```\
+\
+---\
+\
+## Appendix B: Competitive Positioning\
+\
+| Competitor | Model | SendMo Advantage |\
+|------------|-------|------------------|\
+| Pirate Ship | Sender-focused | Recipient control, no address sharing |\
+| PayPal Shipping | Requires accounts | Frictionless for senders |\
+| Shippo | Business-focused | Consumer-friendly |\
+| Facebook Shipping | Platform-locked | Works everywhere |\
+\
+**SendMo's unique value**: Recipient-initiated links that make shipping dead simple for both parties \'e2\'80\'94 recipients set preferences once, senders just click and print.\
+\
+---\
+\
+## Appendix C: Open Questions\
+\
+### Resolved\
+\
+| Question | Decision |\
+|----------|----------|\
+| Pricing model? | 15% margin (standard), 10% (with balance) |\
+| Show fees separately? | No \'e2\'80\'94 show as single "Shipping" price |\
+| Who bears shipping cost risk? | Recipient (including carrier adjustments) |\
+| When to auth payment? | At link activation |\
+| Account creation? | Magic link (passwordless), optional Google/password later |\
+| Address input? | Freeform text field with AI parsing |\
+\
+### Pending\
+\
+1. **Private links MVP**: Defer pending carrier API integration?\
+2. **Rate display on Screen 2**: What's the default range before any configuration? \'e2\'86\'92 Currently using $5\'e2\'80\'93$45\
+3. **Carrier adjustment threshold**: Below what amount do we eat the cost vs charge the recipient?\
+4. **Sender rate display**: Currently hiding prices from sender per design constraint \'e2\'80\'94 confirm this is final.\
+5. **Multiple concurrent shipments**: How many active shipments per link?\
+\
+---\
+\
+## Appendix D: File Structure\
+\
+```\
+src/\
+\'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80 assets/\
+\'e2\'94\'82   \'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80 usecase-airbnb.jpg\
+\'e2\'94\'82   \'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80 usecase-marketplace.jpg\
+\'e2\'94\'82   \'e2\'94\'94\'e2\'94\'80\'e2\'94\'80 usecase-office.jpg\
+\'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80 components/\
+\'e2\'94\'82   \'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80 recipient/\
+\'e2\'94\'82   \'e2\'94\'82   \'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80 RecipientStepAddress.tsx\
+\'e2\'94\'82   \'e2\'94\'82   \'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80 RecipientStepShipping.tsx\
+\'e2\'94\'82   \'e2\'94\'82   \'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80 RecipientStepVerify.tsx\
+\'e2\'94\'82   \'e2\'94\'82   \'e2\'94\'94\'e2\'94\'80\'e2\'94\'80 RecipientStepPayment.tsx\
+\'e2\'94\'82   \'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80 sender/\
+\'e2\'94\'82   \'e2\'94\'82   \'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80 SenderStepIntro.tsx\
+\'e2\'94\'82   \'e2\'94\'82   \'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80 SenderStepOriginPackage.tsx\
+\'e2\'94\'82   \'e2\'94\'82   \'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80 SenderStepRate.tsx\
+\'e2\'94\'82   \'e2\'94\'82   \'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80 SenderStepEmail.tsx\
+\'e2\'94\'82   \'e2\'94\'82   \'e2\'94\'94\'e2\'94\'80\'e2\'94\'80 SenderStepLabel.tsx\
+\'e2\'94\'82   \'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80 ui/                         # shadcn/ui components\
+\'e2\'94\'82   \'e2\'94\'82   \'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80 accordion.tsx\
+\'e2\'94\'82   \'e2\'94\'82   \'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80 alert-dialog.tsx\
+\'e2\'94\'82   \'e2\'94\'82   \'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80 badge.tsx\
+\'e2\'94\'82   \'e2\'94\'82   \'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80 button.tsx\
+\'e2\'94\'82   \'e2\'94\'82   \'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80 card.tsx\
+\'e2\'94\'82   \'e2\'94\'82   \'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80 checkbox.tsx\
+\'e2\'94\'82   \'e2\'94\'82   \'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80 collapsible.tsx\
+\'e2\'94\'82   \'e2\'94\'82   \'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80 dialog.tsx\
+\'e2\'94\'82   \'e2\'94\'82   \'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80 input.tsx\
+\'e2\'94\'82   \'e2\'94\'82   \'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80 input-otp.tsx\
+\'e2\'94\'82   \'e2\'94\'82   \'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80 label.tsx\
+\'e2\'94\'82   \'e2\'94\'82   \'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80 select.tsx\
+\'e2\'94\'82   \'e2\'94\'82   \'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80 switch.tsx\
+\'e2\'94\'82   \'e2\'94\'82   \'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80 table.tsx\
+\'e2\'94\'82   \'e2\'94\'82   \'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80 tabs.tsx\
+\'e2\'94\'82   \'e2\'94\'82   \'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80 toast.tsx\
+\'e2\'94\'82   \'e2\'94\'82   \'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80 toaster.tsx\
+\'e2\'94\'82   \'e2\'94\'82   \'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80 sonner.tsx\
+\'e2\'94\'82   \'e2\'94\'82   \'e2\'94\'94\'e2\'94\'80\'e2\'94\'80 [other shadcn components]\
+\'e2\'94\'82   \'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80 NavLink.tsx\
+\'e2\'94\'82   \'e2\'94\'94\'e2\'94\'80\'e2\'94\'80 SendMoLogo.tsx\
+\'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80 hooks/\
+\'e2\'94\'82   \'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80 use-mobile.tsx\
+\'e2\'94\'82   \'e2\'94\'94\'e2\'94\'80\'e2\'94\'80 use-toast.ts\
+\'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80 lib/\
+\'e2\'94\'82   \'e2\'94\'94\'e2\'94\'80\'e2\'94\'80 utils.ts\
+\'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80 pages/\
+\'e2\'94\'82   \'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80 Index.tsx\
+\'e2\'94\'82   \'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80 RecipientOnboarding.tsx\
+\'e2\'94\'82   \'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80 SenderFlow.tsx\
+\'e2\'94\'82   \'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80 Dashboard.tsx\
+\'e2\'94\'82   \'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80 FAQ.tsx\
+\'e2\'94\'82   \'e2\'94\'94\'e2\'94\'80\'e2\'94\'80 NotFound.tsx\
+\'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80 index.css                       # Design tokens (CSS custom properties)\
+\'e2\'94\'9c\'e2\'94\'80\'e2\'94\'80 main.tsx                        # Entry point\
+\'e2\'94\'94\'e2\'94\'80\'e2\'94\'80 App.tsx                         # Router configuration\
+```\
+\
+---\
+\
+## Appendix E: Environment Variables\
+\
+```env\
+# Supabase\
+SUPABASE_URL=\
+SUPABASE_ANON_KEY=\
+SUPABASE_SERVICE_ROLE_KEY=\
+\
+# EasyPost\
+EASYPOST_API_KEY=\
+EASYPOST_WEBHOOK_SECRET=\
+\
+# Stripe\
+STRIPE_SECRET_KEY=\
+STRIPE_PUBLISHABLE_KEY=\
+STRIPE_WEBHOOK_SECRET=\
+\
+# SendGrid\
+SENDGRID_API_KEY=\
+SENDGRID_FROM_EMAIL=noreply@sendmo.co\
+\
+# Plaid (Post-MVP)\
+PLAID_CLIENT_ID=\
+PLAID_SECRET=\
+PLAID_ENV=sandbox  # sandbox | production\
+\
+# Application\
+APP_URL=https://sendmo.co\
+ADMIN_EMAIL=admin@sendmo.co\
+```\
+\
+---\
+\
+## Appendix F: Webhook Payloads\
+\
+### EasyPost Tracking Webhook\
+\
+```json\
+\{\
+  "description": "tracker.updated",\
+  "mode": "production",\
+  "result": \{\
+    "id": "trk_...",\
+    "tracking_code": "9400111899223456789012",\
+    "status": "in_transit",\
+    "status_detail": "arrived_at_facility",\
+    "carrier": "USPS",\
+    "tracking_details": [\
+      \{\
+        "message": "Arrived at USPS facility",\
+        "status": "in_transit",\
+        "datetime": "2026-02-12T10:30:00Z",\
+        "source": "USPS",\
+        "tracking_location": \{\
+          "city": "San Francisco",\
+          "state": "CA",\
+          "country": "US",\
+          "zip": "94102"\
+        \}\
+      \}\
+    ],\
+    "est_delivery_date": "2026-02-15T00:00:00Z"\
+  \}\
+\}\
+```\
+\
+### Stripe Payment Intent Webhook\
+\
+```json\
+\{\
+  "type": "payment_intent.succeeded",\
+  "data": \{\
+    "object": \{\
+      "id": "pi_...",\
+      "amount": 1725,\
+      "currency": "usd",\
+      "status": "succeeded",\
+      "customer": "cus_...",\
+      "metadata": \{\
+        "shipment_id": "SM-4821",\
+        "link_id": "k8Hj2mNp4x"\
+      \}\
+    \}\
+  \}\
+\}\
+```\
+\
+---\
+\
+## Appendix G: Error Codes\
+\
+| Code | Message | Context |\
+|------|---------|---------|\
+| `LINK_NOT_FOUND` | "This shipping link doesn't exist or has been removed." | Invalid shortId |\
+| `LINK_PENDING` | "This link is pending payment. Contact the recipient." | Link not activated |\
+| `LINK_PAUSED` | "This link is currently paused." | Recipient paused link |\
+| `LINK_DEACTIVATED` | "This link has been deactivated." | Recipient deactivated |\
+| `ADDRESS_INVALID` | "We couldn't verify this address." | EasyPost validation failed |\
+| `NO_RATES` | "No shipping options available for this package." | EasyPost returned empty rates |\
+| `EXCEEDS_CAP` | "This package exceeds the shipping budget." | All rates > price cap |\
+| `PAYMENT_FAILED` | "Payment could not be processed." | Stripe capture failed |\
+| `PAYMENT_METHOD_EXPIRED` | "The payment method on file has expired." | Card expired |\
+| `LABEL_GENERATION_FAILED` | "We couldn't generate the shipping label. Please try again." | EasyPost error |\
+| `RATE_EXPIRED` | "This shipping rate has expired. Please refresh rates." | Rate older than 5 min |\
+\
+---\
+\
+## Appendix H: Testing Strategy\
+\
+### Unit Tests\
+- Form validation logic\
+- Price computation (markup, discounts, holds)\
+- Address parsing\
+- Link state machine transitions\
+\
+### Integration Tests\
+- Full onboarding flow (4 steps)\
+- Full sender flow (5 steps)\
+- Payment authorization + capture\
+- EasyPost rate fetching + label generation\
+- Webhook processing\
+\
+### E2E Tests\
+- Recipient creates link \'e2\'86\'92 Sender uses link \'e2\'86\'92 Label printed\
+- Payment failure \'e2\'86\'92 Recovery flow\
+- Link pause/resume behavior\
+- FAQ search and filtering\
+\
+### Test Accounts\
+- EasyPost test mode (free labels, test addresses)\
+- Stripe test mode (test card numbers)\
+- SendGrid sandbox mode\
+\
+---\
+\
+*End of Document*\
+\
+**Total Sections**: 24 main sections + 8 appendices\
+**Version**: 1.0\
+**Ready for**: Claude Code implementation\
+}
