@@ -33,7 +33,40 @@ serve(async (req: Request) => {
 
         const authHeader = "Basic " + btoa(apiKey + ":");
 
-        // Buy the label
+        // Create EndShipper (required for USPS labels)
+        const endShipperResponse = await fetch(
+            "https://api.easypost.com/v2/end_shippers",
+            {
+                method: "POST",
+                headers: {
+                    Authorization: authHeader,
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    address: {
+                        company: Deno.env.get("SENDMO_COMPANY") || "SendMo",
+                        street1: Deno.env.get("SENDMO_STREET") || "388 Townsend St",
+                        city: Deno.env.get("SENDMO_CITY") || "San Francisco",
+                        state: Deno.env.get("SENDMO_STATE") || "CA",
+                        zip: Deno.env.get("SENDMO_ZIP") || "94107",
+                        country: "US",
+                        phone: Deno.env.get("SENDMO_PHONE") || "4155550100",
+                    },
+                }),
+            }
+        );
+
+        const endShipperData = await endShipperResponse.json();
+
+        if (!endShipperResponse.ok || endShipperData.error) {
+            console.error("EndShipper creation failed:", endShipperData);
+            return new Response(
+                JSON.stringify({ error: "Failed to create EndShipper: " + (endShipperData.error?.message || "Unknown error") }),
+                { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+
+        // Buy the label with EndShipper
         const buyResponse = await fetch(
             `https://api.easypost.com/v2/shipments/${easypost_shipment_id}/buy`,
             {
@@ -44,6 +77,7 @@ serve(async (req: Request) => {
                 },
                 body: JSON.stringify({
                     rate: { id: easypost_rate_id },
+                    end_shipper: { id: endShipperData.id },
                 }),
             }
         );

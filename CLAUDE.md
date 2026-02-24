@@ -285,3 +285,6 @@ Auth required: 4000 0025 0000 3155
 ---
 
 *Last updated: 2026-02-24 | PRD version: 6.1*
+
+## Full Product Spec
+See PRD.md in this repo for complete UI flows, component specs, validation logic, and sequence diagrams.
