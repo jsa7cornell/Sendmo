@@ -89,7 +89,6 @@ export default function LabelTest() {
 
     // State 3 – Rates
     const [rates, setRates] = useState<Rate[]>([]);
-    const [selectedRate, setSelectedRate] = useState<Rate | null>(null);
 
     // State 4 – Label
     const [labelResult, setLabelResult] = useState<LabelResult | null>(null);
@@ -171,7 +170,6 @@ export default function LabelTest() {
     }
 
     async function purchaseLabel(rate: Rate) {
-        setSelectedRate(rate);
         setStep(4);
         setLoading(true);
         setError(null);
@@ -214,7 +212,6 @@ export default function LabelTest() {
         setToAddr(emptyAddress());
         setParcel(defaultParcel());
         setRates([]);
-        setSelectedRate(null);
         setLabelResult(null);
         setError(null);
     }

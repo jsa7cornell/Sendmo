@@ -44,6 +44,7 @@ serve(async (req: Request) => {
                 },
                 body: JSON.stringify({
                     address: {
+                        name: Deno.env.get("SENDMO_COMPANY") || "SendMo",
                         company: Deno.env.get("SENDMO_COMPANY") || "SendMo",
                         street1: Deno.env.get("SENDMO_STREET") || "388 Townsend St",
                         city: Deno.env.get("SENDMO_CITY") || "San Francisco",
@@ -51,6 +52,7 @@ serve(async (req: Request) => {
                         zip: Deno.env.get("SENDMO_ZIP") || "94107",
                         country: "US",
                         phone: Deno.env.get("SENDMO_PHONE") || "4155550100",
+                        email: Deno.env.get("SENDMO_EMAIL") || "shipping@sendmo.co",
                     },
                 }),
             }
