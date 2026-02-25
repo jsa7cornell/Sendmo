@@ -286,5 +286,13 @@ Auth required: 4000 0025 0000 3155
 
 *Last updated: 2026-02-24 | PRD version: 6.1*
 
-## Full Product Spec
-See PRD.md in this repo for complete UI flows, component specs, validation logic, and sequence diagrams.
+## Documentation Structure
+
+**Two-file system** — all product and developer knowledge consolidated:
+
+| File | Purpose |
+|------|---------|
+| `PRD.md` | Single source of truth for product requirements (vision, flows, UI specs, rate tables, AI features, phased execution) |
+| `CLAUDE.md` | Single source of truth for developer instructions (tech stack, repo structure, env vars, design tokens, agent roles) |
+
+Archived reference docs live in `_archive/` — see PRD.md Appendix B for index.

@@ -146,3 +146,11 @@ export interface PackageDimensions {
     height_in: number;
     weight_oz: number;
 }
+
+export interface AddressInput {
+    name: string;
+    street: string;
+    city: string;
+    state: string;
+    zip: string;
+}

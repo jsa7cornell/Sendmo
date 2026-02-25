@@ -797,7 +797,98 @@ Endpoint: `POST /api/webhooks/stripe`
 
 ---
 
-## 22. Open Questions
+## 22. AI Item Recognition (Magic Guestimator)
+
+### Overview
+
+Allow users to describe an item (text) or upload a photo, and AI will automatically estimate package dimensions, weight, and suggest the best shipping method. This powers the "Magic Guestimator" feature in both the Full Label path (Step 10) and Sender flow (Step 1).
+
+### User Flows
+
+**Text description**: User types "iPhone 14 Pro in original box" → AI returns dimensions (6.5×3.5×2"), weight (12 oz), suggested packaging (Small Box), fragility flag, carrier recommendation.
+
+**Photo upload** (Phase 2): User uploads photo → AI vision model analyzes → returns size/weight estimates.
+
+**Combined** (Phase 2): Text + photo for higher accuracy.
+
+### API Specification
+
+```
+POST /api/ai/analyze-item
+```
+
+**Request**:
+```typescript
+{
+  description?: string;
+  imageUrl?: string;        // Phase 2
+  imageBase64?: string;     // Phase 2
+  userHints?: {
+    approximateWeight?: number;
+    approximateSize?: string;
+  }
+}
+```
+
+**Response**:
+```typescript
+{
+  success: boolean;
+  data: {
+    itemCategory: string;           // "Electronics > Mobile Phone"
+    itemName: string;               // "iPhone 14 Pro"
+    confidence: number;             // 0-1
+    estimatedDimensions: { length: number; width: number; height: number; unit: "in" };
+    estimatedWeightOz: number;
+    suggestedPackageSize: "envelope" | "small" | "medium" | "large";
+    fragile: boolean;
+    fragileReason?: string;
+    requiresSignature: boolean;
+    insuranceRecommended: boolean;
+    recommendedCarriers: Array<{ carrier: string; service: string; reason: string }>;
+    warnings?: string[];
+  };
+}
+```
+
+### Implementation Strategy (Hybrid — MVP)
+
+1. **Common items database** — Pre-loaded dimensions for top 100 shipped items (iPhone, MacBook, t-shirt, etc.). Fast lookup, zero cost.
+2. **Claude API fallback** — For items not in the database, use Anthropic Claude API for text analysis (Phase 1) and vision analysis (Phase 2).
+
+```typescript
+async function analyzeItem(description: string, imageUrl?: string) {
+  const commonItem = await checkCommonItems(description);
+  if (commonItem && commonItem.confidence > 0.9) return commonItem;
+  return await callClaudeAPI(description, imageUrl);
+}
+```
+
+### Confidence Indicators
+
+| Level | Threshold | UI |
+|-------|-----------|-----|
+| High | >0.8 | ✅ "We're confident about these estimates" |
+| Medium | 0.5-0.8 | ⚠️ "Please verify these estimates" |
+| Low | <0.5 | ❌ "Please enter details manually" |
+
+### Cost Analysis
+
+- Common item lookup: $0 (cached)
+- Claude API text: ~$0.001 per request
+- Claude API vision: ~$0.01 per image (Phase 2)
+- At 10K labels/month, 30% using AI: **~$17/month**
+
+### Phased Rollout
+
+- **Phase 1 (MVP)**: Text-only Guestimator with common items DB + Claude API
+- **Phase 2**: Photo upload + Claude Vision
+- **Phase 3**: Learning from actual shipments (estimate vs. actual feedback loop)
+- **Phase 4**: Marketplace-specific models (eBay, Poshmark, FBMP)
+
+---
+
+## 23. Open Questions
 
 | Question | Status |
 |----------|--------|
@@ -823,16 +914,16 @@ Endpoint: `POST /api/webhooks/stripe`
 | "Skip -- use default settings" as explicit action | Defaults: Regional, Standard, $100 cap. Prevents users from feeling stuck |
 | PRD as bridge document between sessions | Avoids long context; each session starts fresh with PRD upload |
 
-## Appendix B: Reference Documents
+## Appendix B: Archived Reference Documents
 
-Upload alongside this PRD as needed:
+These documents are archived in `_archive/` for reference. Content has been consolidated into this PRD and CLAUDE.md:
 
-- `SENDMO-PRD-V2.md` -- Loveable PRD v2 with full component-level detail, validation specs, sequence diagrams
-- `easypost-addresses.md` -- EasyPost Address Verification API reference
-- `easypost-shipments.md` -- EasyPost Shipment lifecycle, rates, labels, tracking
-- `stripe-checkout.md` -- Stripe Checkout integration reference
-- `stripe-connect.md` -- Stripe Connect for future escrow pattern
-- `SPEC.md` -- Original SPEC v5 (for event tracking list and user flow wireframes)
+- `_archive/spec/SPEC.md` -- Original SPEC v5 (event tracking list, wireframes)
+- `_archive/spec/external-docs/easypost-*.md` -- EasyPost API references
+- `_archive/spec/external-docs/stripe-*.md` -- Stripe API references
+- `_archive/spec/decisions/001-data-model.md` -- Data model decisions
+- `_archive/frontend/AI_FEATURE_SPEC.md` -- Full AI feature spec (merged into §22)
+- `_archive/backend/` -- Deployment guides, data model docs
 
 ## Appendix C: Prototype vs Production
 
@@ -847,3 +938,40 @@ Upload alongside this PRD as needed:
 | Tracking | Static mock data | EasyPost Tracker + webhooks |
 | Dashboard data | Hardcoded array | PostgreSQL + Supabase |
 | Guestimator | Keyword matching | Claude API with item recognition |
+
+---
+
+## 22. Testing Strategy
+
+SendMo uses a 3-tier testing pyramid to ensure code quality and prevent shipping regressions:
+
+1. **Unit & Component Tests** (Vitest + React Testing Library)
+   - Tests individual UI components, interactive user flows, and utility functions in isolation.
+   - Run on every commit. Fast execution (< 10s).
+   - **Agent Directive**: Whenever a new component or utility is created in `src/`, a co-located `.test.tsx` or `.test.ts` MUST be created in the `tests/unit/` directory.
+
+2. **Integration Tests** (Node Scripts)
+   - Tests the interaction between the application and external APIs (primarily EasyPost via Supabase Edge Functions).
+   - Located in `tests/integration/` (e.g., `easypost-test.mjs`).
+
+3. **End-to-End (E2E) Tests** (Playwright)
+   - Tests full user journeys in a real browser environment.
+   - Requires the local dev server and mocked connections to be running.
+   - Located in `tests/e2e/`.
+
+### Continuous Integration (CI/CD)
+
+- GitHub Actions (`.github/workflows/test.yml`) ensures that the full test suite (linting, type-checking, unit, and E2E) passes on every push and pull request to the `main` branch.
+- Vercel is used for deployment, but relies on GitHub Actions as the primary quality gate.
+
+### Execution Commands
+
+- `npm run lint` — Runs ESLint. Crucial for catching React anti-patterns.
+- `npm run test:unit` — Runs all Vitest unit and component tests.
+- `npm run test:coverage` — Runs Vitest with v8 coverage reporting.
+- `npm run test:e2e` — Runs Playwright E2E tests (requires `npm run dev` to be active).
+- You can use the agent workflow `/run-tests` to execute the full validation pipeline locally.
+
+### Known Anti-Patterns to Avoid
+
+- **Nested Component Definitions**: NEVER define a React component inside another component's render function or body (e.g., defining `AddressFields` inside `LabelTest`). This causes React to remount the child component on every render, leading to massive bugs like input fields losing focus on every keystroke. These bugs are caught by robust Component Interaction tests and the `react/no-unstable-nested-components` ESLint rule.

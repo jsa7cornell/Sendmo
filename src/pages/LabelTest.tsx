@@ -9,12 +9,8 @@ const BASE_URL = import.meta.env.VITE_SUPABASE_URL;
 
 // ─── Types ───────────────────────────────────────────────────
 
-interface AddressInput {
-    street: string;
-    city: string;
-    state: string;
-    zip: string;
-}
+import AddressFields from "@/components/ui/AddressFields";
+import type { AddressInput } from "@/lib/types";
 
 interface ParcelInput {
     length: string;
@@ -26,12 +22,12 @@ interface ParcelInput {
 }
 
 interface Rate {
-    id: string;
     carrier: string;
     service: string;
-    rate_cents: number;
-    display_price_cents: number;
-    estimated_days: number | null;
+    display_price: number;
+    delivery_days: number | null;
+    easypost_shipment_id: string;
+    easypost_rate_id: string;
 }
 
 interface LabelResult {
@@ -52,6 +48,7 @@ const stepVariants = {
 // ─── Helpers ─────────────────────────────────────────────────
 
 const emptyAddress = (): AddressInput => ({
+    name: "",
     street: "",
     city: "",
     state: "",
@@ -67,6 +64,36 @@ const defaultParcel = (): ParcelInput => ({
     packaging: "box",
 });
 
+
+
+// ─── Spinner component ──────────────────────────────────────
+
+function Spinner({ size = "sm" }: { size?: "sm" | "lg" }) {
+    const dim = size === "lg" ? "w-8 h-8" : "w-4 h-4";
+    return (
+        <svg
+            className={`${dim} animate-spin text-primary`}
+            xmlns="http://www.w3.org/2000/svg"
+            fill="none"
+            viewBox="0 0 24 24"
+        >
+            <circle
+                className="opacity-25"
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                strokeWidth="4"
+            />
+            <path
+                className="opacity-75"
+                fill="currentColor"
+                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+            />
+        </svg>
+    );
+}
+
 // ─── Component ───────────────────────────────────────────────
 
 export default function LabelTest() {
@@ -80,8 +107,8 @@ export default function LabelTest() {
     const [verifiedAddresses, setVerifiedAddresses] = useState<{
         from_id: string;
         to_id: string;
-        from_address: any;
-        to_address: any;
+        from_address: Record<string, unknown>;
+        to_address: Record<string, unknown>;
     } | null>(null);
 
     // State 2 – Package
@@ -104,6 +131,7 @@ export default function LabelTest() {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     from: {
+                        name: fromAddr.name,
                         street1: fromAddr.street,
                         city: fromAddr.city,
                         state: fromAddr.state,
@@ -111,6 +139,7 @@ export default function LabelTest() {
                         country: "US",
                     },
                     to: {
+                        name: toAddr.name,
                         street1: toAddr.street,
                         city: toAddr.city,
                         state: toAddr.state,
@@ -126,8 +155,8 @@ export default function LabelTest() {
             const data = await res.json();
             setVerifiedAddresses(data);
             setStep(2);
-        } catch (err: any) {
-            setError(err.message ?? "Address verification failed");
+        } catch (err: unknown) {
+            setError(err instanceof Error ? err.message : "Address verification failed");
         } finally {
             setLoading(false);
         }
@@ -151,7 +180,7 @@ export default function LabelTest() {
                         length: parseFloat(parcel.length),
                         width: parseFloat(parcel.width),
                         height: parseFloat(parcel.height),
-                        weight: totalOz,
+                        weight_oz: totalOz,
                     },
                 }),
             });
@@ -162,8 +191,8 @@ export default function LabelTest() {
             const data = await res.json();
             setRates(data.rates ?? data);
             setStep(3);
-        } catch (err: any) {
-            setError(err.message ?? "Failed to get rates");
+        } catch (err: unknown) {
+            setError(err instanceof Error ? err.message : "Failed to get rates");
         } finally {
             setLoading(false);
         }
@@ -174,23 +203,13 @@ export default function LabelTest() {
         setLoading(true);
         setError(null);
         try {
-            const totalOz =
-                (parseInt(parcel.weightLbs || "0", 10) * 16) +
-                parseInt(parcel.weightOz || "0", 10);
 
             const res = await fetch(`${BASE_URL}/functions/v1/labels`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    rate_id: rate.id,
-                    from_address: verifiedAddresses?.from_address,
-                    to_address: verifiedAddresses?.to_address,
-                    parcel: {
-                        length: parseFloat(parcel.length),
-                        width: parseFloat(parcel.width),
-                        height: parseFloat(parcel.height),
-                        weight: totalOz,
-                    },
+                    easypost_shipment_id: rate.easypost_shipment_id,
+                    easypost_rate_id: rate.easypost_rate_id,
                 }),
             });
             if (!res.ok) {
@@ -199,8 +218,8 @@ export default function LabelTest() {
             }
             const data = await res.json();
             setLabelResult(data);
-        } catch (err: any) {
-            setError(err.message ?? "Label creation failed");
+        } catch (err: unknown) {
+            setError(err instanceof Error ? err.message : "Label creation failed");
         } finally {
             setLoading(false);
         }
@@ -220,12 +239,14 @@ export default function LabelTest() {
 
     function prefillAddresses() {
         setFromAddr({
+            name: "SendMo HQ",
             street: "388 Townsend St",
             city: "San Francisco",
             state: "CA",
             zip: "94107",
         });
         setToAddr({
+            name: "Jane Doe",
             street: "149 New Montgomery St",
             city: "San Francisco",
             state: "CA",
@@ -244,65 +265,7 @@ export default function LabelTest() {
         });
     }
 
-    // ─── Address field renderer ────────────────────────────────
 
-    function AddressFields({
-        label,
-        value,
-        onChange,
-    }: {
-        label: string;
-        value: AddressInput;
-        onChange: (v: AddressInput) => void;
-    }) {
-        return (
-            <div className="space-y-3">
-                <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
-                    {label}
-                </h3>
-                <div>
-                    <Label htmlFor={`${label}-street`}>Street</Label>
-                    <Input
-                        id={`${label}-street`}
-                        value={value.street}
-                        onChange={(e) => onChange({ ...value, street: e.target.value })}
-                        placeholder="123 Main St"
-                    />
-                </div>
-                <div className="grid grid-cols-3 gap-3">
-                    <div>
-                        <Label htmlFor={`${label}-city`}>City</Label>
-                        <Input
-                            id={`${label}-city`}
-                            value={value.city}
-                            onChange={(e) => onChange({ ...value, city: e.target.value })}
-                            placeholder="City"
-                        />
-                    </div>
-                    <div>
-                        <Label htmlFor={`${label}-state`}>State</Label>
-                        <Input
-                            id={`${label}-state`}
-                            value={value.state}
-                            onChange={(e) => onChange({ ...value, state: e.target.value })}
-                            placeholder="CA"
-                            maxLength={2}
-                        />
-                    </div>
-                    <div>
-                        <Label htmlFor={`${label}-zip`}>Zip</Label>
-                        <Input
-                            id={`${label}-zip`}
-                            value={value.zip}
-                            onChange={(e) => onChange({ ...value, zip: e.target.value })}
-                            placeholder="94107"
-                            maxLength={10}
-                        />
-                    </div>
-                </div>
-            </div>
-        );
-    }
 
     // ─── Step indicator ────────────────────────────────────────
 
@@ -313,8 +276,8 @@ export default function LabelTest() {
     const cheapestRateId =
         rates.length > 0
             ? rates.reduce((min, r) =>
-                r.display_price_cents < min.display_price_cents ? r : min
-            ).id
+                r.display_price < min.display_price ? r : min
+            ).easypost_rate_id
             : null;
 
     // ─── Render ────────────────────────────────────────────────
@@ -619,10 +582,10 @@ export default function LabelTest() {
                                     <div className="space-y-3">
                                         {rates.map((rate) => (
                                             <div
-                                                key={rate.id}
+                                                key={rate.easypost_rate_id}
                                                 className={`
                           rounded-xl border p-4 flex items-center justify-between transition-colors
-                          ${rate.id === cheapestRateId
+                          ${rate.easypost_rate_id === cheapestRateId
                                                         ? "border-primary bg-primary/5"
                                                         : "border-border hover:border-primary/40"
                                                     }
@@ -633,7 +596,7 @@ export default function LabelTest() {
                                                         <span className="font-semibold text-sm">
                                                             {rate.carrier}
                                                         </span>
-                                                        {rate.id === cheapestRateId && (
+                                                        {rate.easypost_rate_id === cheapestRateId && (
                                                             <Badge className="bg-success text-white border-0 text-[10px] px-1.5 py-0">
                                                                 Best Value
                                                             </Badge>
@@ -642,10 +605,10 @@ export default function LabelTest() {
                                                     <p className="text-sm text-muted-foreground">
                                                         {rate.service}
                                                     </p>
-                                                    {rate.estimated_days != null && (
+                                                    {rate.delivery_days != null && (
                                                         <p className="text-xs text-muted-foreground">
-                                                            Est. {rate.estimated_days} day
-                                                            {rate.estimated_days !== 1 ? "s" : ""}
+                                                            Est. {rate.delivery_days} day
+                                                            {rate.delivery_days !== 1 ? "s" : ""}
                                                         </p>
                                                     )}
                                                 </div>
@@ -656,7 +619,7 @@ export default function LabelTest() {
                                                         className="text-lg font-bold"
                                                     >
                                                         $
-                                                        {(rate.display_price_cents / 100).toFixed(2)}
+                                                        {rate.display_price.toFixed(2)}
                                                     </motion.span>
                                                     <Button
                                                         size="sm"
@@ -771,30 +734,4 @@ export default function LabelTest() {
     );
 }
 
-// ─── Spinner component ──────────────────────────────────────
 
-function Spinner({ size = "sm" }: { size?: "sm" | "lg" }) {
-    const dim = size === "lg" ? "w-8 h-8" : "w-4 h-4";
-    return (
-        <svg
-            className={`${dim} animate-spin text-primary`}
-            xmlns="http://www.w3.org/2000/svg"
-            fill="none"
-            viewBox="0 0 24 24"
-        >
-            <circle
-                className="opacity-25"
-                cx="12"
-                cy="12"
-                r="10"
-                stroke="currentColor"
-                strokeWidth="4"
-            />
-            <path
-                className="opacity-75"
-                fill="currentColor"
-                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-            />
-        </svg>
-    );
-}

@@ -79,7 +79,7 @@ serve(async (req: Request) => {
                 },
                 body: JSON.stringify({
                     rate: { id: easypost_rate_id },
-                    end_shipper: { id: endShipperData.id },
+                    end_shipper_id: endShipperData.id,
                 }),
             }
         );
