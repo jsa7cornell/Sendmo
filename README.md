@@ -12,21 +12,35 @@ SendMo solves the #1 friction point in peer-to-peer marketplace transactions: sh
 
 Buyer pays shipping upfront. Seller gets a ready-to-print label. No accounts needed for sellers.
 
-## Current Status: MVP / Demo Mode
+## Current Status: Alpha Ready (March 2026)
 
-This is a functional prototype with:
-- ✅ Full UI/UX flow (buyer + seller)
-- ✅ Mock shipping rates
-- ✅ Shareable links
-- ✅ Label printing
-- 🚧 **Awaiting EasyPost API approval for real labels**
-- 🚧 Stripe integration pending
+### Completed
+- ✅ Full UI/UX flow (buyer creates label → shares link → seller prints/ships)
+- ✅ React 18 frontend (`index.html`, `RateSelector.tsx`)
+- ✅ Next.js 14 backend API (`/backend/app/api/`)
+- ✅ EasyPost integration (address verification, multi-carrier rates, label purchase)
+- ✅ Multi-carrier support: USPS, UPS, FedEx via EndShipper
+- ✅ E2E tests (Playwright) + Backend tests (Vitest) - all passing
+- ✅ CI/CD pipeline (GitHub Actions with auto-fix)
+- ✅ **EasyPost production API keys ready** (`/credentials/`)
+
+### Pending for Alpha Launch
+- 🔜 Deploy PostgreSQL database (Vercel Postgres)
+- 🔜 Run Prisma migrations (schema ready at `backend/prisma/schema.prisma`)
+- 🔜 Stripe payment integration (schema designed, code pending)
+- 🔜 Connect frontend to live backend API
+
+### Documentation
+- `AI_FEATURE_SPEC.md` - GPT-4 Vision item recognition (future feature)
+- `schema.sql` - Full PostgreSQL DDL (10 tables)
+- `backend/prisma/schema.prisma` - ORM schema with generalized Request model
 
 ## Tech Stack
 
-- React 18 (standalone, no build step for now)
-- Vanilla CSS (custom design system)
-- Will add: Next.js, EasyPost API, Stripe
+- **Frontend**: React 18 (standalone), Vanilla CSS, Playwright tests
+- **Backend**: Next.js 14 API routes, Prisma ORM, Zod validation
+- **Integrations**: EasyPost (shipping), Stripe (payments - pending)
+- **Database**: PostgreSQL (schema ready, deployment pending)
 
 ## Quick Deploy to Vercel
 
@@ -47,14 +61,15 @@ Or deploy via Vercel dashboard:
    - Type: A, Name: @, Value: 76.76.21.21
    - Type: CNAME, Name: www, Value: cname.vercel-dns.com
 
-## Next Steps
+## Next Steps (Alpha Launch)
 
-1. ✅ Deploy to sendmo.co
-2. ⏳ Wait for EasyPost approval (~24-48 hrs)
-3. 🔜 Add real shipping rates + label generation
-4. 🔜 Stripe payment integration
-5. 🔜 Backend API (Next.js API routes)
-6. 🔜 Database (PostgreSQL)
+1. ✅ Deploy frontend to sendmo.co
+2. ✅ Backend API routes built (shipments, addresses)
+3. ✅ EasyPost production keys obtained
+4. 🔜 **Deploy Vercel Postgres + run migrations**
+5. 🔜 **Stripe payment integration**
+6. 🔜 **Connect frontend to production backend**
+7. 🔜 End-to-end test with real shipping labels
 
 ## Test the App Locally
 
