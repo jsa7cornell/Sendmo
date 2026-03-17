@@ -65,7 +65,7 @@ describe('EasyPost SDK Integration', () => {
     });
     endShipperId = endShipper.id;
     console.log('EndShipper created:', endShipperId);
-  });
+  }, 30000); // 30s timeout for API calls
 
   describe('Shipment.create', () => {
     it('creates a shipment and returns rates from multiple carriers', async () => {
