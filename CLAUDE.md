@@ -229,7 +229,7 @@ When working as a Claude Code agent, you may be assigned one of these roles:
 
 **Priority**: Live label for John's mom → Auth UI → Flexible Link → Sender flow
 
-**Current status (as of 2026-03-19)**:
+**Current status (as of 2026-03-18)**:
 - [x] Backend Edge Functions deployed and working (addresses, rates, labels, cancel-label, admin-report, autocomplete, place-details, ingest, test-db-insert)
 - [x] Database schema applied (8 migrations on remote Supabase)
 - [x] LabelTest page working (test harness for backend APIs)
@@ -237,23 +237,26 @@ When working as a Claude Code agent, you may be assigned one of these roles:
 - [x] **Recipient onboarding flow (Full Prepaid Label path)** — Steps 0→1→10→11→12, Stripe stubbed, real EasyPost test rates
 - [x] Admin test/live toggle — floating toolbar on /onboarding (Test | Live Comp)
 - [x] Magic Guestimator — 15 item types + urgency keywords, client-side
-- [x] Dashboard with shipment history (mock data — connects to real data when auth ships)
 - [x] Landing page (hero, how it works, value props, use cases, CTA, footer)
 - [x] Service name polish — 30+ EasyPost service name mappings + camelCase fallback
 - [x] **Vercel production deploy** — sendmo.co live, auto-deploys from GitHub `main`, env vars configured
 - [x] **Domain setup** — sendmo.co → Vercel (A record 76.76.21.21), www.sendmo.co CNAME, wind.sendmo.co → coyote-wind
 - [x] **EasyPost live key** — set as Supabase secrets (EASYPOST_API_KEY + EASYPOST_TEST_API_KEY)
 - [x] **Comp label ledger** — migration 009 adds `payment_method` column ('card'|'balance'|'comp')
-- [ ] Auth UI (magic link login)
-- [ ] Recipient onboarding flow (Flexible Link path)
-- [ ] Sender flow
-- [ ] Stripe payment integration (stubbed for now, real integration after auth)
-- [ ] Email notifications (OTP, label, tracking)
-- [ ] Server-side admin token validation (before launch)
+- [x] **Auth UI (magic link login)** — Supabase Auth with magic link, Login page, ProtectedRoute, AuthContext, auto-create profile on first login
+- [x] **Dashboard with real data** — connected to Supabase via AuthContext, shows shipment history for authenticated user, user menu with sign out
+- [x] **Recipient onboarding flow (Flexible Link path)** — Steps 20-23: shipping preferences, email OTP verification, payment (stubbed), link activated view
+- [x] **E2E tests (Playwright)** — 12 tests covering home, admin, auth, onboarding, 404
+- [x] **Unit tests** — 110 tests across 11 files, all passing
+- [ ] Sender flow (5-step wizard at /s/:shortCode) — SenderFlow.tsx is a placeholder
+- [ ] Stripe payment integration (stubbed for now, real integration needed)
+- [ ] Email notifications (OTP, label, tracking via Resend)
+- [ ] Server-side admin token validation (replace PIN gate with role-based check)
 
 **What exists on disk but is a stub**:
-- `src/pages/SenderFlow.tsx` — placeholder text
+- `src/pages/SenderFlow.tsx` — placeholder text (needs 5-step sender wizard)
 - `src/components/sender/` — empty directory
+- `src/components/recipient/RecipientStepFlexPayment.tsx` — Stripe payment stubbed with mock form
 
 **Live production URL**: https://sendmo.co (auto-deploys from GitHub `main`, also accessible at sendmo.vercel.app)
 **Loveable prototype reference**: https://sendmo.lovable.app (still live, use for visual reference only — production builds from PRD specs)
