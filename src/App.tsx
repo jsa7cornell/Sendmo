@@ -4,6 +4,7 @@ import RecipientOnboarding from "@/pages/RecipientOnboarding";
 import SenderFlow from "@/pages/SenderFlow";
 import Dashboard from "@/pages/Dashboard";
 import FAQ from "@/pages/FAQ";
+import Admin from "@/pages/Admin";
 import LabelTest from "@/pages/LabelTest";
 import NotFound from "@/pages/NotFound";
 
@@ -16,6 +17,7 @@ function App() {
         <Route path="/s/:shortCode" element={<SenderFlow />} />
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/faq" element={<FAQ />} />
+        <Route path="/admin" element={<Admin />} />
         <Route path="/label-test" element={<LabelTest />} />
         <Route path="*" element={<NotFound />} />
       </Routes>

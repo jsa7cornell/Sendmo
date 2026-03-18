@@ -3,8 +3,10 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import AddressFields from "@/components/ui/AddressFields";
 
-// We need a wrapper to give AddressFields context since it might use hooks in the future
-// Currently it's just a functional component taking props
+/**
+ * AddressFields is now a thin wrapper around SmartAddressInput.
+ * It renders a single "Address" search field (not separate Street/City/State/Zip).
+ */
 describe("AddressFields", () => {
     const mockValue = {
         name: "",
@@ -12,28 +14,50 @@ describe("AddressFields", () => {
         city: "",
         state: "",
         zip: "",
+        verified: false,
     };
 
-    it("renders all 5 input fields", () => {
+    it("renders Name and single Address field (not multi-field form)", () => {
         render(<AddressFields label="Shipping" value={mockValue} onChange={vi.fn()} />);
 
-        expect(screen.getByText("Shipping")).toBeInTheDocument();
-        expect(screen.getByLabelText(/Name/i)).toBeInTheDocument();
-        expect(screen.getByLabelText(/Street/i)).toBeInTheDocument();
-        expect(screen.getByLabelText(/City/i)).toBeInTheDocument();
-        expect(screen.getByLabelText(/State/i)).toBeInTheDocument();
-        expect(screen.getByLabelText(/Zip/i)).toBeInTheDocument();
+        // Name field
+        expect(screen.getByPlaceholderText("Full Name")).toBeInTheDocument();
+
+        // Single address field
+        expect(screen.getByPlaceholderText("Start typing your address…")).toBeInTheDocument();
+
+        // Old multi-field labels must NOT be present
+        expect(screen.queryByLabelText(/Street/i)).not.toBeInTheDocument();
+        expect(screen.queryByLabelText(/City/i)).not.toBeInTheDocument();
+        expect(screen.queryByLabelText(/State/i)).not.toBeInTheDocument();
+        expect(screen.queryByLabelText(/Zip/i)).not.toBeInTheDocument();
     });
 
-    it("calls onChange when typing", async () => {
+    it("calls onChange with updated name when typing in Name field", async () => {
         const onChangeMock = vi.fn();
         const user = userEvent.setup();
 
         render(<AddressFields label="Shipping" value={mockValue} onChange={onChangeMock} />);
 
-        await user.type(screen.getByLabelText(/Name/i), "A");
+        await user.type(screen.getByPlaceholderText("Full Name"), "A");
 
-        // Assert onChange was called with the updated object
-        expect(onChangeMock).toHaveBeenCalledWith({ ...mockValue, name: "A" });
+        expect(onChangeMock).toHaveBeenCalledWith(
+            expect.objectContaining({ name: "A" })
+        );
+    });
+
+    it("shows Verified badge when value has verified=true and street set", () => {
+        const verifiedValue = {
+            name: "Jane Doe",
+            street: "388 Townsend St",
+            city: "San Francisco",
+            state: "CA",
+            zip: "94107",
+            verified: true,
+        };
+        render(<AddressFields label="Shipping" value={verifiedValue} onChange={vi.fn()} />);
+
+        expect(screen.getByText("Verified")).toBeInTheDocument();
+        expect(screen.queryByPlaceholderText("Start typing your address…")).not.toBeInTheDocument();
     });
 });

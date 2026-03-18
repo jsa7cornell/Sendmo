@@ -108,11 +108,13 @@ SendMo keeps 10%
 ## 5. Route Structure
 
 ```
-/                       → Landing page
-/get-started            → Recipient onboarding flow (4 steps)
-/send/:linkId           → Sender flow (5 steps)
+/                       → Landing page (full marketing page)
+/onboarding             → Recipient onboarding flow (4 steps)
+/s/:shortCode           → Sender flow (5 steps)
 /dashboard              → Authenticated recipient dashboard
 /faq                    → FAQ & Help page
+/admin                  → Admin reporting (internal)
+/label-test             → Backend test harness (internal)
 /*                      → 404 Not Found
 ```
 
@@ -507,7 +509,7 @@ discounted = amount x 0.95 (for Balance tab)
 
 | Method | Path | Description | Auth |
 |--------|------|-------------|------|
-| POST | `/api/addresses/verify` | Verify address via EasyPost | No |
+| POST | `/api/addresses/verify` | Verify address | No |
 | POST | `/api/links` | Create new SendMo link | Yes |
 | GET | `/api/links/:shortCode` | Get link details (sender view) | No |
 | PATCH | `/api/links/:id` | Update link preferences | Yes |
@@ -515,10 +517,11 @@ discounted = amount x 0.95 (for Balance tab)
 | POST | `/api/labels` | Purchase label and generate PDF | No (link auth) |
 | POST | `/api/payments/authorize` | Create Stripe payment intent | Yes |
 | POST | `/api/payments/capture` | Capture authorized payment | Internal |
+| POST | `/api/cancel-label` | Void an unused label | Admin |
 | POST | `/api/email/verify` | Send OTP verification email | No |
 | POST | `/api/email/verify/confirm` | Confirm OTP code | No |
 | POST | `/api/webhooks/stripe` | Stripe webhook handler | Webhook sig |
-| POST | `/api/webhooks/easypost` | EasyPost tracking webhook | Webhook sig |
+| POST | `/api/webhooks/easypost` | Shipping tracking webhook | Webhook sig |
 
 ---
 
@@ -554,7 +557,7 @@ CREATE TABLE sendmo_links (
   user_id UUID REFERENCES profiles(id) NOT NULL,
   short_code TEXT UNIQUE NOT NULL,
   destination_address_id UUID REFERENCES addresses(id),
-  link_type TEXT NOT NULL CHECK (link_type IN ('full_label', 'flexible_link')),
+  link_type TEXT NOT NULL CHECK (link_type IN ('full_label', 'flexible_link', 'shipping_and_escrow')),
   status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'active', 'paused', 'deactivated')),
   -- Flexible link preferences
   speed_preference TEXT DEFAULT 'standard',
@@ -583,7 +586,15 @@ CREATE TABLE shipments (
   carrier TEXT, service TEXT,
   tracking_number TEXT, easypost_shipment_id TEXT, easypost_tracker_id TEXT,
   status TEXT NOT NULL DEFAULT 'label_created'
-    CHECK (status IN ('label_created', 'in_transit', 'delivered', 'returned')),
+    CHECK (status IN ('label_created', 'in_transit', 'out_for_delivery', 'delivered', 'return_to_sender', 'cancelled')),
+  is_test BOOLEAN NOT NULL DEFAULT false,
+  -- Refund/cancellation tracking (migration 002)
+  refund_status TEXT NOT NULL DEFAULT 'none'
+    CHECK (refund_status IN ('none', 'submitted', 'refunded', 'rejected', 'not_applicable')),
+  refund_submitted_at TIMESTAMPTZ,
+  cancelled_at TIMESTAMPTZ,
+  carrier_refund_id TEXT,
+  -- Financials
   shipping_cost NUMERIC, insurance_cost NUMERIC DEFAULT 0, total_charged NUMERIC,
   label_pdf_url TEXT,
   shipped_at TIMESTAMPTZ, delivered_at TIMESTAMPTZ, eta TIMESTAMPTZ,
@@ -620,6 +631,39 @@ CREATE TABLE webhook_events (
   processed_at TIMESTAMPTZ DEFAULT now(),
   payload JSONB
 );
+
+-- PHASE 3: ESCROW & MARKETPLACE (Conceptual Modeling)
+-- Money transmission requires strict double-entry or append-only ledgering.
+-- These tables represent future architectural additions to support "shipping_and_escrow" links.
+
+-- CREATE TABLE escrows (
+--   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+--   shipment_id UUID REFERENCES shipments(id),
+--   amount NUMERIC,
+--   currency VARCHAR(3) DEFAULT 'USD',
+--   status TEXT CHECK (status IN ('pending', 'funded', 'held_in_transit', 'dispute_opened', 'released', 'refunded', 'frozen_fraud')),
+--   risk_score NUMERIC,
+--   funded_at TIMESTAMPTZ, released_at TIMESTAMPTZ, disputed_at TIMESTAMPTZ
+-- );
+
+-- CREATE TABLE disputes (
+--   id UUID PRIMARY KEY,
+--   escrow_id UUID REFERENCES escrows(id),
+--   opened_by UUID REFERENCES profiles(id),
+--   reason TEXT,
+--   status TEXT CHECK (status IN ('open', 'under_review', 'resolved_buyer', 'resolved_seller')),
+--   evidence_urls JSONB,
+--   resolution_notes TEXT
+-- );
+
+-- CREATE TABLE transactions (
+--   -- Immutable ledger for all money transmission (funding, release, fees, dispute holding)
+--   id UUID PRIMARY KEY,
+--   escrow_id UUID REFERENCES escrows(id),
+--   type TEXT CHECK (type IN ('hold', 'release', 'fee_deduction', 'refund')),
+--   amount NUMERIC,
+--   created_at TIMESTAMPTZ DEFAULT now()
+-- );
 ```
 
 ### RLS Policies
@@ -648,6 +692,56 @@ CREATE TABLE webhook_events (
 - Pre-loaded wallet via card or ACH (Plaid)
 - 5% discount on all shipments
 - Balance deducted instead of card charged
+
+---
+
+## 13.1 Label Void & Refund Policy
+
+SendMo allows labels to be voided before the package has been picked up and scanned by the carrier. All refund policies are presented under SendMo branding — carrier names are never surfaced to users.
+
+### Eligibility
+
+| Condition | Eligible? |
+|-----------|----------|
+| Label printed, not yet scanned | ✅ Yes |
+| Package in transit | ❌ No |
+| Package delivered | ❌ No |
+| Previous void already submitted | ❌ No |
+| USPS labels | Within 30 days of creation |
+| UPS / FedEx labels | Within 90 days of creation |
+
+### Refund Process
+
+1. Admin (or user, post-MVP) initiates void from `/admin` Actions column
+2. `CancelLabelModal` shows shipment details + SendMo refund policy (no carrier branding)
+3. Click **"Void Label"** → calls `POST /api/cancel-label`
+4. Edge function validates eligibility, submits void to carrier
+5. `shipments.status` → `cancelled`, `refund_status` → `submitted`
+6. Refund credited to SendMo account within **2–4 weeks** after carrier confirmation
+7. Credit appears as SendMo account balance (not original payment method in Phase 1)
+
+### Refund Status Values
+
+| Status | Meaning | UI Label |
+|--------|---------|----------|
+| `none` | No void requested | — |
+| `submitted` | Void submitted, awaiting carrier | "Refund Pending" (blue) |
+| `refunded` | Carrier confirmed, credit issued | "Refunded" (green) |
+| `rejected` | Carrier rejected (label was used) | "Refund Rejected" (red) |
+| `not_applicable` | Label type not refundable | "Not Eligible" |
+
+### Admin Void UI (`/admin`)
+
+- **Actions column** in admin table shows **"Void"** button for eligible labels
+- Button is **disabled** (with tooltip) for in-transit, delivered, cancelled, or already-voided labels
+- **CancelLabelModal**: 4-state dialog (confirm → loading → success/error)
+- On success: row updates optimistically to show "Cancelled" status + "Refund Pending" badge
+
+### Future: User-Facing Void (Post-MVP)
+
+- Dashboard Shipments table will show a "Void Label" action for eligible labels
+- Same backend (`cancel-label` function) — just a different UI entry point
+- Stripe refund to original card will be added in this phase (currently admin-only, credit to balance)
 
 ---
 
@@ -772,28 +866,30 @@ Endpoint: `POST /api/webhooks/stripe`
 - Sentry + PostHog integration
 - Security hardening, abuse prevention
 
-### Phase 3: Scale & Expand (Weeks 8+)
+### Phase 3: Scale, Marketplace & Escrow (Weeks 8+)
 - SendMo Balance / prepaid wallet (Plaid ACH)
+- **Escrow Service / Trust Platform**: Allow recipients to fund an item (`escrow_amount`) in addition to shipping costs. Held funds released on delivery scan.
+- **Money Transmission Compliance**: KYC/AML integration (`identity_verified`), append-only ledger `transactions` tracking, and 1099-K tax reporting (`total_volume_processed`).
+- **Dispute Resolution Flow**: UI for buyers to freeze/dispute funds upon delivery, and Admin panel to mediate `disputes` & view `risk_score` / `frozen_fraud` events.
 - Multiple links per user
 - International shipping
 - Private shipment links (QR code)
-- Admin dashboard
+- Admin dashboard expansion (financial observability)
 
 ---
 
 ## 21. Development Workflow
 
 ### Tool Roles
-- **Loveable**: Frontend prototyping, shareable demo URL (sendmo.lovable.app)
-- **Claude.ai**: Strategy, architecture, PRDs, design decisions, artifact prototypes
-- **Claude Code**: Production code, Edge Functions, DB migrations, tests
+- **Loveable**: Visual reference prototype only (sendmo.lovable.app) — not used for production code
+- **Claude.ai**: Strategy, architecture, PRDs, design decisions
+- **Claude Code**: All production code — frontend, Edge Functions, DB migrations, tests
 - **GitHub**: Single source of truth
 - **Vercel**: Auto-deploys from GitHub
 
 ### File Ownership
-- Loveable owns: `/src/components`, `/src/pages`
-- Claude Code owns: `/supabase` (Edge Functions, migrations)
-- Shared: `/src/lib` (API clients, types)
+- Claude Code owns all production code (`/src`, `/supabase`, `/tests`)
+- Loveable prototype is reference only — do not extract code from it
 
 ---
 
@@ -888,7 +984,68 @@ async function analyzeItem(description: string, imageUrl?: string) {
 
 ---
 
-## 23. Open Questions
+## 23. Logging & Observability
+
+### Overview
+
+SendMo uses a **structured event log** in Supabase (`event_logs` table) as a debugging knowledge base. It is written by Edge Functions during every significant operation, and queryable via the Supabase SQL editor.
+
+**Today scope:** Debugging agents and developers can query `event_logs` with plain SQL to answer investigation questions without reading raw logs.
+
+**Future scope (Phase 2):** When production volume justifies it, export to ClickHouse for clickstream analytics, funnel analysis, and throughput testing.
+
+### Data Model
+
+| Column | Type | Purpose |
+|--------|------|---------|
+| `event_type` | TEXT | e.g. `address.verified`, `label.created` |
+| `session_id` | TEXT | Client-generated UUID; primary debug join key |
+| `actor_id` | UUID | Supabase user_id (null for anonymous senders) |
+| `entity_type` | TEXT | `address` \| `rate` \| `label` \| `shipment` |
+| `entity_id` | TEXT | EasyPost ID or Supabase UUID |
+| `severity` | TEXT | `info` \| `warn` \| `error` |
+| `source` | TEXT | `edge_fn` \| `webhook` \| `frontend` |
+| `duration_ms` | INT | External API call latency |
+| `properties` | JSONB | All structured debug fields |
+
+### Event Sources (Phase 1)
+
+| Edge Function | Events Emitted |
+|---|---|
+| `addresses` | `address.verified`, `address.soft_warning`, `address.hard_error`, `address.google_fallback` |
+| `rates` | `rate.fetched`, `rate.no_results`, `rate.error` |
+| `labels` | `label.created`, `label.buy_error`, `label.endshipper_error` |
+
+### Retention Policy
+
+- **`event_logs`:** 90 days (pg_cron purge job)
+- **Transactional tables** (`shipments`, `payments`, etc.): indefinite
+
+### Infrastructure
+
+- **Write path:** Edge Functions → `_shared/logger.ts` (fire-and-forget) → `ingest` Edge Function → `event_logs` table
+- **Read path:** Supabase SQL Editor (service role), no RLS
+- **Migration:** `supabase/migrations/003_event_logs.sql`
+- **Query guide:** See `CLAUDE.md` § Logging & Observability
+
+### Future: ClickHouse Migration (Phase 2+)
+
+Trigger: `event_logs` exceeds ~5M rows or analytical query latency becomes noticeable.
+
+**Recommended path:**
+1. Add pg_cron export job (every 5 min): SELECT unexported rows → POST to ClickHouse HTTP API
+2. No changes to `ingest` function or Edge Function instrumentation
+3. Use ClickHouse for analytics; Supabase remains write target and transactional source of truth
+
+**ClickHouse use cases:**
+- Funnel conversion analysis (step drop-off)
+- Address failure pattern analysis at scale
+- Carrier reliability reporting
+- Throughput and load testing baseline metrics
+
+---
+
+## 24. Open Questions
 
 | Question | Status |
 |----------|--------|

@@ -153,4 +153,40 @@ export interface AddressInput {
     city: string;
     state: string;
     zip: string;
+    verified?: boolean;   // true when user selected from Google Places dropdown
+    place_id?: string;    // Google Places place_id for the selected location
 }
+
+// ─── Recipient Flow Types ───────────────────────────────────
+
+export type PackagingType = 'box' | 'envelope' | 'tube';
+export type SpeedTier = 'economy' | 'standard' | 'express';
+export type DistanceTier = 'nearby' | 'regional' | 'cross';
+export type RecipientPath = 'full_label' | 'flexible';
+
+export interface ShippingMethodOption extends ShippingRate {
+    speed_tier: SpeedTier;
+    disabled?: boolean;
+    disabledReason?: string;
+}
+
+export interface GuestimatorResult {
+    packaging: PackagingType;
+    length: number;
+    width: number;
+    height: number;
+    weightLbs: number;
+    speedHint?: SpeedTier;
+    itemName: string;
+}
+
+export interface LabelResult {
+    tracking_number: string;
+    carrier: string;
+    service: string;
+    label_url: string;
+    sendmo_id?: string;
+}
+
+// API request/response types are defined inline in api.ts to match
+// the Edge Function field names (from_address, to_address, parcel)

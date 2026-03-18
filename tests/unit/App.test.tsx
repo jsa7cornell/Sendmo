@@ -6,7 +6,7 @@ describe("App Routing", () => {
     it("renders the home page on /", () => {
         window.history.pushState({}, "Test page", "/");
         render(<App />);
-        expect(screen.getByText("Index")).toBeInTheDocument();
+        expect(screen.getByText("Prepaid shipping made easy")).toBeInTheDocument();
     });
 
     it("renders the FAQ page on /faq", () => {
@@ -24,7 +24,7 @@ describe("App Routing", () => {
     it("renders the Onboarding on /onboarding", () => {
         window.history.pushState({}, "Test page", "/onboarding");
         render(<App />);
-        expect(screen.getByText("RecipientOnboarding")).toBeInTheDocument();
+        expect(screen.getByText("How would you like to ship?")).toBeInTheDocument();
     });
 
     it("renders Not Found on unknown paths", () => {
