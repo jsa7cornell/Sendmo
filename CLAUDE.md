@@ -240,6 +240,8 @@ When working as a Claude Code agent, you may be assigned one of these roles:
 - [x] Dashboard with shipment history (mock data — connects to real data when auth ships)
 - [x] Landing page (hero, how it works, value props, use cases, CTA, footer)
 - [x] Service name polish — 30+ EasyPost service name mappings + camelCase fallback
+- [x] **Vercel production deploy** — sendmo.co live, auto-deploys from GitHub `main`, env vars configured
+- [x] **Domain setup** — sendmo.co → Vercel (A record 76.76.21.21), www.sendmo.co CNAME, wind.sendmo.co → coyote-wind
 - [x] **EasyPost live key** — set as Supabase secrets (EASYPOST_API_KEY + EASYPOST_TEST_API_KEY)
 - [x] **Comp label ledger** — migration 009 adds `payment_method` column ('card'|'balance'|'comp')
 - [ ] Auth UI (magic link login)
@@ -273,6 +275,24 @@ When working as a Claude Code agent, you may be assigned one of these roles:
 14. **ALWAYS** derive critical decisions (pricing, refund eligibility, test/live mode) from server-side state (DB, env vars) — **NEVER** trust client-provided parameters for these determinations.
 15. **ALWAYS** anticipate "Phase 3 Escrow" (money transmission) when altering `payments` or `shipments`. Ensure enum constraints are easily expandable for future `escrow` states.
 16. **NEVER** use simple `UPDATE` statements for modifying financial balances. **ALWAYS** utilize immutable, append-only ledger tables (e.g., `transactions`) for tracking money movement (funding, holds, disputes, fees, releases) due to strict money transmission regulations and required audit trails.
+
+## Vercel Deployment
+
+**Production URL**: https://sendmo.co (also https://sendmo.vercel.app)
+**Auto-deploys**: Every push to `main` triggers a build + deploy
+**Build command**: `npm run build` (tsc + vite build)
+**Output directory**: `dist`
+**Framework**: Vite (configured in `vercel.json`)
+
+**Environment variables on Vercel** (must be set in Vercel dashboard or CLI, NOT from .env.local):
+- `VITE_SUPABASE_URL` — Supabase project URL
+- `VITE_SUPABASE_ANON_KEY` — Supabase anon/publishable key
+- `VITE_APP_URL` — `https://sendmo.co`
+- `VITE_GOOGLE_MAPS_API_KEY` — Google Maps API key for address autocomplete
+
+**Important**: Vercel does NOT read `.env.local`. All `VITE_*` vars must be added via `vercel env add` or the Vercel dashboard. After adding/changing env vars, redeploy with `vercel --prod`.
+
+---
 
 ## How to Run Locally
 

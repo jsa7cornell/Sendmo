@@ -21,6 +21,20 @@ When an agent discovers something important — an API quirk, a "why did we choo
 
 ## Architecture Decisions
 
+### [2026-03-18] Vercel env vars must be set separately from .env.local
+**Category:** Architecture
+**Context:** First production deploy to sendmo.co showed a blank page, then API errors ("Unexpected token '<'"). The Vite build was running but `VITE_SUPABASE_URL` was undefined, so API calls went to relative URLs and got HTML back.
+**Decision/Finding:** Vercel ignores `.env.local`. All `VITE_*` environment variables must be set in Vercel via `vercel env add` or the dashboard. After adding/changing vars, a redeploy is required (`vercel --prod`).
+**Why:** Vite inlines `import.meta.env.VITE_*` at build time. If the var is missing during the Vercel build, it's baked in as `undefined`.
+**Watch out:** When adding a new `VITE_*` var to `.env.local`, always also add it to Vercel. The `vercel.json` `framework: "vite"` setting ensures Vercel runs the build correctly.
+
+### [2026-03-18] vercel.json required for SPA routing + Vite build
+**Category:** Architecture
+**Context:** Vercel was serving raw source files (0ms builds) and returning 404 on client-side routes like `/admin`.
+**Decision/Finding:** Added `vercel.json` with `buildCommand`, `outputDirectory`, `framework: "vite"`, and SPA rewrites (`"source": "/(.*)"` → `"/index.html"`).
+**Why:** Without explicit config, Vercel's framework detection wasn't picking up Vite, and client-side routes need catch-all rewrites to serve `index.html`.
+**Watch out:** The GitHub token (`ghp_*`) lacks `workflow` scope — cannot push `.github/workflows/` files. If CI is needed, update the token scope on GitHub.
+
 ### [2026-03-18] Domain setup — sendmo.co is production, sendmo.com is aspirational
 **Category:** Architecture
 **Context:** sendmo.co is the owned domain (Cloudflare DNS). sendmo.com is not yet purchased (parked on Afternic).
