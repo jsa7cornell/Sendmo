@@ -240,8 +240,8 @@ When working as a Claude Code agent, you may be assigned one of these roles:
 - [x] Dashboard with shipment history (mock data — connects to real data when auth ships)
 - [x] Landing page (hero, how it works, value props, use cases, CTA, footer)
 - [x] Service name polish — 30+ EasyPost service name mappings + camelCase fallback
-- [ ] **EasyPost live key** — needs to be set as Supabase secret to generate real labels
-- [ ] **Comp label ledger** — `payment_method: 'comp'` in payments table
+- [x] **EasyPost live key** — set as Supabase secrets (EASYPOST_API_KEY + EASYPOST_TEST_API_KEY)
+- [x] **Comp label ledger** — migration 009 adds `payment_method` column ('card'|'balance'|'comp')
 - [ ] Auth UI (magic link login)
 - [ ] Recipient onboarding flow (Flexible Link path)
 - [ ] Sender flow
@@ -253,6 +253,7 @@ When working as a Claude Code agent, you may be assigned one of these roles:
 - `src/pages/SenderFlow.tsx` — placeholder text
 - `src/components/sender/` — empty directory
 
+**Live production URL**: https://sendmo.vercel.app (auto-deploys from GitHub `main`)
 **Loveable prototype reference**: https://sendmo.lovable.app (still live, use for visual reference only — production builds from PRD specs)
 
 ## Critical Rules for All Agents
