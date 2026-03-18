@@ -133,6 +133,76 @@ export async function confirmOTP(email: string, code: string): Promise<{ ok: boo
   return post<{ ok: boolean; verified: boolean }>("email", { action: "confirm", email, code });
 }
 
+// ─── Fetch Link by Short Code ───────────────────────────────
+
+export interface LinkData {
+  id: string;
+  short_code: string;
+  link_type: string;
+  status: string;
+  recipient_name: string;
+  recipient_city: string;
+  recipient_state: string;
+  max_price_cents: number;
+  preferred_speed: string | null;
+  preferred_carrier: string | null;
+  size_hint: string | null;
+  notes: string | null;
+  expires_at: string | null;
+  recipient_address_id: string;
+}
+
+export async function fetchLink(shortCode: string): Promise<LinkData> {
+  const res = await fetch(
+    `${BASE_URL}/rest/v1/sendmo_links?short_code=eq.${encodeURIComponent(shortCode)}&select=id,short_code,link_type,status,max_price_cents,preferred_speed,preferred_carrier,size_hint,notes,expires_at,recipient_address_id,profiles(full_name),addresses!sendmo_links_recipient_address_id_fkey(city,state)`,
+    {
+      headers: {
+        apikey: ANON_KEY,
+        Authorization: `Bearer ${ANON_KEY}`,
+      },
+    },
+  );
+  if (!res.ok) throw new Error("Failed to load shipping link");
+  const rows = await res.json();
+  if (!rows || rows.length === 0) throw new Error("Link not found");
+  const row = rows[0];
+  return {
+    id: row.id,
+    short_code: row.short_code,
+    link_type: row.link_type,
+    status: row.status,
+    max_price_cents: row.max_price_cents,
+    preferred_speed: row.preferred_speed,
+    preferred_carrier: row.preferred_carrier,
+    size_hint: row.size_hint,
+    notes: row.notes,
+    expires_at: row.expires_at,
+    recipient_address_id: row.recipient_address_id,
+    recipient_name: row.profiles?.full_name || "the recipient",
+    recipient_city: row.addresses?.city || "",
+    recipient_state: row.addresses?.state || "",
+  };
+}
+
+// ─── Fetch Address (for internal rate/label API calls only) ──
+
+export async function fetchAddress(addressId: string): Promise<AddressInput> {
+  const res = await fetch(
+    `${BASE_URL}/rest/v1/addresses?id=eq.${encodeURIComponent(addressId)}&select=name,street1,city,state,zip`,
+    {
+      headers: {
+        apikey: ANON_KEY,
+        Authorization: `Bearer ${ANON_KEY}`,
+      },
+    },
+  );
+  if (!res.ok) throw new Error("Failed to load address");
+  const rows = await res.json();
+  if (!rows || rows.length === 0) throw new Error("Address not found");
+  const a = rows[0];
+  return { name: a.name, street: a.street1, city: a.city, state: a.state, zip: a.zip, verified: true };
+}
+
 // ─── Pricing Helpers ────────────────────────────────────────
 
 const MARGIN_MULTIPLIER = 1.15;
