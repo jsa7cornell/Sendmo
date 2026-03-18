@@ -4,6 +4,7 @@ import { Mail, CheckCircle2, ArrowLeft, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { RecipientFlowState } from "@/hooks/useRecipientFlow";
+import { sendOTP, confirmOTP } from "@/lib/api";
 
 interface Props {
   state: RecipientFlowState;
@@ -38,15 +39,16 @@ export default function RecipientStepEmailVerify({ state, onUpdate, onContinue, 
     setError(null);
     setSending(true);
 
-    // TODO: Call email/verify Edge Function
-    // Stubbed with setTimeout
-    await new Promise((r) => setTimeout(r, 1000));
-
-    setSending(false);
-    setCodeSent(true);
-    onUpdate({ verification_email: email });
-    // Focus first digit
-    setTimeout(() => inputRefs.current[0]?.focus(), 100);
+    try {
+      await sendOTP(email);
+      setSending(false);
+      setCodeSent(true);
+      onUpdate({ verification_email: email });
+      setTimeout(() => inputRefs.current[0]?.focus(), 100);
+    } catch (err) {
+      setSending(false);
+      setError(err instanceof Error ? err.message : "Failed to send code");
+    }
   }
 
   const handleDigitChange = useCallback(
@@ -81,12 +83,14 @@ export default function RecipientStepEmailVerify({ state, onUpdate, onContinue, 
     setError(null);
     setVerifying(true);
 
-    // TODO: Call email/verify/confirm Edge Function
-    // Stubbed — any 6-digit code succeeds
-    await new Promise((r) => setTimeout(r, 1000));
-
-    setVerifying(false);
-    onUpdate({ email_verified: true });
+    try {
+      await confirmOTP(email, code);
+      setVerifying(false);
+      onUpdate({ email_verified: true });
+    } catch (err) {
+      setVerifying(false);
+      setError(err instanceof Error ? err.message : "Verification failed");
+    }
   }
 
   // Already verified — show success
