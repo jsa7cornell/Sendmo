@@ -1,81 +1,61 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { motion } from "framer-motion";
 import {
   Copy, Link2, MapPin, Zap, Shield, CreditCard,
   Package, Truck, CheckCircle2, ExternalLink, Settings,
+  LogOut, User,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/contexts/AuthContext";
+import { supabase } from "@/lib/supabase";
+import type { Shipment } from "@/lib/types";
 
-// ─── Mock Data (replace with Supabase queries when auth ships) ──
+// ─── Status config ──────────────────────────────────────────
 
-const MOCK_LINK = {
-  shortCode: "k8Hj2mNp4x",
-  status: "active" as const,
-  speed: "Standard",
-  distance: "Regional",
-  priceCap: "$100",
-  insurance: "None",
-  destination: "San Francisco, CA",
-};
+type DisplayStatus = "label_created" | "in_transit" | "out_for_delivery" | "delivered" | "return_to_sender" | "cancelled";
 
-const MOCK_WALLET = {
-  cardBrand: "Visa",
-  cardLast4: "4242",
-  cardExpiry: "12/29",
-  balance: "$0.00",
-};
-
-type ShipmentStatus = "label_created" | "in_transit" | "delivered";
-
-interface MockShipment {
-  id: string;
-  sendmoId: string;
-  from: string;
-  status: ShipmentStatus;
-  carrier: string;
-  service: string;
-  amount: string;
-  created: string;
-  tracking: string | null;
-}
-
-const MOCK_SHIPMENTS: MockShipment[] = [
-  {
-    id: "1", sendmoId: "SM-20260318-001",
-    from: "John D. — San Francisco, CA",
-    status: "delivered", carrier: "USPS", service: "Priority Mail",
-    amount: "$9.19", created: "Mar 15, 2026", tracking: "9400111899223456789012",
-  },
-  {
-    id: "2", sendmoId: "SM-20260317-002",
-    from: "Sarah K. — Oakland, CA",
-    status: "in_transit", carrier: "UPS", service: "Ground",
-    amount: "$7.18", created: "Mar 17, 2026", tracking: "1Z999AA10123456784",
-  },
-  {
-    id: "3", sendmoId: "SM-20260318-003",
-    from: "Mike R. — Palo Alto, CA",
-    status: "label_created", carrier: "FedEx", service: "Home Delivery",
-    amount: "$12.45", created: "Mar 18, 2026", tracking: null,
-  },
-];
-
-const STATUS_CONFIG: Record<ShipmentStatus, { label: string; color: string; icon: typeof Package }> = {
+const STATUS_CONFIG: Record<DisplayStatus, { label: string; color: string; icon: typeof Package }> = {
   label_created: { label: "Label Created", color: "bg-purple-100 text-purple-700 border-purple-200", icon: Package },
   in_transit: { label: "In Transit", color: "bg-blue-100 text-blue-700 border-blue-200", icon: Truck },
+  out_for_delivery: { label: "Out for Delivery", color: "bg-blue-100 text-blue-700 border-blue-200", icon: Truck },
   delivered: { label: "Delivered", color: "bg-green-100 text-green-700 border-green-200", icon: CheckCircle2 },
+  return_to_sender: { label: "Returned", color: "bg-orange-100 text-orange-700 border-orange-200", icon: Package },
+  cancelled: { label: "Cancelled", color: "bg-red-100 text-red-700 border-red-200", icon: Package },
 };
 
 // ─── Component ──────────────────────────────────────────────
 
 export default function Dashboard() {
+  const { user, signOut } = useAuth();
   const [copied, setCopied] = useState(false);
-  const link = MOCK_LINK;
-  const wallet = MOCK_WALLET;
-  const shipments = MOCK_SHIPMENTS;
+  const [shipments, setShipments] = useState<Shipment[]>([]);
+  const [loadingShipments, setLoadingShipments] = useState(true);
+  const [showUserMenu, setShowUserMenu] = useState(false);
 
-  const shortUrl = `sendmo.co/s/${link.shortCode}`;
+  // Fetch real shipments for the authenticated user
+  useEffect(() => {
+    async function fetchShipments() {
+      if (!user) return;
+
+      const { data, error } = await supabase
+        .from("shipments")
+        .select("*, sendmo_links!inner(user_id)")
+        .eq("sendmo_links.user_id", user.id)
+        .order("created_at", { ascending: false })
+        .limit(50);
+
+      if (!error && data) {
+        setShipments(data as Shipment[]);
+      }
+      setLoadingShipments(false);
+    }
+
+    fetchShipments();
+  }, [user]);
+
+  const shortUrl = "sendmo.co/s/k8Hj2mNp4x"; // placeholder until links are fetched
 
   function handleCopy() {
     navigator.clipboard.writeText(`https://${shortUrl}`);
@@ -83,8 +63,25 @@ export default function Dashboard() {
     setTimeout(() => setCopied(false), 2000);
   }
 
+  function formatCents(cents: number): string {
+    return `$${(cents / 100).toFixed(2)}`;
+  }
+
+  function formatDate(iso: string): string {
+    return new Date(iso).toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+  }
+
   return (
-    <div className="min-h-screen bg-gradient-to-b from-background to-muted/50">
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.3 }}
+      className="min-h-screen bg-gradient-to-b from-background to-muted/50"
+    >
       <div className="container max-w-4xl mx-auto px-4 py-8">
         {/* Header */}
         <div className="flex items-center justify-between mb-8">
@@ -92,10 +89,47 @@ export default function Dashboard() {
             <h1 className="text-2xl font-bold text-foreground">Dashboard</h1>
             <p className="text-sm text-muted-foreground mt-1">Manage your label links, payments, and shipments</p>
           </div>
-          <Button variant="outline" className="rounded-xl gap-2" onClick={() => window.location.href = "/onboarding"}>
-            <Link2 className="w-4 h-4" />
-            New Link
-          </Button>
+          <div className="flex items-center gap-3">
+            <Button variant="outline" className="rounded-xl gap-2" onClick={() => window.location.href = "/onboarding"}>
+              <Link2 className="w-4 h-4" />
+              New Link
+            </Button>
+
+            {/* User menu */}
+            <div className="relative">
+              <button
+                onClick={() => setShowUserMenu(!showUserMenu)}
+                className="flex items-center gap-2 rounded-xl border border-border bg-card px-3 py-2 text-sm hover:bg-muted/50 transition-colors"
+              >
+                <User className="w-4 h-4 text-muted-foreground" />
+                <span className="hidden sm:inline text-muted-foreground max-w-[160px] truncate">
+                  {user?.email}
+                </span>
+              </button>
+
+              {showUserMenu && (
+                <>
+                  <div className="fixed inset-0 z-10" onClick={() => setShowUserMenu(false)} />
+                  <motion.div
+                    initial={{ opacity: 0, y: -4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="absolute right-0 top-full mt-1 z-20 w-56 bg-card rounded-xl border border-border shadow-lg p-1"
+                  >
+                    <div className="px-3 py-2 border-b border-border mb-1">
+                      <p className="text-xs text-muted-foreground truncate">{user?.email}</p>
+                    </div>
+                    <button
+                      onClick={signOut}
+                      className="flex items-center gap-2 w-full px-3 py-2 text-sm text-destructive hover:bg-destructive/5 rounded-lg transition-colors"
+                    >
+                      <LogOut className="w-4 h-4" />
+                      Sign out
+                    </button>
+                  </motion.div>
+                </>
+              )}
+            </div>
+          </div>
         </div>
 
         {/* Top row: Link + Wallet */}
@@ -129,13 +163,13 @@ export default function Dashboard() {
             {/* Preference pills */}
             <div className="flex flex-wrap gap-2">
               <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground">
-                <MapPin className="w-3 h-3" /> {link.destination}
+                <MapPin className="w-3 h-3" /> San Francisco, CA
               </span>
               <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground">
-                <Zap className="w-3 h-3" /> {link.speed}
+                <Zap className="w-3 h-3" /> Standard
               </span>
               <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground">
-                <Shield className="w-3 h-3" /> Cap: {link.priceCap}
+                <Shield className="w-3 h-3" /> Cap: $100
               </span>
             </div>
           </div>
@@ -150,11 +184,11 @@ export default function Dashboard() {
             {/* Card on file */}
             <div className="flex items-center gap-3 bg-muted/50 rounded-xl px-4 py-3 mb-3">
               <div className="w-10 h-7 rounded bg-gradient-to-br from-blue-600 to-blue-800 flex items-center justify-center">
-                <span className="text-[10px] font-bold text-white">{wallet.cardBrand.toUpperCase()}</span>
+                <span className="text-[10px] font-bold text-white">VISA</span>
               </div>
               <div className="flex-1">
-                <p className="text-sm font-medium text-foreground">•••• {wallet.cardLast4}</p>
-                <p className="text-xs text-muted-foreground">Expires {wallet.cardExpiry}</p>
+                <p className="text-sm font-medium text-foreground">&bull;&bull;&bull;&bull; 4242</p>
+                <p className="text-xs text-muted-foreground">Expires 12/29</p>
               </div>
             </div>
 
@@ -162,7 +196,7 @@ export default function Dashboard() {
             <div className="flex items-center justify-between bg-muted/50 rounded-xl px-4 py-3">
               <div>
                 <p className="text-xs text-muted-foreground">SendMo Balance</p>
-                <p className="text-lg font-bold text-foreground">{wallet.balance}</p>
+                <p className="text-lg font-bold text-foreground">$0.00</p>
               </div>
               <Badge variant="outline" className="text-xs">Coming Soon</Badge>
             </div>
@@ -178,94 +212,95 @@ export default function Dashboard() {
             </h2>
           </div>
 
-          {/* Desktop table */}
-          <div className="hidden md:block overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border text-left text-muted-foreground">
-                  <th className="px-5 py-3 font-medium">ID</th>
-                  <th className="px-5 py-3 font-medium">From</th>
-                  <th className="px-5 py-3 font-medium">Status</th>
-                  <th className="px-5 py-3 font-medium">Carrier</th>
-                  <th className="px-5 py-3 font-medium">Amount</th>
-                  <th className="px-5 py-3 font-medium">Created</th>
-                  <th className="px-5 py-3 font-medium">Tracking</th>
-                </tr>
-              </thead>
-              <tbody>
-                {shipments.map((s) => {
-                  const statusCfg = STATUS_CONFIG[s.status];
-                  const StatusIcon = statusCfg.icon;
-                  return (
-                    <tr key={s.id} className="border-b border-border/50 last:border-0 hover:bg-muted/30 transition-colors">
-                      <td className="px-5 py-3 font-mono text-xs text-muted-foreground">{s.sendmoId}</td>
-                      <td className="px-5 py-3">{s.from}</td>
-                      <td className="px-5 py-3">
-                        <span className={cn(
-                          "inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium",
-                          statusCfg.color,
-                        )}>
-                          <StatusIcon className="w-3 h-3" />
-                          {statusCfg.label}
-                        </span>
-                      </td>
-                      <td className="px-5 py-3">{s.carrier} — {s.service}</td>
-                      <td className="px-5 py-3 font-medium">{s.amount}</td>
-                      <td className="px-5 py-3 text-muted-foreground">{s.created}</td>
-                      <td className="px-5 py-3">
-                        {s.tracking ? (
-                          <button className="text-primary hover:underline text-xs font-mono flex items-center gap-1">
-                            {s.tracking.slice(0, 10)}…
-                            <ExternalLink className="w-3 h-3" />
-                          </button>
-                        ) : (
-                          <span className="text-muted-foreground text-xs">—</span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Mobile cards */}
-          <div className="md:hidden divide-y divide-border/50">
-            {shipments.map((s) => {
-              const statusCfg = STATUS_CONFIG[s.status];
-              const StatusIcon = statusCfg.icon;
-              return (
-                <div key={s.id} className="p-4 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-mono text-muted-foreground">{s.sendmoId}</span>
-                    <span className={cn(
-                      "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium",
-                      statusCfg.color,
-                    )}>
-                      <StatusIcon className="w-3 h-3" />
-                      {statusCfg.label}
-                    </span>
-                  </div>
-                  <p className="text-sm font-medium">{s.from}</p>
-                  <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    <span>{s.carrier} — {s.service}</span>
-                    <span className="font-medium text-foreground">{s.amount}</span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Empty state (shown when no shipments) */}
-          {shipments.length === 0 && (
+          {loadingShipments ? (
+            <div className="p-12 text-center">
+              <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+              <p className="text-sm text-muted-foreground">Loading shipments...</p>
+            </div>
+          ) : shipments.length === 0 ? (
             <div className="p-12 text-center">
               <Package className="w-10 h-10 text-muted-foreground/40 mx-auto mb-3" />
               <p className="text-sm text-muted-foreground">No shipments yet</p>
               <p className="text-xs text-muted-foreground mt-1">When someone uses your label link, shipments will appear here</p>
             </div>
+          ) : (
+            <>
+              {/* Desktop table */}
+              <div className="hidden md:block overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border text-left text-muted-foreground">
+                      <th className="px-5 py-3 font-medium">Status</th>
+                      <th className="px-5 py-3 font-medium">Carrier</th>
+                      <th className="px-5 py-3 font-medium">Amount</th>
+                      <th className="px-5 py-3 font-medium">Created</th>
+                      <th className="px-5 py-3 font-medium">Tracking</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {shipments.map((s) => {
+                      const statusCfg = STATUS_CONFIG[s.status] ?? STATUS_CONFIG.label_created;
+                      const StatusIcon = statusCfg.icon;
+                      return (
+                        <tr key={s.id} className="border-b border-border/50 last:border-0 hover:bg-muted/30 transition-colors">
+                          <td className="px-5 py-3">
+                            <span className={cn(
+                              "inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium",
+                              statusCfg.color,
+                            )}>
+                              <StatusIcon className="w-3 h-3" />
+                              {statusCfg.label}
+                            </span>
+                          </td>
+                          <td className="px-5 py-3">{s.carrier} — {s.service}</td>
+                          <td className="px-5 py-3 font-medium">{formatCents(s.display_price_cents)}</td>
+                          <td className="px-5 py-3 text-muted-foreground">{formatDate(s.created_at)}</td>
+                          <td className="px-5 py-3">
+                            {s.tracking_number ? (
+                              <span className="text-primary text-xs font-mono flex items-center gap-1">
+                                {s.tracking_number.slice(0, 14)}...
+                                <ExternalLink className="w-3 h-3" />
+                              </span>
+                            ) : (
+                              <span className="text-muted-foreground text-xs">&mdash;</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Mobile cards */}
+              <div className="md:hidden divide-y divide-border/50">
+                {shipments.map((s) => {
+                  const statusCfg = STATUS_CONFIG[s.status] ?? STATUS_CONFIG.label_created;
+                  const StatusIcon = statusCfg.icon;
+                  return (
+                    <div key={s.id} className="p-4 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-muted-foreground">{formatDate(s.created_at)}</span>
+                        <span className={cn(
+                          "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium",
+                          statusCfg.color,
+                        )}>
+                          <StatusIcon className="w-3 h-3" />
+                          {statusCfg.label}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between text-xs text-muted-foreground">
+                        <span>{s.carrier} — {s.service}</span>
+                        <span className="font-medium text-foreground">{formatCents(s.display_price_cents)}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
           )}
         </div>
       </div>
-    </div>
+    </motion.div>
   );
 }
