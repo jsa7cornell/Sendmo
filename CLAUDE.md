@@ -248,9 +248,9 @@ When working as a Claude Code agent, you may be assigned one of these roles:
 - [x] **Recipient onboarding flow (Flexible Link path)** — Steps 20-23: shipping preferences, email OTP verification, payment (stubbed), link activated view
 - [x] **E2E tests (Playwright)** — 12 tests covering home, admin, auth, onboarding, 404
 - [x] **Unit tests** — 110 tests across 11 files, all passing
+- [x] **Email notifications (Resend)** — OTP verification, label confirmation, tracking updates. Edge Functions deployed (`email`, `webhooks`), sendmo.co domain verified, API key set as Supabase secret.
 - [ ] Sender flow (5-step wizard at /s/:shortCode) — SenderFlow.tsx is a placeholder
 - [ ] Stripe payment integration (stubbed for now, real integration needed)
-- [ ] Email notifications (OTP, label, tracking via Resend)
 - [ ] Server-side admin token validation (replace PIN gate with role-based check)
 
 **What exists on disk but is a stub**:
@@ -278,6 +278,7 @@ When working as a Claude Code agent, you may be assigned one of these roles:
 14. **ALWAYS** derive critical decisions (pricing, refund eligibility, test/live mode) from server-side state (DB, env vars) — **NEVER** trust client-provided parameters for these determinations.
 15. **ALWAYS** anticipate "Phase 3 Escrow" (money transmission) when altering `payments` or `shipments`. Ensure enum constraints are easily expandable for future `escrow` states.
 16. **NEVER** use simple `UPDATE` statements for modifying financial balances. **ALWAYS** utilize immutable, append-only ledger tables (e.g., `transactions`) for tracking money movement (funding, holds, disputes, fees, releases) due to strict money transmission regulations and required audit trails.
+17. **ALWAYS** add a `CHANGELOG.md` entry when merging to `main`. Every push to `main` is a production deploy. Follow the template in `CHANGELOG.md`. Include: what shipped, files changed, test counts, breaking changes, and notes for future agents.
 
 ## Vercel Deployment
 
@@ -534,12 +535,14 @@ See PRD.md §23 for full architecture.
 
 ## Documentation Structure
 
-**Three-file knowledge system:**
+**Five-file knowledge system:**
 
 | File | Purpose |
 |------|---------|
 | `PRD.md` | Product requirements — vision, flows, UI specs, rate tables, phased execution |
 | `CLAUDE.md` | Developer instructions — tech stack, repo structure, env vars, design tokens, agent roles |
 | `DECISIONS.md` | Decision log — *why* choices were made, integration gotchas, hard-won debugging knowledge |
+| `CHANGELOG.md` | Deployment log — *what* shipped to production and when. Every merge to `main` gets an entry |
+| `WISHLIST.md` | Bugs, polish items, and feature ideas — prioritized top-down, checked off when shipped |
 
 Archived reference docs live in `_archive/` — see PRD.md Appendix B for index.
