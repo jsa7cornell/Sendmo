@@ -99,7 +99,7 @@ RESEND_API_KEY=...
 
 # App
 VITE_APP_URL=http://localhost:5173
-VITE_SHORT_LINK_BASE=sendmo.co/s
+VITE_SHORT_LINK_BASE=sendmo.co/s   # Production domain is sendmo.co
 ```
 
 ## Design System (Strict)
@@ -253,7 +253,7 @@ When working as a Claude Code agent, you may be assigned one of these roles:
 - `src/pages/SenderFlow.tsx` — placeholder text
 - `src/components/sender/` — empty directory
 
-**Live production URL**: https://sendmo.vercel.app (auto-deploys from GitHub `main`)
+**Live production URL**: https://sendmo.co (auto-deploys from GitHub `main`, also accessible at sendmo.vercel.app)
 **Loveable prototype reference**: https://sendmo.lovable.app (still live, use for visual reference only — production builds from PRD specs)
 
 ## Critical Rules for All Agents

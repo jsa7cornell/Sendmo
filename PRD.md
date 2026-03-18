@@ -500,7 +500,7 @@ discounted = amount x 0.95 (for Balance tab)
 
 - Prominent search bar with real-time filtering
 - 10 accordion FAQ items (what is SendMo, who pays, revenue model, privacy, carriers, price caps, dimension adjustments, international, tracking, cancellation)
-- Contact support card (email link to support@sendmo.com)
+- Contact support card (email link to support@sendmo.co)
 - Production: pgvector semantic search, search analytics, contact form
 
 ---

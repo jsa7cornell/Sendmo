@@ -21,6 +21,13 @@ When an agent discovers something important — an API quirk, a "why did we choo
 
 ## Architecture Decisions
 
+### [2026-03-18] Domain setup — sendmo.co is production, sendmo.com is aspirational
+**Category:** Architecture
+**Context:** sendmo.co is the owned domain (Cloudflare DNS). sendmo.com is not yet purchased (parked on Afternic).
+**Decision/Finding:** sendmo.co is the production domain, pointing to Vercel via A record (76.76.21.21). www.sendmo.co CNAMEs to Vercel. wind.sendmo.co points to the WINDow/coyote-wind project. sendmo.com was removed from Vercel — it will be added back if/when purchased.
+**Why:** Clean separation. No dangling domain configs for unowned domains.
+**Watch out:** When sendmo.com is purchased, add it to Vercel and set up Cloudflare DNS (or transfer nameservers). Until then, don't reference sendmo.com in any user-facing copy or code.
+
 ### [2026-03-18] Admin mode: PIN gate → sessionStorage → floating toolbar (Option A)
 **Category:** Architecture
 **Context:** John needs to create real (live) labels for testing and personal use before Stripe/auth are built, but the test/live toggle must be invisible to regular users.
