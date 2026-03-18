@@ -2,6 +2,8 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { log } from "../_shared/logger.ts";
+import { sendEmail } from "../_shared/resend.ts";
+import { labelConfirmationEmail } from "../_shared/email-templates.ts";
 
 serve(async (req: Request) => {
     // Handle CORS preflight
@@ -25,7 +27,8 @@ serve(async (req: Request) => {
             from_address,
             to_address,
             parcel,
-            display_price_cents
+            display_price_cents,
+            recipient_email,
         } = await req.json();
 
         if (!easypost_shipment_id || !easypost_rate_id) {
@@ -284,6 +287,44 @@ serve(async (req: Request) => {
             } else {
                 console.error("Missing SUPABASE_URL or SERVICE_ROLE_KEY for fire-and-forget save");
             }
+        }
+
+        // Send label confirmation email (fire-and-forget)
+        if (recipient_email && typeof recipient_email === "string") {
+            const eta = buyData.selected_rate?.delivery_days
+                ? `${buyData.selected_rate.delivery_days} business days`
+                : "Estimated upon pickup";
+            const template = labelConfirmationEmail(
+                trackingNumber || "Pending",
+                carrier || "Standard",
+                eta,
+            );
+            sendEmail({
+                to: recipient_email,
+                subject: template.subject,
+                html: template.html,
+            })
+                .then(({ id }) => {
+                    log({
+                        event_type: "email.label_confirmation_sent",
+                        session_id: sessionId,
+                        severity: "info",
+                        entity_type: "label",
+                        entity_id: easypost_shipment_id,
+                        properties: { resend_id: id },
+                    });
+                })
+                .catch((err) => {
+                    console.error("Failed to send label confirmation email:", err);
+                    log({
+                        event_type: "email.label_confirmation_error",
+                        session_id: sessionId,
+                        severity: "error",
+                        entity_type: "label",
+                        entity_id: easypost_shipment_id,
+                        properties: { error_message: err instanceof Error ? err.message : String(err) },
+                    });
+                });
         }
 
         return new Response(
