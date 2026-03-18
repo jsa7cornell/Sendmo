@@ -7,6 +7,10 @@ import RecipientStepPathChoice from "@/components/recipient/RecipientStepPathCho
 import RecipientStepAddress from "@/components/recipient/RecipientStepAddress";
 import RecipientStepFullShipping from "@/components/recipient/RecipientStepFullShipping";
 import RecipientStepPayment from "@/components/recipient/RecipientStepPayment";
+import RecipientStepFlexPreferences from "@/components/recipient/RecipientStepFlexPreferences";
+import RecipientStepEmailVerify from "@/components/recipient/RecipientStepEmailVerify";
+import RecipientStepFlexPayment from "@/components/recipient/RecipientStepFlexPayment";
+import RecipientStepLinkReady from "@/components/recipient/RecipientStepLinkReady";
 
 // ─── Animation variants ─────────────────────────────────────
 
@@ -24,11 +28,15 @@ const STEP_TO_PROGRESS: Record<number, number> = {
   10: 1,
   11: 2,
   12: 3,
+  20: 1,
+  21: 2,
+  22: 2,
+  23: 3,
 };
 
 function progressIndexToStep(index: number, path: string | null): number {
-  if (path === "full_label") {
-    return [1, 10, 11, 12][index] ?? 1;
+  if (path === "flexible") {
+    return [1, 20, 21, 23][index] ?? 1;
   }
   return [1, 10, 11, 12][index] ?? 1;
 }
@@ -145,6 +153,46 @@ export default function RecipientOnboarding() {
                 onUpdate={updateState}
                 onBack={goBack}
                 liveMode={liveMode}
+              />
+            )}
+
+            {/* Step 20: Flex — Shipping Preferences */}
+            {state.currentStep === 20 && (
+              <RecipientStepFlexPreferences
+                state={state}
+                errors={getErrors(20)}
+                tried={!!state.tried[20]}
+                onUpdate={updateState}
+                onContinue={() => tryAdvance(20)}
+                onBack={goBack}
+              />
+            )}
+
+            {/* Step 21: Flex — Email Verification */}
+            {state.currentStep === 21 && (
+              <RecipientStepEmailVerify
+                state={state}
+                onUpdate={updateState}
+                onContinue={() => tryAdvance(21)}
+                onBack={goBack}
+              />
+            )}
+
+            {/* Step 22: Flex — Payment Authorization */}
+            {state.currentStep === 22 && (
+              <RecipientStepFlexPayment
+                state={state}
+                onUpdate={updateState}
+                onContinue={() => tryAdvance(22)}
+                onBack={goBack}
+              />
+            )}
+
+            {/* Step 23: Flex — Link Ready */}
+            {state.currentStep === 23 && (
+              <RecipientStepLinkReady
+                state={state}
+                onUpdate={updateState}
               />
             )}
           </motion.div>

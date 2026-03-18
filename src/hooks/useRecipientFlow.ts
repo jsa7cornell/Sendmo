@@ -1,9 +1,11 @@
 import { useCallback, useState } from "react";
 import type {
   AddressInput,
+  DistanceTier,
   PackagingType,
   RecipientPath,
   ShippingRate,
+  SpeedTier,
   LabelResult,
 } from "@/lib/types";
 import { emptyAddress } from "@/lib/utils";
@@ -31,8 +33,17 @@ export interface RecipientFlowState {
   insurance: boolean;
 
   // Step 11-12
-  paymentStatus: "idle" | "processing" | "succeeded" | "failed";
+  paymentStatus: "idle" | "processing" | "authorized" | "succeeded" | "failed";
   labelResult: LabelResult | null;
+
+  // Step 20-23 (Flexible Link path)
+  distance_hint: DistanceTier;
+  size_hint: "envelope" | "smallbox" | "largebox" | null;
+  speed_preference: SpeedTier;
+  price_cap: number;
+  verification_email: string;
+  email_verified: boolean;
+  short_code: string;
 
   // Validation
   tried: Record<number, boolean>;
@@ -59,21 +70,34 @@ const INITIAL_STATE: RecipientFlowState = {
   paymentStatus: "idle",
   labelResult: null,
 
+  distance_hint: "regional",
+  size_hint: null,
+  speed_preference: "standard",
+  price_cap: 100,
+  verification_email: "",
+  email_verified: false,
+  short_code: "",
+
   tried: {},
 };
 
 // ─── Step Navigation Maps ───────────────────────────────────
 
 const FULL_LABEL_STEPS = [0, 1, 10, 11, 12];
+const FLEX_LINK_STEPS = [0, 1, 20, 21, 22, 23];
+
+function stepsForPath(path: RecipientPath | null): number[] {
+  return path === "flexible" ? FLEX_LINK_STEPS : FULL_LABEL_STEPS;
+}
 
 function nextStep(current: number, path: RecipientPath | null): number | null {
-  const steps = path === "full_label" ? FULL_LABEL_STEPS : FULL_LABEL_STEPS;
+  const steps = stepsForPath(path);
   const idx = steps.indexOf(current);
   return idx >= 0 && idx < steps.length - 1 ? steps[idx + 1] : null;
 }
 
 function prevStep(current: number, path: RecipientPath | null): number | null {
-  const steps = path === "full_label" ? FULL_LABEL_STEPS : FULL_LABEL_STEPS;
+  const steps = stepsForPath(path);
   const idx = steps.indexOf(current);
   return idx > 0 ? steps[idx - 1] : null;
 }
@@ -101,6 +125,15 @@ export function getValidationErrors(state: RecipientFlowState, step: number): st
     if (!state.destinationAddress.verified) errors.push("Destination address is required");
     if (!state.email.trim()) errors.push("Email is required");
     else if (!/^.+@.+\..+$/.test(state.email.trim())) errors.push("Enter a valid email address");
+  }
+
+  if (step === 20) {
+    if (state.price_cap <= 0) errors.push("Price cap must be greater than $0");
+    if (state.price_cap > 500) errors.push("Price cap cannot exceed $500");
+  }
+
+  if (step === 21) {
+    if (!state.email_verified) errors.push("Email must be verified to continue");
   }
 
   if (step === 10) {
