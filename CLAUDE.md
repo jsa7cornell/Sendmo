@@ -191,6 +191,7 @@ All backend logic lives in Supabase Edge Functions:
 | POST | `/api/payments/capture` | Internal |
 | POST | `/api/cancel-label` | Admin only |
 | POST | `/api/email` | No | `{ action: "send", email }` or `{ action: "confirm", email, code }` |
+| GET | `/api/tracking?number=XXX` | No | Public tracking lookup (non-PII fields only) |
 | POST | `/api/webhooks` | Webhook sig | EasyPost tracker.updated events |
 | POST | `/api/webhooks/stripe` | Webhook sig |
 
@@ -229,8 +230,8 @@ When working as a Claude Code agent, you may be assigned one of these roles:
 **Priority**: Live label for John's mom → Auth UI → Flexible Link → Sender flow
 
 **Current status (as of 2026-03-18)**:
-- [x] Backend Edge Functions deployed and working (addresses, rates, labels, cancel-label, admin-report, autocomplete, place-details, ingest, test-db-insert, email, webhooks)
-- [x] Database schema applied (10 migrations on remote Supabase — includes email_verifications)
+- [x] Backend Edge Functions deployed and working (addresses, rates, labels, cancel-label, admin-report, autocomplete, place-details, ingest, test-db-insert, email, webhooks, tracking)
+- [x] Database schema applied (11 migrations on remote Supabase — includes email_verifications, notification_contacts, notifications_log)
 - [x] LabelTest page working (test harness for backend APIs)
 - [x] Admin page working (PIN-gated, reporting + label void)
 - [x] **Recipient onboarding flow (Full Prepaid Label path)** — Steps 0→1→10→11→12, Stripe stubbed, real EasyPost test rates
@@ -246,8 +247,9 @@ When working as a Claude Code agent, you may be assigned one of these roles:
 - [x] **Dashboard with real data** — connected to Supabase via AuthContext, shows shipment history for authenticated user, user menu with sign out
 - [x] **Recipient onboarding flow (Flexible Link path)** — Steps 20-23: shipping preferences, email OTP verification, payment (stubbed), link activated view
 - [x] **E2E tests (Playwright)** — 12 tests covering home, admin, auth, onboarding, 404
-- [x] **Unit tests** — 131 tests across 13 files, all passing
+- [x] **Unit tests** — 145 tests across 14 files, all passing
 - [x] **Email notifications (Resend)** — OTP verification, label confirmation, tracking updates. Edge Functions: `email` (send/confirm OTP), `webhooks` (EasyPost tracker). Migration 010 adds `email_verifications` table. Templates in `_shared/email-templates.ts`.
+- [x] **Shipping notifications (sender + recipient)** — Notification dispatcher with channel-based routing (email now, SMS/push extensible). notification_contacts + notifications_log tables (migration 011). Role-aware email templates with ETA, carrier, and "Track Package" button. Public tracking page at `/track/:trackingNumber`.
 - [ ] Sender flow (5-step wizard at /s/:shortCode) — SenderFlow.tsx is a placeholder
 - [ ] Stripe payment integration (stubbed for now, real integration needed)
 - [ ] Server-side admin token validation (replace PIN gate with role-based check)
