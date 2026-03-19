@@ -2,14 +2,14 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { log } from "../_shared/logger.ts";
-import { sendEmail } from "../_shared/resend.ts";
-import { trackingUpdateEmail } from "../_shared/email-templates.ts";
+import { dispatchNotifications } from "../_shared/notifications.ts";
 
 /**
  * Webhook handler for EasyPost tracker updates.
  * POST /webhooks — EasyPost sends tracker.updated events here.
  *
- * Updates shipment status in DB and sends tracking email notifications.
+ * Updates shipment status in DB and dispatches notifications to all
+ * registered contacts (sender + recipient) via the notification system.
  */
 
 const STATUS_MAP: Record<string, string> = {
@@ -19,8 +19,10 @@ const STATUS_MAP: Record<string, string> = {
   return_to_sender: "returned",
 };
 
-// Statuses that trigger email notifications
-const EMAIL_STATUSES = new Set(["in_transit", "out_for_delivery", "delivered"]);
+// EasyPost statuses that trigger notifications
+const NOTIFY_STATUSES = new Set(["in_transit", "out_for_delivery", "delivered"]);
+
+const APP_URL = "https://sendmo.co";
 
 function getSupabase() {
   const url = Deno.env.get("SUPABASE_URL");
@@ -45,8 +47,6 @@ serve(async (req: Request) => {
   // Always respond 200 to webhooks to prevent retries
   try {
     const body = await req.json();
-
-    // EasyPost webhook structure: { description, result: { ... } }
     const description = body.description || "";
     const result = body.result || {};
 
@@ -80,7 +80,7 @@ serve(async (req: Request) => {
     // Find shipment by tracking number
     const { data: shipment, error: fetchErr } = await supabase
       .from("shipments")
-      .select("id, status, tracking_number, carrier, user_id, profiles!inner(email)")
+      .select("id, status, tracking_number, carrier")
       .eq("tracking_number", trackingCode)
       .limit(1)
       .single();
@@ -108,7 +108,6 @@ serve(async (req: Request) => {
     });
 
     if (dupeErr?.code === "23505") {
-      // Duplicate event — already processed
       return new Response(JSON.stringify({ ok: true, duplicate: true }), {
         status: 200,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -137,38 +136,24 @@ serve(async (req: Request) => {
       },
     });
 
-    // Send tracking email notification (fire-and-forget)
-    if (EMAIL_STATUSES.has(easypostStatus)) {
-      const recipientEmail = (shipment as any).profiles?.email;
-      if (recipientEmail) {
-        const template = trackingUpdateEmail(easypostStatus, trackingCode);
-        sendEmail({
-          to: recipientEmail,
-          subject: template.subject,
-          html: template.html,
-        })
-          .then(({ id }) => {
-            log({
-              event_type: "email.tracking_sent",
-              severity: "info",
-              source: "webhook",
-              entity_type: "shipment",
-              entity_id: shipment.id,
-              properties: { resend_id: id, status: easypostStatus },
-            });
+    // Dispatch notifications to all contacts (fire-and-forget)
+    if (NOTIFY_STATUSES.has(easypostStatus)) {
+      // Extract estimated delivery from EasyPost tracker data
+      const estDelivery = result.est_delivery_date
+        ? new Date(result.est_delivery_date).toLocaleDateString("en-US", {
+            weekday: "long",
+            month: "long",
+            day: "numeric",
           })
-          .catch((err) => {
-            console.error("Failed to send tracking email:", err);
-            log({
-              event_type: "email.tracking_send_error",
-              severity: "error",
-              source: "webhook",
-              entity_type: "shipment",
-              entity_id: shipment.id,
-              properties: { error_message: err instanceof Error ? err.message : String(err) },
-            });
-          });
-      }
+        : undefined;
+
+      // Don't await — fire and forget
+      dispatchNotifications(supabase, shipment.id, easypostStatus, {
+        tracking_number: trackingCode,
+        carrier: shipment.carrier || "",
+        estimated_delivery: estDelivery,
+        tracking_url: `${APP_URL}/track/${trackingCode}`,
+      });
     }
 
     return new Response(JSON.stringify({ ok: true }), {
@@ -176,7 +161,6 @@ serve(async (req: Request) => {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (err) {
-    // Always 200 for webhooks — log the error but don't trigger retries
     console.error("Webhook processing error:", err);
     log({
       event_type: "webhook.processing_error",
