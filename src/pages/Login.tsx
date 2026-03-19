@@ -40,7 +40,14 @@ export default function Login() {
     setSending(false);
 
     if (signInError) {
-      setError(signInError);
+      // Make common Supabase errors user-friendly
+      if (signInError.includes("rate limit")) {
+        setError("Too many attempts. Please wait a few minutes and try again.");
+      } else if (signInError.includes("invalid") && signInError.includes("email")) {
+        setError("Please enter a valid email address.");
+      } else {
+        setError(signInError);
+      }
     } else {
       setSent(true);
     }
@@ -145,9 +152,16 @@ export default function Login() {
                 <p className="text-sm text-muted-foreground mb-4">
                   We sent a magic link to <span className="font-medium text-foreground">{email}</span>
                 </p>
-                <p className="text-xs text-muted-foreground">
-                  Click the link in the email to sign in. You can close this tab.
+                <p className="text-xs text-muted-foreground mb-4">
+                  Click the link in the email to sign in. Check your spam folder if you don't see it.
                 </p>
+                <button
+                  type="button"
+                  onClick={() => { setSent(false); setTried(false); setError(null); }}
+                  className="text-xs text-primary hover:underline underline-offset-2"
+                >
+                  Didn't receive it? Try again
+                </button>
               </motion.div>
             )}
           </AnimatePresence>

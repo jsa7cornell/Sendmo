@@ -1,9 +1,11 @@
-import { Package, Link2, Shield, Zap, ArrowRight, CheckCircle2, Users, CreditCard } from "lucide-react";
+import { Package, Link2, Shield, Zap, ArrowRight, CheckCircle2, Users, CreditCard, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useAuth } from "@/contexts/AuthContext";
 
 // ─── Landing Page ───────────────────────────────────────────
 
 export default function Index() {
+  const { user, signOut } = useAuth();
   return (
     <div className="min-h-screen bg-gradient-to-b from-background to-muted/50">
       {/* Nav */}
@@ -16,9 +18,20 @@ export default function Index() {
           <Button variant="ghost" className="rounded-xl text-sm" onClick={() => window.location.href = "/faq"}>
             FAQ
           </Button>
-          <Button variant="outline" className="rounded-xl text-sm" onClick={() => window.location.href = "/dashboard"}>
-            Sign In
-          </Button>
+          {user ? (
+            <div className="flex items-center gap-2">
+              <Button variant="outline" className="rounded-xl text-sm" onClick={() => window.location.href = "/dashboard"}>
+                Dashboard
+              </Button>
+              <Button variant="ghost" className="rounded-xl text-sm px-2" onClick={() => signOut()} title="Sign out">
+                <LogOut className="w-4 h-4" />
+              </Button>
+            </div>
+          ) : (
+            <Button variant="outline" className="rounded-xl text-sm" onClick={() => window.location.href = "/login"}>
+              Sign In
+            </Button>
+          )}
         </div>
       </nav>
 

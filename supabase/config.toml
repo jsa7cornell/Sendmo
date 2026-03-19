@@ -1,3 +1,17 @@
+# ─── Auth Configuration ───────────────────────────────────────
+[auth]
+site_url = "https://sendmo.co"
+additional_redirect_urls = [
+  "https://sendmo.co/dashboard",
+  "https://sendmo.co/**",
+  "http://localhost:5173/dashboard",
+  "http://localhost:5173/**",
+]
+
+[auth.email]
+enable_signup = true
+double_confirm_changes = false
+enable_confirmations = true
 
 [functions.test-db-insert]
 enabled = true
