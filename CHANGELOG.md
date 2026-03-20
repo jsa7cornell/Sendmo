@@ -36,6 +36,49 @@
 
 ---
 
+## [2026-03-19] — UI polish: persistent header, flow badge, path choice redesign, dashboard identity
+
+**Branch:** `feat/ui-polish` (merged to `main`)
+**Commit:** `4644a33`
+**Deploy:** Vercel auto-deploy
+
+### What shipped
+- **Shared AppHeader component** — persistent nav header across all pages (auth-aware, logo links home). Replaces per-page inline navs.
+- **Flow indicator badge** — pill below header during onboarding shows "Full Prepaid Label" or "Flexible Shipping Link" once a path is chosen
+- **Dashboard identity** — replaced "Dashboard" heading with avatar circle (first letter of email) + email + tagline. Compact sign-out icon button.
+- **Path choice redesign** — RecipientStepPathChoice now has illustrated cards with gradient hero bands, 3-icon scenes, feature bullet points, and descriptive copy to help users understand the two flows
+- **Name field label** — SmartAddressInput name field now reads "Recipient Name (probably your name!)"
+- **NotFound page** — "Lost in transit" headline with Package icon, Go home + Go back buttons
+- **SenderFlow placeholder** — added AppHeader to sender checkout placeholder
+- **Index page** — replaced inline nav with AppHeader, fixed footer email to support@sendmo.co
+
+### What changed (files)
+- `src/components/AppHeader.tsx` — **new**: shared persistent header with `actions` prop override
+- `src/components/recipient/RecipientStepPathChoice.tsx` — rewritten with illustrated cards
+- `src/components/ui/SmartAddressInput.tsx` — updated name field label
+- `src/pages/Dashboard.tsx` — avatar identity section, compact sign-out
+- `src/pages/Index.tsx` — uses AppHeader, fixed footer email
+- `src/pages/NotFound.tsx` — rewritten with AppHeader + "Lost in transit"
+- `src/pages/RecipientOnboarding.tsx` — added AppHeader + flow badge pill
+- `src/pages/SenderFlow.tsx` — added AppHeader
+- `src/pages/TrackingPage.tsx` — uses AppHeader with breadcrumb action
+- `tests/unit/App.test.tsx` — updated 2 assertions to match new copy
+
+### Tests
+- 0 new tests, 2 test assertions updated
+- 188 total unit tests passing
+
+### Breaking changes
+- None (frontend-only, no API or DB changes)
+
+### Notes
+- AppHeader `actions` prop completely replaces the right slot — pass `undefined` (or omit) for default auth-aware buttons
+- Flow badge reads `data.path` from RecipientFlowContext — no new props needed
+- Path choice illustrations use only Tailwind + Lucide icons (no external image assets)
+- Page title in browser tab still shows "temp-app" — may want to fix in index.html
+
+---
+
 ## [2026-03-19] — User-facing label void, live tracking, dashboard enhancements
 
 **Branch:** direct to `main` (3 commits)
