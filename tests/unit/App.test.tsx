@@ -38,7 +38,7 @@ describe("App Routing", () => {
     it("renders the Onboarding on /onboarding", () => {
         window.history.pushState({}, "Test page", "/onboarding");
         render(<App />);
-        expect(screen.getByText("How do you want to set this up?")).toBeInTheDocument();
+        expect(screen.getByText("How should we set up your prepaid shipment?")).toBeInTheDocument();
     });
 
     it("renders Not Found on unknown paths", () => {
