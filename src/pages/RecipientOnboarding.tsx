@@ -1,7 +1,15 @@
 import { useState } from "react";
+import { useLocation, Navigate } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import { useRecipientFlow } from "@/hooks/useRecipientFlow";
 import { isAdminSession } from "@/pages/Admin";
+import { useRecipientFlowContext } from "@/contexts/RecipientFlowContext";
+import {
+  stepToProgressIndex,
+  progressIndexToStep,
+  canAccessStep,
+  firstIncompleteSlug,
+  isSlugValidForPath,
+} from "@/lib/stepRouting";
 import ProgressBar from "@/components/recipient/ProgressBar";
 import RecipientStepPathChoice from "@/components/recipient/RecipientStepPathChoice";
 import RecipientStepAddress from "@/components/recipient/RecipientStepAddress";
@@ -14,34 +22,15 @@ import RecipientStepLinkReady from "@/components/recipient/RecipientStepLinkRead
 
 // ─── Animation variants ─────────────────────────────────────
 
-const stepVariants = {
-  initial: { opacity: 0, x: 20 },
-  animate: { opacity: 1, x: 0 },
-  exit: { opacity: 0, x: -20 },
-};
-
-// ─── Progress index mapping ─────────────────────────────────
-
-const STEP_TO_PROGRESS: Record<number, number> = {
-  0: -1, // no progress bar on step 0
-  1: 0,
-  10: 1,
-  11: 2,
-  12: 3,
-  20: 1,
-  21: 2,
-  22: 2,
-  23: 3,
-};
-
-function progressIndexToStep(index: number, path: string | null): number {
-  if (path === "flexible") {
-    return [1, 20, 21, 23][index] ?? 1;
-  }
-  return [1, 10, 11, 12][index] ?? 1;
+function getVariants(direction: "forward" | "backward") {
+  return {
+    initial: { opacity: 0, x: direction === "forward" ? 20 : -20 },
+    animate: { opacity: 1, x: 0 },
+    exit: { opacity: 0, x: direction === "forward" ? -20 : 20 },
+  };
 }
 
-// ─── Page Component ─────────────────────────────────────────
+// ─── Admin Toolbar ──────────────────────────────────────────
 
 type AdminMode = "test" | "live_comp";
 
@@ -66,36 +55,68 @@ function AdminToolbar({ mode, onModeChange }: { mode: AdminMode; onModeChange: (
   );
 }
 
+// ─── Layout Component ───────────────────────────────────────
+
 export default function RecipientOnboarding() {
   const isAdmin = isAdminSession();
   const [adminMode, setAdminMode] = useState<AdminMode>("test");
   const liveMode = isAdmin && adminMode === "live_comp";
+  const location = useLocation();
 
   const {
+    data,
+    currentStep,
+    direction,
     state,
-    updateState,
+    updateData,
     goToStep,
     goBack,
     tryAdvance,
     selectPath,
     getErrors,
-  } = useRecipientFlow();
+  } = useRecipientFlowContext();
 
-  const currentProgressIndex = STEP_TO_PROGRESS[state.currentStep] ?? -1;
-  const completedProgressIndexes = state.completedSteps
-    .map((s) => STEP_TO_PROGRESS[s])
+  // ── Step guard: redirect if step is not accessible ────────
+
+  // Extract slug from pathname
+  const pathParts = location.pathname.split("/").filter(Boolean);
+  const slug = pathParts.length > 1 ? pathParts[1] : null; // "address", "shipping", etc.
+
+  if (slug) {
+    // Validate slug is valid for the selected path
+    if (!isSlugValidForPath(slug, data.path)) {
+      const redirect = firstIncompleteSlug(data.completedSteps, data.path);
+      return <Navigate to={redirect ? `/onboarding/${redirect}` : "/onboarding"} replace />;
+    }
+
+    // Validate step is accessible (all prior steps completed)
+    if (!canAccessStep(currentStep, data.completedSteps, data.path)) {
+      const redirect = firstIncompleteSlug(data.completedSteps, data.path);
+      return <Navigate to={redirect ? `/onboarding/${redirect}` : "/onboarding"} replace />;
+    }
+  }
+
+  // ── Progress bar ──────────────────────────────────────────
+
+  const currentProgressIndex = stepToProgressIndex(currentStep);
+  const completedProgressIndexes = data.completedSteps
+    .map((s) => stepToProgressIndex(s))
     .filter((i): i is number => i !== undefined && i >= 0);
 
   function handleProgressClick(index: number) {
-    const targetStep = progressIndexToStep(index, state.path);
+    const targetStep = progressIndexToStep(index, data.path);
     goToStep(targetStep);
   }
+
+  // ── Render ────────────────────────────────────────────────
+
+  const variants = getVariants(direction);
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-background to-muted/50">
       <div className="container max-w-2xl mx-auto px-4 py-8">
         {/* Progress bar (hidden on Step 0) */}
-        {state.currentStep !== 0 && (
+        {currentStep !== 0 && (
           <ProgressBar
             activeIndex={currentProgressIndex}
             completedIndexes={completedProgressIndexes}
@@ -106,40 +127,40 @@ export default function RecipientOnboarding() {
         {/* Step content with animation */}
         <AnimatePresence mode="wait">
           <motion.div
-            key={state.currentStep}
-            variants={stepVariants}
+            key={location.pathname}
+            variants={variants}
             initial="initial"
             animate="animate"
             exit="exit"
             transition={{ duration: 0.25 }}
           >
             {/* Step 0: Path Choice */}
-            {state.currentStep === 0 && (
+            {currentStep === 0 && (
               <RecipientStepPathChoice onSelect={selectPath} />
             )}
 
             {/* Step 1: Address + Email */}
-            {state.currentStep === 1 && (
+            {currentStep === 1 && (
               <RecipientStepAddress
                 address={state.destinationAddress}
                 email={state.email}
                 path={state.path}
                 errors={getErrors(1)}
                 tried={!!state.tried[1]}
-                onAddressChange={(addr) => updateState({ destinationAddress: addr })}
-                onEmailChange={(email) => updateState({ email })}
+                onAddressChange={(addr) => updateData({ destinationAddress: addr })}
+                onEmailChange={(email) => updateData({ email })}
                 onContinue={() => tryAdvance(1)}
                 onBack={goBack}
               />
             )}
 
             {/* Step 10: Full Label — Shipment Details */}
-            {state.currentStep === 10 && (
+            {currentStep === 10 && (
               <RecipientStepFullShipping
                 state={state}
                 errors={getErrors(10)}
                 tried={!!state.tried[10]}
-                onUpdate={updateState}
+                onUpdate={updateData}
                 onContinue={() => tryAdvance(10)}
                 onBack={goBack}
                 liveMode={liveMode}
@@ -147,52 +168,52 @@ export default function RecipientOnboarding() {
             )}
 
             {/* Step 11/12: Payment + Label Ready */}
-            {(state.currentStep === 11 || state.currentStep === 12) && (
+            {(currentStep === 11 || currentStep === 12) && (
               <RecipientStepPayment
                 state={state}
-                onUpdate={updateState}
+                onUpdate={updateData}
                 onBack={goBack}
                 liveMode={liveMode}
               />
             )}
 
             {/* Step 20: Flex — Shipping Preferences */}
-            {state.currentStep === 20 && (
+            {currentStep === 20 && (
               <RecipientStepFlexPreferences
                 state={state}
                 errors={getErrors(20)}
                 tried={!!state.tried[20]}
-                onUpdate={updateState}
+                onUpdate={updateData}
                 onContinue={() => tryAdvance(20)}
                 onBack={goBack}
               />
             )}
 
             {/* Step 21: Flex — Email Verification */}
-            {state.currentStep === 21 && (
+            {currentStep === 21 && (
               <RecipientStepEmailVerify
                 state={state}
-                onUpdate={updateState}
+                onUpdate={updateData}
                 onContinue={() => tryAdvance(21)}
                 onBack={goBack}
               />
             )}
 
             {/* Step 22: Flex — Payment Authorization */}
-            {state.currentStep === 22 && (
+            {currentStep === 22 && (
               <RecipientStepFlexPayment
                 state={state}
-                onUpdate={updateState}
+                onUpdate={updateData}
                 onContinue={() => tryAdvance(22)}
                 onBack={goBack}
               />
             )}
 
             {/* Step 23: Flex — Link Ready */}
-            {state.currentStep === 23 && (
+            {currentStep === 23 && (
               <RecipientStepLinkReady
                 state={state}
-                onUpdate={updateState}
+                onUpdate={updateData}
               />
             )}
           </motion.div>
