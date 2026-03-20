@@ -11,6 +11,7 @@ import FAQ from "@/pages/FAQ";
 import Admin from "@/pages/Admin";
 import LabelTest from "@/pages/LabelTest";
 import SenderPreview from "@/pages/SenderPreview";
+import HeaderPreview from "@/pages/HeaderPreview";
 import TrackingPage from "@/pages/TrackingPage";
 import NotFound from "@/pages/NotFound";
 
@@ -51,6 +52,7 @@ function App() {
           <Route path="/track/:trackingNumber" element={<TrackingPage />} />
           <Route path="/label-test" element={<LabelTest />} />
           <Route path="/sender-preview" element={<SenderPreview />} />
+          <Route path="/header-preview" element={<HeaderPreview />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </AuthProvider>
