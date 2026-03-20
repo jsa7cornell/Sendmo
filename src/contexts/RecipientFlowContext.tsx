@@ -14,9 +14,7 @@ import {
   slugToStep,
   stepToSlug,
   nextStep,
-  prevStep,
   canAccessStep,
-  firstIncompleteSlug,
   stepIndex,
 } from "@/lib/stepRouting";
 import { getValidationErrors, type RecipientFlowState } from "@/hooks/useRecipientFlow";
