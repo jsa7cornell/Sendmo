@@ -1,106 +1,201 @@
-import { motion } from "framer-motion";
-import { MapPin, ArrowLeft, Sliders } from "lucide-react";
+import { useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import {
+  Zap, Truck, Leaf, ChevronDown, ChevronUp,
+  DollarSign, X, Package, ArrowLeft,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import type { RecipientFlowState } from "@/hooks/useRecipientFlow";
-import type { DistanceTier, SpeedTier } from "@/lib/types";
+import type { SpeedTier } from "@/lib/types";
 
-// ─── Option Data ─────────────────────────────────────────────
+// ─── Speed data ─────────────────────────────────────────────
 
-const DISTANCE_OPTIONS: { id: DistanceTier; label: string; desc: string }[] = [
-  { id: "nearby", label: "Local", desc: "Same state or neighbor state" },
-  { id: "regional", label: "Domestic", desc: "Same half of the country" },
-  { id: "cross", label: "Cross-country", desc: "Coast to coast" },
+const SPEEDS = [
+  {
+    id: "economy" as SpeedTier,
+    label: "Economy",
+    time: "5–8 business days",
+    icon: Leaf,
+    color: "text-emerald-600",
+    bg: "bg-emerald-50",
+    border: "border-emerald-200",
+    activeBg: "bg-emerald-600",
+    exampleCost: "$5.50",
+    tagline: "Cheapest option",
+  },
+  {
+    id: "standard" as SpeedTier,
+    label: "Standard",
+    time: "3–5 business days",
+    icon: Truck,
+    color: "text-primary",
+    bg: "bg-blue-50",
+    border: "border-blue-200",
+    activeBg: "bg-primary",
+    exampleCost: "$9.25",
+    tagline: "Best balance of speed & cost",
+  },
+  {
+    id: "express" as SpeedTier,
+    label: "Express",
+    time: "1–3 business days",
+    icon: Zap,
+    color: "text-orange-600",
+    bg: "bg-orange-50",
+    border: "border-orange-200",
+    activeBg: "bg-orange-600",
+    exampleCost: "$18.75",
+    tagline: "Fastest delivery",
+  },
 ];
 
-const SIZE_OPTIONS: { id: "envelope" | "smallbox" | "largebox"; label: string; desc: string }[] = [
-  { id: "envelope", label: "Envelope", desc: "Under 1 lb" },
-  { id: "smallbox", label: "Small Box", desc: "2–5 lbs" },
-  { id: "largebox", label: "Large Box", desc: "10–25 lbs" },
+// ─── Price cap options ──────────────────────────────────────
+
+const PRICE_CAPS = [
+  { value: 25, label: "$25", desc: "Small & slow shipments" },
+  { value: 50, label: "$50", desc: "Most standard shipments" },
+  { value: 100, label: "$100", desc: "Large or express shipments" },
+  { value: 150, label: "$150", desc: "Covers 99% of shipments" },
 ];
 
-const SPEED_OPTIONS: { id: SpeedTier; label: string; desc: string; color: string }[] = [
-  { id: "economy", label: "Economy", desc: "3–7 business days", color: "emerald" },
-  { id: "standard", label: "Standard", desc: "1–3 business days", color: "blue" },
-  { id: "express", label: "Express", desc: "1–2 business days", color: "amber" },
+const CARRIERS = [
+  { id: "any", label: "Any carrier" },
+  { id: "usps", label: "USPS" },
+  { id: "ups", label: "UPS" },
+  { id: "fedex", label: "FedEx" },
 ];
 
-// ─── Radio Card Component ────────────────────────────────────
+// ─── Price grid data ────────────────────────────────────────
 
-function RadioCard({
-  selected,
-  onClick,
-  label,
-  desc,
-  accentColor,
-}: {
-  selected: boolean;
-  onClick: () => void;
-  label: string;
-  desc: string;
-  accentColor?: string;
-}) {
-  const selectedBorder = accentColor
-    ? `border-${accentColor}-400 bg-${accentColor}-50`
-    : "border-primary bg-primary/5";
-  const selectedDot = accentColor ? `border-${accentColor}-500` : "border-primary";
-  const selectedDotInner = accentColor ? `bg-${accentColor}-500` : "bg-primary";
+const PRICE_DATA: Record<SpeedTier, { small: number[]; medium: number[]; large: number[] }> = {
+  economy:  { small: [3.50, 4.75, 6.25],  medium: [5.50, 7.50, 10.00],  large: [8.75, 12.50, 16.75] },
+  standard: { small: [5.25, 7.00, 9.50],  medium: [9.25, 12.00, 15.50], large: [14.50, 19.00, 25.00] },
+  express:  { small: [12.00, 15.50, 19.00], medium: [18.75, 24.00, 30.00], large: [28.00, 36.00, 45.00] },
+};
+
+const DISTANCES = ["Nearby", "Regional", "Cross-country"];
+const DISTANCE_RANGES = ["< 150 mi", "150–800 mi", "800+ mi"];
+const SIZES = [
+  { key: "small" as const, label: "Small", desc: "Envelope / 1 lb" },
+  { key: "medium" as const, label: "Medium", desc: "Shoebox / 5 lbs" },
+  { key: "large" as const, label: "Large", desc: "Moving box / 20 lbs" },
+];
+
+// ─── Price Grid Modal ───────────────────────────────────────
+
+function PriceGridModal({ onClose }: { onClose: () => void }) {
+  const [tab, setTab] = useState<SpeedTier>("standard");
+  const data = PRICE_DATA[tab];
+  const speedInfo = SPEEDS.find((s) => s.id === tab)!;
+  const SIcon = speedInfo.icon;
 
   return (
-    <motion.button
-      type="button"
-      whileTap={{ scale: 0.98 }}
-      onClick={onClick}
-      className={`text-left w-full bg-card rounded-2xl border shadow-sm p-4 transition-all ${
-        selected ? selectedBorder : "border-border hover:border-muted-foreground/30"
-      }`}
-    >
-      <div className="flex items-center gap-3">
-        <div
-          className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${
-            selected ? selectedDot : "border-muted-foreground/30"
-          }`}
-        >
-          {selected && <div className={`w-2 h-2 rounded-full ${selectedDotInner}`} />}
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      {/* Backdrop */}
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        className="absolute inset-0 bg-black/40"
+        onClick={onClose}
+      />
+
+      {/* Modal */}
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95, y: 10 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.95, y: 10 }}
+        className="relative bg-card rounded-2xl border border-border shadow-lg max-w-lg w-full overflow-hidden max-h-[90vh] overflow-y-auto"
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+          <div>
+            <h2 className="text-lg font-bold text-foreground">Shipping cost grid</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">Typical SendMo prices including all fees</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-8 h-8 rounded-lg hover:bg-muted flex items-center justify-center"
+          >
+            <X className="w-4 h-4 text-muted-foreground" />
+          </button>
         </div>
-        <div>
-          <div className="font-medium text-foreground text-sm">{label}</div>
-          <div className="text-xs text-muted-foreground">{desc}</div>
+
+        {/* Pill tabs */}
+        <div className="px-5 pt-4 pb-2">
+          <div className="bg-muted rounded-xl p-1 flex gap-1">
+            {SPEEDS.map((s) => {
+              const SI = s.icon;
+              const isActive = tab === s.id;
+              return (
+                <button
+                  key={s.id}
+                  type="button"
+                  onClick={() => setTab(s.id)}
+                  className={`
+                    flex-1 rounded-lg py-2 text-center text-sm font-medium transition-all flex items-center justify-center gap-1.5
+                    ${isActive ? "bg-card shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}
+                  `}
+                >
+                  <SI className={`w-3.5 h-3.5 ${isActive ? s.color : ""}`} />
+                  {s.label}
+                </button>
+              );
+            })}
+          </div>
+          <p className="text-center text-xs text-muted-foreground mt-2">
+            <SIcon className={`w-3 h-3 inline ${speedInfo.color}`} /> {speedInfo.time}
+          </p>
         </div>
-      </div>
-    </motion.button>
+
+        {/* Card grid */}
+        <div className="px-5 pb-5 space-y-3">
+          {/* Distance headers */}
+          <div className="grid grid-cols-3 gap-3 mt-2">
+            {DISTANCES.map((d, i) => (
+              <div key={d} className="text-center">
+                <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">{d}</p>
+                <p className="text-[10px] text-muted-foreground">{DISTANCE_RANGES[i]}</p>
+              </div>
+            ))}
+          </div>
+
+          {SIZES.map((size) => (
+            <div key={size.key}>
+              <div className="flex items-center gap-2 mb-1.5">
+                <Package className={`w-3.5 h-3.5 ${speedInfo.color}`} />
+                <span className="text-xs font-semibold text-foreground">{size.label}</span>
+                <span className="text-[10px] text-muted-foreground">({size.desc})</span>
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                {data[size.key].map((price, ci) => (
+                  <div
+                    key={ci}
+                    className={`rounded-xl ${speedInfo.bg} border ${speedInfo.border} py-3 text-center`}
+                  >
+                    <span className={`text-lg font-bold ${speedInfo.color}`}>
+                      ${price.toFixed(0)}
+                    </span>
+                    <span className={`text-xs ${speedInfo.color} opacity-70`}>
+                      .{price.toFixed(2).split(".")[1]}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+
+          <p className="text-xs text-muted-foreground text-center pt-2">
+            Example estimates. Actual costs can vary.
+          </p>
+        </div>
+      </motion.div>
+    </div>
   );
 }
 
-// ─── Toggle Card (for package size — deselectable) ───────────
-
-function ToggleCard({
-  selected,
-  onClick,
-  label,
-  desc,
-}: {
-  selected: boolean;
-  onClick: () => void;
-  label: string;
-  desc: string;
-}) {
-  return (
-    <motion.button
-      type="button"
-      whileTap={{ scale: 0.98 }}
-      onClick={onClick}
-      className={`text-left w-full bg-card rounded-2xl border shadow-sm p-4 transition-all ${
-        selected ? "border-primary bg-primary/5" : "border-border hover:border-muted-foreground/30"
-      }`}
-    >
-      <div className="font-medium text-foreground text-sm">{label}</div>
-      <div className="text-xs text-muted-foreground">{desc}</div>
-    </motion.button>
-  );
-}
-
-// ─── Main Component ──────────────────────────────────────────
+// ─── Main Component ─────────────────────────────────────────
 
 interface Props {
   state: RecipientFlowState;
@@ -119,108 +214,145 @@ export default function RecipientStepFlexPreferences({
   onContinue,
   onBack,
 }: Props) {
+  const [showOptional, setShowOptional] = useState(false);
+  const [showPriceGrid, setShowPriceGrid] = useState(false);
+
+  const selected = SPEEDS.find((s) => s.id === state.speed_preference)!;
+  const SelectedIcon = selected.icon;
+
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="text-center">
-        <div className="flex items-center justify-center gap-2 mb-2">
-          <Sliders className="w-5 h-5 text-primary" />
-          <h1 className="text-2xl font-bold text-foreground">Shipping preferences</h1>
-        </div>
-        <p className="text-muted-foreground text-sm">
-          Help us estimate costs. Your sender can still ship any size.
-        </p>
+    <div className="space-y-5">
+      <div className="text-center mb-6">
+        <h1 className="text-2xl font-bold text-foreground">How fast should it get there?</h1>
+        <p className="text-muted-foreground mt-2">Just pick a speed — your sender handles the rest</p>
       </div>
 
-      {/* Destination display */}
-      {state.destinationAddress.verified && (
-        <div className="bg-muted rounded-xl px-4 py-3 flex items-center gap-2 text-sm">
-          <MapPin className="w-4 h-4 text-primary shrink-0" />
-          <span className="text-muted-foreground">Shipping to</span>
-          <span className="font-medium text-foreground">
-            {state.destinationAddress.city}, {state.destinationAddress.state} {state.destinationAddress.zip}
-          </span>
-        </div>
-      )}
-
-      {/* Distance selector */}
-      <div>
-        <h3 className="text-sm font-semibold text-foreground mb-3">Expected distance</h3>
-        <div className="grid gap-2">
-          {DISTANCE_OPTIONS.map((d) => (
-            <RadioCard
-              key={d.id}
-              selected={state.distance_hint === d.id}
-              onClick={() => onUpdate({ distance_hint: d.id })}
-              label={d.label}
-              desc={d.desc}
-            />
-          ))}
-        </div>
-      </div>
-
-      {/* Package size hint */}
-      <div>
-        <h3 className="text-sm font-semibold text-foreground mb-1">Package size hint</h3>
-        <p className="text-xs text-muted-foreground mb-3">Optional — helps estimate cost. Tap again to deselect.</p>
-        <div className="grid gap-2 sm:grid-cols-3">
-          {SIZE_OPTIONS.map((s) => (
-            <ToggleCard
+      {/* Pill selector */}
+      <div className="bg-muted rounded-2xl p-1.5 flex gap-1">
+        {SPEEDS.map((s) => {
+          const SIcon = s.icon;
+          const isActive = state.speed_preference === s.id;
+          return (
+            <button
               key={s.id}
-              selected={state.size_hint === s.id}
-              onClick={() =>
-                onUpdate({ size_hint: state.size_hint === s.id ? null : s.id })
-              }
-              label={s.label}
-              desc={s.desc}
-            />
-          ))}
-        </div>
-      </div>
-
-      {/* Speed tier */}
-      <div>
-        <h3 className="text-sm font-semibold text-foreground mb-3">Preferred speed</h3>
-        <div className="grid gap-2">
-          {SPEED_OPTIONS.map((s) => (
-            <RadioCard
-              key={s.id}
-              selected={state.speed_preference === s.id}
+              type="button"
               onClick={() => onUpdate({ speed_preference: s.id })}
-              label={s.label}
-              desc={s.desc}
-              accentColor={s.color}
-            />
-          ))}
-        </div>
+              className={`
+                flex-1 rounded-xl py-3 px-2 text-center transition-all duration-200
+                ${isActive ? "bg-card shadow-sm" : "hover:bg-card/50"}
+              `}
+            >
+              <SIcon className={`w-5 h-5 mx-auto mb-1 ${isActive ? s.color : "text-muted-foreground"}`} />
+              <p className={`text-sm font-semibold ${isActive ? "text-foreground" : "text-muted-foreground"}`}>
+                {s.label}
+              </p>
+              <p className="text-[10px] text-muted-foreground mt-0.5">{s.time}</p>
+            </button>
+          );
+        })}
       </div>
 
-      {/* Price cap */}
-      <div>
-        <h3 className="text-sm font-semibold text-foreground mb-1">Maximum you'll pay per shipment</h3>
-        <p className="text-xs text-muted-foreground mb-3">
-          Senders will only see shipping options under this cap.
-        </p>
-        <div className="flex items-center gap-3">
-          <span className="text-lg font-semibold text-foreground">$</span>
-          <Input
-            type="number"
-            min={5}
-            max={500}
-            value={state.price_cap}
-            onChange={(e) => onUpdate({ price_cap: Math.max(0, Number(e.target.value)) })}
-            className="w-28 rounded-xl text-center text-lg font-semibold"
-          />
-          <input
-            type="range"
-            min={5}
-            max={500}
-            step={5}
-            value={state.price_cap}
-            onChange={(e) => onUpdate({ price_cap: Number(e.target.value) })}
-            className="flex-1 accent-primary"
-          />
+      {/* Cost spotlight */}
+      <div className={`rounded-2xl ${selected.bg} border ${selected.border} p-5 text-center`}>
+        <div className="flex items-center justify-center gap-2 mb-2">
+          <SelectedIcon className={`w-5 h-5 ${selected.color}`} />
+          <span className={`text-sm font-semibold ${selected.color}`}>{selected.label}</span>
         </div>
+        <p className={`text-4xl font-bold ${selected.color} mb-1`}>{selected.exampleCost}</p>
+        <p className="text-sm text-muted-foreground">typical cost for a medium package within California</p>
+        <p className="text-xs text-muted-foreground mt-2">Actual price depends on weight, size, and distance</p>
+      </div>
+
+      {/* Optional settings */}
+      <div className="space-y-3">
+        <button
+          type="button"
+          onClick={() => setShowOptional(!showOptional)}
+          className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors mx-auto"
+        >
+          {showOptional ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+          {showOptional ? "Hide" : "Show"} optional settings
+        </button>
+
+        <AnimatePresence>
+          {showOptional && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              className="overflow-hidden"
+            >
+              <div className="space-y-5 bg-muted/30 rounded-2xl border border-border/60 p-5">
+                {/* Preferred carrier */}
+                <div>
+                  <label className="text-sm font-medium text-foreground mb-2 block">Preferred carrier</label>
+                  <div className="flex gap-2 flex-wrap">
+                    {CARRIERS.map((c) => (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => onUpdate({ preferred_carrier: c.id })}
+                        className={`
+                          px-3 py-1.5 rounded-lg text-sm border transition-all
+                          ${state.preferred_carrier === c.id
+                            ? "border-primary bg-primary/10 text-primary font-medium"
+                            : "border-border bg-card text-muted-foreground hover:border-muted-foreground/40"
+                          }
+                        `}
+                      >
+                        {c.label}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1.5">
+                    Your sender will only see options from this carrier
+                  </p>
+                </div>
+
+                {/* Max shipping cost */}
+                <div>
+                  <label className="text-sm font-medium text-foreground mb-2 block">Maximum shipping cost</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {PRICE_CAPS.map((cap) => (
+                      <button
+                        key={cap.value}
+                        type="button"
+                        onClick={() => onUpdate({ price_cap: cap.value })}
+                        className={`
+                          text-left rounded-xl border p-3 transition-all
+                          ${state.price_cap === cap.value
+                            ? "border-primary bg-primary/10"
+                            : "border-border bg-card hover:border-muted-foreground/40"
+                          }
+                        `}
+                      >
+                        <span className={`text-base font-bold ${state.price_cap === cap.value ? "text-primary" : "text-foreground"}`}>
+                          {cap.label}
+                        </span>
+                        <p className="text-xs text-muted-foreground mt-0.5">{cap.desc}</p>
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1.5">
+                    Your sender won't see options above this price
+                  </p>
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+
+      {/* Price grid link */}
+      <div className="text-center">
+        <button
+          type="button"
+          onClick={() => setShowPriceGrid(true)}
+          className="text-sm text-primary hover:underline inline-flex items-center gap-1"
+        >
+          <DollarSign className="w-3.5 h-3.5" />
+          See our shipping cost grid
+        </button>
       </div>
 
       {/* Validation errors */}
@@ -234,12 +366,6 @@ export default function RecipientStepFlexPreferences({
         </div>
       )}
 
-      {/* Context note */}
-      <div className="bg-muted rounded-xl px-4 py-3 text-xs text-muted-foreground">
-        Prices are estimates and may vary based on actual package dimensions.
-        Your card is not charged until a sender prints a label.
-      </div>
-
       {/* Buttons */}
       <div className="flex gap-3">
         <Button variant="outline" onClick={onBack} className="rounded-xl">
@@ -250,6 +376,11 @@ export default function RecipientStepFlexPreferences({
           Continue
         </Button>
       </div>
+
+      {/* Price grid modal */}
+      <AnimatePresence>
+        {showPriceGrid && <PriceGridModal onClose={() => setShowPriceGrid(false)} />}
+      </AnimatePresence>
     </div>
   );
 }

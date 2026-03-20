@@ -48,6 +48,7 @@ export interface RecipientFlowData {
   distance_hint: DistanceTier;
   size_hint: "envelope" | "smallbox" | "largebox" | null;
   speed_preference: SpeedTier;
+  preferred_carrier: string;
   price_cap: number;
   verification_email: string;
   email_verified: boolean;
@@ -80,6 +81,7 @@ const INITIAL_DATA: RecipientFlowData = {
   distance_hint: "regional",
   size_hint: null,
   speed_preference: "standard",
+  preferred_carrier: "any",
   price_cap: 100,
   verification_email: "",
   email_verified: false,
