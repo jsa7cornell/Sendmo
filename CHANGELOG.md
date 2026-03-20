@@ -36,6 +36,44 @@
 
 ---
 
+## [2026-03-19] — User-facing label void, live tracking, dashboard enhancements
+
+**Branch:** direct to `main` (3 commits)
+**Commits:** `0358c11`, `cb49ec9`, `de24fe8`
+**Deploy:** Vercel auto-deploy + Supabase Edge Functions (`cancel-label`, `tracking`)
+
+### What shipped
+- **Dashboard enhancements**: sender name column, status with dates ("Shipped on Mar 18"), clickable tracking links to `/track/:number`
+- **Live tracking from EasyPost**: tracking page + function fetch real-time status, events, and ETA from EasyPost tracker API. 30-min TTL cache (terminal statuses never re-fetched). Auto-syncs DB when status changes.
+- **User-facing label void**: "Void Label" button on eligible shipments in dashboard. CancelLabelModal with confirmation, loading, success/error states. Server-side JWT auth + ownership check on cancel-label function. Refund status badges (pending/refunded/rejected).
+- **Refund service stub**: `src/lib/refundService.ts` — interface for future Stripe refund integration
+- **Resend domain verified**: `noreply@sendmo.co` confirmed as sending address, RESEND_API_KEY set as Supabase secret
+- **DB fix**: reassigned all sendmo_links from system user to John's real account
+
+### What changed (files)
+- `src/pages/Dashboard.tsx` — sender name, status dates, tracking links, void button + modal, refund badges
+- `src/pages/TrackingPage.tsx` — live EasyPost events timeline, estimated delivery, TTL cache
+- `src/components/CancelLabelModal.tsx` — added optional `accessToken` prop for authenticated calls
+- `src/lib/refundService.ts` — new stub for Stripe refund integration
+- `supabase/functions/tracking/index.ts` — live EasyPost fetch, 30-min TTL, DB sync
+- `supabase/functions/cancel-label/index.ts` — JWT auth + ownership via sendmo_links join
+- `WISHLIST.md` — added EasyPost webhooks, event caching, payment ledger, Stripe refund, payment history
+
+### Tests
+- No new unit tests this deploy (UI-heavy changes)
+- 145 total unit tests still passing
+
+### Breaking changes
+- `cancel-label` now verifies JWT ownership for authenticated callers (admin anon-key path preserved)
+
+### Notes
+- EasyPost webhooks still not registered — tracking relies on TTL-cached polling for now (WISHLIST item)
+- Refund service is a stub — needs Stripe integration + transaction ledger before going live
+- Label void only shows for live labels with status=label_created and refund_status=none
+- All eligibility checks enforced server-side — client-side is UX only
+
+---
+
 ## [2026-03-19] — URL-based step routing for recipient onboarding
 
 **Branch:** `feat/url-step-routing`
