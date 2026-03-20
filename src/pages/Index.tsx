@@ -1,39 +1,11 @@
-import { Package, Link2, Shield, Zap, ArrowRight, CheckCircle2, Users, CreditCard, LogOut } from "lucide-react";
+import { Link2, Shield, Zap, ArrowRight, CheckCircle2, Users, CreditCard, Package } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { useAuth } from "@/contexts/AuthContext";
-
-// ─── Landing Page ───────────────────────────────────────────
+import AppHeader from "@/components/AppHeader";
 
 export default function Index() {
-  const { user, signOut } = useAuth();
   return (
     <div className="min-h-screen bg-gradient-to-b from-background to-muted/50">
-      {/* Nav */}
-      <nav className="container max-w-5xl mx-auto px-4 py-5 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Package className="w-6 h-6 text-primary" />
-          <span className="text-xl font-bold text-foreground">SendMo</span>
-        </div>
-        <div className="flex items-center gap-3">
-          <Button variant="ghost" className="rounded-xl text-sm" onClick={() => window.location.href = "/faq"}>
-            FAQ
-          </Button>
-          {user ? (
-            <div className="flex items-center gap-2">
-              <Button variant="outline" className="rounded-xl text-sm" onClick={() => window.location.href = "/dashboard"}>
-                Dashboard
-              </Button>
-              <Button variant="ghost" className="rounded-xl text-sm px-2" onClick={() => signOut()} title="Sign out">
-                <LogOut className="w-4 h-4" />
-              </Button>
-            </div>
-          ) : (
-            <Button variant="outline" className="rounded-xl text-sm" onClick={() => window.location.href = "/login"}>
-              Sign In
-            </Button>
-          )}
-        </div>
-      </nav>
+      <AppHeader />
 
       {/* Hero */}
       <section className="container max-w-5xl mx-auto px-4 pt-16 pb-20 text-center">
@@ -48,8 +20,8 @@ export default function Index() {
         </h1>
 
         <p className="text-lg text-muted-foreground mt-6 max-w-2xl mx-auto leading-relaxed">
-          Recipients create a link once and share it with anyone who needs to send them something.
-          Senders click, enter package details, and print a label. The recipient pays.
+          Set up a link once. Share it with anyone who needs to send you something.
+          They click, enter package details, and print a label — you pay, they ship. No back-and-forth.
         </p>
 
         <div className="flex flex-col sm:flex-row items-center justify-center gap-3 mt-10">
@@ -76,7 +48,7 @@ export default function Index() {
           How SendMo works
         </h2>
         <p className="text-muted-foreground text-center mb-12 max-w-lg mx-auto">
-          Three simple steps to send or receive a package
+          From "can you ship this to me?" to a label in their hands — in minutes.
         </p>
 
         <div className="grid gap-6 sm:grid-cols-3">
@@ -187,7 +159,7 @@ export default function Index() {
             Ready to simplify shipping?
           </h2>
           <p className="text-muted-foreground mb-8 max-w-md mx-auto">
-            Create your first label link in under 60 seconds. No account required to start.
+            Your first link takes about 60 seconds to set up. No account required.
           </p>
           <Button
             className="rounded-xl text-lg py-6 px-10 shadow-md gap-2"
@@ -208,7 +180,7 @@ export default function Index() {
           </div>
           <div className="flex items-center gap-4 text-sm text-muted-foreground">
             <a href="/faq" className="hover:text-foreground transition-colors">FAQ</a>
-            <a href="mailto:support@sendmo.com" className="hover:text-foreground transition-colors">Support</a>
+            <a href="mailto:support@sendmo.co" className="hover:text-foreground transition-colors">Support</a>
           </div>
         </div>
       </footer>

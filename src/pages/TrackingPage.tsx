@@ -1,4 +1,5 @@
 import { useParams, Link } from "react-router-dom";
+import AppHeader from "@/components/AppHeader";
 import { useState, useEffect } from "react";
 import { Package, Truck, CheckCircle2, AlertCircle, Clock, ArrowLeft, MapPin, Calendar } from "lucide-react";
 
@@ -74,12 +75,11 @@ export default function TrackingPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      <header className="border-b border-border bg-card">
-        <div className="max-w-2xl mx-auto px-4 py-4 flex items-center gap-3">
-          <Link to="/" className="text-primary font-bold text-xl tracking-tight">SendMo</Link>
-          <span className="text-muted-foreground text-sm">/ Track Package</span>
-        </div>
-      </header>
+      <AppHeader
+        actions={
+          <span className="text-sm text-muted-foreground">Track Package</span>
+        }
+      />
 
       <main className="max-w-2xl mx-auto px-4 py-8">
         {loading && (

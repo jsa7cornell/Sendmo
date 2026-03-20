@@ -232,7 +232,7 @@ export default function SmartAddressInput({ label, value, onChange, error }: Pro
             {/* ── Name field ─────────────────────────────────── */}
             <div>
                 <label htmlFor={`${label}-name`} className="text-sm font-medium text-foreground">
-                    Name
+                    Recipient Name <span className="font-normal text-muted-foreground">(probably your name!)</span>
                 </label>
                 <input
                     id={`${label}-name`}

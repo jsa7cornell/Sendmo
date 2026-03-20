@@ -1,8 +1,10 @@
 import { useState } from "react";
 import { useLocation, Navigate } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
+import { Package, Link2 } from "lucide-react";
 import { isAdminSession } from "@/pages/Admin";
 import { useRecipientFlowContext } from "@/contexts/RecipientFlowContext";
+import AppHeader from "@/components/AppHeader";
 import {
   stepToProgressIndex,
   progressIndexToStep,
@@ -114,7 +116,22 @@ export default function RecipientOnboarding() {
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-background to-muted/50">
+      <AppHeader />
+
       <div className="container max-w-2xl mx-auto px-4 py-8">
+        {/* Flow badge — visible once a path is chosen */}
+        {data.path && currentStep !== 0 && (
+          <div className="flex justify-center mb-5">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 text-primary border border-primary/20 px-3 py-1 text-xs font-medium">
+              {data.path === "full_label" ? (
+                <><Package className="w-3 h-3" /> Full Prepaid Label</>
+              ) : (
+                <><Link2 className="w-3 h-3" /> Flexible Shipping Link</>
+              )}
+            </span>
+          </div>
+        )}
+
         {/* Progress bar (hidden on Step 0) */}
         {currentStep !== 0 && (
           <ProgressBar

@@ -53,6 +53,7 @@ sendmo/
 │   │   ├── FAQ.tsx
 │   │   └── NotFound.tsx
 │   ├── components/
+│   │   ├── AppHeader.tsx        # Shared persistent nav header (auth-aware, used by all pages)
 │   │   ├── recipient/           # RecipientStep*.tsx, ProgressBar, MagicGuestimator, etc.
 │   │   ├── sender/              # SenderStep*.tsx components (pending)
 │   │   └── ui/                  # shadcn/ui components + SmartAddressInput

@@ -38,12 +38,12 @@ describe("App Routing", () => {
     it("renders the Onboarding on /onboarding", () => {
         window.history.pushState({}, "Test page", "/onboarding");
         render(<App />);
-        expect(screen.getByText("How would you like to ship?")).toBeInTheDocument();
+        expect(screen.getByText("How do you want to set this up?")).toBeInTheDocument();
     });
 
     it("renders Not Found on unknown paths", () => {
         window.history.pushState({}, "Test page", "/this-does-not-exist");
         render(<App />);
-        expect(screen.getByText("NotFound")).toBeInTheDocument();
+        expect(screen.getByText("Lost in transit")).toBeInTheDocument();
     });
 });

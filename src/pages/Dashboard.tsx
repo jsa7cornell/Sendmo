@@ -152,12 +152,19 @@ export default function Dashboard() {
       <div className="container max-w-4xl mx-auto px-4 py-8">
         {/* Header */}
         <div className="flex items-center justify-between mb-8">
-          <div>
-            <h1 className="text-2xl font-bold text-foreground">Dashboard</h1>
-            <p className="text-sm text-muted-foreground mt-1">Manage your label links, payments, and shipments</p>
-          </div>
+          {/* Me / profile identity */}
           <div className="flex items-center gap-3">
-            <Button variant="outline" className="rounded-xl gap-2" onClick={() => window.location.href = "/onboarding"}>
+            <div className="w-10 h-10 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center text-primary font-semibold text-sm shrink-0">
+              {user?.email?.charAt(0).toUpperCase() ?? "?"}
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-foreground truncate max-w-[200px]">{user?.email}</p>
+              <p className="text-xs text-muted-foreground">Your shipments, links & wallet</p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Button variant="outline" className="rounded-xl gap-2 text-sm" onClick={() => window.location.href = "/onboarding"}>
               <Link2 className="w-4 h-4" />
               New Link
             </Button>
@@ -165,12 +172,10 @@ export default function Dashboard() {
             <div className="relative">
               <button
                 onClick={() => setShowUserMenu(!showUserMenu)}
-                className="flex items-center gap-2 rounded-xl border border-border bg-card px-3 py-2 text-sm hover:bg-muted/50 transition-colors"
+                className="flex items-center justify-center w-9 h-9 rounded-xl border border-border bg-card hover:bg-muted/50 transition-colors"
+                title="Account options"
               >
                 <User className="w-4 h-4 text-muted-foreground" />
-                <span className="hidden sm:inline text-muted-foreground max-w-[160px] truncate">
-                  {user?.email}
-                </span>
               </button>
 
               {showUserMenu && (
@@ -179,11 +184,8 @@ export default function Dashboard() {
                   <motion.div
                     initial={{ opacity: 0, y: -4 }}
                     animate={{ opacity: 1, y: 0 }}
-                    className="absolute right-0 top-full mt-1 z-20 w-56 bg-card rounded-xl border border-border shadow-lg p-1"
+                    className="absolute right-0 top-full mt-1 z-20 w-48 bg-card rounded-xl border border-border shadow-lg p-1"
                   >
-                    <div className="px-3 py-2 border-b border-border mb-1">
-                      <p className="text-xs text-muted-foreground truncate">{user?.email}</p>
-                    </div>
                     <button
                       onClick={signOut}
                       className="flex items-center gap-2 w-full px-3 py-2 text-sm text-destructive hover:bg-destructive/5 rounded-lg transition-colors"
