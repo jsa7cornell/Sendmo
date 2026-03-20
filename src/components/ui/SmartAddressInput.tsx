@@ -18,6 +18,8 @@ interface Props {
     value: AddressInput;
     onChange: (v: AddressInput) => void;
     error?: string;
+    nameLabel?: string;
+    nameHint?: string;
 }
 
 // ─── Parse a formatted address string into components ────────
@@ -46,7 +48,7 @@ function parseDescriptionToComponents(description: string): Omit<AddressInput, "
 
 // ─── Component ───────────────────────────────────────────────
 
-export default function SmartAddressInput({ label, value, onChange, error }: Props) {
+export default function SmartAddressInput({ label, value, onChange, error, nameLabel, nameHint }: Props) {
     const [query, setQuery] = useState(
         value.verified ? `${value.street}, ${value.city}, ${value.state} ${value.zip}`.trim() : "",
     );
@@ -232,7 +234,7 @@ export default function SmartAddressInput({ label, value, onChange, error }: Pro
             {/* ── Name field ─────────────────────────────────── */}
             <div>
                 <label htmlFor={`${label}-name`} className="text-sm font-medium text-foreground">
-                    Recipient Name <span className="font-normal text-muted-foreground">(probably your name!)</span>
+                    {nameLabel || "Recipient Name"} {nameHint !== undefined ? (nameHint ? <span className="font-normal text-muted-foreground">({nameHint})</span> : null) : <span className="font-normal text-muted-foreground">(probably your name!)</span>}
                 </label>
                 <input
                     id={`${label}-name`}

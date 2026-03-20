@@ -3,6 +3,7 @@ import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { log } from "../_shared/logger.ts";
 
 const MARKUP_MULTIPLIER = 1.15;
+const MARKUP_FLAT_CENTS = 100; // $1.00 flat fee on top of the percentage markup
 const MAX_DISPLAY_PRICE = 200;
 
 serve(async (req: Request) => {
@@ -20,7 +21,7 @@ serve(async (req: Request) => {
     const sessionId = req.headers.get("x-session-id") || "unknown";
 
     try {
-        const { from_address, to_address, parcel, live_mode } = await req.json();
+        const { from_address, to_address, parcel, live_mode, preferred_carrier, preferred_speed, max_price_cents } = await req.json();
 
         if (!from_address || !to_address || !parcel) {
             return new Response(
@@ -125,21 +126,58 @@ serve(async (req: Request) => {
             console.warn(`[Session ${sessionId}] [rates] carrier messages:`, JSON.stringify(epMessages));
         }
 
+        // ── Speed tier classification ──
+        function classifySpeed(days: number | null): string {
+            if (days === null) return "standard";
+            if (days <= 3) return "express";
+            if (days <= 5) return "standard";
+            return "economy";
+        }
+
+        // ── Recipient preference price cap (converts cents → dollars) ──
+        const effectivePriceCap = typeof max_price_cents === "number"
+            ? max_price_cents / 100
+            : MAX_DISPLAY_PRICE;
+
         // Apply markup, filter, and sort
         const rates = (shipmentData.rates || [])
             .map((rate: Record<string, unknown>) => {
                 const basePrice = parseFloat(rate.rate as string);
-                const displayPrice = Math.round(basePrice * MARKUP_MULTIPLIER * 100) / 100;
+                const displayPrice = Math.round(basePrice * MARKUP_MULTIPLIER * 100 + MARKUP_FLAT_CENTS) / 100;
+                const days = (rate.est_delivery_days || rate.delivery_days || null) as number | null;
                 return {
-                    carrier: rate.carrier,
-                    service: rate.service,
+                    carrier: rate.carrier as string,
+                    service: rate.service as string,
                     display_price: displayPrice,
-                    delivery_days: rate.est_delivery_days || rate.delivery_days || null,
+                    delivery_days: days,
+                    speed_tier: classifySpeed(days),
                     easypost_shipment_id: shipmentData.id,
                     easypost_rate_id: rate.id,
                 };
             })
-            .filter((r: { display_price: number }) => r.display_price <= MAX_DISPLAY_PRICE)
+            .filter((r: { display_price: number; carrier: string; speed_tier: string }) => {
+                // Hard cap — never show rates above the absolute max
+                if (r.display_price > MAX_DISPLAY_PRICE) return false;
+
+                // Recipient preference: price cap
+                if (r.display_price > effectivePriceCap) return false;
+
+                // Recipient preference: carrier filter
+                if (preferred_carrier && preferred_carrier !== "any") {
+                    if (r.carrier.toLowerCase() !== preferred_carrier.toLowerCase()) return false;
+                }
+
+                // Recipient preference: speed tier filter
+                if (preferred_speed) {
+                    const speedRank: Record<string, number> = { economy: 0, standard: 1, express: 2 };
+                    const rateRank = speedRank[r.speed_tier] ?? 1;
+                    const prefRank = speedRank[preferred_speed] ?? 1;
+                    // Show rates at the preferred speed or faster
+                    if (rateRank < prefRank) return false;
+                }
+
+                return true;
+            })
             .sort((a: { display_price: number }, b: { display_price: number }) => a.display_price - b.display_price);
 
         console.log(`[Session ${sessionId}] [rates] returning ${rates.length} rates, ${epMessages.length} carrier messages`);

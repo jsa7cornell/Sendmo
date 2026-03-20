@@ -1,24 +1,14 @@
-import { useState, useMemo } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { CheckCircle2, Copy, MessageSquare, Mail, ArrowRight } from "lucide-react";
+import { CheckCircle2, Copy, MessageSquare, Mail, ArrowRight, Loader2, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { createFlexLink } from "@/lib/api";
+import { useAuth } from "@/contexts/AuthContext";
 import type { RecipientFlowState } from "@/hooks/useRecipientFlow";
 
-// ─── Short code generator ────────────────────────────────────
-
-const SAFE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
-
-function generateShortCode(): string {
-  const arr = new Uint8Array(10);
-  crypto.getRandomValues(arr);
-  return Array.from(arr, (b) => SAFE_CHARS[b % SAFE_CHARS.length]).join("");
-}
-
-// ─── QR Code (inline SVG generation — no external dependency) ─
+// ─── QR Code placeholder ────────────────────────────────────
 
 function QRPlaceholder({ url }: { url: string }) {
-  // Simple placeholder that shows the URL in a styled box
-  // Will be replaced with qrcode.react when installed
   return (
     <div className="w-40 h-40 mx-auto bg-white rounded-xl border border-border flex items-center justify-center p-3">
       <div className="text-center">
@@ -40,7 +30,7 @@ function QRPlaceholder({ url }: { url: string }) {
   );
 }
 
-// ─── Main Component ──────────────────────────────────────────
+// ─── Main Component ─────────────────────────────────────────
 
 interface Props {
   state: RecipientFlowState;
@@ -49,16 +39,97 @@ interface Props {
 
 export default function RecipientStepLinkReady({ state, onUpdate }: Props) {
   const [copied, setCopied] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const { session } = useAuth();
 
-  const shortCode = useMemo(() => {
-    if (state.short_code) return state.short_code;
-    const code = generateShortCode();
-    // Fire update outside render via microtask
-    queueMicrotask(() => onUpdate({ short_code: code }));
-    return code;
-  }, [state.short_code, onUpdate]);
+  // Persist the link to the database on first mount
+  useEffect(() => {
+    if (state.short_code) return; // Already created
+    if (creating) return; // In progress
 
-  const shortLink = `sendmo.co/s/${shortCode}`;
+    async function persistLink() {
+      setCreating(true);
+      setError(null);
+
+      const token = session?.access_token;
+      if (!token) {
+        setError("You must be signed in to create a link. Please sign in and try again.");
+        setCreating(false);
+        return;
+      }
+
+      try {
+        const result = await createFlexLink({
+          recipient_address: {
+            name: state.destinationAddress.name,
+            street1: state.destinationAddress.street,
+            city: state.destinationAddress.city,
+            state: state.destinationAddress.state,
+            zip: state.destinationAddress.zip,
+            verified: state.destinationAddress.verified,
+          },
+          speed_preference: state.speed_preference,
+          preferred_carrier: state.preferred_carrier,
+          price_cap_dollars: state.price_cap,
+          size_hint: state.size_hint,
+          distance_hint: state.distance_hint,
+        }, token);
+
+        onUpdate({ short_code: result.short_code });
+      } catch (err) {
+        console.error("Failed to create link:", err);
+        setError(err instanceof Error ? err.message : "Failed to create link. Please try again.");
+      } finally {
+        setCreating(false);
+      }
+    }
+
+    persistLink();
+  }, [state.short_code]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Loading state
+  if (creating) {
+    return (
+      <div className="space-y-5 text-center py-12">
+        <Loader2 className="w-10 h-10 text-primary animate-spin mx-auto" />
+        <p className="text-lg font-semibold text-foreground">Creating your shipping link…</p>
+        <p className="text-sm text-muted-foreground">This only takes a moment</p>
+      </div>
+    );
+  }
+
+  // Error state
+  if (error) {
+    return (
+      <div className="space-y-5">
+        <div className="bg-destructive/10 border border-destructive/30 rounded-2xl p-6 text-center">
+          <AlertCircle className="w-10 h-10 text-destructive mx-auto mb-3" />
+          <h2 className="text-lg font-bold text-foreground mb-2">Something went wrong</h2>
+          <p className="text-sm text-muted-foreground mb-4">{error}</p>
+          <Button
+            onClick={() => {
+              setError(null);
+              setCreating(false);
+              // Trigger the effect again by ensuring short_code is empty
+              onUpdate({ short_code: "" });
+            }}
+            className="rounded-xl"
+          >
+            Try again
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  // Not yet created (shouldn't normally show, but safety)
+  if (!state.short_code) {
+    return null;
+  }
+
+  // Success state — link created and persisted
+  const shortLink = `sendmo.co/s/${state.short_code}`;
   const fullUrl = `https://${shortLink}`;
 
   function handleCopy() {
@@ -141,7 +212,7 @@ export default function RecipientStepLinkReady({ state, onUpdate }: Props) {
         </div>
       </div>
 
-      {/* Shipment preferences summary */}
+      {/* Link preferences summary */}
       <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
         <h3 className="text-sm font-semibold text-foreground mb-3">Link preferences</h3>
         <dl className="space-y-2 text-sm">
@@ -149,22 +220,10 @@ export default function RecipientStepLinkReady({ state, onUpdate }: Props) {
             <dt className="text-muted-foreground">Speed</dt>
             <dd className="font-medium text-foreground capitalize">{state.speed_preference}</dd>
           </div>
-          <div className="flex justify-between">
-            <dt className="text-muted-foreground">Distance</dt>
-            <dd className="font-medium text-foreground capitalize">
-              {state.distance_hint === "cross" ? "Cross-country" : state.distance_hint}
-            </dd>
-          </div>
-          {state.size_hint && (
+          {state.preferred_carrier && state.preferred_carrier !== "any" && (
             <div className="flex justify-between">
-              <dt className="text-muted-foreground">Size hint</dt>
-              <dd className="font-medium text-foreground capitalize">
-                {state.size_hint === "smallbox"
-                  ? "Small box"
-                  : state.size_hint === "largebox"
-                    ? "Large box"
-                    : "Envelope"}
-              </dd>
+              <dt className="text-muted-foreground">Carrier</dt>
+              <dd className="font-medium text-foreground uppercase">{state.preferred_carrier}</dd>
             </div>
           )}
           <div className="flex justify-between">
