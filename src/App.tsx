@@ -1,5 +1,6 @@
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Outlet } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
+import { RecipientFlowProvider } from "@/contexts/RecipientFlowContext";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import Index from "@/pages/Index";
 import RecipientOnboarding from "@/pages/RecipientOnboarding";
@@ -12,6 +13,15 @@ import LabelTest from "@/pages/LabelTest";
 import TrackingPage from "@/pages/TrackingPage";
 import NotFound from "@/pages/NotFound";
 
+// Layout that provides RecipientFlowContext to all onboarding routes
+function OnboardingLayout() {
+  return (
+    <RecipientFlowProvider>
+      <Outlet />
+    </RecipientFlowProvider>
+  );
+}
+
 function App() {
   return (
     <BrowserRouter>
@@ -19,7 +29,13 @@ function App() {
         <Routes>
           <Route path="/" element={<Index />} />
           <Route path="/login" element={<Login />} />
-          <Route path="/onboarding" element={<RecipientOnboarding />} />
+
+          {/* Recipient onboarding — URL-based step routing */}
+          <Route path="/onboarding" element={<OnboardingLayout />}>
+            <Route index element={<RecipientOnboarding />} />
+            <Route path=":step" element={<RecipientOnboarding />} />
+          </Route>
+
           <Route path="/s/:shortCode" element={<SenderFlow />} />
           <Route
             path="/dashboard"
