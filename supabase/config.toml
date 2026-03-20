@@ -13,6 +13,15 @@ enable_signup = true
 double_confirm_changes = false
 enable_confirmations = true
 
+[auth.email.smtp]
+enabled = true
+host = "smtp.resend.com"
+port = 465
+user = "resend"
+pass = "env(SMTP_PASS)"
+admin_email = "noreply@sendmo.co"
+sender_name = "SendMo"
+
 [functions.test-db-insert]
 enabled = true
 verify_jwt = true
