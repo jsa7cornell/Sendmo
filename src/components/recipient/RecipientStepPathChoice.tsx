@@ -1,6 +1,6 @@
 import { motion } from "framer-motion";
 import {
-  Link2, CheckCircle2, ArrowRight, Printer,
+  Link2, CheckCircle2, ArrowRight,
   HelpCircle, FileText,
 } from "lucide-react";
 import type { RecipientPath } from "@/lib/types";
