@@ -23,6 +23,9 @@
 
 - [ ] **Register EasyPost webhook URL** — Configure EasyPost dashboard to send `tracker.updated` events to `https://fkxykvzsqdjzhurntgah.supabase.co/functions/v1/webhooks`. The webhook handler is already built and deployed — just needs the URL registered. This will give us real-time status updates pushed by EasyPost instead of polling on page load. Currently we use a 30-min TTL cache on the tracking function; webhooks would make this near-instant and eliminate API polling entirely.
 - [ ] **Cache tracking events in DB** — Store EasyPost tracking events (message, status, datetime, location) in a `tracking_events` table so the tracking page can show event history even when serving from cache (within the 30-min TTL). Currently events only show when a fresh EasyPost fetch happens.
+- [ ] **Payment transaction ledger** — Per CLAUDE.md rule 16, financial balance changes must use an append-only ledger table. Create a `transactions` table: `id, user_id, shipment_id, type ('charge'|'refund'|'credit'|'fee'), amount_cents, stripe_ref, description, created_at`. All money movement flows through this table. Required before Stripe goes live.
+- [ ] **Stripe refund on label void** — When EasyPost confirms `refund_status = 'refunded'` (via webhook), trigger a Stripe refund on the associated `payment_intent`. Wire up `processRefund()` in `src/lib/refundService.ts` (currently stubbed). Requires: Stripe refund API call, payment status update, ledger entry.
+- [ ] **User payment history page** — Show all transactions (charges, refunds, credits) for the authenticated user. Read from the `transactions` ledger table. Accessible from Dashboard.
 
 ---
 

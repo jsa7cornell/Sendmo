@@ -24,6 +24,7 @@ interface CancelLabelModalProps {
         isTest: boolean;
     };
     onCancelled: (shipmentId: string) => void;
+    accessToken?: string;  // If provided, use for auth (dashboard); otherwise anon key (admin)
 }
 
 type ModalState = "confirm" | "loading" | "success" | "error";
@@ -33,6 +34,7 @@ export default function CancelLabelModal({
     onClose,
     shipment,
     onCancelled,
+    accessToken,
 }: CancelLabelModalProps) {
     const [state, setState] = useState<ModalState>("confirm");
     const [resultMessage, setResultMessage] = useState("");
@@ -60,7 +62,7 @@ export default function CancelLabelModal({
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
-                    Authorization: `Bearer ${ANON_KEY}`,
+                    Authorization: `Bearer ${accessToken || ANON_KEY}`,
                 },
                 body: JSON.stringify({
                     shipment_id: shipment.shipmentId,

@@ -4,13 +4,14 @@ import { Link } from "react-router-dom";
 import {
   Copy, Link2, MapPin, Zap, Shield, CreditCard,
   Package, Truck, CheckCircle2, ExternalLink, Settings,
-  LogOut, User, AlertCircle,
+  LogOut, User, AlertCircle, Ban,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
+import CancelLabelModal from "@/components/CancelLabelModal";
 
 // ─── Types ──────────────────────────────────────────────────
 
@@ -20,7 +21,11 @@ interface DashboardShipment {
   carrier: string;
   service: string;
   status: string;
+  refund_status: string;
   display_price_cents: number;
+  rate_cents: number;
+  is_test: boolean;
+  easypost_shipment_id: string | null;
   created_at: string;
   updated_at: string;
   sendmo_links: {
@@ -42,8 +47,6 @@ const STATUS_CONFIG: Record<DisplayStatus, { label: string; color: string; icon:
 };
 
 function statusWithDate(status: string, updatedAt: string): string {
-  const cfg = STATUS_CONFIG[status as DisplayStatus];
-  const label = cfg?.label ?? status;
   const date = new Date(updatedAt).toLocaleDateString("en-US", {
     month: "short", day: "numeric", year: "numeric",
   });
@@ -54,8 +57,34 @@ function statusWithDate(status: string, updatedAt: string): string {
     case "delivered": return `Delivered on ${date}`;
     case "return_to_sender": return `Returned on ${date}`;
     case "cancelled": return `Cancelled on ${date}`;
-    default: return `${label} — ${date}`;
+    default: return date;
   }
+}
+
+function canVoidLabel(s: DashboardShipment): boolean {
+  return (
+    !s.is_test &&
+    s.easypost_shipment_id !== null &&
+    s.status === "label_created" &&
+    s.refund_status === "none"
+  );
+}
+
+function refundBadge(refundStatus: string) {
+  if (refundStatus === "none") return null;
+  const cfg: Record<string, { label: string; className: string }> = {
+    submitted: { label: "Refund Pending", className: "bg-blue-100 text-blue-700 border-blue-200" },
+    refunded: { label: "Refunded", className: "bg-green-100 text-green-700 border-green-200" },
+    rejected: { label: "Refund Rejected", className: "bg-red-100 text-red-700 border-red-200" },
+    not_applicable: { label: "No Refund", className: "bg-gray-100 text-gray-600 border-gray-200" },
+  };
+  const c = cfg[refundStatus];
+  if (!c) return null;
+  return (
+    <span className={cn("inline-flex rounded-full border px-2 py-0.5 text-[10px] font-medium", c.className)}>
+      {c.label}
+    </span>
+  );
 }
 
 // ─── Component ──────────────────────────────────────────────
@@ -66,14 +95,20 @@ export default function Dashboard() {
   const [shipments, setShipments] = useState<DashboardShipment[]>([]);
   const [loadingShipments, setLoadingShipments] = useState(true);
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [cancelTarget, setCancelTarget] = useState<DashboardShipment | null>(null);
+  const [accessToken, setAccessToken] = useState<string>("");
 
   useEffect(() => {
     async function fetchShipments() {
       if (!user) return;
 
+      // Get access token for authenticated API calls
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.access_token) setAccessToken(session.access_token);
+
       const { data, error } = await supabase
         .from("shipments")
-        .select("id, tracking_number, carrier, service, status, display_price_cents, created_at, updated_at, sendmo_links!inner(user_id, sender_name)")
+        .select("id, tracking_number, carrier, service, status, refund_status, display_price_cents, rate_cents, is_test, easypost_shipment_id, created_at, updated_at, sendmo_links!inner(user_id, sender_name)")
         .eq("sendmo_links.user_id", user.id)
         .order("created_at", { ascending: false })
         .limit(50);
@@ -86,6 +121,14 @@ export default function Dashboard() {
 
     fetchShipments();
   }, [user]);
+
+  function handleCancelled(shipmentId: string) {
+    setShipments((prev) =>
+      prev.map((s) =>
+        s.id === shipmentId ? { ...s, status: "cancelled", refund_status: "submitted" } : s,
+      ),
+    );
+  }
 
   const shortUrl = "sendmo.co/s/k8Hj2mNp4x"; // placeholder
 
@@ -119,7 +162,6 @@ export default function Dashboard() {
               New Link
             </Button>
 
-            {/* User menu */}
             <div className="relative">
               <button
                 onClick={() => setShowUserMenu(!showUserMenu)}
@@ -158,7 +200,6 @@ export default function Dashboard() {
 
         {/* Top row: Link + Wallet */}
         <div className="grid gap-5 md:grid-cols-2 mb-8">
-          {/* My Label Link */}
           <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
@@ -166,15 +207,12 @@ export default function Dashboard() {
                 My Label Link
               </h2>
               <div className="flex items-center gap-2">
-                <Badge variant="outline" className="text-xs border-success/50 text-success bg-success/10">
-                  Active
-                </Badge>
+                <Badge variant="outline" className="text-xs border-success/50 text-success bg-success/10">Active</Badge>
                 <button className="text-muted-foreground hover:text-foreground transition-colors">
                   <Settings className="w-4 h-4" />
                 </button>
               </div>
             </div>
-
             <div className="flex items-center gap-2 bg-muted/50 rounded-xl px-3 py-2.5 mb-4">
               <span className="text-sm font-mono text-foreground flex-1 truncate">{shortUrl}</span>
               <Button variant="ghost" size="sm" onClick={handleCopy} className="rounded-lg gap-1.5 shrink-0">
@@ -182,27 +220,18 @@ export default function Dashboard() {
                 {copied ? "Copied!" : "Copy"}
               </Button>
             </div>
-
             <div className="flex flex-wrap gap-2">
-              <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground">
-                <MapPin className="w-3 h-3" /> San Francisco, CA
-              </span>
-              <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground">
-                <Zap className="w-3 h-3" /> Standard
-              </span>
-              <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground">
-                <Shield className="w-3 h-3" /> Cap: $100
-              </span>
+              <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground"><MapPin className="w-3 h-3" /> San Francisco, CA</span>
+              <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground"><Zap className="w-3 h-3" /> Standard</span>
+              <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground"><Shield className="w-3 h-3" /> Cap: $100</span>
             </div>
           </div>
 
-          {/* My Wallet */}
           <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
             <h2 className="text-sm font-semibold text-foreground flex items-center gap-2 mb-4">
               <CreditCard className="w-4 h-4 text-primary" />
               My Wallet
             </h2>
-
             <div className="flex items-center gap-3 bg-muted/50 rounded-xl px-4 py-3 mb-3">
               <div className="w-10 h-7 rounded bg-gradient-to-br from-blue-600 to-blue-800 flex items-center justify-center">
                 <span className="text-[10px] font-bold text-white">VISA</span>
@@ -212,7 +241,6 @@ export default function Dashboard() {
                 <p className="text-xs text-muted-foreground">Expires 12/29</p>
               </div>
             </div>
-
             <div className="flex items-center justify-between bg-muted/50 rounded-xl px-4 py-3">
               <div>
                 <p className="text-xs text-muted-foreground">SendMo Balance</p>
@@ -255,6 +283,7 @@ export default function Dashboard() {
                       <th className="px-5 py-3 font-medium">Status</th>
                       <th className="px-5 py-3 font-medium">Amount</th>
                       <th className="px-5 py-3 font-medium">Tracking</th>
+                      <th className="px-5 py-3 font-medium">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -278,6 +307,7 @@ export default function Dashboard() {
                               <span className="text-xs text-muted-foreground">
                                 {statusWithDate(s.status, s.updated_at)}
                               </span>
+                              {refundBadge(s.refund_status)}
                             </div>
                           </td>
                           <td className="px-5 py-3 font-medium">{formatCents(s.display_price_cents)}</td>
@@ -293,6 +323,17 @@ export default function Dashboard() {
                             ) : (
                               <span className="text-muted-foreground text-xs">&mdash;</span>
                             )}
+                          </td>
+                          <td className="px-5 py-3">
+                            {canVoidLabel(s) ? (
+                              <button
+                                onClick={() => setCancelTarget(s)}
+                                className="inline-flex items-center gap-1 text-xs text-destructive hover:underline"
+                              >
+                                <Ban className="w-3 h-3" />
+                                Void Label
+                              </button>
+                            ) : null}
                           </td>
                         </tr>
                       );
@@ -320,19 +361,31 @@ export default function Dashboard() {
                         </span>
                       </div>
                       <p className="text-xs text-muted-foreground">{statusWithDate(s.status, s.updated_at)}</p>
+                      {refundBadge(s.refund_status)}
                       <div className="flex items-center justify-between text-xs">
                         <span className="text-muted-foreground">{s.carrier}</span>
                         <span className="font-medium text-foreground">{formatCents(s.display_price_cents)}</span>
                       </div>
-                      {s.tracking_number && s.tracking_number !== "TEST" && (
-                        <Link
-                          to={`/track/${s.tracking_number}`}
-                          className="text-primary text-xs font-mono flex items-center gap-1 hover:underline"
-                        >
-                          Track: {s.tracking_number.slice(0, 18)}...
-                          <ExternalLink className="w-3 h-3" />
-                        </Link>
-                      )}
+                      <div className="flex items-center justify-between">
+                        {s.tracking_number && s.tracking_number !== "TEST" ? (
+                          <Link
+                            to={`/track/${s.tracking_number}`}
+                            className="text-primary text-xs font-mono flex items-center gap-1 hover:underline"
+                          >
+                            Track: {s.tracking_number.slice(0, 18)}...
+                            <ExternalLink className="w-3 h-3" />
+                          </Link>
+                        ) : <span />}
+                        {canVoidLabel(s) && (
+                          <button
+                            onClick={() => setCancelTarget(s)}
+                            className="inline-flex items-center gap-1 text-xs text-destructive hover:underline"
+                          >
+                            <Ban className="w-3 h-3" />
+                            Void
+                          </button>
+                        )}
+                      </div>
                     </div>
                   );
                 })}
@@ -341,6 +394,25 @@ export default function Dashboard() {
           )}
         </div>
       </div>
+
+      {/* Cancel Label Modal */}
+      {cancelTarget && (
+        <CancelLabelModal
+          open={!!cancelTarget}
+          onClose={() => setCancelTarget(null)}
+          shipment={{
+            shipmentId: cancelTarget.id,
+            easypostShipmentId: cancelTarget.easypost_shipment_id || "",
+            carrier: cancelTarget.carrier,
+            trackingNumber: cancelTarget.tracking_number || "",
+            rateCents: cancelTarget.rate_cents,
+            createdAt: cancelTarget.created_at,
+            isTest: cancelTarget.is_test,
+          }}
+          onCancelled={handleCancelled}
+          accessToken={accessToken}
+        />
+      )}
     </motion.div>
   );
 }

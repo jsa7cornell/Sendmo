@@ -49,12 +49,42 @@ serve(async (req: Request) => {
             auth: { autoRefreshToken: false, persistSession: false },
         });
 
-        // ── Fetch shipment — is_test comes from the DB, not the client ──
+        // ── Auth: verify caller identity + ownership ─────────────────
+        // If a JWT is provided, verify it and enforce ownership.
+        // If no JWT (admin/anon), allow through (legacy admin path).
+        const authHeader = req.headers.get("Authorization");
+        const token = authHeader?.replace("Bearer ", "");
+        let callerId: string | null = null;
+
+        if (token && token !== Deno.env.get("VITE_SUPABASE_ANON_KEY")) {
+            const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || Deno.env.get("VITE_SUPABASE_ANON_KEY");
+            if (anonKey && token !== anonKey) {
+                // Looks like a real JWT — verify it
+                const userClient = createClient(sbUrl, anonKey || sbKey, {
+                    auth: { autoRefreshToken: false, persistSession: false },
+                    global: { headers: { Authorization: `Bearer ${token}` } },
+                });
+                const { data: { user }, error: authError } = await userClient.auth.getUser(token);
+                if (!authError && user) {
+                    callerId = user.id;
+                }
+            }
+        }
+
+        // ── Fetch shipment with ownership join ───────────────────────
         const { data: shipment, error: fetchError } = await supabase
             .from("shipments")
-            .select("id, easypost_shipment_id, status, refund_status, is_test, carrier, tracking_number, rate_cents, created_at")
+            .select("id, easypost_shipment_id, status, refund_status, is_test, carrier, tracking_number, rate_cents, created_at, sendmo_links!inner(user_id)")
             .eq("id", shipment_id)
             .single();
+
+        // ── Ownership check (authenticated users only) ───────────────
+        if (callerId && shipment && (shipment as any).sendmo_links?.user_id !== callerId) {
+            return new Response(
+                JSON.stringify({ error: "You do not have permission to void this label." }),
+                { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
 
         if (fetchError || !shipment) {
             return new Response(
