@@ -21,7 +21,8 @@
 
 ## Features
 
-_(add future feature ideas here)_
+- [ ] **Register EasyPost webhook URL** — Configure EasyPost dashboard to send `tracker.updated` events to `https://fkxykvzsqdjzhurntgah.supabase.co/functions/v1/webhooks`. The webhook handler is already built and deployed — just needs the URL registered. This will give us real-time status updates pushed by EasyPost instead of polling on page load. Currently we use a 30-min TTL cache on the tracking function; webhooks would make this near-instant and eliminate API polling entirely.
+- [ ] **Cache tracking events in DB** — Store EasyPost tracking events (message, status, datetime, location) in a `tracking_events` table so the tracking page can show event history even when serving from cache (within the 30-min TTL). Currently events only show when a fresh EasyPost fetch happens.
 
 ---
 
