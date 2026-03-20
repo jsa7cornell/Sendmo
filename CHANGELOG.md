@@ -36,6 +36,44 @@
 
 ---
 
+## [2026-03-19] — URL-based step routing for recipient onboarding
+
+**Branch:** `feat/url-step-routing`
+**Commit:** `4fbc307`
+**Deploy:** Vercel auto-deploy
+
+### What shipped
+- Onboarding steps now have real URLs: `/onboarding/address`, `/onboarding/shipping`, `/onboarding/payment`, `/onboarding/label` (full label) and `/onboarding/preferences`, `/onboarding/verify`, `/onboarding/authorize`, `/onboarding/link-ready` (flex)
+- Browser back/forward buttons work naturally through the flow
+- Step guards: direct URL access blocked if prior steps not completed (redirects to first incomplete step)
+- Cross-path slug rejection: flex slugs rejected when full_label path is active (and vice versa)
+- Flow state lifted to React Context — persists across URL changes
+- Direction-aware animation (forward vs backward slide)
+
+### What changed (files)
+- `src/lib/stepRouting.ts` — new: slug↔step mappings, step ordering, guard logic, progress bar mapping
+- `src/contexts/RecipientFlowContext.tsx` — new: flow state context with navigate()-based transitions
+- `src/pages/RecipientOnboarding.tsx` — rewritten as layout reading step from URL
+- `src/App.tsx` — nested routes with shared OnboardingLayout provider
+- `tests/unit/stepRouting.test.ts` — 27 new tests
+- `tests/unit/recipientFlowContext.test.tsx` — 11 new tests
+- `tests/e2e/url-step-routing.spec.ts` — 10 new tests
+
+### Tests
+- 38 new unit tests (stepRouting + RecipientFlowContext), 188 total passing
+- 10 new E2E tests (URL changes, browser back, step guards, cross-path rejection), 31 total E2E passing
+
+### Breaking changes
+- Onboarding URLs changed from `/onboarding` (single page) to `/onboarding/:step` (URL per step). No external links to old step URLs existed, so no user impact.
+
+### Notes
+- Step components required zero changes — context exposes backward-compatible `state: RecipientFlowState`
+- Steps 11→12 (payment→label ready) happen within the same `RecipientStepPayment` component, so URL stays at `/payment`
+- `useRecipientFlow` hook still exists for its tests but the context wraps similar logic
+- Sender flow (`SenderFlow.tsx`) is still a placeholder — URL routing for it will be added when sender flow is built
+
+---
+
 ## [2026-03-19] — Shipping notifications for sender + recipient, tracking page
 
 **Branch:** `feat/shipping-notifications`
