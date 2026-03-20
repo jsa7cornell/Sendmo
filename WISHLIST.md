@@ -12,7 +12,7 @@
 
 ## Bugs
 
-- [ ] **Magic link login doesn't send email** — Clicking "Sign In" from the home page navigates to /login, but submitting an email doesn't trigger the Supabase magic link email. Investigate: is the Supabase Auth email provider configured? Are emails going to spam?
+- [x] **Magic link login doesn't send email** — Root cause: Supabase Auth Site URL was pointed at old Vercel deploy URL. Fixed 2026-03-19: config push to set `sendmo.co`, confirmed John's account, added `detectSessionInUrl` to client.
 - [ ] **Full Label flow doesn't create account or link** — After completing the Full Prepaid Label flow, the recipient should have: (1) email verified via OTP, (2) Supabase Auth account auto-created, (3) a `sendmo_links` record in their dashboard. Currently the flow generates a label but doesn't persist the recipient's account or link.
 
 ## Data / Reporting

@@ -1,3 +1,26 @@
+# ─── Auth Configuration ───────────────────────────────────────
+[auth]
+site_url = "https://sendmo.co"
+additional_redirect_urls = [
+  "https://sendmo.co/dashboard",
+  "https://sendmo.co/**",
+  "http://localhost:5173/dashboard",
+  "http://localhost:5173/**",
+]
+
+[auth.email]
+enable_signup = true
+double_confirm_changes = false
+enable_confirmations = true
+
+[auth.email.smtp]
+enabled = true
+host = "smtp.resend.com"
+port = 465
+user = "resend"
+pass = "env(SMTP_PASS)"
+admin_email = "noreply@sendmo.co"
+sender_name = "SendMo"
 
 [functions.test-db-insert]
 enabled = true
