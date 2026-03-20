@@ -1,15 +1,23 @@
 import { useParams, Link } from "react-router-dom";
 import { useState, useEffect } from "react";
-import { Package, Truck, CheckCircle2, AlertCircle, Clock, ArrowLeft } from "lucide-react";
+import { Package, Truck, CheckCircle2, AlertCircle, Clock, ArrowLeft, MapPin, Calendar } from "lucide-react";
 
 const BASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
-const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
+
+interface TrackingEvent {
+  message: string;
+  status: string;
+  datetime: string;
+  location: string | null;
+}
 
 interface TrackingData {
   tracking_number: string;
   carrier: string;
   service: string;
   status: string;
+  estimated_delivery: string | null;
+  events: TrackingEvent[];
   created_at: string;
   updated_at: string;
 }
@@ -25,6 +33,18 @@ const STATUS_CONFIG: Record<string, { label: string; icon: typeof Package; color
 
 const TIMELINE_STEPS = ["label_created", "in_transit", "out_for_delivery", "delivered"];
 
+function formatEventDate(iso: string): string {
+  return new Date(iso).toLocaleString("en-US", {
+    month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+  });
+}
+
+function formatDeliveryDate(iso: string): string {
+  return new Date(iso).toLocaleDateString("en-US", {
+    weekday: "long", month: "long", day: "numeric",
+  });
+}
+
 export default function TrackingPage() {
   const { trackingNumber } = useParams<{ trackingNumber: string }>();
   const [data, setData] = useState<TrackingData | null>(null);
@@ -34,9 +54,8 @@ export default function TrackingPage() {
   useEffect(() => {
     if (!trackingNumber) return;
     setLoading(true);
-    fetch(`${BASE_URL}/functions/v1/tracking?number=${encodeURIComponent(trackingNumber)}`, {
-      headers: { Authorization: `Bearer ${ANON_KEY}` },
-    })
+    // No auth header — tracking function is deployed with --no-verify-jwt
+    fetch(`${BASE_URL}/functions/v1/tracking?number=${encodeURIComponent(trackingNumber)}`)
       .then(async (res) => {
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
@@ -51,13 +70,10 @@ export default function TrackingPage() {
 
   const config = data ? STATUS_CONFIG[data.status] || STATUS_CONFIG.label_created : null;
   const StatusIcon = config?.icon || Package;
-
-  // Determine which timeline steps are complete
   const currentStepIndex = data ? TIMELINE_STEPS.indexOf(data.status) : -1;
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Header */}
       <header className="border-b border-border bg-card">
         <div className="max-w-2xl mx-auto px-4 py-4 flex items-center gap-3">
           <Link to="/" className="text-primary font-bold text-xl tracking-tight">SendMo</Link>
@@ -77,12 +93,8 @@ export default function TrackingPage() {
             <AlertCircle className="w-10 h-10 text-destructive mx-auto" />
             <h2 className="text-lg font-semibold text-foreground">Tracking not found</h2>
             <p className="text-sm text-muted-foreground">{error}</p>
-            <Link
-              to="/"
-              className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              Back to SendMo
+            <Link to="/" className="inline-flex items-center gap-1 text-sm text-primary hover:underline">
+              <ArrowLeft className="w-4 h-4" /> Back to SendMo
             </Link>
           </div>
         )}
@@ -97,9 +109,12 @@ export default function TrackingPage() {
                 </div>
                 <div>
                   <h1 className="text-xl font-bold text-foreground">{config.label}</h1>
-                  <p className="text-sm text-muted-foreground">
-                    Last updated {new Date(data.updated_at).toLocaleString()}
-                  </p>
+                  {data.estimated_delivery && data.status !== "delivered" && (
+                    <p className="text-sm text-muted-foreground flex items-center gap-1 mt-0.5">
+                      <Calendar className="w-3.5 h-3.5" />
+                      Expected {formatDeliveryDate(data.estimated_delivery)}
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -126,9 +141,9 @@ export default function TrackingPage() {
               </div>
             </div>
 
-            {/* Timeline */}
+            {/* Progress bar */}
             <div className="bg-card rounded-2xl border border-border shadow-sm p-6">
-              <h2 className="text-sm font-semibold text-foreground mb-4">Shipment Timeline</h2>
+              <h2 className="text-sm font-semibold text-foreground mb-4">Progress</h2>
               <div className="space-y-0">
                 {TIMELINE_STEPS.map((step, i) => {
                   const stepConfig = STATUS_CONFIG[step];
@@ -137,30 +152,18 @@ export default function TrackingPage() {
                   const isCurrent = i === currentStepIndex;
                   return (
                     <div key={step} className="flex items-start gap-3">
-                      {/* Line + dot */}
                       <div className="flex flex-col items-center">
-                        <div
-                          className={`w-8 h-8 rounded-full flex items-center justify-center ${
-                            isComplete ? "bg-primary text-white" : "bg-muted text-muted-foreground"
-                          } ${isCurrent ? "ring-2 ring-primary/30" : ""}`}
-                        >
+                        <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
+                          isComplete ? "bg-primary text-white" : "bg-muted text-muted-foreground"
+                        } ${isCurrent ? "ring-2 ring-primary/30" : ""}`}>
                           <StepIcon className="w-4 h-4" />
                         </div>
                         {i < TIMELINE_STEPS.length - 1 && (
-                          <div
-                            className={`w-0.5 h-8 ${
-                              i < currentStepIndex ? "bg-primary" : "bg-border"
-                            }`}
-                          />
+                          <div className={`w-0.5 h-8 ${i < currentStepIndex ? "bg-primary" : "bg-border"}`} />
                         )}
                       </div>
-                      {/* Label */}
                       <div className="pt-1">
-                        <p
-                          className={`text-sm font-medium ${
-                            isComplete ? "text-foreground" : "text-muted-foreground"
-                          }`}
-                        >
+                        <p className={`text-sm font-medium ${isComplete ? "text-foreground" : "text-muted-foreground"}`}>
                           {stepConfig.label}
                         </p>
                       </div>
@@ -170,12 +173,43 @@ export default function TrackingPage() {
               </div>
             </div>
 
-            <Link
-              to="/"
-              className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              Back to SendMo
+            {/* Live tracking events */}
+            {data.events.length > 0 && (
+              <div className="bg-card rounded-2xl border border-border shadow-sm p-6">
+                <h2 className="text-sm font-semibold text-foreground mb-4">Tracking History</h2>
+                <div className="space-y-0">
+                  {data.events.map((event, i) => (
+                    <div key={i} className="flex items-start gap-3">
+                      <div className="flex flex-col items-center">
+                        <div className={`w-2.5 h-2.5 rounded-full mt-1.5 ${
+                          i === 0 ? "bg-primary" : "bg-border"
+                        }`} />
+                        {i < data.events.length - 1 && (
+                          <div className="w-0.5 h-10 bg-border" />
+                        )}
+                      </div>
+                      <div className="pb-4">
+                        <p className={`text-sm ${i === 0 ? "font-medium text-foreground" : "text-muted-foreground"}`}>
+                          {event.message}
+                        </p>
+                        <div className="flex items-center gap-3 mt-0.5 text-xs text-muted-foreground">
+                          <span>{formatEventDate(event.datetime)}</span>
+                          {event.location && (
+                            <span className="flex items-center gap-0.5">
+                              <MapPin className="w-3 h-3" />
+                              {event.location}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <Link to="/" className="inline-flex items-center gap-1 text-sm text-primary hover:underline">
+              <ArrowLeft className="w-4 h-4" /> Back to SendMo
             </Link>
           </div>
         )}
