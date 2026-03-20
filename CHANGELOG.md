@@ -36,6 +36,47 @@
 
 ---
 
+## [2026-03-19] — Full sender flow + links pipeline + friendly error copy
+
+**Branch:** `main`
+**Commit:** `5346656`
+**Deploy:** Vercel auto-deploy
+
+### What shipped
+- **Links Edge Function** — `supabase/functions/links/index.ts` (GET + POST). Creates flex links with recipient preferences, retrieves by short code. Handles expired/used/cancelled statuses.
+- **Preference-aware rate filtering** — Rates Edge Function now filters by carrier, speed tier (preferred or faster), and price cap from link preferences.
+- **Full sender wizard** — 4-step flow at `/s/:shortCode`: address → package → rates → done. Fetches link, shows preferences banner, uses SmartAddressInput + Magic Guestimator.
+- **RecipientStepLinkReady** — Now persists flex links to DB on mount via `createFlexLink()` API call.
+- **Friendly error copy** — "Hmm, that link didn't work", "Rates are playing hide and seek", "No options for this one", "One and done!" etc.
+- **"prepaid by [name]"** — Shows on rate cards and shipment summary.
+- **"Your label is ready!"** — Done step with label placeholder (pending Stripe integration).
+- **SmartAddressInput name label fix** — Now configurable via `nameLabel`/`nameHint` props. Sender side shows "Sender's Name" instead of "Recipient Name".
+- **SenderPreview page** — `/sender-preview` with 7 interactive scenarios for testing all sender states.
+
+### What changed (files)
+- `supabase/functions/links/index.ts` — new Edge Function
+- `supabase/functions/rates/index.ts` — added preference filtering (carrier, speed, price cap)
+- `src/lib/api.ts` — added `createFlexLink()`, `fetchLink()`, `fetchSenderRates()`, `LinkData` type
+- `src/pages/SenderFlow.tsx` — full sender wizard (was stub)
+- `src/pages/SenderPreview.tsx` — new preview/mockup page
+- `src/components/recipient/RecipientStepLinkReady.tsx` — now persists to DB
+- `src/components/ui/SmartAddressInput.tsx` — configurable name label
+- `src/App.tsx` — added SenderPreview route
+
+### Tests
+- 188 unit tests passing (17 files)
+- 14 E2E tests passing
+
+### Breaking changes
+- None
+
+### Notes for future agents
+- Links Edge Function is NOT yet deployed to Supabase — run `npx supabase functions deploy links` and `npx supabase functions deploy rates`
+- Done step has a label placeholder — actual label generation requires Stripe payment integration (see WISHLIST.md)
+- SenderPreview.tsx is a dev tool — remove or gate behind admin before launch
+
+---
+
 ## [2026-03-19] — UI polish: persistent header, flow badge, path choice redesign, dashboard identity
 
 **Branch:** `feat/ui-polish` (merged to `main`)
