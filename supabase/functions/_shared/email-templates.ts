@@ -109,26 +109,77 @@ const STATUS_LABELS: Record<string, { label: string; emoji: string; color: strin
 export function trackingUpdateEmail(
   status: string,
   tracking: string,
+  carrier?: string,
+  estimatedDelivery?: string,
+  trackingUrl?: string,
+  role: "sender" | "recipient" = "recipient",
 ): { subject: string; html: string } {
   const info = STATUS_LABELS[status] || { label: status, emoji: "📦", color: BRAND_BLUE };
+  const isSender = role === "sender";
+
+  const statusMessage = (() => {
+    if (status === "delivered") {
+      return isSender
+        ? "The package you sent has been delivered!"
+        : "Your package has been delivered!";
+    }
+    if (status === "out_for_delivery") {
+      return isSender
+        ? "The package you sent is out for delivery and should arrive today."
+        : "Your package is out for delivery and should arrive today.";
+    }
+    return isSender
+      ? "The package you sent is on its way."
+      : "Your package is on its way.";
+  })();
+
+  const etaRow = estimatedDelivery
+    ? `<tr>
+        <td style="padding:12px 16px;border-bottom:1px solid #e5e7eb;">
+          <span style="font-size:12px;color:${GRAY_400};text-transform:uppercase;letter-spacing:0.5px;">Estimated Delivery</span><br/>
+          <span style="font-size:14px;font-weight:500;color:#111827;">${estimatedDelivery}</span>
+        </td>
+      </tr>`
+    : "";
+
+  const carrierRow = carrier
+    ? `<tr>
+        <td style="padding:12px 16px;${!estimatedDelivery ? "" : "border-bottom:1px solid #e5e7eb;"}">
+          <span style="font-size:12px;color:${GRAY_400};text-transform:uppercase;letter-spacing:0.5px;">Carrier</span><br/>
+          <span style="font-size:14px;font-weight:500;color:#111827;">${carrier}</span>
+        </td>
+      </tr>`
+    : "";
+
+  const trackButton = trackingUrl
+    ? `<div style="text-align:center;margin:24px 0 0;">
+        <a href="${trackingUrl}" style="display:inline-block;background-color:${BRAND_BLUE};color:#ffffff;font-size:14px;font-weight:600;text-decoration:none;padding:12px 32px;border-radius:8px;">Track Package</a>
+      </div>`
+    : "";
+
   return {
-    subject: `${info.emoji} Your package is ${info.label.toLowerCase()} — SendMo`,
+    subject: isSender
+      ? `${info.emoji} Package you sent is ${info.label.toLowerCase()} — SendMo`
+      : `${info.emoji} Your package is ${info.label.toLowerCase()} — SendMo`,
     html: layout(`
       <div style="text-align:center;margin:0 0 24px;">
         <span style="font-size:48px;">${info.emoji}</span>
       </div>
       <h2 style="margin:0 0 8px;font-size:20px;font-weight:600;color:#111827;text-align:center;">${info.label}</h2>
       <p style="margin:0 0 24px;font-size:14px;color:${GRAY_600};line-height:1.5;text-align:center;">
-        ${status === "delivered"
-          ? "Your package has been delivered!"
-          : status === "out_for_delivery"
-            ? "Your package is out for delivery and should arrive today."
-            : "Your package is on its way."}
+        ${statusMessage}
       </p>
-      <div style="text-align:center;margin:0 0 24px;background-color:#f9fafb;border-radius:8px;border:1px solid #e5e7eb;padding:16px;">
-        <span style="font-size:12px;color:${GRAY_400};text-transform:uppercase;letter-spacing:0.5px;">Tracking Number</span><br/>
-        <span style="font-size:16px;font-weight:600;color:${BRAND_BLUE};">${tracking}</span>
-      </div>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 24px;background-color:#f9fafb;border-radius:8px;border:1px solid #e5e7eb;">
+        <tr>
+          <td style="padding:12px 16px;${carrierRow || etaRow ? "border-bottom:1px solid #e5e7eb;" : ""}">
+            <span style="font-size:12px;color:${GRAY_400};text-transform:uppercase;letter-spacing:0.5px;">Tracking Number</span><br/>
+            <span style="font-size:16px;font-weight:600;color:${BRAND_BLUE};">${tracking}</span>
+          </td>
+        </tr>
+        ${carrierRow}
+        ${etaRow}
+      </table>
+      ${trackButton}
     `),
   };
 }

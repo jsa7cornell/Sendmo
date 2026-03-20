@@ -9,6 +9,7 @@ import Login from "@/pages/Login";
 import FAQ from "@/pages/FAQ";
 import Admin from "@/pages/Admin";
 import LabelTest from "@/pages/LabelTest";
+import TrackingPage from "@/pages/TrackingPage";
 import NotFound from "@/pages/NotFound";
 
 function App() {
@@ -30,6 +31,7 @@ function App() {
           />
           <Route path="/faq" element={<FAQ />} />
           <Route path="/admin" element={<Admin />} />
+          <Route path="/track/:trackingNumber" element={<TrackingPage />} />
           <Route path="/label-test" element={<LabelTest />} />
           <Route path="*" element={<NotFound />} />
         </Routes>

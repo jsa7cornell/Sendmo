@@ -29,6 +29,7 @@ serve(async (req: Request) => {
             parcel,
             display_price_cents,
             recipient_email,
+            sender_email,
         } = await req.json();
 
         if (!easypost_shipment_id || !easypost_rate_id) {
@@ -243,6 +244,22 @@ serve(async (req: Request) => {
                                 shipment_id: shipmentId
                             }
                         });
+
+                        // Store notification contacts for this shipment
+                        if (shipmentId) {
+                            const contacts: Array<{ shipment_id: string; role: string; channel: string; address: string }> = [];
+                            if (recipient_email && typeof recipient_email === "string") {
+                                contacts.push({ shipment_id: shipmentId, role: "recipient", channel: "email", address: recipient_email });
+                            }
+                            if (sender_email && typeof sender_email === "string") {
+                                contacts.push({ shipment_id: shipmentId, role: "sender", channel: "email", address: sender_email });
+                            }
+                            if (contacts.length > 0) {
+                                supabase.from("notification_contacts").insert(contacts).then(({ error: ncErr }) => {
+                                    if (ncErr) console.error("notification_contacts insert error:", ncErr);
+                                });
+                            }
+                        }
 
                         // Insert comp payment record for live comp labels
                         if (isLive && shipmentId) {
