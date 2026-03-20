@@ -140,8 +140,8 @@ VITE_SHORT_LINK_BASE=sendmo.co/s   # Production domain is sendmo.co
 
 ### Pricing
 ```
-DisplayPrice = EasyPostRate × 1.15   (standard, credit card)
-DisplayPrice = EasyPostRate × 1.10   (SendMo Balance — post-MVP)
+DisplayPrice = EasyPostRate × 1.15 + $1.00   (standard, credit card)
+DisplayPrice = EasyPostRate × 1.10 + $1.00   (SendMo Balance — post-MVP)
 ```
 Never show the SendMo fee separately. Single "Shipping" price.
 
@@ -280,6 +280,7 @@ When working as a Claude Code agent, you may be assigned one of these roles:
 15. **ALWAYS** anticipate "Phase 3 Escrow" (money transmission) when altering `payments` or `shipments`. Ensure enum constraints are easily expandable for future `escrow` states.
 16. **NEVER** use simple `UPDATE` statements for modifying financial balances. **ALWAYS** utilize immutable, append-only ledger tables (e.g., `transactions`) for tracking money movement (funding, holds, disputes, fees, releases) due to strict money transmission regulations and required audit trails.
 17. **ALWAYS** add a `CHANGELOG.md` entry when merging to `main`. Every push to `main` is a production deploy. Follow the template in `CHANGELOG.md`. Include: what shipped, files changed, test counts, breaking changes, and notes for future agents.
+18. **ALWAYS** run `npx tsc -b --noEmit` before pushing to `main`. Vitest/esbuild strips types without checking them — only `tsc` catches unused imports, type errors, etc. A passing test suite does NOT mean the Vercel build will succeed.
 
 ## Vercel Deployment
 
