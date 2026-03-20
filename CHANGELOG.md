@@ -36,6 +36,44 @@
 
 ---
 
+## [2026-03-19] — Fix magic link login + custom SMTP via Resend
+
+**Branch:** `feat/fix-auth-login`
+**Commit:** `f7d503b`
+**Deploy:** Vercel auto-deploy
+
+### What shipped
+- Magic link login now works — Supabase Site URL corrected from old Vercel deploy URL to `sendmo.co`
+- Emails send from `SendMo <noreply@sendmo.co>` via Resend SMTP (was `supabase auth`)
+- Landing page nav shows Dashboard + sign out when logged in (was always "Sign In")
+- "Sign In" button links to `/login` directly (was `/dashboard` → redirect)
+- User-friendly error for rate limiting, spam folder hint on success screen
+- Supabase client configured with `detectSessionInUrl`, `persistSession`, `autoRefreshToken`
+- John's account confirmed via SQL (was stuck with `email_confirmed_at: null`)
+
+### What changed (files)
+- `src/lib/supabase.ts` — auth config options
+- `src/pages/Index.tsx` — conditional nav (signed in vs anonymous)
+- `src/pages/Login.tsx` — better error messages, resend link
+- `supabase/config.toml` — auth site_url, redirect allowlist, SMTP config
+- `tests/unit/auth.test.tsx` — 5 new tests
+- `DECISIONS.md` — auth debugging findings
+- `WISHLIST.md` — marked magic link bug as fixed
+
+### Tests
+- 5 new auth unit tests, 136 total passing
+
+### Breaking changes
+- None
+
+### Notes
+- Free tier can't change JWT expiry (1hr) — sessions persist via refresh tokens (`autoRefreshToken: true`)
+- SMTP password passed as `env(SMTP_PASS)` during `supabase config push` — never in git
+- To re-push SMTP config: `SMTP_PASS=re_xxx npx supabase config push --project-ref fkxykvzsqdjzhurntgah`
+- Free tier email rate limit: 4/hour (now shows friendly error instead of raw Supabase message)
+
+---
+
 ## [2026-03-18] — Email notifications via Resend (OTP, label confirmation, tracking)
 
 **Branch:** `feat/email-notifications`
