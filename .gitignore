@@ -26,6 +26,14 @@ dist-ssr
 # Test artifacts
 test-results/
 playwright-report/
+tests/integration/easypost-results.md
 
 # Vercel CLI cache
 .vercel/
+
+# Supabase CLI cache
+supabase/.temp/
+
+# Per-developer agent/tool state
+.agents/
+.claude/
