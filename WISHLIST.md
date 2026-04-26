@@ -7,11 +7,18 @@
 
 ## UX / Polish
 
+- [ ] **Signed-in users should land on their dashboard, not the public homepage** — When an authenticated user hits `/` (or returns to the site), redirect to their dashboard/home rather than rendering the marketing landing page. Public landing should only show for unauthenticated visitors.
 - [ ] **Production-quality headers and graphics** — Add SendMo logo to nav, email templates, landing page. Replace placeholder text/icons with branded assets. Consistent header across all pages.
 - [ ] **Label download link should be secure** — After Full Label flow completes, the label PDF link should be a signed/expiring URL (not a public EasyPost URL). Prevents unauthorized access to shipping labels.
 
 ## Bugs
 
+- [x] **Tracking status stuck "In Transit" after delivery; no notification emails sent** — Example: Barb Anderson shipment, USPS tracking `94346362083033...`. Investigation 2026-04-26 surfaced four separate bugs; all four fixed in commit `ebedd4e` and EasyPost webhook registered the same day:
+    1. ✅ EasyPost `tracker.updated` webhook URL registered in EasyPost dashboard.
+    2. ✅ `notification_contacts` now populated on label buy (`src/lib/api.ts` `buyLabel` accepts contacts; `RecipientStepPayment.tsx` passes `state.email`; insert in [labels/index.ts](supabase/functions/labels/index.ts) is now awaited + logged).
+    3. ✅ Lazy-pull tracking path now calls `dispatchNotifications` on status change ([tracking/index.ts](supabase/functions/tracking/index.ts)).
+    4. ✅ Webhook handler `webhook_events` insert was using wrong column name (`provider` → `source`); fixed in [webhooks/index.ts](supabase/functions/webhooks/index.ts).
+- [ ] **Sender email not captured anywhere in the flow** — Notifications now go to the recipient (the person filling out the prepaid-label flow), but never to the sender. Need to add a sender email field to the Full Label flow so they get notifications too. Touches `RecipientFlowContext.tsx` (state shape), the address step (UI), and `RecipientStepPayment.tsx` (pass to `buyLabel`).
 - [x] **Magic link login doesn't send email** — Root cause: Supabase Auth Site URL was pointed at old Vercel deploy URL. Fixed 2026-03-19: config push to set `sendmo.co`, confirmed John's account, added `detectSessionInUrl` to client.
 - [ ] **Full Label flow doesn't create account or link** — After completing the Full Prepaid Label flow, the recipient should have: (1) email verified via OTP, (2) Supabase Auth account auto-created, (3) a `sendmo_links` record in their dashboard. Currently the flow generates a label but doesn't persist the recipient's account or link.
 
