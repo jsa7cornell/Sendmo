@@ -19,8 +19,5 @@ export default defineConfig([
       ecmaVersion: 2020,
       globals: globals.browser,
     },
-    rules: {
-      "react/no-unstable-nested-components": ["error", { "allowAsProps": true }]
-    },
   },
 ])
