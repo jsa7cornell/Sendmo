@@ -2,16 +2,16 @@ import { describe, it, expect } from "vitest";
 import { applyMargin, addInsurance, formatCents, isOverCap } from "@/lib/api";
 
 describe("applyMargin", () => {
-  it("applies 15% margin to a rate", () => {
-    expect(applyMargin(1000)).toBe(1150); // $10.00 → $11.50
+  it("applies 15% margin + $1.00 flat fee to a rate", () => {
+    expect(applyMargin(1000)).toBe(1250); // $10.00 × 1.15 + $1.00 = $12.50
   });
 
-  it("rounds to nearest cent", () => {
-    expect(applyMargin(333)).toBe(383); // $3.33 × 1.15 = $3.8295 → $3.83
+  it("rounds to nearest cent then adds flat fee", () => {
+    expect(applyMargin(333)).toBe(483); // $3.33 × 1.15 = $3.83 + $1.00 = $4.83
   });
 
-  it("handles zero", () => {
-    expect(applyMargin(0)).toBe(0);
+  it("handles zero (flat fee still applies)", () => {
+    expect(applyMargin(0)).toBe(100); // $0.00 × 1.15 + $1.00 = $1.00
   });
 });
 
