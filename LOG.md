@@ -1,12 +1,14 @@
-# SendMo — Decision Log & Integration Gotchas
+# SendMo — Log (Decisions & Deploys)
 
-> AI agents: Read this file alongside CLAUDE.md. It captures **why** decisions were made and **hard-won** debugging knowledge. Before ending any session, propose additions here if you discovered anything new.
+This file combines two critical logs: **Decisions & Gotchas** (why decisions were made, hard-won debugging knowledge) and **Deploy Log** (what shipped to production and when).
+
+Agents should read this alongside PLAYBOOK.md. Before ending any session, propose additions here if you discovered anything new.
 
 ---
 
-## How to Use This File
+## Decisions & Gotchas
 
-When an agent discovers something important — an API quirk, a "why did we choose X", a bug pattern — it should propose an addition to this file using the following format:
+When an agent discovers something important — an API quirk, a "why did we choose X", a bug pattern — propose an addition using this format:
 
 ```markdown
 ### [YYYY-MM-DD] Short title
@@ -17,9 +19,7 @@ When an agent discovers something important — an API quirk, a "why did we choo
 **Watch out:** What breaks if you ignore this.
 ```
 
----
-
-## Pricing & Rate Strategy
+### Pricing & Rate Strategy
 
 ### [2026-03-19] EasyPost rate competitiveness — confirmed same tier as Pirate Ship
 **Category:** Architecture
@@ -36,7 +36,7 @@ When an agent discovers something important — an API quirk, a "why did we choo
 
 ---
 
-## Architecture Decisions
+### Architecture Decisions
 
 ### [2026-03-19] Shared AppHeader component — single persistent nav for all pages
 **Category:** Architecture
@@ -206,188 +206,604 @@ When an agent discovers something important — an API quirk, a "why did we choo
 **Why:** The critical path is delivering the label to the user. A DB outage or latency spike on our end should not prevent a user from seeing the label they just paid for. By using fire-and-forget DB writes to a robust RPC with full FK handling, we separate the external API transaction from our internal bookkeeping.
 **Watch out:** If a DB insert fails, the `labels` function relies on structured logging (`label.db_persisted` vs. `label.db_persist_error`) to record the outcome. This ensures an audit trail. We must monitor these logs.
 
-
 ### [2026-02-24] Use Supabase Edge Functions for all backend logic
-**Category:** Architecture  
-**Context:** Needed a scalable backend without managing servers.  
-**Decision:** All server logic lives in Supabase Edge Functions (Deno/TypeScript). No Express server, no separate API service.  
-**Why:** Zero cold-start penalty vs. Lambda, co-located with DB, native Deno secrets management, easy local dev with `supabase functions serve`.  
+**Category:** Architecture
+**Context:** Needed a scalable backend without managing servers.
+**Decision:** All server logic lives in Supabase Edge Functions (Deno/TypeScript). No Express server, no separate API service.
+**Why:** Zero cold-start penalty vs. Lambda, co-located with DB, native Deno secrets management, easy local dev with `supabase functions serve`.
 **Watch out:** Deno imports use URL syntax (`import x from "npm:package"`), not Node `require()`. Third-party packages must be Deno-compatible.
 
 ### [2026-02-24] White-label EasyPost — never expose carrier branding to users
-**Category:** Architecture  
-**Context:** SendMo is a white-label shipping product.  
-**Decision:** EasyPost must never appear in any user-facing UI, error messages, or email copy. All policies (refunds, cancellations, tracking) are presented as "SendMo policies."  
-**Why:** Brand integrity and competitive sensitivity.  
+**Category:** Architecture
+**Context:** SendMo is a white-label shipping product.
+**Decision:** EasyPost must never appear in any user-facing UI, error messages, or email copy. All policies (refunds, cancellations, tracking) are presented as "SendMo policies."
+**Why:** Brand integrity and competitive sensitivity.
 **Watch out:** Error messages from EasyPost API often include carrier names. Always strip/replace before returning to frontend.
 
 ### [2026-02-24] Two-file documentation system (PRD.md + CLAUDE.md + DECISIONS.md)
-**Category:** Architecture  
-**Context:** Multiple overlapping PRD versions were causing confusion.  
-**Decision:** Consolidate all product knowledge into `PRD.md`, developer/agent instructions into `CLAUDE.md`, and decision rationale into `DECISIONS.md`.  
-**Why:** Single source of truth for each audience. Agents always know where to look.  
+**Category:** Architecture
+**Context:** Multiple overlapping PRD versions were causing confusion.
+**Decision:** Consolidate all product knowledge into `PRD.md`, developer/agent instructions into `CLAUDE.md`, and decision rationale into `DECISIONS.md`.
+**Why:** Single source of truth for each audience. Agents always know where to look.
 **Watch out:** Never let a fourth "source of truth" accumulate. Update the three canonical files, not random new ones.
 
 ### [2026-02-25] Server-side state is always truth — never derive critical decisions from client-provided data
-**Category:** Architecture  
-**Context:** The `cancel-label` v1 accepted `live_mode` from the client request body to decide whether to call the real carrier API. This was wrong — a malicious or buggy client could set `live_mode=true` on a test label, causing a real carrier API call, or `live_mode=false` on a live label, bypassing the carrier entirely.  
-**Decision/Principle:**  
-> **Any decision that affects server behavior or data integrity must be derived from server-side sources (DB, env vars, JWT claims) — never from client-provided parameters.**  
+**Category:** Architecture
+**Context:** The `cancel-label` v1 accepted `live_mode` from the client request body to decide whether to call the real carrier API. This was wrong — a malicious or buggy client could set `live_mode=true` on a test label, causing a real carrier API call, or `live_mode=false` on a live label, bypassing the carrier entirely.
+**Decision/Principle:**
+> **Any decision that affects server behavior or data integrity must be derived from server-side sources (DB, env vars, JWT claims) — never from client-provided parameters.**
 
 Specific rules that follow from this principle:
 1. `is_test` is a DB column set at creation time — never sent by the client
 2. User identity/role is read from JWT claims — never from a request body `user_id`
 3. Pricing is computed server-side from rates — never trusted from the client
-4. Refund eligibility is checked from DB state — not from a client-asserted status  
+4. Refund eligibility is checked from DB state — not from a client-asserted status
 **Watch out:** Watch for any Edge Function that accepts a parameter that could change a security or financial outcome. If the client can provide it, the server must re-validate it from a trusted source.
 
 ---
 
-## EasyPost Integration Gotchas
+### EasyPost Integration Gotchas
 
 ### [2026-02-25] Luma AI Select is for Headless Automation, not UI highlighting
-**Category:** EasyPost  
-**Context:** Explored using EasyPost Luma AI to add a "Recommended" badge to the best shipping rate in the Sender UI.  
-**Decision/Finding:** Decided to hold off on Luma AI for now. Luma AI Select is designed primarily to *automatically purchase* the best rate based on dashboard rules, replacing the UI choice entirely ("Autopilot"). It is not designed to simply flag a rate as "recommended" in an array of options.  
-**Why:** Implementing Luma just to highlight a UI option adds unnecessary orchestration complexity. If we want UI badges, a simple custom server-side rule (e.g., "cheapest under 4 days") is better. If we want to use Luma, we should pivot the Sender UX to "Autopilot" and remove the carrier choice entirely.  
+**Category:** EasyPost
+**Context:** Explored using EasyPost Luma AI to add a "Recommended" badge to the best shipping rate in the Sender UI.
+**Decision/Finding:** Decided to hold off on Luma AI for now. Luma AI Select is designed primarily to *automatically purchase* the best rate based on dashboard rules, replacing the UI choice entirely ("Autopilot"). It is not designed to simply flag a rate as "recommended" in an array of options.
+**Why:** Implementing Luma just to highlight a UI option adds unnecessary orchestration complexity. If we want UI badges, a simple custom server-side rule (e.g., "cheapest under 4 days") is better. If we want to use Luma, we should pivot the Sender UX to "Autopilot" and remove the carrier choice entirely.
 **Watch out:** If this feature is revisited, decide on the UX goal first. If keeping the list of choices, build a custom backend rule. If removing choices, use Luma AI.
 
 ### [2026-02-24] USPS requires `EndShipper` — causes `ProviderEndShipper` error if missing
-**Category:** EasyPost  
-**Context:** USPS label purchases were failing with a cryptic `ProviderEndShipper` error.  
-**Decision/Finding:** USPS requires an `EndShipper` object in the EasyPost buy request. This is not required for UPS or FedEx.  
-**Why:** USPS regulation — the entity responsible for the shipment must be declared.  
+**Category:** EasyPost
+**Context:** USPS label purchases were failing with a cryptic `ProviderEndShipper` error.
+**Decision/Finding:** USPS requires an `EndShipper` object in the EasyPost buy request. This is not required for UPS or FedEx.
+**Why:** USPS regulation — the entity responsible for the shipment must be declared.
 **Watch out:** The `EndShipper` must use the `SB_SERVICE_ROLE_KEY` env var (not `SUPABASE_SERVICE_ROLE_KEY`). Also, the EndShipper address must match a real, verified business address.
 
 ### [2026-02-24] EasyPost address verification — "soft warning" vs "hard error"
-**Category:** EasyPost  
-**Context:** Rural addresses were being rejected even though they're valid and deliverable.  
-**Decision/Finding:** EasyPost returns a `verifiable` flag. If `verifiable: false` but Google Maps confirms the address exists, treat it as a **soft warning** (accepted with a note) not a hard rejection.  
-**Why:** Rural Route addresses, RFD addresses, and some PO Boxes pass USPS delivery but fail EasyPost's street-level verification.  
+**Category:** EasyPost
+**Context:** Rural addresses were being rejected even though they're valid and deliverable.
+**Decision/Finding:** EasyPost returns a `verifiable` flag. If `verifiable: false` but Google Maps confirms the address exists, treat it as a **soft warning** (accepted with a note) not a hard rejection.
+**Why:** Rural Route addresses, RFD addresses, and some PO Boxes pass USPS delivery but fail EasyPost's street-level verification.
 **Watch out:** Don't block the user flow for soft warnings. Return `{ verified: true, warning: "...", address_type: "rural" }`. Log as `address.soft_warning` event.
 
 ### [2026-02-24] EasyPost Google Fallback — when EasyPost rejects but Google confirms
-**Category:** EasyPost  
-**Context:** Some valid addresses were being hard-rejected by EasyPost's verifier.  
-**Decision/Finding:** Implemented a Google Maps geocoding fallback. If EasyPost rejects AND Google confirms the address exists with high confidence, accept with a warning.  
-**Why:** EasyPost's verifier is strict for non-standard address formats. Google's geocoder is more permissive and often correct.  
+**Category:** EasyPost
+**Context:** Some valid addresses were being hard-rejected by EasyPost's verifier.
+**Decision/Finding:** Implemented a Google Maps geocoding fallback. If EasyPost rejects AND Google confirms the address exists with high confidence, accept with a warning.
+**Why:** EasyPost's verifier is strict for non-standard address formats. Google's geocoder is more permissive and often correct.
 **Watch out:** Log all fallback events as `address.google_fallback` for monitoring. Track the fallback rate — if it spikes, something upstream changed in EasyPost's behavior.
 
 ### [2026-02-24] PO Box and Military (APO/FPO/DPO) — USPS only
-**Category:** EasyPost  
-**Context:** PO Box addresses were being offered UPS/FedEx rates that would always fail.  
-**Decision/Finding:** Detect PO Box and APO/FPO/DPO addresses in the `addresses` function. Return `{ is_po_box: true }` or `{ is_military: true }` and `usps_only: true`.  
-**Why:** UPS and FedEx do not deliver to PO Boxes or military addresses. Offering those rates leads to purchase failures.  
+**Category:** EasyPost
+**Context:** PO Box addresses were being offered UPS/FedEx rates that would always fail.
+**Decision/Finding:** Detect PO Box and APO/FPO/DPO addresses in the `addresses` function. Return `{ is_po_box: true }` or `{ is_military: true }` and `usps_only: true`.
+**Why:** UPS and FedEx do not deliver to PO Boxes or military addresses. Offering those rates leads to purchase failures.
 **Watch out:** Filter non-USPS rates in the `rates` function when `usps_only: true`. Log `address_type` in all events for audit queries.
 
 ### [2026-02-24] Same address validation — sender = recipient must be blocked
-**Category:** EasyPost  
-**Context:** Edge case testing revealed a user could accidentally configure the same address for both sender and recipient.  
-**Decision/Finding:** Added frontend validation to block identical from/to addresses before calling the rates API.  
-**Why:** EasyPost will return rates for same-address shipments (technically valid), but they're always user errors.  
+**Category:** EasyPost
+**Context:** Edge case testing revealed a user could accidentally configure the same address for both sender and recipient.
+**Decision/Finding:** Added frontend validation to block identical from/to addresses before calling the rates API.
+**Why:** EasyPost will return rates for same-address shipments (technically valid), but they're always user errors.
 **Watch out:** Compare normalized addresses (lowercase, trimmed) not raw strings.
 
 ---
 
-## Supabase / Database Gotchas
+### Supabase / Database Gotchas
 
 ### [2026-02-24] Use `SB_SERVICE_ROLE_KEY` not `SUPABASE_SERVICE_ROLE_KEY` in Edge Functions
-**Category:** Supabase  
-**Context:** Supabase CLI injects `SUPABASE_SERVICE_ROLE_KEY` automatically in local dev, but production secrets use a custom name.  
-**Decision/Finding:** This project uses `SB_SERVICE_ROLE_KEY` as the env var name for the service role key in Edge Functions.  
-**Why:** Avoids collision with Supabase's auto-injected local variable; explicit name makes it clear this is a secret you must set manually.  
+**Category:** Supabase
+**Context:** Supabase CLI injects `SUPABASE_SERVICE_ROLE_KEY` automatically in local dev, but production secrets use a custom name.
+**Decision/Finding:** This project uses `SB_SERVICE_ROLE_KEY` as the env var name for the service role key in Edge Functions.
+**Why:** Avoids collision with Supabase's auto-injected local variable; explicit name makes it clear this is a secret you must set manually.
 **Watch out:** After deploying a new function, always run `npx supabase secrets set SB_SERVICE_ROLE_KEY=...`. Forgetting this causes silent auth failures.
 
 ### [2026-02-24] RLS policies block service role writes — use the service client
-**Category:** Supabase  
-**Context:** Edge functions were failing to write test data to the database even with RLS "disabled."  
-**Decision/Finding:** RLS applies to the `anon` and `authenticated` roles. The service role bypasses RLS, but only if you create the client with the service role key: `createClient(url, serviceRoleKey)`.  
-**Why:** Default Edge Function client uses the `anon` key. You must explicitly create a second client for admin operations.  
+**Category:** Supabase
+**Context:** Edge functions were failing to write test data to the database even with RLS "disabled."
+**Decision/Finding:** RLS applies to the `anon` and `authenticated` roles. The service role bypasses RLS, but only if you create the client with the service role key: `createClient(url, serviceRoleKey)`.
+**Why:** Default Edge Function client uses the `anon` key. You must explicitly create a second client for admin operations.
 **Watch out:** Never use the service role client for user-facing operations. Only use it in admin functions or background jobs.
 
 ### [2026-02-24] Foreign key constraints — insert order matters
-**Category:** Supabase  
-**Context:** Label creation was failing with FK constraint violations.  
-**Decision/Finding:** Insert order: `profiles` → `addresses` → `sendmo_links` → `shipments` → `payments`. Violating this order causes FK errors.  
-**Why:** Each table references the previous one. The DB enforces referential integrity.  
+**Category:** Supabase
+**Context:** Label creation was failing with FK constraint violations.
+**Decision/Finding:** Insert order: `profiles` → `addresses` → `sendmo_links` → `shipments` → `payments`. Violating this order causes FK errors.
+**Why:** Each table references the previous one. The DB enforces referential integrity.
 **Watch out:** In tests, always seed in this order. In the `labels` function, always verify the upstream records exist before inserting.
 
 ### [2026-02-25] System user pattern — well-known UUID for pre-auth label records
-**Category:** Supabase  
-**Context:** All label records during the label-test phase need a valid FK to `profiles`, but real Supabase Auth (magic link) hasn't shipped yet. The old hack used a hardcoded fake UUID `b0000000-...` inserted ad hoc from the `test-db-insert` Edge Function.  
+**Category:** Supabase
+**Context:** All label records during the label-test phase need a valid FK to `profiles`, but real Supabase Auth (magic link) hasn't shipped yet. The old hack used a hardcoded fake UUID `b0000000-...` inserted ad hoc from the `test-db-insert` Edge Function.
 **Decision/Finding:** Migration `004_system_user_and_helpers.sql` inserts a well-known system/admin identity into `auth.users` + `profiles`:
 - UUID: `00000000-0000-0000-0000-000000000001`
 - Email: `admin@sendmo.co`, full_name: `SendMo Admin`
 
-All label-test shipments use `p_user_id = '00000000-0000-0000-0000-000000000001'`. When real auth ships, the label flow passes the actual `auth.uid()` — no other code changes.  
-**Why:** Reproducible, auditable, idempotent (`ON CONFLICT DO NOTHING`). Admin queries via service role always bypass RLS so the system user's records are always readable for reporting. No separate "admin" RLS policy needed.  
+All label-test shipments use `p_user_id = '00000000-0000-0000-0000-000000000001'`. When real auth ships, the label flow passes the actual `auth.uid()` — no other code changes.
+**Why:** Reproducible, auditable, idempotent (`ON CONFLICT DO NOTHING`). Admin queries via service role always bypass RLS so the system user's records are always readable for reporting. No separate "admin" RLS policy needed.
 **Watch out:** The system user UUID is a sentinel — never issue it to real users. Direct SQL insert into `auth.users` only works in service-role migrations (`npx supabase db push`). If you recreate the DB, the migration re-runs and the row is silently skipped on conflict.
 
 ### [2026-02-25] `admin_insert_shipment()` RPC — transactional FK-ordered insert
-**Category:** Supabase  
-**Context:** Edge Functions calling the anon Supabase client can't insert into tables protected by RLS. The old approach was three separate round-trips from TypeScript with careful ordering and error recovery. Any step failure left orphaned rows.  
+**Category:** Supabase
+**Context:** Edge Functions calling the anon Supabase client can't insert into tables protected by RLS. The old approach was three separate round-trips from TypeScript with careful ordering and error recovery. Any step failure left orphaned rows.
 **Decision/Finding:** Created a `SECURITY DEFINER` PostgreSQL function `admin_insert_shipment(p_user_id, ...)` that performs all inserts atomically in FK order:
 ```
 addresses (from) → addresses (to) → sendmo_links → shipments
 ```
-Returns the new `shipments.id`. Called via `supabase.rpc('admin_insert_shipment', {...})` with the anon client — the function body runs as its owner (service role), bypassing RLS entirely.  
-**Why:** Atomicity (all rows committed or none), single network round-trip, FK ordering guaranteed by the function, no orphaned rows on partial failure. Also future-proof: passing a different `p_user_id` at call time is the only change needed when real auth users arrive.  
+Returns the new `shipments.id`. Called via `supabase.rpc('admin_insert_shipment', {...})` with the anon client — the function body runs as its owner (service role), bypassing RLS entirely.
+**Why:** Atomicity (all rows committed or none), single network round-trip, FK ordering guaranteed by the function, no orphaned rows on partial failure. Also future-proof: passing a different `p_user_id` at call time is the only change needed when real auth users arrive.
 **Watch out:** `GRANT EXECUTE ... TO anon, authenticated` is required — without it, the anon client gets a `permission denied` even though the function is SECURITY DEFINER. The function is in `public` schema; do not move it to a private schema without re-granting.
 
 ---
 
-## Testing Gotchas
+### Testing Gotchas
 
 ### [2026-02-24] Always write a regression test BEFORE fixing a bug
-**Category:** Testing  
-**Context:** Bugs were being fixed without tests, leading to regressions.  
-**Decision:** Rule 12 in CLAUDE.md — write the regression test first (red), then fix (green).  
-**Why:** Forces you to understand the failure mode before changing code. Guarantees the bug is caught if reintroduced.  
+**Category:** Testing
+**Context:** Bugs were being fixed without tests, leading to regressions.
+**Decision:** Rule 12 in CLAUDE.md — write the regression test first (red), then fix (green).
+**Why:** Forces you to understand the failure mode before changing code. Guarantees the bug is caught if reintroduced.
 **Watch out:** The test must fail without the fix and pass with it. Don't write tests that pass either way.
 
 ### [2026-02-24] EasyPost TEST key is `EZTKxxxx` prefix — LIVE key charges real money
-**Category:** Testing  
-**Context:** Developers could accidentally use the live EasyPost key during development.  
-**Decision/Finding:** Always validate that the API key starts with `EZTK` before making EasyPost calls in development. Refuse to proceed if it starts with `EZak` (live key).  
-**Why:** Live EasyPost labels cost real money and cannot be easily refunded during testing.  
+**Category:** Testing
+**Context:** Developers could accidentally use the live EasyPost key during development.
+**Decision/Finding:** Always validate that the API key starts with `EZTK` before making EasyPost calls in development. Refuse to proceed if it starts with `EZak` (live key).
+**Why:** Live EasyPost labels cost real money and cannot be easily refunded during testing.
 **Watch out:** This check should be in the Edge Function OR enforced by having separate `.env.local` and `.env.production` files with different keys.
 
 ---
 
-## Label Cancellation / Refund Gotchas
+### Label Cancellation / Refund Gotchas
 
 ### [2026-02-25] Label void eligibility — check `shipment.status` AND `refund_status`
-**Category:** EasyPost  
-**Context:** The cancel-label function needed robust eligibility guards.  
-**Decision/Finding:** A label can only be voided if: (1) `shipment.status = 'label_created'`, (2) `refund_status = 'none'`, (3) `easypost_shipment_id` is present.  
-**Why:** EasyPost rejects void requests after the carrier scans the package. Our DB guards must mirror this constraint.  
+**Category:** EasyPost
+**Context:** The cancel-label function needed robust eligibility guards.
+**Decision/Finding:** A label can only be voided if: (1) `shipment.status = 'label_created'`, (2) `refund_status = 'none'`, (3) `easypost_shipment_id` is present.
+**Why:** EasyPost rejects void requests after the carrier scans the package. Our DB guards must mirror this constraint.
 **Watch out:** EasyPost refund processing takes 2–4 weeks. Update `refund_status` to `submitted` immediately upon successful void API call, not `refunded`. A webhook will eventually confirm when the refund is processed.
 
 ### [2026-02-25] EasyPost test labels cannot be refunded via API — is_test is a DB attribute, not a client mode
-**Category:** Architecture / EasyPost  
-**Context:** After implementing cancel-label, admin void attempts on test labels returned "Label void request was rejected by the carrier." The first fix (v1) was to accept `live_mode` from the client and simulate success in test mode. This was wrong — it allowed the client to determine server behavior.  
-**Decision:** `is_test` is a boolean column on `shipments`, set **server-side at creation time** by the function that knows which API key was used. It is never derived from client-provided parameters.  
+**Category:** Architecture / EasyPost
+**Context:** After implementing cancel-label, admin void attempts on test labels returned "Label void request was rejected by the carrier." The first fix (v1) was to accept `live_mode` from the client and simulate success in test mode. This was wrong — it allowed the client to determine server behavior.
+**Decision:** `is_test` is a boolean column on `shipments`, set **server-side at creation time** by the function that knows which API key was used. It is never derived from client-provided parameters.
 **Fix applied:**
 - Migration `005_add_is_test_to_shipments.sql` — adds `is_test BOOLEAN NOT NULL DEFAULT false`
 - `test-db-insert` — always sets `is_test: true` (these records always use the test key)
 - `labels` — should set `is_test: !isLive` when writing the shipment record (Phase 1 production path)
 - `cancel-label` — removed `live_mode` from the request API; reads `is_test` from DB instead
 - `Admin.tsx` — removed heuristic guessing (email patterns, tracking prefixes); reads `sh.is_test` from DB
-- `CancelLabelModal` — removed `live_mode` from the POST body entirely  
-**Why:** The client cannot be trusted to determine whether a shipment is real or synthetic. That decision is made once, by the server, at creation time, and stored durably in the DB.  
+- `CancelLabelModal` — removed `live_mode` from the POST body entirely
+**Why:** The client cannot be trusted to determine whether a shipment is real or synthetic. That decision is made once, by the server, at creation time, and stored durably in the DB.
 **Watch out:** Test labels get a clear, honest rejection: "Test labels cannot be voided. Void is only available for live shipments." No silent simulation — behavior is deterministic and honest.
 
 ---
 
-## Logging / Observability Gotchas
+### Logging / Observability Gotchas
 
 ### [2026-02-25] `log()` is fire-and-forget — don't await it on the critical path
-**Category:** Architecture  
-**Context:** Logging was being awaited, adding latency to every API response.  
-**Decision/Finding:** The `log()` helper in `_shared/logger.ts` should never be awaited on the critical path. Use `log({...})` without `await`.  
-**Why:** Log ingestion latency (DB write) should not block the user-facing response.  
+**Category:** Architecture
+**Context:** Logging was being awaited, adding latency to every API response.
+**Decision/Finding:** The `log()` helper in `_shared/logger.ts` should never be awaited on the critical path. Use `log({...})` without `await`.
+**Why:** Log ingestion latency (DB write) should not block the user-facing response.
 **Watch out:** This means log failures are silent. Add a try/catch inside `logger.ts` itself to swallow errors gracefully.
 
 ---
 
-*Last updated: 2026-03-19 | Add new entries at the top of each category section.*
+## Deploy Log
+
+Every merge to `main` triggers a Vercel auto-deploy. This section tracks what shipped and when.
+
+### [2026-03-19] — Full sender flow + links pipeline + friendly error copy
+
+**Branch:** `main`
+**Commit:** `5346656`
+**Deploy:** Vercel auto-deploy
+
+**What shipped**
+- Links Edge Function (GET + POST). Creates flex links with recipient preferences, retrieves by short code. Handles expired/used/cancelled statuses.
+- Preference-aware rate filtering. Rates Edge Function filters by carrier, speed tier (preferred or faster), and price cap from link preferences.
+- Full sender wizard. 4-step flow at `/s/:shortCode`: address → package → rates → done. Fetches link, shows preferences banner, uses SmartAddressInput + Magic Guestimator.
+- RecipientStepLinkReady now persists flex links to DB on mount via `createFlexLink()` API call.
+- Friendly error copy. "Hmm, that link didn't work", "Rates are playing hide and seek", "No options for this one", "One and done!" etc.
+- "prepaid by [name]" shows on rate cards and shipment summary.
+- "Your label is ready!" Done step with label placeholder (pending Stripe integration).
+- SmartAddressInput name label fix. Now configurable via `nameLabel`/`nameHint` props. Sender side shows "Sender's Name" instead of "Recipient Name".
+- SenderPreview page. `/sender-preview` with 7 interactive scenarios for testing all sender states.
+
+**What changed (files)**
+- `supabase/functions/links/index.ts` — new Edge Function
+- `supabase/functions/rates/index.ts` — added preference filtering (carrier, speed, price cap)
+- `src/lib/api.ts` — added `createFlexLink()`, `fetchLink()`, `fetchSenderRates()`, `LinkData` type
+- `src/pages/SenderFlow.tsx` — full sender wizard (was stub)
+- `src/pages/SenderPreview.tsx` — new preview/mockup page
+- `src/components/recipient/RecipientStepLinkReady.tsx` — now persists to DB
+- `src/components/ui/SmartAddressInput.tsx` — configurable name label
+- `src/App.tsx` — added SenderPreview route
+
+**Tests**
+- 188 unit tests passing (17 files)
+- 14 E2E tests passing
+
+**Breaking changes**
+- None
+
+**Notes for future agents**
+- Links Edge Function is NOT yet deployed to Supabase — run `npx supabase functions deploy links` and `npx supabase functions deploy rates`
+- Done step has a label placeholder — actual label generation requires Stripe payment integration (see WISHLIST.md)
+- SenderPreview.tsx is a dev tool — remove or gate behind admin before launch
+
+---
+
+### [2026-03-19] — UI polish: persistent header, flow badge, path choice redesign, dashboard identity
+
+**Branch:** `feat/ui-polish` (merged to `main`)
+**Commit:** `4644a33`
+**Deploy:** Vercel auto-deploy
+
+**What shipped**
+- Shared AppHeader component. Persistent nav header across all pages (auth-aware, logo links home). Replaces per-page inline navs.
+- Flow indicator badge. Pill below header during onboarding shows "Full Prepaid Label" or "Flexible Shipping Link" once a path is chosen
+- Dashboard identity. Replaced "Dashboard" heading with avatar circle (first letter of email) + email + tagline. Compact sign-out icon button.
+- Path choice redesign. RecipientStepPathChoice now has illustrated cards with gradient hero bands, 3-icon scenes, feature bullet points, and descriptive copy
+- Name field label. SmartAddressInput name field now reads "Recipient Name (probably your name!)"
+- NotFound page. "Lost in transit" headline with Package icon, Go home + Go back buttons
+- SenderFlow placeholder. Added AppHeader to sender checkout placeholder
+- Index page. Replaced inline nav with AppHeader, fixed footer email to support@sendmo.co
+
+**What changed (files)**
+- `src/components/AppHeader.tsx` — **new**: shared persistent header with `actions` prop override
+- `src/components/recipient/RecipientStepPathChoice.tsx` — rewritten with illustrated cards
+- `src/components/ui/SmartAddressInput.tsx` — updated name field label
+- `src/pages/Dashboard.tsx` — avatar identity section, compact sign-out
+- `src/pages/Index.tsx` — uses AppHeader, fixed footer email
+- `src/pages/NotFound.tsx` — rewritten with AppHeader + "Lost in transit"
+- `src/pages/RecipientOnboarding.tsx` — added AppHeader + flow badge pill
+- `src/pages/SenderFlow.tsx` — added AppHeader
+- `src/pages/TrackingPage.tsx` — uses AppHeader with breadcrumb action
+- `tests/unit/App.test.tsx` — updated 2 assertions to match new copy
+
+**Tests**
+- 0 new tests, 2 test assertions updated
+- 188 total unit tests passing
+
+**Breaking changes**
+- None (frontend-only, no API or DB changes)
+
+**Notes**
+- AppHeader `actions` prop completely replaces the right slot — pass `undefined` (or omit) for default auth-aware buttons
+- Flow badge reads `data.path` from RecipientFlowContext — no new props needed
+- Path choice illustrations use only Tailwind + Lucide icons (no external image assets)
+- Page title in browser tab still shows "temp-app" — may want to fix in index.html
+
+---
+
+### [2026-03-19] — User-facing label void, live tracking, dashboard enhancements
+
+**Branch:** direct to `main` (3 commits)
+**Commits:** `0358c11`, `cb49ec9`, `de24fe8`
+**Deploy:** Vercel auto-deploy + Supabase Edge Functions (`cancel-label`, `tracking`)
+
+**What shipped**
+- Dashboard enhancements: sender name column, status with dates ("Shipped on Mar 18"), clickable tracking links to `/track/:number`
+- Live tracking from EasyPost: tracking page + function fetch real-time status, events, and ETA from EasyPost tracker API. 30-min TTL cache (terminal statuses never re-fetched). Auto-syncs DB when status changes.
+- User-facing label void: "Void Label" button on eligible shipments in dashboard. CancelLabelModal with confirmation, loading, success/error states. Server-side JWT auth + ownership check on cancel-label function. Refund status badges (pending/refunded/rejected).
+- Refund service stub: `src/lib/refundService.ts` — interface for future Stripe refund integration
+- Resend domain verified: `noreply@sendmo.co` confirmed as sending address, RESEND_API_KEY set as Supabase secret
+- DB fix: reassigned all sendmo_links from system user to John's real account
+
+**What changed (files)**
+- `src/pages/Dashboard.tsx` — sender name, status dates, tracking links, void button + modal, refund badges
+- `src/pages/TrackingPage.tsx` — live EasyPost events timeline, estimated delivery, TTL cache
+- `src/components/CancelLabelModal.tsx` — added optional `accessToken` prop for authenticated calls
+- `src/lib/refundService.ts` — new stub for Stripe refund integration
+- `supabase/functions/tracking/index.ts` — live EasyPost fetch, 30-min TTL, DB sync
+- `supabase/functions/cancel-label/index.ts` — JWT auth + ownership via sendmo_links join
+- `WISHLIST.md` — added EasyPost webhooks, event caching, payment ledger, Stripe refund, payment history
+
+**Tests**
+- No new unit tests this deploy (UI-heavy changes)
+- 145 total unit tests still passing
+
+**Breaking changes**
+- `cancel-label` now verifies JWT ownership for authenticated callers (admin anon-key path preserved)
+
+**Notes**
+- EasyPost webhooks still not registered — tracking relies on TTL-cached polling for now (WISHLIST item)
+- Refund service is a stub — needs Stripe integration + transaction ledger before going live
+- Label void only shows for live labels with status=label_created and refund_status=none
+- All eligibility checks enforced server-side — client-side is UX only
+
+---
+
+### [2026-03-19] — URL-based step routing for recipient onboarding
+
+**Branch:** `feat/url-step-routing`
+**Commit:** `4fbc307`
+**Deploy:** Vercel auto-deploy
+
+**What shipped**
+- Onboarding steps now have real URLs: `/onboarding/address`, `/onboarding/shipping`, `/onboarding/payment`, `/onboarding/label` (full label) and `/onboarding/preferences`, `/onboarding/verify`, `/onboarding/authorize`, `/onboarding/link-ready` (flex)
+- Browser back/forward buttons work naturally through the flow
+- Step guards: direct URL access blocked if prior steps not completed (redirects to first incomplete step)
+- Cross-path slug rejection: flex slugs rejected when full_label path is active (and vice versa)
+- Flow state lifted to React Context — persists across URL changes
+- Direction-aware animation (forward vs backward slide)
+
+**What changed (files)**
+- `src/lib/stepRouting.ts` — new: slug↔step mappings, step ordering, guard logic, progress bar mapping
+- `src/contexts/RecipientFlowContext.tsx` — new: flow state context with navigate()-based transitions
+- `src/pages/RecipientOnboarding.tsx` — rewritten as layout reading step from URL
+- `src/App.tsx` — nested routes with shared OnboardingLayout provider
+- `tests/unit/stepRouting.test.ts` — 27 new tests
+- `tests/unit/recipientFlowContext.test.tsx` — 11 new tests
+- `tests/e2e/url-step-routing.spec.ts` — 10 new tests
+
+**Tests**
+- 38 new unit tests (stepRouting + RecipientFlowContext), 188 total passing
+- 10 new E2E tests (URL changes, browser back, step guards, cross-path rejection), 31 total E2E passing
+
+**Breaking changes**
+- Onboarding URLs changed from `/onboarding` (single page) to `/onboarding/:step` (URL per step). No external links to old step URLs existed, so no user impact.
+
+**Notes**
+- Step components required zero changes — context exposes backward-compatible `state: RecipientFlowState`
+- Steps 11→12 (payment→label ready) happen within the same `RecipientStepPayment` component, so URL stays at `/payment`
+- `useRecipientFlow` hook still exists for its tests but the context wraps similar logic
+- Sender flow (`SenderFlow.tsx`) is still a placeholder — URL routing for it will be added when sender flow is built
+
+---
+
+### [2026-03-19] — Shipping notifications for sender + recipient, tracking page
+
+**Branch:** `feat/shipping-notifications`
+**Commit:** `22b35a9`
+**Deploy:** Vercel auto-deploy
+
+**What shipped**
+- Both sender AND recipient get notified on in_transit, out_for_delivery, delivered
+- Role-aware email templates ("Your package..." vs "The package you sent...")
+- Estimated delivery date and carrier info in tracking emails
+- "Track Package" button in emails linking to public tracking page
+- Public tracking page at `/track/:trackingNumber` with status timeline
+- Notification dispatcher architecture (email now, SMS/push extensible later)
+- `notification_contacts` table — who to notify about each shipment
+- `notifications_log` table — audit trail with idempotency (no duplicate sends)
+- Tracking Edge Function — lightweight read-only endpoint, no auth required
+- Labels function stores sender + recipient emails as notification contacts
+
+**What changed (files)**
+- `supabase/migrations/011_notification_contacts.sql` — 2 new tables + indexes
+- `supabase/functions/_shared/notifications.ts` — notification dispatcher
+- `supabase/functions/_shared/email-templates.ts` — role-aware tracking emails with ETA + tracking link
+- `supabase/functions/_shared/cors.ts` — added GET method
+- `supabase/functions/webhooks/index.ts` — uses dispatcher instead of direct email
+- `supabase/functions/labels/index.ts` — stores notification contacts, accepts sender_email
+- `supabase/functions/tracking/index.ts` — new public tracking endpoint
+- `src/pages/TrackingPage.tsx` — new tracking page
+- `src/App.tsx` — added `/track/:trackingNumber` route
+- `tests/unit/emailTemplates.test.ts` — updated (13 tests, role + ETA + tracking link)
+- `tests/unit/notifications.test.ts` — new (9 tests, dispatch logic + idempotency)
+
+**Tests**
+- 14 new/updated tests (9 notification + 5 email template)
+- 145 total unit tests passing (up from 131)
+- E2E: no new coverage this deploy
+
+**Breaking changes**
+- `trackingUpdateEmail()` signature changed — now accepts optional carrier, ETA, trackingUrl, role params (backwards compatible, all optional)
+
+**Notes**
+- Migration 011 must be pushed: `npx supabase db push`
+- Deploy new Edge Functions: `npx supabase functions deploy tracking webhooks`
+- `sender_email` param is optional in labels function — comp labels may not have it
+- SMS/push channels are stubbed in the dispatcher — add handlers when ready
+- Tracking page fetches from Edge Function, not direct DB (keeps RLS clean)
+
+---
+
+### [2026-03-19] — Fix magic link login + custom SMTP via Resend
+
+**Branch:** `feat/fix-auth-login`
+**Commit:** `f7d503b`
+**Deploy:** Vercel auto-deploy
+
+**What shipped**
+- Magic link login now works — Supabase Site URL corrected from old Vercel deploy URL to `sendmo.co`
+- Emails send from `SendMo <noreply@sendmo.co>` via Resend SMTP (was `supabase auth`)
+- Landing page nav shows Dashboard + sign out when logged in (was always "Sign In")
+- "Sign In" button links to `/login` directly (was `/dashboard` → redirect)
+- User-friendly error for rate limiting, spam folder hint on success screen
+- Supabase client configured with `detectSessionInUrl`, `persistSession`, `autoRefreshToken`
+- John's account confirmed via SQL (was stuck with `email_confirmed_at: null`)
+
+**What changed (files)**
+- `src/lib/supabase.ts` — auth config options
+- `src/pages/Index.tsx` — conditional nav (signed in vs anonymous)
+- `src/pages/Login.tsx` — better error messages, resend link
+- `supabase/config.toml` — auth site_url, redirect allowlist, SMTP config
+- `tests/unit/auth.test.tsx` — 5 new tests
+- `DECISIONS.md` — auth debugging findings
+- `WISHLIST.md` — marked magic link bug as fixed
+
+**Tests**
+- 5 new auth unit tests, 136 total passing
+
+**Breaking changes**
+- None
+
+**Notes**
+- Free tier can't change JWT expiry (1hr) — sessions persist via refresh tokens (`autoRefreshToken: true`)
+- SMTP password passed as `env(SMTP_PASS)` during `supabase config push` — never in git
+- To re-push SMTP config: `SMTP_PASS=re_xxx npx supabase config push --project-ref fkxykvzsqdjzhurntgah`
+- Free tier email rate limit: 4/hour (now shows friendly error instead of raw Supabase message)
+
+---
+
+### [2026-03-18] — Email notifications via Resend (OTP, label confirmation, tracking)
+
+**Branch:** `feat/email-notifications`
+**Commit:** `6a1b169`
+**Deploy:** Vercel auto-deploy + Supabase Edge Functions
+
+**What shipped**
+- OTP email verification for Flexible Link path (6-digit code, SHA-256 hashed, 10-min expiry)
+- Label confirmation email sent after successful purchase (fire-and-forget)
+- Tracking update email on EasyPost webhook status changes (in_transit, out_for_delivery, delivered)
+- Rate limiting: 3 sends per email per 10 min, 5 verification attempts per code
+- Branded HTML email templates (SendMo blue header, white body, gray footer)
+- RecipientStepEmailVerify wired to real API calls (replaces stubbed setTimeout)
+
+**What changed (files)**
+- `supabase/functions/email/index.ts` — new Edge Function (send OTP + confirm OTP)
+- `supabase/functions/webhooks/index.ts` — new EasyPost webhook handler with tracking emails
+- `supabase/functions/_shared/email-templates.ts` — 3 branded HTML templates
+- `supabase/functions/_shared/resend.ts` — Resend REST API client for Deno
+- `supabase/functions/labels/index.ts` — added label confirmation email (fire-and-forget)
+- `supabase/migrations/010_email_verifications.sql` — email_verifications table
+- `src/components/recipient/RecipientStepEmailVerify.tsx` — wired to real sendOTP/confirmOTP
+- `src/lib/api.ts` — added sendOTP(), confirmOTP()
+- `tests/unit/emailTemplates.test.ts` — 8 template tests
+- `tests/unit/otpLogic.test.ts` — 13 OTP logic tests
+
+**Tests**
+- 21 new unit tests (email templates + OTP logic), 131 total passing
+
+**Breaking changes**
+- None
+
+**Notes**
+- RESEND_API_KEY set as Supabase secret, sendmo.co domain verified in Resend
+- All email sends are fire-and-forget — never block user-facing responses
+- No PII logged in event_logs (email addresses excluded per policy)
+
+---
+
+### [2026-03-18] — Auth, Flexible Link path, E2E tests
+
+**Branch:** `feat/flexible-link` (merged), plus auth and test commits
+**Commit:** `f65bfc2`
+**Deploy:** Vercel auto-deploy
+
+**What shipped**
+- Supabase Auth with magic link (passwordless) login
+- Protected routes — `/onboarding`, `/dashboard` require auth
+- Flexible Link recipient path (Steps 20-23): preferences, email verify, payment auth, link ready
+- Comprehensive Playwright E2E test suite
+- Updated CLAUDE.md with auth, flexible link, and test status
+
+**What changed (files)**
+- `src/pages/RecipientOnboarding.tsx` — added flex link steps 20-23
+- `src/components/recipient/RecipientStepFlex*.tsx` — 4 new step components
+- `src/hooks/useRecipientFlow.ts` — flex link state + step navigation
+- `src/lib/api.ts` — added `sendOTP()`, `confirmOTP()`
+- `tests/e2e/` — new Playwright suite
+- Auth provider, login page, route guards
+
+**Tests**
+- 157 unit tests passing
+- New E2E test suite (Playwright)
+
+**Breaking changes**
+- Routes now require auth (except landing, FAQ, `/s/:shortCode`)
+
+**Notes**
+- Admin PIN still hardcoded (`2026`) — replace with `profile.role === 'admin'` before launch
+- Stripe still stubbed — real integration blocked on auth completion
+
+---
+
+### [2026-03-17] — Vercel production deploy + domain setup
+
+**Branch:** direct to `main`
+**Commit:** `26a277b`
+**Deploy:** Vercel auto-deploy + manual domain config
+
+**What shipped**
+- sendmo.co live on Vercel (A record → 76.76.21.21)
+- www.sendmo.co CNAME redirect
+- wind.sendmo.co pointing to coyote-wind project
+- SPA rewrites in `vercel.json` for client-side routing
+- EasyPost live key set as Supabase secrets
+- Comp label ledger — migration 009 adds `payment_method` column
+
+**What changed (files)**
+- `vercel.json` — SPA rewrites, build config
+- `supabase/migrations/009_*.sql` — payment_method column
+- `CLAUDE.md` — production URL, env var docs, Vercel deployment section
+
+**Tests**
+- No new tests this deploy
+
+**Breaking changes**
+- None
+
+**Notes**
+- Vercel does NOT read `.env.local` — all `VITE_*` vars must be in Vercel dashboard
+- After changing env vars, must redeploy with `vercel --prod`
+
+---
+
+### [2026-03-16] — Full Prepaid Label flow + admin mode
+
+**Branch:** direct to `main`
+**Commit:** `ba8c354`
+**Deploy:** Vercel auto-deploy
+
+**What shipped**
+- Recipient onboarding flow (Full Prepaid Label path): Steps 0→1→10→11→12
+- Admin page with PIN gate, reporting, label void
+- Admin test/live toggle on `/onboarding`
+- Magic Guestimator (15 item types + urgency keywords)
+- Dashboard with shipment history (mock data)
+- Landing page (hero, how it works, value props, use cases, CTA, footer)
+- 30+ EasyPost service name mappings
+- All backend Edge Functions deployed (addresses, rates, labels, cancel-label, admin-report, autocomplete, place-details, ingest, test-db-insert)
+- Database schema: 8 migrations applied on remote Supabase
+
+**What changed (files)**
+- `src/pages/` — RecipientOnboarding, Dashboard, Index, Admin, FAQ
+- `src/components/recipient/` — all step components, ProgressBar, MagicGuestimator, ShippingMethodCard
+- `src/hooks/useRecipientFlow.ts` — state management
+- `src/lib/api.ts` — verifyAddress, fetchRates, buyLabel, pricing helpers
+- `src/lib/utils.ts` — carrier/service display, speed tier classification
+- `supabase/functions/` — 9 Edge Functions
+- `supabase/migrations/` — 001-008
+
+**Tests**
+- 131 unit tests passing
+- LabelTest page for manual backend testing
+
+**Breaking changes**
+- First real deploy — no prior production state
+
+**Notes**
+- Stripe payment stubbed (shows success without real charge)
+- EasyPost test mode by default; live mode via admin toggle only
+
+---
+
+### [2026-03-14] — Initial setup
+
+**Branch:** direct to `main`
+**Commit:** `a2b96d4`
+**Deploy:** Initial Vercel deploy
+
+**What shipped**
+- React + Vite + TypeScript + Tailwind + shadcn/ui scaffold
+- EasyPost Edge Functions (addresses, rates)
+- LabelTest page for development
+- CI pipeline (lint, typecheck, test)
+- PRD.md, CLAUDE.md, DECISIONS.md
+
+**What changed (files)**
+- Everything (initial commit)
+
+**Tests**
+- Basic test framework setup
+
+**Breaking changes**
+- N/A (first deploy)
+
+---
+
+*Last updated: 2026-03-30*
