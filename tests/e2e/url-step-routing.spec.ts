@@ -152,13 +152,13 @@ test.describe("URL-based step routing", () => {
     await page.goto("/onboarding");
     await expect(page).toHaveURL(/\/onboarding$/);
 
-    await page.getByText("Full prepaid label").click();
+    await page.getByText("Completed Prepaid Label").click();
     await expect(page).toHaveURL(/\/onboarding\/address$/);
   });
 
   test("URL updates to /onboarding/shipping when advancing from address step", async ({ page }) => {
     await page.goto("/onboarding");
-    await page.getByText("Full prepaid label").click();
+    await page.getByText("Completed Prepaid Label").click();
     await expect(page).toHaveURL(/\/onboarding\/address$/);
 
     // Fill step 1
@@ -172,7 +172,7 @@ test.describe("URL-based step routing", () => {
 
   test("URL updates through full flow: address → shipping → payment → label", async ({ page }) => {
     await page.goto("/onboarding");
-    await page.getByText("Full prepaid label").click();
+    await page.getByText("Completed Prepaid Label").click();
 
     // Step 1: address
     await expect(page).toHaveURL(/\/onboarding\/address$/);
@@ -206,7 +206,7 @@ test.describe("URL-based step routing", () => {
 
   test("browser back button returns to previous step with data preserved", async ({ page }) => {
     await page.goto("/onboarding");
-    await page.getByText("Full prepaid label").click();
+    await page.getByText("Completed Prepaid Label").click();
 
     // Fill step 1
     await page.locator("#destination-name").fill("Jane Doe");
@@ -231,7 +231,7 @@ test.describe("URL-based step routing", () => {
 
   test("browser back from address step returns to path choice", async ({ page }) => {
     await page.goto("/onboarding");
-    await page.getByText("Full prepaid label").click();
+    await page.getByText("Completed Prepaid Label").click();
     await expect(page).toHaveURL(/\/onboarding\/address$/);
 
     await page.goBack();
@@ -268,7 +268,7 @@ test.describe("URL-based step routing", () => {
   test("flex slug rejected when full_label path is active", async ({ page }) => {
     await page.goto("/onboarding");
     // Select full label path first
-    await page.getByText("Full prepaid label").click();
+    await page.getByText("Completed Prepaid Label").click();
     await expect(page).toHaveURL(/\/onboarding\/address$/);
 
     // Try navigating to a flex-only slug

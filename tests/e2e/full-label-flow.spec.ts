@@ -10,19 +10,19 @@ test.describe("Full Prepaid Label Flow", () => {
   });
 
   test("Step 0: renders two path choice cards", async ({ page }) => {
-    await expect(page.getByText("Full prepaid label")).toBeVisible();
+    await expect(page.getByText("Completed Prepaid Label")).toBeVisible();
     await expect(page.getByText("Flexible shipping link")).toBeVisible();
     await expect(page.getByText("Recommended")).toBeVisible();
   });
 
   test("Step 0 → Step 1: clicking Full Label advances to address step", async ({ page }) => {
-    await page.getByText("Full prepaid label").click();
+    await page.getByText("Completed Prepaid Label").click();
     await expect(page.getByText("Where should the package be delivered?")).toBeVisible();
     await expect(page.getByPlaceholder("you@example.com")).toBeVisible();
   });
 
   test("Step 1: validation errors shown when Continue clicked without data", async ({ page }) => {
-    await page.getByText("Full prepaid label").click();
+    await page.getByText("Completed Prepaid Label").click();
     await page.getByText("Continue to shipment details").click();
 
     // Should show validation errors
@@ -32,7 +32,7 @@ test.describe("Full Prepaid Label Flow", () => {
   });
 
   test("Step 1: email validation shows error for invalid email", async ({ page }) => {
-    await page.getByText("Full prepaid label").click();
+    await page.getByText("Completed Prepaid Label").click();
 
     // Type an invalid email
     await page.getByPlaceholder("you@example.com").fill("notanemail");
@@ -42,7 +42,7 @@ test.describe("Full Prepaid Label Flow", () => {
   });
 
   test("Step 1 → Step 10: advance with valid address and email", async ({ page }) => {
-    await page.getByText("Full prepaid label").click();
+    await page.getByText("Completed Prepaid Label").click();
 
     // Use the address autocomplete
     const addressInput = page.getByPlaceholder("Start typing your address…").first();
@@ -68,7 +68,7 @@ test.describe("Full Prepaid Label Flow", () => {
 
   test("Step 10: Magic Guestimator fills in laptop details", async ({ page }) => {
     // Navigate to step 10
-    await page.getByText("Full prepaid label").click();
+    await page.getByText("Completed Prepaid Label").click();
 
     const addressInput = page.getByPlaceholder("Start typing your address…").first();
     await addressInput.fill("388 Townsend St San Francisco");
@@ -89,7 +89,7 @@ test.describe("Full Prepaid Label Flow", () => {
 
   test("Step 10: validation errors when Continue clicked without required fields", async ({ page }) => {
     // Navigate to step 10
-    await page.getByText("Full prepaid label").click();
+    await page.getByText("Completed Prepaid Label").click();
 
     const addressInput = page.getByPlaceholder("Start typing your address…").first();
     await addressInput.fill("388 Townsend St San Francisco");
@@ -110,7 +110,7 @@ test.describe("Full Prepaid Label Flow", () => {
 
   test("Progress bar shows correct state and allows back navigation", async ({ page }) => {
     // Navigate to step 1
-    await page.getByText("Full prepaid label").click();
+    await page.getByText("Completed Prepaid Label").click();
 
     // Progress bar should be visible with Destination active
     await expect(page.getByText("Destination")).toBeVisible();
@@ -135,7 +135,7 @@ test.describe("Full Prepaid Label Flow", () => {
 
   test("Mobile responsive: progress labels hidden on small viewport", async ({ page }) => {
     await page.setViewportSize({ width: 375, height: 812 });
-    await page.getByText("Full prepaid label").click();
+    await page.getByText("Completed Prepaid Label").click();
 
     // Progress labels should be hidden on mobile
     await expect(page.getByText("Destination")).not.toBeVisible();

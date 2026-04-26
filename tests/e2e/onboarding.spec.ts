@@ -179,7 +179,7 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
     await expect(
       page.getByRole("heading", { name: /How would you like to ship/i })
     ).toBeVisible();
-    await expect(page.getByText("Full prepaid label")).toBeVisible();
+    await expect(page.getByText("Completed Prepaid Label")).toBeVisible();
     await expect(page.getByText("Flexible shipping link")).toBeVisible();
   });
 
@@ -189,7 +189,7 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
     await page.goto("/onboarding");
 
     // ── Step 0: Select "Full prepaid label" ──────────────────
-    await page.getByText("Full prepaid label").click();
+    await page.getByText("Completed Prepaid Label").click();
 
     // ── Step 1: Address + Email ──────────────────────────────
     await expect(
