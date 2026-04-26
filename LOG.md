@@ -19,6 +19,26 @@ When an agent discovers something important — an API quirk, a "why did we choo
 **Watch out:** What breaks if you ignore this.
 ```
 
+### [2026-04-26] Notification system silently 100% broken — three independent bugs
+**Category:** EasyPost | Architecture | Testing
+**Context:** A real shipment (Barb Anderson, USPS `94346362083033...`) was stuck "In transit since Mar 19, 2026" in the dashboard despite being delivered. No tracking emails were ever sent. Investigation revealed the notification system had never worked for any shipment.
+**Decision/Finding:** Three independent bugs were silently compounding:
+1. **EasyPost `tracker.updated` webhook URL was never registered** in the EasyPost dashboard. `webhook_events` table had 0 rows from EasyPost. Status updates never pushed to us. Fixed by registering `https://fkxykvzsqdjzhurntgah.supabase.co/functions/v1/webhooks` (production env, all events).
+2. **`notification_contacts` was empty for every shipment (17/17 missing).** Root cause: the labels Edge function expected `recipient_email`/`sender_email` in the request body, but the only caller (`buyLabel` in `src/lib/api.ts`) never sent them. So the contacts array was always empty, the insert never ran, and the webhook handler would have logged `notification.no_contacts` and skipped even if it had fired. Fixed by piping `state.email` (recipient) and a new `state.senderEmail` field through `buyLabel` → labels function. Also un-fire-and-forgot the insert and added explicit log events for empty/error cases.
+3. **Webhook handler used wrong column name** when inserting into `webhook_events` (`provider` instead of `source`). Insert was failing silently — handler kept going via the `if (dupeErr?.code === '23505')` check and called dispatch anyway, but `webhook_events` would have stayed empty even if registered.
+4. **Lazy-pull tracking path didn't dispatch notifications.** When someone visited `/track/<number>`, [tracking/index.ts](supabase/functions/tracking/index.ts) synced status to the DB but never called `dispatchNotifications`. Fixed by dispatching on `liveStatus !== shipment.status` (idempotent via `notifications_log` unique index, so safe alongside the webhook).
+
+Also dropped the 30-minute TTL cache on the tracking endpoint — EasyPost API reads are free, and users want fresh location info every time they view the page. Tracking now always fetches live unless the shipment is in a terminal status (`delivered`/`return_to_sender`/`cancelled`).
+**Why:** Each bug individually would have caused silent failure. The "fire-and-forget" pattern in `labels/index.ts` (warned about in the 2026-03-19 notification dispatcher entry) hid bug #2 for over a month; nobody noticed because the only signal was `console.error`. The webhook bug (#3) and the never-registered URL (#1) ensured we'd never hear from EasyPost. Bug #4 made the lazy-pull "fallback" not actually a notification fallback.
+**Watch out:**
+- (1) Any Edge Function `.then()` chain on a Supabase write is fire-and-forget in Deno — Deno may terminate the request before the promise resolves. Always `await` writes that matter, or wrap in `EdgeRuntime.waitUntil` if truly background work.
+- (2) EasyPost webhook events MUST be checked end-to-end after registration: send a test event from the EasyPost dashboard, then `select count(*) from webhook_events where source='easypost';` should be ≥ 1. Don't trust "the handler is deployed" as proof.
+- (3) The notification system's silent failure modes (`notification.no_contacts`, `notification.dispatch_error`) are easy to miss. Worth wiring an alert on `notifications_log` rows with `status='failed'` or sustained absence of `status='sent'` rows.
+- (4) Sender email is still optional in the UI; if the recipient leaves it blank, only the recipient gets notifications. That's by design (the recipient is the person doing the flow), but worth knowing when debugging "sender didn't get email."
+- (5) Old test shipments (the 17 created before the fix) won't be backfilled — they have no contacts, so they'll never email. New shipments only.
+
+---
+
 ### Pricing & Rate Strategy
 
 ### [2026-03-19] EasyPost rate competitiveness — confirmed same tier as Pirate Ship
