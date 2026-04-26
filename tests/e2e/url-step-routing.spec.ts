@@ -236,7 +236,7 @@ test.describe("URL-based step routing", () => {
 
     await page.goBack();
     await expect(page).toHaveURL(/\/onboarding$/);
-    await expect(page.getByText("How would you like to ship?")).toBeVisible();
+    await expect(page.getByText("How should we set up your prepaid shipment?")).toBeVisible();
   });
 
   // ── Step guards (direct URL access) ────────────────────────

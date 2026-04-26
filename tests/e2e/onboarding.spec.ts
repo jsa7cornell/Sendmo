@@ -177,10 +177,10 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
     await page.goto("/onboarding");
 
     await expect(
-      page.getByRole("heading", { name: /How would you like to ship/i })
+      page.getByRole("heading", { name: /How should we set up your prepaid shipment/i })
     ).toBeVisible();
     await expect(page.getByText("Completed Prepaid Label")).toBeVisible();
-    await expect(page.getByText("Flexible shipping link")).toBeVisible();
+    await expect(page.getByText("Flexible Prepaid Shipping Link")).toBeVisible();
   });
 
   test("Full label flow: Step 0 → Step 1 → Step 10 → Step 11 → label ready", async ({
