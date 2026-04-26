@@ -1,6 +1,10 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
+import { dispatchNotifications } from "../_shared/notifications.ts";
+
+const APP_URL = "https://sendmo.co";
+const NOTIFY_STATUSES = new Set(["in_transit", "out_for_delivery", "delivered"]);
 
 /**
  * Public tracking lookup — no auth required.
@@ -48,7 +52,7 @@ serve(async (req: Request) => {
   // Look up shipment in our DB
   const { data: shipment, error } = await supabase
     .from("shipments")
-    .select("tracking_number, carrier, service, status, easypost_tracker_id, is_test, created_at, updated_at")
+    .select("id, tracking_number, carrier, service, status, easypost_tracker_id, is_test, created_at, updated_at")
     .eq("tracking_number", trackingNumber)
     .limit(1)
     .single();
@@ -94,20 +98,37 @@ serve(async (req: Request) => {
             .reverse();
 
           // Sync DB: update status + updated_at (resets the TTL clock)
+          const statusChanged = liveStatus !== shipment.status;
           const updateFields: Record<string, unknown> = {
             updated_at: new Date().toISOString(),
           };
-          if (liveStatus !== shipment.status) {
+          if (statusChanged) {
             updateFields.status = liveStatus;
           }
           if (liveStatus === "delivered") {
             updateFields.delivered_at = new Date().toISOString();
           }
-          supabase
+          await supabase
             .from("shipments")
             .update(updateFields)
-            .eq("tracking_number", trackingNumber)
-            .then(() => {});
+            .eq("tracking_number", trackingNumber);
+
+          // Dispatch notifications if status advanced (idempotent — safe if webhook also fires)
+          if (statusChanged && NOTIFY_STATUSES.has(liveStatus)) {
+            const estDeliveryFmt = estDelivery
+              ? new Date(estDelivery).toLocaleDateString("en-US", {
+                  weekday: "long",
+                  month: "long",
+                  day: "numeric",
+                })
+              : undefined;
+            dispatchNotifications(supabase, shipment.id, liveStatus, {
+              tracking_number: trackingNumber,
+              carrier: shipment.carrier || "",
+              estimated_delivery: estDeliveryFmt,
+              tracking_url: `${APP_URL}/track/${trackingNumber}`,
+            });
+          }
         }
       } catch {
         // EasyPost fetch failed — fall back to DB data

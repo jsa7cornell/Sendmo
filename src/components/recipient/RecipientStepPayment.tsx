@@ -242,6 +242,7 @@ export default function RecipientStepPayment({ state, onUpdate, onBack, liveMode
         state.originAddress,
         state.destinationAddress,
         liveMode,
+        { recipient_email: state.email || undefined },
       );
 
       onUpdate({

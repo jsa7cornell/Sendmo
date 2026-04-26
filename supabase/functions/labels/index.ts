@@ -255,8 +255,38 @@ serve(async (req: Request) => {
                                 contacts.push({ shipment_id: shipmentId, role: "sender", channel: "email", address: sender_email });
                             }
                             if (contacts.length > 0) {
-                                supabase.from("notification_contacts").insert(contacts).then(({ error: ncErr }) => {
-                                    if (ncErr) console.error("notification_contacts insert error:", ncErr);
+                                const { error: ncErr } = await supabase.from("notification_contacts").insert(contacts);
+                                if (ncErr) {
+                                    console.error("notification_contacts insert error:", ncErr);
+                                    log({
+                                        event_type: "label.notification_contacts_error",
+                                        session_id: sessionId,
+                                        severity: "error",
+                                        entity_type: "shipment",
+                                        entity_id: shipmentId,
+                                        duration_ms: 0,
+                                        properties: { error_message: ncErr.message, count: contacts.length },
+                                    });
+                                } else {
+                                    log({
+                                        event_type: "label.notification_contacts_stored",
+                                        session_id: sessionId,
+                                        severity: "info",
+                                        entity_type: "shipment",
+                                        entity_id: shipmentId,
+                                        duration_ms: 0,
+                                        properties: { count: contacts.length },
+                                    });
+                                }
+                            } else {
+                                log({
+                                    event_type: "label.notification_contacts_none",
+                                    session_id: sessionId,
+                                    severity: "warn",
+                                    entity_type: "shipment",
+                                    entity_id: shipmentId,
+                                    duration_ms: 0,
+                                    properties: { recipient_email_provided: !!recipient_email, sender_email_provided: !!sender_email },
                                 });
                             }
                         }

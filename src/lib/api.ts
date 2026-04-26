@@ -112,6 +112,7 @@ export async function buyLabel(
   from: AddressInput,
   to: AddressInput,
   liveMode: boolean = false,
+  contacts?: { recipient_email?: string; sender_email?: string },
 ): Promise<LabelResult> {
   const body = {
     easypost_shipment_id: easypostShipmentId,
@@ -119,6 +120,8 @@ export async function buyLabel(
     from_address: addressToApi(from),
     to_address: addressToApi(to),
     live_mode: liveMode,
+    recipient_email: contacts?.recipient_email,
+    sender_email: contacts?.sender_email,
   };
   return post<LabelResult>("labels", body);
 }

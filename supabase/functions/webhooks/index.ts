@@ -101,7 +101,7 @@ serve(async (req: Request) => {
     // Idempotency: store webhook event
     const eventId = body.id || `ep_${trackingCode}_${easypostStatus}_${Date.now()}`;
     const { error: dupeErr } = await supabase.from("webhook_events").insert({
-      provider: "easypost",
+      source: "easypost",
       event_id: eventId,
       event_type: `tracker.${easypostStatus}`,
       payload: body,
