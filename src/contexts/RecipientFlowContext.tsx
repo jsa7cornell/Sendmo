@@ -31,6 +31,7 @@ export interface RecipientFlowData {
 
   // Step 10
   originAddress: AddressInput;
+  senderEmail: string;
   itemDescription: string;
   packagingType: PackagingType;
   dimensions: { length: string; width: string; height: string };
@@ -66,6 +67,7 @@ const INITIAL_DATA: RecipientFlowData = {
   email: "",
 
   originAddress: emptyAddress(),
+  senderEmail: "",
   itemDescription: "",
   packagingType: "box",
   dimensions: { length: "", width: "", height: "" },

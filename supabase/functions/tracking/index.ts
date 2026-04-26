@@ -10,16 +10,13 @@ const NOTIFY_STATUSES = new Set(["in_transit", "out_for_delivery", "delivered"])
  * Public tracking lookup — no auth required.
  * GET /tracking?number=XXXXX
  *
- * Uses a TTL cache strategy to minimize EasyPost API calls:
- * - Terminal statuses (delivered, cancelled, returned) → always serve from DB
- * - Active shipments → fetch from EasyPost only if updated_at is older than CACHE_TTL_MS
- * - Syncs DB when EasyPost reports a status change
+ * Always fetches live from EasyPost when a tracker exists and the
+ * shipment isn't in a terminal state — EasyPost API reads are free,
+ * users want fresh location info every time they look at the page.
+ * Syncs DB and dispatches notifications when status advances.
  */
 
-// How long to cache active shipment data before re-fetching from EasyPost
-const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
-
-// Statuses that will never change — no need to re-fetch
+// Statuses that will never change — serve from DB, skip EasyPost
 const TERMINAL_STATUSES = new Set(["delivered", "return_to_sender", "cancelled"]);
 
 serve(async (req: Request) => {
@@ -68,11 +65,9 @@ serve(async (req: Request) => {
   let estDelivery: string | null = null;
   let trackingEvents: Array<{ message: string; status: string; datetime: string; location: string | null }> = [];
 
-  // Decide whether to fetch from EasyPost
+  // Always fetch from EasyPost unless shipment is in a terminal status
   const isTerminal = TERMINAL_STATUSES.has(shipment.status);
-  const age = Date.now() - new Date(shipment.updated_at).getTime();
-  const isFresh = age < CACHE_TTL_MS;
-  const shouldFetchLive = shipment.easypost_tracker_id && !isTerminal && !isFresh;
+  const shouldFetchLive = shipment.easypost_tracker_id && !isTerminal;
 
   if (shouldFetchLive) {
     const apiKey = Deno.env.get(shipment.is_test ? "EASYPOST_TEST_API_KEY" : "EASYPOST_API_KEY");
@@ -97,7 +92,7 @@ serve(async (req: Request) => {
             }))
             .reverse();
 
-          // Sync DB: update status + updated_at (resets the TTL clock)
+          // Sync DB: update status + updated_at
           const statusChanged = liveStatus !== shipment.status;
           const updateFields: Record<string, unknown> = {
             updated_at: new Date().toISOString(),
@@ -134,11 +129,6 @@ serve(async (req: Request) => {
         // EasyPost fetch failed — fall back to DB data
       }
     }
-  } else if (shipment.easypost_tracker_id && isFresh && !isTerminal) {
-    // Data is fresh — still fetch from EasyPost for events display only?
-    // No: serve from DB to save API calls. Events won't show until next refresh
-    // after TTL expires. This is the trade-off for efficiency.
-    // TODO: Store cached events in DB when EasyPost webhooks are configured.
   }
 
   return new Response(

@@ -160,6 +160,19 @@ export default function RecipientStepFullShipping({
           onChange={(addr: AddressInput) => onUpdate({ originAddress: addr })}
           error={tried && !state.originAddress.verified ? "Sender address is required" : undefined}
         />
+        <div className="mt-4">
+          <label htmlFor="sender-email" className="text-sm font-medium text-foreground">
+            Sender's email <span className="text-muted-foreground font-normal">(optional — they'll get tracking updates)</span>
+          </label>
+          <Input
+            id="sender-email"
+            type="email"
+            value={state.senderEmail}
+            onChange={(e) => onUpdate({ senderEmail: e.target.value })}
+            placeholder="sender@example.com"
+            className="mt-1.5 rounded-xl"
+          />
+        </div>
       </div>
 
       {/* Magic Guestimator */}

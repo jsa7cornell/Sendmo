@@ -23,6 +23,7 @@ export interface RecipientFlowState {
 
   // Step 10
   originAddress: AddressInput;
+  senderEmail: string;
   itemDescription: string;
   packagingType: PackagingType;
   dimensions: { length: string; width: string; height: string };
@@ -59,6 +60,7 @@ const INITIAL_STATE: RecipientFlowState = {
   email: "",
 
   originAddress: emptyAddress(),
+  senderEmail: "",
   itemDescription: "",
   packagingType: "box",
   dimensions: { length: "", width: "", height: "" },
