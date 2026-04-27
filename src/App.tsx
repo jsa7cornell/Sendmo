@@ -1,5 +1,5 @@
-import { BrowserRouter, Routes, Route, Outlet } from "react-router-dom";
-import { AuthProvider } from "@/contexts/AuthContext";
+import { BrowserRouter, Routes, Route, Outlet, Navigate, useSearchParams } from "react-router-dom";
+import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { RecipientFlowProvider } from "@/contexts/RecipientFlowContext";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import Index from "@/pages/Index";
@@ -13,10 +13,21 @@ import LabelTest from "@/pages/LabelTest";
 import SenderPreview from "@/pages/SenderPreview";
 import HeaderPreview from "@/pages/HeaderPreview";
 import TrackingPage from "@/pages/TrackingPage";
+import LinksNew from "@/pages/LinksNew";
+import LinksEdit from "@/pages/LinksEdit";
 import NotFound from "@/pages/NotFound";
 
-// Layout that provides RecipientFlowContext to all onboarding routes
+// Auth'd users land on /links/new instead of the wizard. Anon users get the wizard
+// wrapped in RecipientFlowProvider. Provider only mounts on the anon branch.
 function OnboardingLayout() {
+  const { user, loading } = useAuth();
+  const [searchParams] = useSearchParams();
+  if (loading) return null;
+  if (user) {
+    const path = searchParams.get("path");
+    const target = path === "full_label" ? "/links/new?path=full_label" : "/links/new";
+    return <Navigate to={target} replace />;
+  }
   return (
     <RecipientFlowProvider>
       <Outlet />
@@ -44,6 +55,22 @@ function App() {
             element={
               <ProtectedRoute>
                 <Dashboard />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/links/new"
+            element={
+              <ProtectedRoute>
+                <LinksNew />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/links/:id/edit"
+            element={
+              <ProtectedRoute>
+                <LinksEdit />
               </ProtectedRoute>
             }
           />

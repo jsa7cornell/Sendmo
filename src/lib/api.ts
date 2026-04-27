@@ -197,6 +197,54 @@ export interface LinkData {
   recipient_name: string | null;
 }
 
+export interface UpdateLinkParams {
+  recipient_address?: {
+    name: string;
+    street1: string;
+    street2?: string;
+    city: string;
+    state: string;
+    zip: string;
+    verified?: boolean;
+  };
+  speed_preference?: string;
+  preferred_carrier?: string;
+  price_cap_dollars?: number;
+  size_hint?: string | null;
+  notes?: string | null;
+}
+
+export interface UpdateLinkResult {
+  id: string;
+  short_code: string;
+  updated_at: string;
+  recipient_address: { name: string; city: string; state: string; zip: string } | null;
+  speed_preference: string | null;
+  preferred_carrier: string | null;
+  max_price_cents: number;
+  size_hint: string | null;
+}
+
+export async function updateFlexLink(
+  linkId: string,
+  params: UpdateLinkParams,
+  accessToken: string,
+): Promise<UpdateLinkResult> {
+  const res = await fetch(`${BASE_URL}/functions/v1/links/${encodeURIComponent(linkId)}`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify(params),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || `Failed to update link (${res.status})`);
+  }
+  return data as UpdateLinkResult;
+}
+
 export async function fetchLink(shortCode: string): Promise<LinkData> {
   const res = await fetch(`${BASE_URL}/functions/v1/links?code=${encodeURIComponent(shortCode)}`, {
     method: "GET",

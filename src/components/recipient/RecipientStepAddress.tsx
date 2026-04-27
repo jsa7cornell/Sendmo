@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { AlertCircle } from "lucide-react";
-import SmartAddressInput from "@/components/ui/SmartAddressInput";
+import AddressForm from "@/components/forms/AddressForm";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/contexts/AuthContext";
@@ -73,14 +73,7 @@ export default function RecipientStepAddress({
       </div>
 
       {/* Destination address */}
-      <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
-        <SmartAddressInput
-          label="destination"
-          value={address}
-          onChange={onAddressChange}
-          error={tried && !address.verified ? "Select an address from the dropdown" : undefined}
-        />
-      </div>
+      <AddressForm value={address} tried={tried} onChange={onAddressChange} />
 
       {/* Email */}
       <div className="bg-card rounded-2xl border border-border shadow-sm p-5">

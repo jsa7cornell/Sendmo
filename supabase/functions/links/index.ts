@@ -216,6 +216,249 @@ serve(async (req: Request) => {
         );
     }
 
+    // ── PATCH /links/:id — Authenticated: edit a flexible link ──
+    if (req.method === "PATCH") {
+        const authHeader = req.headers.get("Authorization") || "";
+        const token = authHeader.replace("Bearer ", "");
+
+        const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+        if (authError || !user) {
+            return new Response(
+                JSON.stringify({ error: "Unauthorized" }),
+                { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+
+        // Parse :id from /functions/v1/links/<id>
+        const pathParts = url.pathname.split("/").filter(Boolean);
+        const linkId = pathParts[pathParts.length - 1];
+        if (!linkId || linkId === "links") {
+            return new Response(
+                JSON.stringify({ error: "Missing link id in URL" }),
+                { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+
+        let payload: Record<string, unknown>;
+        try {
+            payload = await req.json();
+        } catch {
+            return new Response(
+                JSON.stringify({ error: "Invalid JSON body" }),
+                { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+
+        if (!payload || typeof payload !== "object" || Object.keys(payload).length === 0) {
+            return new Response(
+                JSON.stringify({ error: "Empty payload — nothing to update" }),
+                { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+
+        // Ownership check (service role bypasses RLS — explicit user_id filter required)
+        const { data: existing, error: loadError } = await supabase
+            .from("sendmo_links")
+            .select(`
+                id, user_id, status, recipient_address_id,
+                recipient_address:addresses!recipient_address_id (
+                    id, name, street1, street2, city, state, zip
+                )
+            `)
+            .eq("id", linkId)
+            .eq("user_id", user.id)
+            .maybeSingle();
+
+        if (loadError) {
+            console.error("Link load error:", loadError);
+            return new Response(
+                JSON.stringify({ error: "Failed to load link" }),
+                { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+
+        if (!existing) {
+            // Don't leak existence — same response for not-found and not-owned
+            return new Response(
+                JSON.stringify({ error: "Link not found" }),
+                { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+
+        // Status guard — only active/draft are editable
+        if (existing.status !== "active" && existing.status !== "draft") {
+            return new Response(
+                JSON.stringify({ error: "This link is no longer editable", status: existing.status }),
+                { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+
+        // Build the update — whitelist of mutable fields
+        const updates: Record<string, unknown> = {};
+        const changedFields: string[] = [];
+
+        if ("speed_preference" in payload) {
+            updates.preferred_speed = payload.speed_preference || null;
+            changedFields.push("speed_preference");
+        }
+        if ("preferred_carrier" in payload) {
+            updates.preferred_carrier = payload.preferred_carrier === "any" ? null : (payload.preferred_carrier || null);
+            changedFields.push("preferred_carrier");
+        }
+        if ("price_cap_dollars" in payload) {
+            const cap = payload.price_cap_dollars;
+            if (typeof cap !== "number" || cap <= 0) {
+                return new Response(
+                    JSON.stringify({ error: "price_cap_dollars must be a positive number" }),
+                    { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+            updates.max_price_cents = Math.round(cap * 100);
+            changedFields.push("price_cap_dollars");
+        }
+        if ("size_hint" in payload) {
+            updates.size_hint = payload.size_hint || null;
+            changedFields.push("size_hint");
+        }
+        if ("notes" in payload) {
+            updates.notes = payload.notes ?? null;
+            changedFields.push("notes");
+        }
+
+        // Address handling — insert-new-row + repoint-FK pattern (preserves shipment history)
+        let previousAddressId: string | null = null;
+        let newAddressId: string | null = null;
+
+        if ("recipient_address" in payload && payload.recipient_address) {
+            const addr = payload.recipient_address as Record<string, unknown>;
+            const street1 = typeof addr.street1 === "string" ? addr.street1 : "";
+            const city = typeof addr.city === "string" ? addr.city : "";
+            const state = typeof addr.state === "string" ? addr.state : "";
+            const zip = typeof addr.zip === "string" ? addr.zip : "";
+
+            if (!street1 || !city || !state || !zip) {
+                return new Response(
+                    JSON.stringify({ error: "Missing required recipient address fields" }),
+                    { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+
+            // Equality check — case-insensitive, trimmed
+            const norm = (s: unknown) => (typeof s === "string" ? s.trim().toLowerCase() : "");
+            const cur = Array.isArray(existing.recipient_address)
+                ? existing.recipient_address[0]
+                : existing.recipient_address;
+            const unchanged = cur
+                && norm(cur.street1) === norm(street1)
+                && norm(cur.street2 ?? "") === norm(addr.street2 ?? "")
+                && norm(cur.city) === norm(city)
+                && norm(cur.state) === norm(state)
+                && norm(cur.zip) === norm(zip);
+
+            if (!unchanged) {
+                const { data: newAddr, error: addrError } = await supabase
+                    .from("addresses")
+                    .insert({
+                        user_id: user.id,
+                        name: (addr.name as string) || "Recipient",
+                        street1,
+                        street2: (addr.street2 as string) || null,
+                        city,
+                        state,
+                        zip,
+                        country: "US",
+                        is_verified: addr.verified === true,
+                    })
+                    .select("id")
+                    .single();
+
+                if (addrError || !newAddr) {
+                    console.error("Address insert error:", addrError);
+                    return new Response(
+                        JSON.stringify({ error: "Failed to save updated address" }),
+                        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                    );
+                }
+
+                previousAddressId = existing.recipient_address_id;
+                newAddressId = newAddr.id;
+                updates.recipient_address_id = newAddr.id;
+                changedFields.push("recipient_address");
+            }
+        }
+
+        if (Object.keys(updates).length === 0) {
+            return new Response(
+                JSON.stringify({ error: "No mutable fields supplied" }),
+                { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+
+        updates.updated_at = new Date().toISOString();
+
+        const { data: updated, error: updateError } = await supabase
+            .from("sendmo_links")
+            .update(updates)
+            .eq("id", linkId)
+            .eq("user_id", user.id)
+            .select(`
+                id, short_code, updated_at,
+                max_price_cents, preferred_speed, preferred_carrier, size_hint,
+                recipient_address:addresses!recipient_address_id (
+                    name, city, state, zip
+                )
+            `)
+            .single();
+
+        if (updateError || !updated) {
+            console.error("Link update error:", updateError);
+            return new Response(
+                JSON.stringify({ error: "Failed to update link" }),
+                { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+
+        // Audit log — best-effort, don't fail the request if logging fails
+        try {
+            await supabase.from("event_logs").insert({
+                event_type: "link.updated",
+                entity_type: "sendmo_link",
+                entity_id: linkId,
+                user_id: user.id,
+                properties: {
+                    changed_fields: changedFields,
+                    previous_address_id: previousAddressId,
+                    new_address_id: newAddressId,
+                },
+            });
+        } catch (logErr) {
+            console.warn("Audit log failed:", logErr);
+        }
+
+        const respAddr = Array.isArray(updated.recipient_address)
+            ? updated.recipient_address[0]
+            : updated.recipient_address;
+
+        return new Response(
+            JSON.stringify({
+                id: updated.id,
+                short_code: updated.short_code,
+                updated_at: updated.updated_at,
+                recipient_address: respAddr ? {
+                    name: respAddr.name,
+                    city: respAddr.city,
+                    state: respAddr.state,
+                    zip: respAddr.zip,
+                } : null,
+                speed_preference: updated.preferred_speed,
+                preferred_carrier: updated.preferred_carrier,
+                max_price_cents: updated.max_price_cents,
+                size_hint: updated.size_hint,
+            }),
+            { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+    }
+
     return new Response(
         JSON.stringify({ error: "Method not allowed" }),
         { status: 405, headers: { ...corsHeaders, "Content-Type": "application/json" } }

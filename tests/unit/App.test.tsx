@@ -35,10 +35,12 @@ describe("App Routing", () => {
         });
     });
 
-    it("renders the Onboarding on /onboarding", () => {
+    it("renders the Onboarding on /onboarding", async () => {
         window.history.pushState({}, "Test page", "/onboarding");
         render(<App />);
-        expect(screen.getByText("How should we set up your prepaid shipment?")).toBeInTheDocument();
+        await waitFor(() => {
+            expect(screen.getByText("How should we set up your prepaid shipment?")).toBeInTheDocument();
+        });
     });
 
     it("renders Not Found on unknown paths", () => {

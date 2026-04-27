@@ -1,10 +1,10 @@
 import { useState, useEffect } from "react";
-import { motion } from "framer-motion";
-import { Link } from "react-router-dom";
+import { motion, AnimatePresence } from "framer-motion";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
   Copy, Link2, MapPin, Zap, Shield, CreditCard,
   Package, Truck, CheckCircle2, ExternalLink,
-  LogOut, User, AlertCircle, Ban,
+  LogOut, User, AlertCircle, Ban, Pencil, X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -112,6 +112,10 @@ function refundBadge(refundStatus: string) {
 
 export default function Dashboard() {
   const { user, signOut } = useAuth();
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const updatedLinkId = searchParams.get("updated_link");
+  const [showUpdatedBanner, setShowUpdatedBanner] = useState(!!updatedLinkId);
   const [copied, setCopied] = useState(false);
   const [shipments, setShipments] = useState<DashboardShipment[]>([]);
   const [loadingShipments, setLoadingShipments] = useState(true);
@@ -206,7 +210,7 @@ export default function Dashboard() {
           </div>
 
           <div className="flex items-center gap-2">
-            <Button variant="outline" className="rounded-xl gap-2 text-sm" onClick={() => window.location.href = "/onboarding"}>
+            <Button variant="outline" className="rounded-xl gap-2 text-sm" onClick={() => navigate("/links/new")}>
               <Link2 className="w-4 h-4" />
               New Link
             </Button>
@@ -242,17 +246,57 @@ export default function Dashboard() {
           </div>
         </div>
 
+        {/* Updated-link confirmation banner */}
+        <AnimatePresence>
+          {showUpdatedBanner && updatedLinkId && (
+            <motion.div
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, height: 0, marginBottom: 0 }}
+              className="mb-5 rounded-xl border border-success/30 bg-success/10 px-4 py-3 flex items-center gap-3"
+            >
+              <CheckCircle2 className="w-4 h-4 text-success shrink-0" />
+              <p className="text-sm text-foreground flex-1">Link updated.</p>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowUpdatedBanner(false);
+                  searchParams.delete("updated_link");
+                  setSearchParams(searchParams, { replace: true });
+                }}
+                className="w-7 h-7 rounded-lg hover:bg-success/10 flex items-center justify-center"
+                aria-label="Dismiss"
+              >
+                <X className="w-3.5 h-3.5 text-muted-foreground" />
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* Top row: Link + Wallet */}
         <div className="grid gap-5 md:grid-cols-2 mb-8">
-          <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
+          <div className="bg-card rounded-2xl border border-border shadow-sm p-5 relative">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
                 <Link2 className="w-4 h-4 text-primary" />
                 My Label Link
               </h2>
-              {link && (
-                <Badge variant="outline" className="text-xs border-success/50 text-success bg-success/10">Active</Badge>
-              )}
+              <div className="flex items-center gap-2">
+                {link && (
+                  <Badge variant="outline" className="text-xs border-success/50 text-success bg-success/10">Active</Badge>
+                )}
+                {link && (
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/links/${link.id}/edit`)}
+                    className="w-7 h-7 rounded-lg hover:bg-muted flex items-center justify-center transition-colors"
+                    aria-label="Edit link"
+                    title="Edit link"
+                  >
+                    <Pencil className="w-3.5 h-3.5 text-muted-foreground" />
+                  </button>
+                )}
+              </div>
             </div>
 
             {loadingLink ? (
@@ -304,7 +348,7 @@ export default function Dashboard() {
                 <Button
                   size="sm"
                   className="rounded-xl gap-1.5"
-                  onClick={() => window.location.href = "/onboarding?path=flexible"}
+                  onClick={() => navigate("/links/new")}
                 >
                   <Link2 className="w-3.5 h-3.5" />
                   Create my link

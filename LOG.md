@@ -413,6 +413,37 @@ Returns the new `shipments.id`. Called via `supabase.rpc('admin_insert_shipment'
 
 Every merge to `main` triggers a Vercel auto-deploy. This section tracks what shipped and when.
 
+### [2026-04-26] — Links Manager: auth-aware /links/new + /links/:id/edit
+
+**Branch:** `main`
+**Deploy:** Vercel auto-deploy + `npx supabase functions deploy links`
+
+**What shipped**
+- `/links/new` and `/links/:id/edit` pages for authenticated users — replaces forcing repeat users through the marketing onboarding wizard (with its inappropriate OTP/payment steps).
+- Auth'd users hitting `/onboarding/*` now redirect to `/links/new` (preserving `?path=full_label`).
+- Edit flow on Dashboard: Pencil icon button on the link card opens `/links/:id/edit`, which prefills from the existing `sendmo_links` row and shows a dismissible "Link updated" banner on save.
+- Backend `PATCH /functions/v1/links/:id` handler with status guard (active/draft only), explicit `user_id = auth_user.id` ownership check (service-role bypasses RLS, so this matters), insert-new-address-row + repoint-FK pattern (preserves shipment historical integrity), and audit log to `event_logs`.
+- Extracted reusable presenter components: `AddressForm`, `FlexPreferencesForm`, `LinkShareCard`, `NotificationEmailField` — shared between `/links/new`, `/links/:id/edit`, and the legacy `/onboarding/*` wizard steps.
+
+**What changed (files)**
+- New: `src/pages/LinksNew.tsx`, `src/pages/LinksEdit.tsx`, `src/components/links/LinksEditor.tsx`, `src/components/links/LinkShareCard.tsx`, `src/components/forms/{AddressForm,FlexPreferencesForm,NotificationEmailField}.tsx`
+- Modified: `supabase/functions/links/index.ts` (PATCH handler), `src/lib/api.ts` (`updateFlexLink`), `src/App.tsx` (routes + OnboardingLayout redirect), `src/pages/Dashboard.tsx` (Pencil button + banner), recipient wizard steps (refactored to use shared presenters)
+- `tests/unit/App.test.tsx` — wrapped onboarding test in `waitFor` (OnboardingLayout returns null while auth resolves to avoid wizard-flash for authed users)
+
+**Tests**
+- 188 unit tests passing (17 files)
+- E2E tests still red on Maps autocomplete (pre-existing, see WISHLIST CI debt)
+
+**Breaking changes**
+- None
+
+**Notes for future agents**
+- Edge Function uses service-role key (bypasses RLS) — every owner check must explicitly filter `user_id = auth_user.id`. Don't rely on RLS for ownership.
+- Address mutations don't UPDATE in place — they INSERT a new `addresses` row and repoint `sendmo_links.recipient_address_id`. This preserves the historical address attached to past `shipments` rows. Same pattern should be reused for any future `addresses` mutation through user-facing flows.
+- Proposal + decision record: `proposals/2026-04-26_links-manager_reviewed-2026-04-26_decided-2026-04-26.md`
+
+---
+
 ### [2026-03-19] — Full sender flow + links pipeline + friendly error copy
 
 **Branch:** `main`
