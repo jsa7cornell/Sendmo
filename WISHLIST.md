@@ -9,6 +9,7 @@
 
 - [ ] **Signed-in users should land on their dashboard, not the public homepage** — When an authenticated user hits `/` (or returns to the site), redirect to their dashboard/home rather than rendering the marketing landing page. Public landing should only show for unauthenticated visitors.
 - [ ] **Production-quality headers and graphics** — Add SendMo logo to nav, email templates, landing page. Replace placeholder text/icons with branded assets. Consistent header across all pages.
+- [ ] **Favicon + logo refresh** — Replace the placeholder favicon and any inline logo SVGs with a proper SendMo branded set (favicon.ico, apple-touch-icon, 192/512 PWA icons, OG image). Tab and home-screen icons currently look unbranded.
 - [ ] **Label download link should be secure** — After Full Label flow completes, the label PDF link should be a signed/expiring URL (not a public EasyPost URL). Prevents unauthorized access to shipping labels.
 
 ## Bugs
@@ -21,6 +22,7 @@
 - [x] **Sender email not captured anywhere in the flow** — Added optional sender email field to the "Ship from" section of the Full Label flow ([RecipientStepFullShipping.tsx](src/components/recipient/RecipientStepFullShipping.tsx)); piped through state + `buyLabel` to populate `notification_contacts`.
 - [x] **Magic link login doesn't send email** — Root cause: Supabase Auth Site URL was pointed at old Vercel deploy URL. Fixed 2026-03-19: config push to set `sendmo.co`, confirmed John's account, added `detectSessionInUrl` to client.
 - [ ] **Full Label flow doesn't create account or link** — After completing the Full Prepaid Label flow, the recipient should have: (1) email verified via OTP, (2) Supabase Auth account auto-created, (3) a `sendmo_links` record in their dashboard. Currently the flow generates a label but doesn't persist the recipient's account or link.
+- [ ] **Real wallet card on Dashboard (after Stripe ships)** — Today the Dashboard "My Wallet" card is an honest "Coming Soon" placeholder. Once Stripe is wired, populate it with the user's saved card(s) (brand, last4, exp) from Stripe and show their SendMo balance from the `transactions` ledger. Replace the placeholder block in [Dashboard.tsx](src/pages/Dashboard.tsx).
 
 ## Test / CI debt (2026-04-26)
 

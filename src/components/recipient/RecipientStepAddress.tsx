@@ -1,8 +1,12 @@
+import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { AlertCircle } from "lucide-react";
+import { AlertCircle, Sparkles, X } from "lucide-react";
 import SmartAddressInput from "@/components/ui/SmartAddressInput";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { useAuth } from "@/contexts/AuthContext";
+import { supabase } from "@/lib/supabase";
+import { emptyAddress } from "@/lib/utils";
 import type { AddressInput, RecipientPath } from "@/lib/types";
 
 interface Props {
@@ -22,6 +26,58 @@ export default function RecipientStepAddress({
   onAddressChange, onEmailChange, onContinue, onBack,
 }: Props) {
   const showErrors = tried && errors.length > 0;
+  const { user } = useAuth();
+  const [prefilledFrom, setPrefilledFrom] = useState<"profile" | null>(null);
+  const prefillAttempted = useRef(false);
+
+  // Silent prefill: when signed-in user lands here with empty address, populate
+  // from their most recent verified address + profile email.
+  useEffect(() => {
+    if (!user || prefillAttempted.current) return;
+    if (address.verified || address.street || email) return;
+    prefillAttempted.current = true;
+
+    (async () => {
+      const [{ data: profile }, { data: recentAddr }] = await Promise.all([
+        supabase.from("profiles").select("email, full_name").eq("id", user.id).single(),
+        supabase
+          .from("addresses")
+          .select("name, street1, street2, city, state, zip")
+          .eq("user_id", user.id)
+          .eq("is_verified", true)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+      ]);
+
+      let didPrefill = false;
+
+      if (recentAddr) {
+        onAddressChange({
+          name: recentAddr.name || profile?.full_name || "",
+          street: [recentAddr.street1, recentAddr.street2].filter(Boolean).join(", "),
+          city: recentAddr.city,
+          state: recentAddr.state,
+          zip: recentAddr.zip,
+          verified: true,
+        });
+        didPrefill = true;
+      }
+
+      const fillEmail = profile?.email ?? user.email ?? "";
+      if (fillEmail) {
+        onEmailChange(fillEmail);
+        didPrefill = true;
+      }
+
+      if (didPrefill) setPrefilledFrom("profile");
+    })();
+  }, [user, address.verified, address.street, email, onAddressChange, onEmailChange]);
+
+  function clearPrefilledAddress() {
+    onAddressChange(emptyAddress());
+    setPrefilledFrom(null);
+  }
 
   return (
     <div className="space-y-6">
@@ -31,6 +87,27 @@ export default function RecipientStepAddress({
           Enter the destination address and your email
         </p>
       </div>
+
+      {/* Prefill banner */}
+      {prefilledFrom && (
+        <motion.div
+          initial={{ opacity: 0, y: -4 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="rounded-xl border border-primary/30 bg-primary/5 px-4 py-2.5 flex items-center justify-between gap-3"
+        >
+          <div className="flex items-center gap-2 text-sm text-primary">
+            <Sparkles className="w-4 h-4 shrink-0" />
+            <span>Prefilled from your account</span>
+          </div>
+          <button
+            onClick={clearPrefilledAddress}
+            className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <X className="w-3 h-3" />
+            Use a different address
+          </button>
+        </motion.div>
+      )}
 
       {/* Destination address */}
       <div className="bg-card rounded-2xl border border-border shadow-sm p-5">

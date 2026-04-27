@@ -3,7 +3,7 @@ import { motion } from "framer-motion";
 import { Link } from "react-router-dom";
 import {
   Copy, Link2, MapPin, Zap, Shield, CreditCard,
-  Package, Truck, CheckCircle2, ExternalLink, Settings,
+  Package, Truck, CheckCircle2, ExternalLink,
   LogOut, User, AlertCircle, Ban,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -32,6 +32,19 @@ interface DashboardShipment {
     sender_name: string | null;
   };
 }
+
+interface DashboardLink {
+  short_code: string;
+  max_price_cents: number;
+  preferred_speed: string | null;
+  recipient_address: { city: string; state: string } | null;
+}
+
+const SPEED_LABEL: Record<string, string> = {
+  economy: "Economy",
+  standard: "Standard",
+  express: "Express",
+};
 
 // ─── Status config ──────────────────────────────────────────
 
@@ -94,32 +107,52 @@ export default function Dashboard() {
   const [copied, setCopied] = useState(false);
   const [shipments, setShipments] = useState<DashboardShipment[]>([]);
   const [loadingShipments, setLoadingShipments] = useState(true);
+  const [link, setLink] = useState<DashboardLink | null>(null);
+  const [loadingLink, setLoadingLink] = useState(true);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [cancelTarget, setCancelTarget] = useState<DashboardShipment | null>(null);
   const [accessToken, setAccessToken] = useState<string>("");
 
   useEffect(() => {
-    async function fetchShipments() {
+    async function fetchData() {
       if (!user) return;
 
       // Get access token for authenticated API calls
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.access_token) setAccessToken(session.access_token);
 
-      const { data, error } = await supabase
+      const shipmentsPromise = supabase
         .from("shipments")
         .select("id, tracking_number, carrier, service, status, refund_status, display_price_cents, rate_cents, is_test, easypost_shipment_id, created_at, updated_at, sendmo_links!inner(user_id, sender_name)")
         .eq("sendmo_links.user_id", user.id)
         .order("created_at", { ascending: false })
         .limit(50);
 
-      if (!error && data) {
-        setShipments(data as unknown as DashboardShipment[]);
+      // Most recent active flexible link (the user's reusable shareable link)
+      const linkPromise = supabase
+        .from("sendmo_links")
+        .select("short_code, max_price_cents, preferred_speed, recipient_address:addresses!recipient_address_id(city, state)")
+        .eq("user_id", user.id)
+        .eq("link_type", "flexible")
+        .eq("status", "active")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      const [shipmentsRes, linkRes] = await Promise.all([shipmentsPromise, linkPromise]);
+
+      if (!shipmentsRes.error && shipmentsRes.data) {
+        setShipments(shipmentsRes.data as unknown as DashboardShipment[]);
       }
       setLoadingShipments(false);
+
+      if (!linkRes.error && linkRes.data) {
+        setLink(linkRes.data as unknown as DashboardLink);
+      }
+      setLoadingLink(false);
     }
 
-    fetchShipments();
+    fetchData();
   }, [user]);
 
   function handleCancelled(shipmentId: string) {
@@ -130,9 +163,10 @@ export default function Dashboard() {
     );
   }
 
-  const shortUrl = "sendmo.co/s/k8Hj2mNp4x"; // placeholder
+  const shortUrl = link ? `sendmo.co/s/${link.short_code}` : null;
 
   function handleCopy() {
+    if (!shortUrl) return;
     navigator.clipboard.writeText(`https://${shortUrl}`);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
@@ -208,47 +242,72 @@ export default function Dashboard() {
                 <Link2 className="w-4 h-4 text-primary" />
                 My Label Link
               </h2>
-              <div className="flex items-center gap-2">
+              {link && (
                 <Badge variant="outline" className="text-xs border-success/50 text-success bg-success/10">Active</Badge>
-                <button className="text-muted-foreground hover:text-foreground transition-colors">
-                  <Settings className="w-4 h-4" />
-                </button>
+              )}
+            </div>
+
+            {loadingLink ? (
+              <div className="h-24 flex items-center justify-center">
+                <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
               </div>
-            </div>
-            <div className="flex items-center gap-2 bg-muted/50 rounded-xl px-3 py-2.5 mb-4">
-              <span className="text-sm font-mono text-foreground flex-1 truncate">{shortUrl}</span>
-              <Button variant="ghost" size="sm" onClick={handleCopy} className="rounded-lg gap-1.5 shrink-0">
-                <Copy className="w-3.5 h-3.5" />
-                {copied ? "Copied!" : "Copy"}
-              </Button>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground"><MapPin className="w-3 h-3" /> San Francisco, CA</span>
-              <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground"><Zap className="w-3 h-3" /> Standard</span>
-              <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground"><Shield className="w-3 h-3" /> Cap: $100</span>
-            </div>
+            ) : link && shortUrl ? (
+              <>
+                <div className="flex items-center gap-2 bg-muted/50 rounded-xl px-3 py-2.5 mb-4">
+                  <span className="text-sm font-mono text-foreground flex-1 truncate">{shortUrl}</span>
+                  <Button variant="ghost" size="sm" onClick={handleCopy} className="rounded-lg gap-1.5 shrink-0">
+                    <Copy className="w-3.5 h-3.5" />
+                    {copied ? "Copied!" : "Copy"}
+                  </Button>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {link.recipient_address && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground">
+                      <MapPin className="w-3 h-3" /> {link.recipient_address.city}, {link.recipient_address.state}
+                    </span>
+                  )}
+                  {link.preferred_speed && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground">
+                      <Zap className="w-3 h-3" /> {SPEED_LABEL[link.preferred_speed] ?? link.preferred_speed}
+                    </span>
+                  )}
+                  <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground">
+                    <Shield className="w-3 h-3" /> Cap: {formatCents(link.max_price_cents)}
+                  </span>
+                </div>
+              </>
+            ) : (
+              <div className="flex flex-col items-center text-center py-4">
+                <Link2 className="w-8 h-8 text-muted-foreground/40 mb-2" />
+                <p className="text-sm text-muted-foreground mb-3">
+                  You don't have a shareable link yet
+                </p>
+                <Button
+                  size="sm"
+                  className="rounded-xl gap-1.5"
+                  onClick={() => window.location.href = "/onboarding"}
+                >
+                  <Link2 className="w-3.5 h-3.5" />
+                  Create my link
+                </Button>
+              </div>
+            )}
           </div>
 
           <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
-            <h2 className="text-sm font-semibold text-foreground flex items-center gap-2 mb-4">
-              <CreditCard className="w-4 h-4 text-primary" />
-              My Wallet
-            </h2>
-            <div className="flex items-center gap-3 bg-muted/50 rounded-xl px-4 py-3 mb-3">
-              <div className="w-10 h-7 rounded bg-gradient-to-br from-blue-600 to-blue-800 flex items-center justify-center">
-                <span className="text-[10px] font-bold text-white">VISA</span>
-              </div>
-              <div className="flex-1">
-                <p className="text-sm font-medium text-foreground">&bull;&bull;&bull;&bull; 4242</p>
-                <p className="text-xs text-muted-foreground">Expires 12/29</p>
-              </div>
-            </div>
-            <div className="flex items-center justify-between bg-muted/50 rounded-xl px-4 py-3">
-              <div>
-                <p className="text-xs text-muted-foreground">SendMo Balance</p>
-                <p className="text-lg font-bold text-foreground">$0.00</p>
-              </div>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
+                <CreditCard className="w-4 h-4 text-primary" />
+                My Wallet
+              </h2>
               <Badge variant="outline" className="text-xs">Coming Soon</Badge>
+            </div>
+            <div className="bg-muted/30 rounded-xl px-4 py-5 text-center">
+              <CreditCard className="w-7 h-7 text-muted-foreground/40 mx-auto mb-2" />
+              <p className="text-sm text-foreground font-medium">Saved cards & balance</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                We'll add your payment methods and SendMo balance here when payments launch.
+              </p>
             </div>
           </div>
         </div>
