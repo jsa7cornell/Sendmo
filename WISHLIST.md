@@ -23,6 +23,7 @@
 - [x] **Magic link login doesn't send email** — Root cause: Supabase Auth Site URL was pointed at old Vercel deploy URL. Fixed 2026-03-19: config push to set `sendmo.co`, confirmed John's account, added `detectSessionInUrl` to client.
 - [ ] **Full Label flow doesn't create account or link** — After completing the Full Prepaid Label flow, the recipient should have: (1) email verified via OTP, (2) Supabase Auth account auto-created, (3) a `sendmo_links` record in their dashboard. Currently the flow generates a label but doesn't persist the recipient's account or link.
 - [ ] **Real wallet card on Dashboard (after Stripe ships)** — Today the Dashboard "My Wallet" card is an honest "Coming Soon" placeholder. Once Stripe is wired, populate it with the user's saved card(s) (brand, last4, exp) from Stripe and show their SendMo balance from the `transactions` ledger. Replace the placeholder block in [Dashboard.tsx](src/pages/Dashboard.tsx).
+- [ ] **Edit my label link from Dashboard** — The dashboard now displays the user's primary flexible link (address, speed, cap), but there's no inline edit. Build an edit flow that lets users change the destination address and preferences in place (likely a modal on the Dashboard, or a dedicated `/links/:id/edit` page that reuses the flex preferences step). Update existing `sendmo_links` row instead of creating a new one.
 
 ## Test / CI debt (2026-04-26)
 

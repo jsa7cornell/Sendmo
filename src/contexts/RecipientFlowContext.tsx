@@ -1,5 +1,5 @@
-import { createContext, useContext, useCallback, useState, useRef } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { createContext, useContext, useCallback, useEffect, useState, useRef } from "react";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import type {
   AddressInput,
   DistanceTier,
@@ -121,10 +121,28 @@ export function RecipientFlowProvider({ children }: { children: React.ReactNode 
   const [data, setData] = useState<RecipientFlowData>(INITIAL_DATA);
   const navigate = useNavigate();
   const params = useParams<{ step?: string }>();
+  const [searchParams] = useSearchParams();
   const directionRef = useRef<NavDirection>("forward");
+  const autoPathHandled = useRef(false);
 
   // Derive current step from URL
   const currentStep = params.step ? (slugToStep(params.step) ?? 0) : 0;
+
+  // Auto-select path from ?path= query param so callers can deep-link past
+  // the path-choice screen (e.g. Dashboard "Create my link" → flexible).
+  useEffect(() => {
+    if (autoPathHandled.current || data.path) return;
+    const qp = searchParams.get("path");
+    if (qp !== "flexible" && qp !== "full_label") return;
+    autoPathHandled.current = true;
+    setData((prev) => ({
+      ...prev,
+      path: qp,
+      completedSteps: prev.completedSteps.includes(0) ? prev.completedSteps : [...prev.completedSteps, 0],
+    }));
+    directionRef.current = "forward";
+    navigate("/onboarding/address", { replace: true });
+  }, [searchParams, data.path, navigate]);
 
   // Build the old-style state object for backward compatibility with step components
   const state: RecipientFlowState = {

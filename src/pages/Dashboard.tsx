@@ -34,10 +34,18 @@ interface DashboardShipment {
 }
 
 interface DashboardLink {
+  id: string;
   short_code: string;
   max_price_cents: number;
   preferred_speed: string | null;
-  recipient_address: { city: string; state: string } | null;
+  recipient_address: {
+    name: string;
+    street1: string;
+    street2: string | null;
+    city: string;
+    state: string;
+    zip: string;
+  } | null;
 }
 
 const SPEED_LABEL: Record<string, string> = {
@@ -131,7 +139,7 @@ export default function Dashboard() {
       // Most recent active flexible link (the user's reusable shareable link)
       const linkPromise = supabase
         .from("sendmo_links")
-        .select("short_code, max_price_cents, preferred_speed, recipient_address:addresses!recipient_address_id(city, state)")
+        .select("id, short_code, max_price_cents, preferred_speed, recipient_address:addresses!recipient_address_id(name, street1, street2, city, state, zip)")
         .eq("user_id", user.id)
         .eq("link_type", "flexible")
         .eq("status", "active")
@@ -260,12 +268,23 @@ export default function Dashboard() {
                     {copied ? "Copied!" : "Copy"}
                   </Button>
                 </div>
+
+                {link.recipient_address && (
+                  <div className="bg-muted/30 rounded-xl px-3 py-2.5 mb-3 flex items-start gap-2">
+                    <MapPin className="w-3.5 h-3.5 text-muted-foreground mt-0.5 shrink-0" />
+                    <div className="flex-1 min-w-0 text-xs">
+                      <p className="font-medium text-foreground truncate">{link.recipient_address.name}</p>
+                      <p className="text-muted-foreground truncate">
+                        {[link.recipient_address.street1, link.recipient_address.street2].filter(Boolean).join(", ")}
+                      </p>
+                      <p className="text-muted-foreground truncate">
+                        {link.recipient_address.city}, {link.recipient_address.state} {link.recipient_address.zip}
+                      </p>
+                    </div>
+                  </div>
+                )}
+
                 <div className="flex flex-wrap gap-2">
-                  {link.recipient_address && (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground">
-                      <MapPin className="w-3 h-3" /> {link.recipient_address.city}, {link.recipient_address.state}
-                    </span>
-                  )}
                   {link.preferred_speed && (
                     <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground">
                       <Zap className="w-3 h-3" /> {SPEED_LABEL[link.preferred_speed] ?? link.preferred_speed}
@@ -285,7 +304,7 @@ export default function Dashboard() {
                 <Button
                   size="sm"
                   className="rounded-xl gap-1.5"
-                  onClick={() => window.location.href = "/onboarding"}
+                  onClick={() => window.location.href = "/onboarding?path=flexible"}
                 >
                   <Link2 className="w-3.5 h-3.5" />
                   Create my link
