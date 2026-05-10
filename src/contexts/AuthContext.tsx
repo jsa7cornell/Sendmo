@@ -7,6 +7,7 @@ interface AuthContextValue {
   session: Session | null;
   loading: boolean;
   signIn: (email: string) => Promise<{ error: string | null }>;
+  signInWithGoogle: () => Promise<{ error: string | null }>;
   signOut: () => Promise<void>;
 }
 
@@ -17,11 +18,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Auto-create profile row on first login
+  // Ensure profile row exists and is populated from OAuth metadata.
+  // A DB trigger (handle_new_user) auto-inserts {id, email} on auth.users insert,
+  // so we backfill full_name/avatar_url here when Google/OAuth provides them.
   const ensureProfile = useCallback(async (u: User) => {
+    const meta = (u.user_metadata ?? {}) as {
+      full_name?: string;
+      name?: string;
+      avatar_url?: string;
+      picture?: string;
+    };
+    const fullName = meta.full_name ?? meta.name ?? null;
+    const avatarUrl = meta.avatar_url ?? meta.picture ?? null;
+
     const { data } = await supabase
       .from("profiles")
-      .select("id")
+      .select("id, full_name, avatar_url")
       .eq("id", u.id)
       .single();
 
@@ -29,7 +41,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await supabase.from("profiles").insert({
         id: u.id,
         email: u.email,
+        full_name: fullName,
+        avatar_url: avatarUrl,
       });
+      return;
+    }
+
+    const update: Record<string, string> = {};
+    if (fullName && !data.full_name) update.full_name = fullName;
+    if (avatarUrl && !data.avatar_url) update.avatar_url = avatarUrl;
+    if (Object.keys(update).length > 0) {
+      await supabase.from("profiles").update(update).eq("id", u.id);
     }
   }, []);
 
@@ -65,12 +87,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return { error: error?.message ?? null };
   }, []);
 
+  const signInWithGoogle = useCallback(async () => {
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo: `${window.location.origin}/dashboard`,
+      },
+    });
+    return { error: error?.message ?? null };
+  }, []);
+
   const signOut = useCallback(async () => {
     await supabase.auth.signOut();
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, session, loading, signIn, signOut }}>
+    <AuthContext.Provider value={{ user, session, loading, signIn, signInWithGoogle, signOut }}>
       {children}
     </AuthContext.Provider>
   );
