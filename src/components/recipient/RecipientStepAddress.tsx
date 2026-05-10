@@ -50,7 +50,7 @@ export default function RecipientStepAddress({
       if (recentAddr) {
         onAddressChange({
           name: recentAddr.name || profile?.full_name || "",
-          street: [recentAddr.street1, recentAddr.street2].filter(Boolean).join(", "),
+          street: recentAddr.street1 || "",
           city: recentAddr.city,
           state: recentAddr.state,
           zip: recentAddr.zip,
