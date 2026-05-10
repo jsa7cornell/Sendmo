@@ -7,6 +7,7 @@ interface AuthContextValue {
   session: Session | null;
   loading: boolean;
   signIn: (email: string) => Promise<{ error: string | null }>;
+  signInWithGoogle: () => Promise<{ error: string | null }>;
   signOut: () => Promise<void>;
 }
 
@@ -25,10 +26,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       .eq("id", u.id)
       .single();
 
+    const meta = (u.user_metadata ?? {}) as {
+      full_name?: string;
+      name?: string;
+      avatar_url?: string;
+      picture?: string;
+    };
+    const fullName = meta.full_name ?? meta.name ?? null;
+    const avatarUrl = meta.avatar_url ?? meta.picture ?? null;
+
     if (!data) {
       await supabase.from("profiles").insert({
         id: u.id,
         email: u.email,
+        full_name: fullName,
+        avatar_url: avatarUrl,
       });
     }
   }, []);
@@ -65,12 +77,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return { error: error?.message ?? null };
   }, []);
 
+  const signInWithGoogle = useCallback(async () => {
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo: `${window.location.origin}/dashboard`,
+      },
+    });
+    return { error: error?.message ?? null };
+  }, []);
+
   const signOut = useCallback(async () => {
     await supabase.auth.signOut();
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, session, loading, signIn, signOut }}>
+    <AuthContext.Provider value={{ user, session, loading, signIn, signInWithGoogle, signOut }}>
       {children}
     </AuthContext.Provider>
   );

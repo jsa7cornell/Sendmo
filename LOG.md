@@ -8,6 +8,36 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-10] Google OAuth added alongside magic link
+**Category:** Supabase | Architecture
+**Context:** Stripe work needs a sturdier account-creation story than magic-link-only. Google OAuth is a low-friction second option without making magic link disappear.
+**Decision/Finding:**
+- Added `signInWithGoogle()` to [AuthContext](src/contexts/AuthContext.tsx) using `supabase.auth.signInWithOAuth({ provider: 'google', redirectTo: <origin>/dashboard })`. The existing `detectSessionInUrl: true` on the supabase client handles the callback; no new route required.
+- Added a "Continue with Google" button above the email form on [Login.tsx](src/pages/Login.tsx) with brand-correct multi-color "G" SVG, divider with "or", and disabled-while-loading behavior.
+- `ensureProfile()` now also writes `full_name` and `avatar_url` from `user_metadata` on first sign-in (Google fills `name`/`picture`, Supabase mirrors them as `full_name`/`avatar_url`). Magic-link users get nulls, same as before.
+**Why:** Single source of truth for profile creation kept inside AuthContext so both paths converge on the same row shape. No new route or callback page; the OAuth redirect lands on `/dashboard` and the existing session listener picks it up.
+**Watch out:**
+- Account auto-linking by email is **not** the default in Supabase. If a user signs in with magic link first, then later with Google using the same email, Supabase creates a separate identity unless "Link this identity to an existing user" is enabled (or done manually). To verify after John completes the dashboard config: sign in via magic link with email X, sign out, sign in via Google with email X, check `auth.users` — same id = linked, different ids = duplicate. Document the actual behavior here once tested.
+- The redirect URI for Google Cloud Console is the **Supabase project's** callback (`https://<project-ref>.supabase.co/auth/v1/callback`), not sendmo.co. The `redirectTo` we pass to `signInWithOAuth` is where Supabase sends the user *after* it processes the callback.
+
+### Setup steps for John (Google Cloud + Supabase dashboard)
+1. **Google Cloud Console** → APIs & Services → Credentials → Create OAuth 2.0 Client ID.
+   - Application type: Web application.
+   - Authorized JavaScript origins: `https://sendmo.co`, `http://localhost:5173`.
+   - Authorized redirect URI: `https://fkxykvzsqdjzhurntgah.supabase.co/auth/v1/callback` (the Supabase project callback — not a sendmo.co URL).
+   - Save the Client ID and Client Secret.
+2. **Supabase dashboard** → Authentication → Providers → Google → toggle on.
+   - Paste the Client ID and Client Secret from step 1.
+   - Leave "Skip nonce check" off.
+   - Save.
+3. **Supabase dashboard** → Authentication → URL Configuration.
+   - Site URL: `https://sendmo.co`.
+   - Additional redirect URLs: include `http://localhost:5173/**` and `https://sendmo.co/**` (the app uses `${window.location.origin}/dashboard`).
+4. **OAuth consent screen** in Google Cloud Console → fill in app name "SendMo", support email, logo, and add scopes `email`, `profile`, `openid`. Publish (or keep in testing and add yourself as a test user) before going live.
+5. Test on `http://localhost:5173/login` → "Continue with Google" → land back on `/dashboard` with profile row populated.
+
+---
+
 When an agent discovers something important — an API quirk, a "why did we choose X", a bug pattern — propose an addition using this format:
 
 ```markdown
