@@ -1,4 +1,5 @@
 import { Link2, Shield, Zap, ArrowRight, CheckCircle2, Users, CreditCard, Package } from "lucide-react";
+import SendMoLogo from "@/components/SendMoLogo";
 import { Button } from "@/components/ui/button";
 import AppHeader from "@/components/AppHeader";
 
@@ -175,7 +176,7 @@ export default function Index() {
       <footer className="border-t border-border bg-card">
         <div className="container max-w-5xl mx-auto px-4 py-8 flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2">
-            <Package className="w-4 h-4 text-muted-foreground" />
+            <SendMoLogo className="w-5 h-5" />
             <span className="text-sm text-muted-foreground">SendMo — Prepaid shipping made easy</span>
           </div>
           <div className="flex items-center gap-4 text-sm text-muted-foreground">

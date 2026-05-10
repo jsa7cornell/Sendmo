@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { Package, LogOut, User, ChevronDown, Settings } from "lucide-react";
+import { LogOut, User, ChevronDown, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import SendMoLogo from "@/components/SendMoLogo";
 
 export default function HeaderPreview() {
   const [signedIn, setSignedIn] = useState(true);
@@ -46,7 +47,7 @@ function HeaderB({ signedIn }: { signedIn: boolean }) {
       <header className="border-b border-border bg-card">
         <div className="container max-w-5xl mx-auto px-4 h-14 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Package className="w-5 h-5 text-primary" />
+            <SendMoLogo className="w-7 h-7" />
             <span className="text-lg font-bold text-foreground">SendMo</span>
           </div>
 

@@ -17,7 +17,8 @@ function layout(content: string): string {
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;background-color:#ffffff;border-radius:12px;overflow:hidden;">
         <!-- Header -->
         <tr><td style="background-color:${BRAND_BLUE};padding:24px 32px;text-align:center;">
-          <span style="color:#ffffff;font-size:22px;font-weight:700;letter-spacing:-0.5px;">SendMo</span>
+          <img src="https://sendmo.co/icon-192.png" width="36" height="36" alt="" style="display:inline-block;vertical-align:middle;margin-right:10px;border-radius:8px;" />
+          <span style="color:#ffffff;font-size:22px;font-weight:700;letter-spacing:-0.5px;vertical-align:middle;">SendMo</span>
         </td></tr>
         <!-- Body -->
         <tr><td style="padding:32px;">
