@@ -18,14 +18,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Auto-create profile row on first login
+  // Ensure profile row exists and is populated from OAuth metadata.
+  // A DB trigger (handle_new_user) auto-inserts {id, email} on auth.users insert,
+  // so we backfill full_name/avatar_url here when Google/OAuth provides them.
   const ensureProfile = useCallback(async (u: User) => {
-    const { data } = await supabase
-      .from("profiles")
-      .select("id")
-      .eq("id", u.id)
-      .single();
-
     const meta = (u.user_metadata ?? {}) as {
       full_name?: string;
       name?: string;
@@ -35,6 +31,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const fullName = meta.full_name ?? meta.name ?? null;
     const avatarUrl = meta.avatar_url ?? meta.picture ?? null;
 
+    const { data } = await supabase
+      .from("profiles")
+      .select("id, full_name, avatar_url")
+      .eq("id", u.id)
+      .single();
+
     if (!data) {
       await supabase.from("profiles").insert({
         id: u.id,
@@ -42,6 +44,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         full_name: fullName,
         avatar_url: avatarUrl,
       });
+      return;
+    }
+
+    const update: Record<string, string> = {};
+    if (fullName && !data.full_name) update.full_name = fullName;
+    if (avatarUrl && !data.avatar_url) update.avatar_url = avatarUrl;
+    if (Object.keys(update).length > 0) {
+      await supabase.from("profiles").update(update).eq("id", u.id);
     }
   }, []);
 
