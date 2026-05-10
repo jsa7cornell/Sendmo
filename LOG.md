@@ -19,6 +19,14 @@ When an agent discovers something important — an API quirk, a "why did we choo
 **Watch out:** What breaks if you ignore this.
 ```
 
+### [2026-05-10] Brand identity shipped — V6-B "S with sender/receiver dots"
+**Category:** Architecture
+- Single source of truth: [src/assets/sendmo-logo.svg](src/assets/sendmo-logo.svg). React component at [src/components/SendMoLogo.tsx](src/components/SendMoLogo.tsx) inlines the same path so it tints/scales via Tailwind.
+- Asset pipeline: [scripts/generate-brand-assets.mjs](scripts/generate-brand-assets.mjs) renders favicon.ico (16/32/48), favicon-32, apple-touch-icon (180), icon-192/512/maskable, og-image (1200×630). Re-run after editing the SVG. Uses `sharp` + `png-to-ico` (devDeps).
+- Wired through: AppHeader, HeaderPreview, Index footer, index.html (favicons + theme-color + OG/Twitter meta), public/manifest.webmanifest (PWA), email-templates.ts header (img to https://sendmo.co/icon-192.png — only resolves after deploy).
+- Removed placeholder vite.svg + react.svg.
+- **Manual follow-up:** upload `public/icon-512.png` to Google Cloud Console → APIs & Services → OAuth consent screen (App logo). Min 120×120, square, <1 MB — 512×512 PNG fits.
+
 ### [2026-04-26] Notification system silently 100% broken — three independent bugs
 **Category:** EasyPost | Architecture | Testing
 **Context:** A real shipment (Barb Anderson, USPS `94346362083033...`) was stuck "In transit since Mar 19, 2026" in the dashboard despite being delivered. No tracking emails were ever sent. Investigation revealed the notification system had never worked for any shipment.

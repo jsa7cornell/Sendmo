@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect } from "react";
-import { Package, LogOut, User, ChevronDown, Settings } from "lucide-react";
+import { LogOut, User, ChevronDown, Settings } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/contexts/AuthContext";
+import SendMoLogo from "@/components/SendMoLogo";
 
 interface Props {
   /** Override the entire right-side action slot */
@@ -47,7 +48,7 @@ export default function AppHeader({ actions }: Props) {
           to="/"
           className="flex items-center gap-2 hover:opacity-80 transition-opacity"
         >
-          <Package className="w-5 h-5 text-primary" />
+          <SendMoLogo className="w-7 h-7" />
           <span className="text-lg font-bold text-foreground">SendMo</span>
         </Link>
         <div>{actions !== undefined ? actions : defaultRight}</div>
