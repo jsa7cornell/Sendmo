@@ -8,6 +8,13 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-10] Edge Function deploys: always pass `--no-verify-jwt` for anon-callable functions
+**Category:** Supabase | Gotcha
+**Context:** Redeployed `place-details` to add a ZIP regex fallback. Bare `supabase functions deploy place-details` defaulted to `verify_jwt: true`, which immediately broke address verification in prod — every place-details call started returning 401 Unauthorized because the new `sb_publishable_*` anon key isn't a JWT and Supabase's gateway rejects it under `verify_jwt: true`. Symptom: address dropdown selection followed by "Select an address from the dropdown" stuck on screen.
+**Rule:** When deploying any Edge Function called by anonymous (logged-out) users — or by any client using the publishable anon key — pass `--no-verify-jwt`. Functions in this category today: `autocomplete`, `place-details`, `addresses`, `rates`, `labels`, `email`, `guestimate`, `links` (the GET path). Authenticated functions (`admin-report`, link CRUD POST/PATCH) keep `verify_jwt: true`.
+**Why we don't have config.toml entries for them:** most functions aren't listed in `supabase/config.toml` so the deploy flag is the source of truth. Either add them to config.toml with `verify_jwt = false`, or always remember the flag. Fastest unbreak: redeploy with `--no-verify-jwt`.
+**Verification after fix:** `fetch('/functions/v1/place-details', {place_id: ...})` returns 200 with full components (street/city/state/zip).
+
 ### [2026-05-10] Magic Guestimator upgraded to AI + "I'm Feeling Lucky" + auto-rate-recommendation
 **Category:** Feature | LLM | UX
 **Context:** The shipping page's "Magic Guestimator" was branded with a sparkle icon but was a 15-item hardcoded keyword lookup. Anything outside the list ("watch", "ceramic vase", "framed print", etc.) returned "Couldn't match." User reported it as "not working" because most realistic descriptions failed. Also: `speedHint` was being parsed and silently discarded; cheapest/fastest hints in the user's text were never applied to rate selection.
