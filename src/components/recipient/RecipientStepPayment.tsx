@@ -4,7 +4,6 @@ import {
   CheckCircle2, Download, ExternalLink, Copy,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { formatCents, buyLabel } from "@/lib/api";
 import { carrierDisplayName, serviceDisplayName } from "@/lib/utils";
 import { getTotalPriceCents } from "@/hooks/useRecipientFlow";
