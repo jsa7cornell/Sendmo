@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
   Copy, Link2, MapPin, Zap, Shield, CreditCard,
-  Package, Truck, CheckCircle2, ExternalLink,
+  Package, Truck, CheckCircle2, ChevronRight,
   LogOut, User, AlertCircle, Ban, Pencil, X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -443,7 +443,7 @@ export default function Dashboard() {
                                 className="text-primary text-xs font-mono flex items-center gap-1 hover:underline"
                               >
                                 {s.tracking_number.slice(0, 14)}...
-                                <ExternalLink className="w-3 h-3" />
+                                <ChevronRight className="w-3 h-3" />
                               </Link>
                             ) : (
                               <span className="text-muted-foreground text-xs">&mdash;</span>
@@ -498,7 +498,7 @@ export default function Dashboard() {
                             className="text-primary text-xs font-mono flex items-center gap-1 hover:underline"
                           >
                             Track: {s.tracking_number.slice(0, 18)}...
-                            <ExternalLink className="w-3 h-3" />
+                            <ChevronRight className="w-3 h-3" />
                           </Link>
                         ) : <span />}
                         {canVoidLabel(s) && (

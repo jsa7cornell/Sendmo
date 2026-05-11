@@ -322,7 +322,10 @@ serve(async (req: Request) => {
                     p_length_in: parcel?.length_in ?? 0,
                     p_width_in: parcel?.width_in ?? 0,
                     p_height_in: parcel?.height_in ?? 0,
-                    p_is_live: isLive
+                    p_is_live: isLive,
+                    p_promised_delivery_date: buyData.selected_rate?.delivery_date
+                        ? new Date(buyData.selected_rate.delivery_date).toISOString().slice(0, 10)
+                        : null
                 }).then(async ({ data, error }) => {
                     if (error) {
                         console.error('admin_insert_shipment error:', error);

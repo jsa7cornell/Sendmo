@@ -117,3 +117,26 @@ import type { AddressInput } from "./types";
 export const emptyAddress = (): AddressInput => ({
   name: "", street: "", city: "", state: "", zip: "",
 });
+
+// ─── Carrier Tracking URL ───────────────────────────────────
+//
+// Build a deep link to the carrier's own tracking page. Used on /track/<num>
+// so users can verify against the source-of-truth carrier site. Returns null
+// for unknown carriers — caller should hide the link.
+
+const CARRIER_TRACKING_URLS: Record<string, (n: string) => string> = {
+  USPS: (n) => `https://tools.usps.com/go/TrackConfirmAction?tLabels=${encodeURIComponent(n)}`,
+  UPS: (n) => `https://www.ups.com/track?tracknum=${encodeURIComponent(n)}`,
+  FEDEX: (n) => `https://www.fedex.com/fedextrack/?trknbr=${encodeURIComponent(n)}`,
+  FedEx: (n) => `https://www.fedex.com/fedextrack/?trknbr=${encodeURIComponent(n)}`,
+  DHL: (n) => `https://www.dhl.com/en/express/tracking.html?AWB=${encodeURIComponent(n)}`,
+  DHLExpress: (n) => `https://www.dhl.com/en/express/tracking.html?AWB=${encodeURIComponent(n)}`,
+};
+
+export function carrierTrackingUrl(carrier: string | null | undefined, tracking: string | null | undefined): string | null {
+  if (!carrier || !tracking) return null;
+  const key = carrier.trim();
+  const upper = key.toUpperCase();
+  const builder = CARRIER_TRACKING_URLS[key] || CARRIER_TRACKING_URLS[upper];
+  return builder ? builder(tracking) : null;
+}

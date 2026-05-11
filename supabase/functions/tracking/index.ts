@@ -49,7 +49,7 @@ serve(async (req: Request) => {
   // Look up shipment in our DB
   const { data: shipment, error } = await supabase
     .from("shipments")
-    .select("id, tracking_number, carrier, service, status, easypost_tracker_id, is_test, created_at, updated_at")
+    .select("id, tracking_number, carrier, service, status, easypost_tracker_id, is_test, created_at, updated_at, promised_delivery_date, delivered_at")
     .eq("tracking_number", trackingNumber)
     .limit(1)
     .single();
@@ -141,6 +141,8 @@ serve(async (req: Request) => {
       events: trackingEvents,
       created_at: shipment.created_at,
       updated_at: shipment.updated_at,
+      promised_delivery_date: shipment.promised_delivery_date,
+      delivered_at: shipment.delivered_at,
     }),
     { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
   );

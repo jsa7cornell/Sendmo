@@ -1,7 +1,8 @@
 import { useParams, Link } from "react-router-dom";
 import AppHeader from "@/components/AppHeader";
 import { useState, useEffect } from "react";
-import { Package, Truck, CheckCircle2, AlertCircle, Clock, ArrowLeft, MapPin, Calendar } from "lucide-react";
+import { Package, Truck, CheckCircle2, AlertCircle, Clock, ArrowLeft, MapPin, Calendar, ExternalLink } from "lucide-react";
+import { carrierTrackingUrl } from "@/lib/utils";
 
 const BASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
 
@@ -21,6 +22,46 @@ interface TrackingData {
   events: TrackingEvent[];
   created_at: string;
   updated_at: string;
+  promised_delivery_date: string | null;
+  delivered_at: string | null;
+}
+
+/**
+ * Compare delivered date vs promised date (both DATEs, no time component).
+ * Returns null if either input is missing or unparseable.
+ */
+function deliveryPerformance(
+  promisedDate: string | null,
+  deliveredAt: string | null,
+): { days: number; label: string; emoji: string; color: string } | null {
+  if (!promisedDate || !deliveredAt) return null;
+  // Both compared at midnight UTC to avoid off-by-one from local TZ
+  const promisedMs = Date.parse(promisedDate + "T00:00:00Z");
+  const delivered = new Date(deliveredAt);
+  const deliveredMs = Date.UTC(
+    delivered.getUTCFullYear(),
+    delivered.getUTCMonth(),
+    delivered.getUTCDate(),
+  );
+  if (Number.isNaN(promisedMs) || Number.isNaN(deliveredMs)) return null;
+  const days = Math.round((deliveredMs - promisedMs) / 86_400_000);
+  if (days <= -1) {
+    return {
+      days,
+      label: `${Math.abs(days)} ${Math.abs(days) === 1 ? "day" : "days"} early`,
+      emoji: "✨",
+      color: "bg-emerald-50 text-emerald-700 border-emerald-200",
+    };
+  }
+  if (days === 0) {
+    return { days, label: "Right on time", emoji: "🎯", color: "bg-blue-50 text-blue-700 border-blue-200" };
+  }
+  return {
+    days,
+    label: `${days} ${days === 1 ? "day" : "days"} late`,
+    emoji: "🐢",
+    color: "bg-amber-50 text-amber-700 border-amber-200",
+  };
 }
 
 const STATUS_CONFIG: Record<string, { label: string; icon: typeof Package; color: string; bgColor: string }> = {
@@ -115,6 +156,15 @@ export default function TrackingPage() {
                       Expected {formatDeliveryDate(data.estimated_delivery)}
                     </p>
                   )}
+                  {data.status === "delivered" && (() => {
+                    const perf = deliveryPerformance(data.promised_delivery_date, data.delivered_at);
+                    return perf ? (
+                      <span className={`inline-flex items-center gap-1 mt-1 rounded-full border px-2 py-0.5 text-xs font-medium ${perf.color}`}>
+                        <span>{perf.emoji}</span>
+                        {perf.label}
+                      </span>
+                    ) : null;
+                  })()}
                 </div>
               </div>
 
@@ -123,6 +173,20 @@ export default function TrackingPage() {
                 <div>
                   <span className="text-xs text-muted-foreground uppercase tracking-wider">Tracking Number</span>
                   <p className="text-sm font-semibold text-primary mt-1 break-all">{data.tracking_number}</p>
+                  {(() => {
+                    const carrierUrl = carrierTrackingUrl(data.carrier, data.tracking_number);
+                    return carrierUrl ? (
+                      <a
+                        href={carrierUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-primary mt-1"
+                      >
+                        View on {data.carrier} site
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    ) : null;
+                  })()}
                 </div>
                 <div>
                   <span className="text-xs text-muted-foreground uppercase tracking-wider">Carrier</span>
