@@ -160,8 +160,8 @@ export function trackingUpdateEmail(
 
   return {
     subject: isSender
-      ? `${info.emoji} Package you sent is ${info.label.toLowerCase()} — SendMo`
-      : `${info.emoji} Your package is ${info.label.toLowerCase()} — SendMo`,
+      ? `${info.emoji} Package you sent is ${info.label} — SendMo`
+      : `${info.emoji} Your package is ${info.label} — SendMo`,
     html: layout(`
       <div style="text-align:center;margin:0 0 24px;">
         <span style="font-size:48px;">${info.emoji}</span>
