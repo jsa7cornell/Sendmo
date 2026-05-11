@@ -15,6 +15,7 @@ import LabelTest from "@/pages/LabelTest";
 import SenderPreview from "@/pages/SenderPreview";
 import HeaderPreview from "@/pages/HeaderPreview";
 import TrackingPage from "@/pages/TrackingPage";
+import LegacyTrackingRedirect from "@/pages/LegacyTrackingRedirect";
 import LinksNew from "@/pages/LinksNew";
 import LinksEdit from "@/pages/LinksEdit";
 import NotFound from "@/pages/NotFound";
@@ -94,7 +95,8 @@ function App() {
           <Route path="/privacy" element={<Privacy />} />
           <Route path="/terms" element={<Terms />} />
           <Route path="/admin" element={<Admin />} />
-          <Route path="/track/:trackingNumber" element={<TrackingPage />} />
+          <Route path="/t/:code" element={<TrackingPage />} />
+          <Route path="/track/:trackingNumber" element={<LegacyTrackingRedirect />} />
           <Route path="/label-test" element={<LabelTest />} />
           <Route path="/sender-preview" element={<SenderPreview />} />
           <Route path="/header-preview" element={<HeaderPreview />} />

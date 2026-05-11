@@ -14,7 +14,8 @@ interface TrackingEvent {
 }
 
 interface TrackingData {
-  tracking_number: string;
+  tracking_number: string;        // carrier's number (e.g. USPS 22-digit)
+  public_code: string;            // SendMo's canonical short code
   carrier: string;
   service: string;
   status: string;
@@ -88,16 +89,16 @@ function formatDeliveryDate(iso: string): string {
 }
 
 export default function TrackingPage() {
-  const { trackingNumber } = useParams<{ trackingNumber: string }>();
+  const { code } = useParams<{ code: string }>();
   const [data, setData] = useState<TrackingData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!trackingNumber) return;
+    if (!code) return;
     setLoading(true);
     // No auth header — tracking function is deployed with --no-verify-jwt
-    fetch(`${BASE_URL}/functions/v1/tracking?number=${encodeURIComponent(trackingNumber)}`)
+    fetch(`${BASE_URL}/functions/v1/tracking?code=${encodeURIComponent(code)}`)
       .then(async (res) => {
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
@@ -108,7 +109,7 @@ export default function TrackingPage() {
       .then(setData)
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
-  }, [trackingNumber]);
+  }, [code]);
 
   const config = data ? STATUS_CONFIG[data.status] || STATUS_CONFIG.label_created : null;
   const StatusIcon = config?.icon || Package;
@@ -171,8 +172,11 @@ export default function TrackingPage() {
               {/* Details */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <span className="text-xs text-muted-foreground uppercase tracking-wider">Tracking Number</span>
-                  <p className="text-sm font-semibold text-primary mt-1 break-all">{data.tracking_number}</p>
+                  <span className="text-xs text-muted-foreground uppercase tracking-wider">SendMo Tracking</span>
+                  <p className="text-lg font-bold text-primary mt-1 tracking-wider">{data.public_code}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5 break-all">
+                    {data.carrier} #{data.tracking_number}
+                  </p>
                   {(() => {
                     const carrierUrl = carrierTrackingUrl(data.carrier, data.tracking_number);
                     return carrierUrl ? (

@@ -342,7 +342,11 @@ serve(async (req: Request) => {
                             }
                         });
                     } else {
-                        const shipmentId = data;
+                        // admin_insert_shipment now returns a TABLE(id, public_code).
+                        // Supabase JS surfaces this as an array of rows.
+                        const row = Array.isArray(data) ? data[0] : (data as { id: string; public_code: string } | null);
+                        const shipmentId: string | undefined = row?.id;
+                        const publicCode: string | undefined = row?.public_code;
                         log({
                             event_type: "label.db_persisted",
                             session_id: sessionId,
@@ -351,9 +355,54 @@ serve(async (req: Request) => {
                             entity_id: easypost_shipment_id,
                             duration_ms: 0,
                             properties: {
-                                shipment_id: shipmentId
+                                shipment_id: shipmentId,
+                                public_code: publicCode,
                             }
                         });
+
+                        // Send label-confirmation email now that we have a public_code
+                        // and the shipment row is persisted. Synchronizing email send
+                        // with DB persist (instead of doing both as siblings) fixes a
+                        // latent bug where the email could fire even when persist failed.
+                        if (publicCode && recipient_email && typeof recipient_email === "string") {
+                            const eta = buyData.selected_rate?.delivery_days
+                                ? `${buyData.selected_rate.delivery_days} business days`
+                                : "Estimated upon pickup";
+                            const trackingUrl = `https://sendmo.co/t/${publicCode}`;
+                            const template = labelConfirmationEmail(
+                                publicCode,
+                                trackingNumber || "Pending",
+                                carrier || "Standard",
+                                eta,
+                                trackingUrl,
+                            );
+                            sendEmail({
+                                to: recipient_email,
+                                subject: template.subject,
+                                html: template.html,
+                            })
+                                .then(({ id }) => {
+                                    log({
+                                        event_type: "email.label_confirmation_sent",
+                                        session_id: sessionId,
+                                        severity: "info",
+                                        entity_type: "label",
+                                        entity_id: easypost_shipment_id,
+                                        properties: { resend_id: id, public_code: publicCode },
+                                    });
+                                })
+                                .catch((err) => {
+                                    console.error("Failed to send label confirmation email:", err);
+                                    log({
+                                        event_type: "email.label_confirmation_error",
+                                        session_id: sessionId,
+                                        severity: "error",
+                                        entity_type: "label",
+                                        entity_id: easypost_shipment_id,
+                                        properties: { error_message: err instanceof Error ? err.message : String(err) },
+                                    });
+                                });
+                        }
 
                         // Store notification contacts for this shipment
                         if (shipmentId) {
@@ -484,43 +533,9 @@ serve(async (req: Request) => {
             }
         }
 
-        // Send label confirmation email (fire-and-forget)
-        if (recipient_email && typeof recipient_email === "string") {
-            const eta = buyData.selected_rate?.delivery_days
-                ? `${buyData.selected_rate.delivery_days} business days`
-                : "Estimated upon pickup";
-            const template = labelConfirmationEmail(
-                trackingNumber || "Pending",
-                carrier || "Standard",
-                eta,
-            );
-            sendEmail({
-                to: recipient_email,
-                subject: template.subject,
-                html: template.html,
-            })
-                .then(({ id }) => {
-                    log({
-                        event_type: "email.label_confirmation_sent",
-                        session_id: sessionId,
-                        severity: "info",
-                        entity_type: "label",
-                        entity_id: easypost_shipment_id,
-                        properties: { resend_id: id },
-                    });
-                })
-                .catch((err) => {
-                    console.error("Failed to send label confirmation email:", err);
-                    log({
-                        event_type: "email.label_confirmation_error",
-                        session_id: sessionId,
-                        severity: "error",
-                        entity_type: "label",
-                        entity_id: easypost_shipment_id,
-                        properties: { error_message: err instanceof Error ? err.message : String(err) },
-                    });
-                });
-        }
+        // Label-confirmation email send was here; moved into the
+        // admin_insert_shipment .then() callback above so it has access
+        // to the generated public_code and only fires on successful DB persist.
 
         return new Response(
             JSON.stringify({

@@ -77,15 +77,18 @@ serve(async (req: Request) => {
 
     const supabase = getSupabase();
 
-    // Find shipment by tracking number
-    const { data: shipment, error: fetchErr } = await supabase
+    // Find shipment by tracking number. EasyPost only sends the carrier
+    // tracking code in webhooks, so we can't use the unambiguous public_code
+    // for this lookup. tracking_number is NOT unique (EasyPost test-mode
+    // fixtures + cross-mode shipments can produce duplicates), so if >1
+    // row matches we log + bail rather than update an arbitrary row and
+    // notify the wrong contacts.
+    const { data: candidates, error: fetchErr } = await supabase
       .from("shipments")
-      .select("id, status, tracking_number, carrier")
-      .eq("tracking_number", trackingCode)
-      .limit(1)
-      .single();
+      .select("id, status, tracking_number, public_code, carrier")
+      .eq("tracking_number", trackingCode);
 
-    if (fetchErr || !shipment) {
+    if (fetchErr || !candidates || candidates.length === 0) {
       log({
         event_type: "webhook.easypost_shipment_not_found",
         severity: "warn",
@@ -97,6 +100,28 @@ serve(async (req: Request) => {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+
+    if (candidates.length > 1) {
+      // Tracking number collision — safest behavior is to skip the update
+      // and surface to admin via the event log, rather than update an
+      // arbitrary shipment and notify the wrong contacts.
+      log({
+        event_type: "webhook.tracking_number_collision",
+        severity: "error",
+        source: "webhook",
+        properties: {
+          tracking_code: trackingCode,
+          match_count: candidates.length,
+          shipment_ids: candidates.map((c: { id: string }) => c.id),
+        },
+      });
+      return new Response(JSON.stringify({ ok: true, collision: true }), {
+        status: 200,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const shipment = candidates[0];
 
     // Idempotency: store webhook event
     const eventId = body.id || `ep_${trackingCode}_${easypostStatus}_${Date.now()}`;
@@ -150,9 +175,10 @@ serve(async (req: Request) => {
       // Don't await — fire and forget
       dispatchNotifications(supabase, shipment.id, easypostStatus, {
         tracking_number: trackingCode,
+        public_code: shipment.public_code,
         carrier: shipment.carrier || "",
         estimated_delivery: estDelivery,
-        tracking_url: `${APP_URL}/track/${trackingCode}`,
+        tracking_url: `${APP_URL}/t/${shipment.public_code}`,
       });
     }
 

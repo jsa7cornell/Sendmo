@@ -13,10 +13,11 @@ import { trackingUpdateEmail } from "./email-templates.ts";
 import { log } from "./logger.ts";
 
 export interface NotificationContext {
-  tracking_number: string;
+  tracking_number: string;       // the carrier's number (USPS/UPS/FedEx) — shown as secondary in emails
+  public_code: string;           // SendMo's canonical short code — prominent in emails, drives the URL
   carrier: string;
   estimated_delivery?: string;
-  tracking_url: string;
+  tracking_url: string;          // built as `${APP_URL}/t/${public_code}` by callers
 }
 
 interface Contact {
@@ -37,6 +38,7 @@ const channelHandlers: Record<string, ChannelHandler> = {
   email: async (contact, eventType, ctx) => {
     const template = trackingUpdateEmail(
       eventType,
+      ctx.public_code,
       ctx.tracking_number,
       ctx.carrier,
       ctx.estimated_delivery,
