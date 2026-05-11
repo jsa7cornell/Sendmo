@@ -1,45 +1,93 @@
 import type { RecipientPath } from "@/lib/types";
 
-// ─── Slug ↔ Step Mappings ───────────────────────────────────
+// ─── URL Structure ──────────────────────────────────────────
+//
+// All routes are path-scoped and self-describing:
+//
+//   /onboarding                          → path picker (step 0)
+//   /onboarding/full-label/destination   → step 1 (recipient + email)
+//   /onboarding/full-label/shipping      → step 10
+//   /onboarding/full-label/payment       → step 11
+//   /onboarding/full-label/label         → step 12
+//   /onboarding/flexible/destination     → step 1
+//   /onboarding/flexible/preferences     → step 20
+//   /onboarding/flexible/verify          → step 21
+//   /onboarding/flexible/authorize       → step 22
+//   /onboarding/flexible/share           → step 23
+//
+// `path` (full-label | flexible) is the URL segment; `RecipientPath` enum
+// uses `full_label` (underscore) — convert at the boundary.
 
-export type RecipientSlug =
-  | "address"
+export type PathSlug = "full-label" | "flexible";
+export type StepSlug =
+  | "destination"
   | "shipping"
   | "payment"
   | "label"
   | "preferences"
   | "verify"
   | "authorize"
-  | "link-ready";
+  | "share";
 
-const SLUG_TO_STEP: Record<RecipientSlug, number> = {
-  address: 1,
+export function pathSlugToPath(slug: string): RecipientPath | null {
+  if (slug === "full-label") return "full_label";
+  if (slug === "flexible") return "flexible";
+  return null;
+}
+
+export function pathToPathSlug(path: RecipientPath): PathSlug {
+  return path === "full_label" ? "full-label" : "flexible";
+}
+
+// ─── Step Maps (per path) ───────────────────────────────────
+
+const FULL_LABEL_STEP_BY_SLUG: Record<string, number> = {
+  destination: 1,
   shipping: 10,
   payment: 11,
   label: 12,
-  preferences: 20,
-  verify: 21,
-  authorize: 22,
-  "link-ready": 23,
 };
 
-const STEP_TO_SLUG: Record<number, RecipientSlug> = {
-  1: "address",
+const FULL_LABEL_SLUG_BY_STEP: Record<number, StepSlug> = {
+  1: "destination",
   10: "shipping",
   11: "payment",
   12: "label",
+};
+
+const FLEX_STEP_BY_SLUG: Record<string, number> = {
+  destination: 1,
+  preferences: 20,
+  verify: 21,
+  authorize: 22,
+  share: 23,
+};
+
+const FLEX_SLUG_BY_STEP: Record<number, StepSlug> = {
+  1: "destination",
   20: "preferences",
   21: "verify",
   22: "authorize",
-  23: "link-ready",
+  23: "share",
 };
 
-export function slugToStep(slug: string): number | null {
-  return SLUG_TO_STEP[slug as RecipientSlug] ?? null;
+export function slugToStep(path: RecipientPath | null, slug: string | null | undefined): number {
+  if (!slug) return 0;
+  const map = path === "flexible" ? FLEX_STEP_BY_SLUG : FULL_LABEL_STEP_BY_SLUG;
+  return map[slug] ?? 0;
 }
 
-export function stepToSlug(step: number): RecipientSlug | null {
-  return STEP_TO_SLUG[step] ?? null;
+export function stepToSlug(path: RecipientPath | null, step: number): StepSlug | null {
+  if (step === 0) return null;
+  const map = path === "flexible" ? FLEX_SLUG_BY_STEP : FULL_LABEL_SLUG_BY_STEP;
+  return map[step] ?? null;
+}
+
+export function stepUrl(path: RecipientPath | null, step: number): string {
+  if (step === 0 || !path) return "/onboarding";
+  const slug = stepToSlug(path, step);
+  if (!slug) return "/onboarding";
+  return `/onboarding/${pathToPathSlug(path)}/${slug}`;
 }
 
 // ─── Step Ordering ──────────────────────────────────────────
@@ -92,38 +140,33 @@ export function progressIndexToStep(index: number, path: RecipientPath | null): 
   return [1, 10, 11, 12][index] ?? 1;
 }
 
-// ─── Slug Validation for Path ───────────────────────────────
-
-const FULL_LABEL_SLUGS: RecipientSlug[] = ["address", "shipping", "payment", "label"];
-const FLEX_LINK_SLUGS: RecipientSlug[] = ["address", "preferences", "verify", "authorize", "link-ready"];
+// ─── Slug Validation ────────────────────────────────────────
 
 export function isSlugValidForPath(slug: string, path: RecipientPath | null): boolean {
-  if (slug === "address") return true; // shared by both paths
-  if (path === "flexible") return FLEX_LINK_SLUGS.includes(slug as RecipientSlug);
-  if (path === "full_label") return FULL_LABEL_SLUGS.includes(slug as RecipientSlug);
-  return false; // no path selected yet — only index (step 0) is valid
+  if (!path) return false;
+  return slugToStep(path, slug) !== 0;
 }
 
-// ─── Step Guard Logic ───────────────────────────────────────
+// ─── Step Guard ─────────────────────────────────────────────
 
 export function canAccessStep(step: number, completedSteps: number[], path: RecipientPath | null): boolean {
   if (step === 0) return true;
   const steps = stepsForPath(path);
   const idx = steps.indexOf(step);
   if (idx < 0) return false;
-  // All prior steps must be completed
   for (let i = 0; i < idx; i++) {
     if (!completedSteps.includes(steps[i])) return false;
   }
   return true;
 }
 
-export function firstIncompleteSlug(completedSteps: number[], path: RecipientPath | null): string | null {
+export function firstIncompleteUrl(completedSteps: number[], path: RecipientPath | null): string {
+  if (!path) return "/onboarding";
   const steps = stepsForPath(path);
   for (const step of steps) {
     if (!completedSteps.includes(step)) {
-      return stepToSlug(step); // null for step 0 → means go to index
+      return stepUrl(path, step);
     }
   }
-  return null;
+  return stepUrl(path, steps[steps.length - 1]);
 }
