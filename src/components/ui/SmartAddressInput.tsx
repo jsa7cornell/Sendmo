@@ -156,41 +156,47 @@ export default function SmartAddressInput({ label, value, onChange, error, nameL
                 body: JSON.stringify({ place_id: prediction.place_id }),
             });
 
-            if (res.ok) {
-                const details = await res.json();
-                // Use the Google Places structured components — ZIP is always populated here
-                const components = {
-                    street: details.street || fallbackComponents.street,
-                    city: details.city || fallbackComponents.city,
-                    state: details.state || fallbackComponents.state,
-                    zip: details.zip || fallbackComponents.zip,
-                };
-                const finalDisplay = `${components.street}, ${components.city}, ${components.state} ${components.zip}`.trim();
-                setQuery(finalDisplay);
-                setIsVerified(true);
-                onChange({
-                    name: value.name,
-                    ...components,
-                    verified: true,
+            const details = res.ok ? await res.json() : null;
+            const components = {
+                street: details?.street || fallbackComponents.street,
+                city: details?.city || fallbackComponents.city,
+                state: details?.state || fallbackComponents.state,
+                zip: details?.zip || fallbackComponents.zip,
+            };
+            const complete = !!components.street && !!components.city && !!components.state && !!components.zip;
+
+            if (!complete) {
+                // Surface why the verification failed so we can fix the
+                // underlying place-details response or the prediction text.
+                console.warn("[SmartAddressInput] verification incomplete", {
                     place_id: prediction.place_id,
-                });
-            } else {
-                // Fallback to parsed text if the detail call fails
-                setIsVerified(true);
-                onChange({
-                    name: value.name,
-                    ...fallbackComponents,
-                    verified: true,
-                    place_id: prediction.place_id,
+                    res_ok: res.ok,
+                    details,
+                    fallbackComponents,
+                    components,
                 });
             }
-        } catch {
-            // Fallback to parsed text on network error
-            setIsVerified(true);
+
+            const finalDisplay = complete
+                ? `${components.street}, ${components.city}, ${components.state} ${components.zip}`.trim()
+                : prediction.description;
+            setQuery(finalDisplay);
+            setIsVerified(complete);
+            onChange({
+                name: value.name,
+                ...components,
+                verified: complete,
+                place_id: prediction.place_id,
+            });
+        } catch (err) {
+            console.warn("[SmartAddressInput] place-details call failed", err, {
+                place_id: prediction.place_id,
+            });
+            setIsVerified(false);
             onChange({
                 name: value.name,
                 ...fallbackComponents,
-                verified: true,
+                verified: false,
                 place_id: prediction.place_id,
             });
         } finally {
