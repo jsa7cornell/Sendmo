@@ -40,6 +40,7 @@ export interface RecipientFlowData {
   availableRates: ShippingRate[];
   easypostShipmentId: string;
   insurance: boolean;
+  recommendedSpeedHint: SpeedTier | null;
 
   // Step 11-12
   paymentStatus: "idle" | "processing" | "authorized" | "succeeded" | "failed";
@@ -76,6 +77,7 @@ const INITIAL_DATA: RecipientFlowData = {
   availableRates: [],
   easypostShipmentId: "",
   insurance: false,
+  recommendedSpeedHint: null,
 
   paymentStatus: "idle",
   labelResult: null,
