@@ -8,6 +8,31 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-11] Stripe Phase 2 directional decisions locked in
+**Category:** Stripe | Architecture
+**Context:** Phase 1 (full-label test-mode charges, label auth gate, auto-refund-on-EasyPost-fail) shipped in commit `90aebca` on 2026-05-10. Before going live and before flex-link/Phase E coding begins, six of the eleven open §11 decisions in `proposals/2026-04-26_stripe-integration-plan_reviewed-2026-04-26.md` needed John's call.
+
+**Decisions:**
+1. **Refund destination (proposal #1):** original card. Not balance. Cleans up the SPEC §13.1 contradiction; balance-refund pattern revisits if/when Phase 2 balance UI ships.
+2. **Stripe fee absorption (proposal #2):** **flat $1 surcharge on every label, always.** Structurally different from the three options in the proposal — adds a fixed line item to absorb Stripe (≈$0.30) + support handling. Pricing formula becomes `DisplayPrice = EasyPostRate × 1.15 + $1.00`. PLAYBOOK.md §"Pricing" already reflects this — the standalone $1 is now load-bearing, not aspirational.
+3. **Hold-exceeded policy on flex links (proposal #3):** **Debit-then-cap (D-then-C).** Sender's flow never blocks; gap is recovered via off-session debit on recipient's saved card, with notification after the fact. Implicitly picks (a) on proposal #10 — explicit mandate at link creation with a Stripe-compliant string ("authorize SendMo to debit up to $X for shipping cost variance through {date}"). Hard cap stays as §3.7 specifies ($10 lifetime per shipment, $20 per card per 24h).
+4. **Account creation timing for full-label (proposal #4):** research first. Spawning a separate proposal-only session to survey Stripe/Substack/Gumroad/Shopify patterns before locking. Lands in `proposals/` for review.
+5. **Live-mode admin UX (proposal #5):** **both.** Add the 3rd admin toolbar mode (Live Charge) for Phase C self-charge dogfooding **and** replace the PIN gate with role-based auth (`profile.role='admin'`) before Phase C goes live. Don't ship Live Charge behind a hardcoded PIN.
+6. **Carrier adjustment caps (proposal #8):** stay with proposal recommendation — $2 absorb / $2–$10 auto-recover off-session / >$10 admin review. Per-shipment $10 lifetime cap, per-card $20/24h cap, per-user $50/7d cap. Final values reviewable post-Phase D data.
+
+**Still open (deferred or not yet relevant):**
+- #6 prepaid balance topup discount shape → Phase 2/H, not blocking MVP.
+- #9 ACH credit timing → settle-then-credit per proposal recommendation, Phase H.
+- #11 MTL/KYC scope → explicitly deferred to Phase H legal review.
+
+**Why:** John's directional calls turn Phase A/C/E from "blocked on decisions" into "blocked only on code + Stripe live-mode setup." The $1 fee is the only one that materially deviates from the proposal — it requires a proposal revision pass and a pricing-display change in `src/lib/api.ts` `pickRecommendedRate` consumers + the FAQ pricing table.
+
+**Watch out:**
+- The $1 fee makes the "shipping costs ≈ post office" claim *less* true for very cheap labels — a $3.74 Ground Advantage shipment becomes ~$5.30 vs USPS retail ~$5.50, but a $4.50 Ground Advantage shipment becomes ~$6.18 vs retail ~$6.50. Margin is healthier, claim still holds, but the FAQ pricing table needs to use representative shipments where the math is favorable.
+- D-then-C + mandate means the auto-debit consent (proposal #10) is **resolved as part of #3** — no separate decision needed. Implementation must put the mandate string in front of recipients at link creation, not buried in ToS.
+- "Do both" on #5 means Phase C is blocked on the role-based auth work landing first. That's a side-quest, not part of Stripe proper. Track separately.
+- Proposal still needs a round-3 revision to fold these in; status flips from `revised` to `decided` only after that revision lands.
+
 ### [2026-05-11] SendMo public tracking code — decoupled `/track` URL from carrier number
 **Category:** Feature | Schema | Email | URL contract
 **Proposal:** [proposals/2026-05-11_sendmo-public-tracking-code_reviewed-2026-05-11_decided-2026-05-11.md](proposals/2026-05-11_sendmo-public-tracking-code_reviewed-2026-05-11_decided-2026-05-11.md)
