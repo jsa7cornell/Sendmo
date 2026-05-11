@@ -19,6 +19,7 @@ import CancelLabelModal from "@/components/CancelLabelModal";
 interface DashboardShipment {
   id: string;
   tracking_number: string | null;
+  public_code: string | null;
   carrier: string;
   service: string;
   status: string;
@@ -136,7 +137,7 @@ export default function Dashboard() {
 
       const shipmentsPromise = supabase
         .from("shipments")
-        .select("id, tracking_number, carrier, service, status, refund_status, display_price_cents, rate_cents, is_test, easypost_shipment_id, created_at, updated_at, sendmo_links!inner(user_id, sender_name)")
+        .select("id, tracking_number, public_code, carrier, service, status, refund_status, display_price_cents, rate_cents, is_test, easypost_shipment_id, created_at, updated_at, sendmo_links!inner(user_id, sender_name)")
         .eq("sendmo_links.user_id", user.id)
         .order("created_at", { ascending: false })
         .limit(50);
@@ -437,12 +438,13 @@ export default function Dashboard() {
                           </td>
                           <td className="px-5 py-3 font-medium">{formatCents(s.display_price_cents)}</td>
                           <td className="px-5 py-3">
-                            {s.tracking_number && s.tracking_number !== "TEST" ? (
+                            {s.public_code && s.tracking_number !== "TEST" ? (
                               <Link
-                                to={`/track/${s.tracking_number}`}
+                                to={`/t/${s.public_code}`}
                                 className="text-primary text-xs font-mono flex items-center gap-1 hover:underline"
+                                title={s.tracking_number ? `${s.carrier} #${s.tracking_number}` : undefined}
                               >
-                                {s.tracking_number.slice(0, 14)}...
+                                {s.public_code}
                                 <ChevronRight className="w-3 h-3" />
                               </Link>
                             ) : (
@@ -492,12 +494,12 @@ export default function Dashboard() {
                         <span className="font-medium text-foreground">{formatCents(s.display_price_cents)}</span>
                       </div>
                       <div className="flex items-center justify-between">
-                        {s.tracking_number && s.tracking_number !== "TEST" ? (
+                        {s.public_code && s.tracking_number !== "TEST" ? (
                           <Link
-                            to={`/track/${s.tracking_number}`}
+                            to={`/t/${s.public_code}`}
                             className="text-primary text-xs font-mono flex items-center gap-1 hover:underline"
                           >
-                            Track: {s.tracking_number.slice(0, 18)}...
+                            Track: {s.public_code}
                             <ChevronRight className="w-3 h-3" />
                           </Link>
                         ) : <span />}

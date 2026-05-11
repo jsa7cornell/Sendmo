@@ -61,9 +61,11 @@ export function otpEmail(code: string): { subject: string; html: string } {
 // ─── Label Confirmation Email ──────────────────────────────
 
 export function labelConfirmationEmail(
-  tracking: string,
+  publicCode: string,
+  carrierTracking: string,
   carrier: string,
   eta: string,
+  trackingUrl: string,
 ): { subject: string; html: string } {
   return {
     subject: "Your shipping label is ready — SendMo",
@@ -75,8 +77,9 @@ export function labelConfirmationEmail(
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 24px;background-color:#f9fafb;border-radius:8px;border:1px solid #e5e7eb;">
         <tr>
           <td style="padding:12px 16px;border-bottom:1px solid #e5e7eb;">
-            <span style="font-size:12px;color:${GRAY_400};text-transform:uppercase;letter-spacing:0.5px;">Tracking Number</span><br/>
-            <span style="font-size:16px;font-weight:600;color:${BRAND_BLUE};">${tracking}</span>
+            <span style="font-size:12px;color:${GRAY_400};text-transform:uppercase;letter-spacing:0.5px;">SendMo Tracking</span><br/>
+            <span style="font-size:22px;font-weight:700;color:${BRAND_BLUE};letter-spacing:1px;">${publicCode}</span><br/>
+            <span style="font-size:11px;color:${GRAY_400};">${carrier} #${carrierTracking}</span>
           </td>
         </tr>
         <tr>
@@ -92,6 +95,9 @@ export function labelConfirmationEmail(
           </td>
         </tr>
       </table>
+      <div style="text-align:center;margin:0 0 16px;">
+        <a href="${trackingUrl}" style="display:inline-block;background-color:${BRAND_BLUE};color:#ffffff;font-size:14px;font-weight:600;text-decoration:none;padding:12px 32px;border-radius:8px;">Track Package</a>
+      </div>
       <p style="margin:0;font-size:13px;color:${GRAY_400};text-align:center;">
         You'll receive updates as your package moves through the shipping network.
       </p>
@@ -109,7 +115,8 @@ const STATUS_LABELS: Record<string, { label: string; emoji: string; color: strin
 
 export function trackingUpdateEmail(
   status: string,
-  tracking: string,
+  publicCode: string,
+  carrierTracking: string,
   carrier?: string,
   estimatedDelivery?: string,
   trackingUrl?: string,
@@ -173,8 +180,9 @@ export function trackingUpdateEmail(
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 24px;background-color:#f9fafb;border-radius:8px;border:1px solid #e5e7eb;">
         <tr>
           <td style="padding:12px 16px;${carrierRow || etaRow ? "border-bottom:1px solid #e5e7eb;" : ""}">
-            <span style="font-size:12px;color:${GRAY_400};text-transform:uppercase;letter-spacing:0.5px;">Tracking Number</span><br/>
-            <span style="font-size:16px;font-weight:600;color:${BRAND_BLUE};">${tracking}</span>
+            <span style="font-size:12px;color:${GRAY_400};text-transform:uppercase;letter-spacing:0.5px;">SendMo Tracking</span><br/>
+            <span style="font-size:22px;font-weight:700;color:${BRAND_BLUE};letter-spacing:1px;">${publicCode}</span><br/>
+            <span style="font-size:11px;color:${GRAY_400};">${carrier || "Carrier"} #${carrierTracking}</span>
           </td>
         </tr>
         ${carrierRow}
