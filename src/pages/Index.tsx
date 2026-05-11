@@ -181,6 +181,8 @@ export default function Index() {
           </div>
           <div className="flex items-center gap-4 text-sm text-muted-foreground">
             <a href="/faq" className="hover:text-foreground transition-colors">FAQ</a>
+            <a href="/privacy" className="hover:text-foreground transition-colors">Privacy</a>
+            <a href="/terms" className="hover:text-foreground transition-colors">Terms</a>
             <a href="mailto:support@sendmo.co" className="hover:text-foreground transition-colors">Support</a>
           </div>
         </div>

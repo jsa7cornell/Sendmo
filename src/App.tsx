@@ -8,6 +8,8 @@ import SenderFlow from "@/pages/SenderFlow";
 import Dashboard from "@/pages/Dashboard";
 import Login from "@/pages/Login";
 import FAQ from "@/pages/FAQ";
+import Privacy from "@/pages/Privacy";
+import Terms from "@/pages/Terms";
 import Admin from "@/pages/Admin";
 import LabelTest from "@/pages/LabelTest";
 import SenderPreview from "@/pages/SenderPreview";
@@ -92,6 +94,8 @@ function App() {
             }
           />
           <Route path="/faq" element={<FAQ />} />
+          <Route path="/privacy" element={<Privacy />} />
+          <Route path="/terms" element={<Terms />} />
           <Route path="/admin" element={<Admin />} />
           <Route path="/track/:trackingNumber" element={<TrackingPage />} />
           <Route path="/label-test" element={<LabelTest />} />
