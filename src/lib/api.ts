@@ -104,6 +104,30 @@ export async function fetchRates(
   return { rates, easypost_shipment_id: shipmentId };
 }
 
+// ─── Stripe Payments ────────────────────────────────────────
+
+export interface CreatePaymentIntentResult {
+  client_secret: string;
+  payment_intent_id: string;
+  status: string;
+}
+
+export async function createPaymentIntent(params: {
+  easypost_shipment_id: string;
+  amount_cents: number;
+  live_mode?: boolean;
+  receipt_email?: string;
+  description?: string;
+}): Promise<CreatePaymentIntentResult> {
+  return post<CreatePaymentIntentResult>("payments", {
+    easypost_shipment_id: params.easypost_shipment_id,
+    amount_cents: params.amount_cents,
+    live_mode: params.live_mode ?? false,
+    receipt_email: params.receipt_email,
+    description: params.description,
+  });
+}
+
 // ─── Magic Guestimator (AI) ─────────────────────────────────
 
 export interface GuestimateApiResult {
@@ -131,6 +155,7 @@ export async function buyLabel(
   to: AddressInput,
   liveMode: boolean = false,
   contacts?: { recipient_email?: string; sender_email?: string },
+  payment?: { payment_intent_id?: string; comp?: boolean; display_price_cents?: number },
 ): Promise<LabelResult> {
   const body = {
     easypost_shipment_id: easypostShipmentId,
@@ -140,6 +165,9 @@ export async function buyLabel(
     live_mode: liveMode,
     recipient_email: contacts?.recipient_email,
     sender_email: contacts?.sender_email,
+    payment_intent_id: payment?.payment_intent_id,
+    comp: payment?.comp,
+    display_price_cents: payment?.display_price_cents,
   };
   return post<LabelResult>("labels", body);
 }

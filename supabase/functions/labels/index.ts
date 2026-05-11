@@ -4,6 +4,7 @@ import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { log } from "../_shared/logger.ts";
 import { sendEmail } from "../_shared/resend.ts";
 import { labelConfirmationEmail } from "../_shared/email-templates.ts";
+import { retrievePaymentIntent, createRefund } from "../_shared/stripe.ts";
 
 serve(async (req: Request) => {
     // Handle CORS preflight
@@ -30,6 +31,8 @@ serve(async (req: Request) => {
             display_price_cents,
             recipient_email,
             sender_email,
+            payment_intent_id,
+            comp,  // admin override — bypass payment requirement (live comp labels)
         } = await req.json();
 
         if (!easypost_shipment_id || !easypost_rate_id) {
@@ -40,6 +43,58 @@ serve(async (req: Request) => {
         }
 
         const isLive = live_mode === true;
+        const isComp = comp === true;
+
+        // ─── Payment authorization gate ─────────────────────────
+        // Every label purchase must reference a captured Stripe PaymentIntent
+        // bound to the same easypost_shipment_id. The lone exception is `comp`
+        // (admin/internal flow) which records a comp payment after the fact.
+        let verifiedPaymentIntent: { id: string; amount: number; status: string } | null = null;
+        if (!isComp) {
+            if (!payment_intent_id || typeof payment_intent_id !== "string") {
+                return new Response(
+                    JSON.stringify({ error: "Missing required field: payment_intent_id" }),
+                    { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+            try {
+                const pi = await retrievePaymentIntent(payment_intent_id, isLive);
+                if (pi.status !== "succeeded") {
+                    return new Response(
+                        JSON.stringify({ error: `Payment not captured (status=${pi.status})` }),
+                        { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                    );
+                }
+                if (pi.metadata?.easypost_shipment_id !== easypost_shipment_id) {
+                    // Hard refuse: prevents one paid PI from being replayed against
+                    // a different shipment.
+                    log({
+                        event_type: "label.pi_shipment_mismatch",
+                        session_id: sessionId,
+                        severity: "error",
+                        entity_type: "payment_intent",
+                        entity_id: payment_intent_id,
+                        properties: {
+                            requested_shipment_id: easypost_shipment_id,
+                            pi_metadata_shipment_id: pi.metadata?.easypost_shipment_id ?? null,
+                        },
+                    });
+                    return new Response(
+                        JSON.stringify({ error: "PaymentIntent does not match shipment" }),
+                        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                    );
+                }
+                verifiedPaymentIntent = { id: pi.id, amount: pi.amount, status: pi.status };
+            } catch (err) {
+                const msg = err instanceof Error ? err.message : "PI verification failed";
+                console.error(`[Session ${sessionId}] [labels] PI verify error:`, msg);
+                return new Response(
+                    JSON.stringify({ error: `Payment verification failed: ${msg}` }),
+                    { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+        }
+
         const apiKey = Deno.env.get(isLive ? "EASYPOST_API_KEY" : "EASYPOST_TEST_API_KEY");
         if (!apiKey) {
             return new Response(
@@ -143,8 +198,60 @@ serve(async (req: Request) => {
                 },
             });
 
+            // Auto-refund the captured payment if EasyPost couldn't deliver
+            // the label. The user has been charged but has nothing to ship,
+            // so this is a hard failure mode we need to make right.
+            if (verifiedPaymentIntent) {
+                try {
+                    const refund = await createRefund({
+                        payment_intent_id: verifiedPaymentIntent.id,
+                        reason: "requested_by_customer",
+                        metadata: {
+                            easypost_shipment_id,
+                            failure_reason: "easypost_buy_failed",
+                            easypost_error: String(buyData.error?.code ?? "unknown"),
+                        },
+                        idempotency_key: `refund_${easypost_shipment_id}_buy_failed`,
+                        liveMode: isLive,
+                    });
+                    log({
+                        event_type: "label.auto_refund_issued",
+                        session_id: sessionId,
+                        severity: "warn",
+                        entity_type: "payment_intent",
+                        entity_id: verifiedPaymentIntent.id,
+                        properties: { refund_id: refund.id, amount_cents: refund.amount, easypost_shipment_id },
+                    });
+                } catch (refundErr) {
+                    // Refund failed — this is bad. The user was charged and
+                    // we can't programmatically make it right. Log loud and
+                    // surface in the response so the UI can tell the user
+                    // to contact support.
+                    const refundMsg = refundErr instanceof Error ? refundErr.message : String(refundErr);
+                    console.error(`[Session ${sessionId}] [labels] AUTO-REFUND FAILED:`, refundMsg);
+                    log({
+                        event_type: "label.auto_refund_failed",
+                        session_id: sessionId,
+                        severity: "error",
+                        entity_type: "payment_intent",
+                        entity_id: verifiedPaymentIntent.id,
+                        properties: { error_message: refundMsg, easypost_shipment_id },
+                    });
+                    return new Response(
+                        JSON.stringify({
+                            error: errorMsg,
+                            payment_charged: true,
+                            refund_failed: true,
+                            payment_intent_id: verifiedPaymentIntent.id,
+                            support_message: "Payment was charged but label generation failed and the automatic refund could not be processed. Please contact support@sendmo.co with this reference: " + verifiedPaymentIntent.id,
+                        }),
+                        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                    );
+                }
+            }
+
             return new Response(
-                JSON.stringify({ error: errorMsg }),
+                JSON.stringify({ error: errorMsg, refunded: !!verifiedPaymentIntent }),
                 { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
             );
         }
@@ -291,8 +398,48 @@ serve(async (req: Request) => {
                             }
                         }
 
-                        // Insert comp payment record for live comp labels
-                        if (isLive && shipmentId) {
+                        // Record the payment row. Three cases:
+                        //   1. Real Stripe-charged label → verifiedPaymentIntent present
+                        //   2. Admin comp (free label, no card) → isComp
+                        //   3. Pre-Stripe legacy live-mode flow → kept as fallback
+                        //      until everything is on PI, then removable.
+                        if (shipmentId && verifiedPaymentIntent) {
+                            const rateCents = Math.round(parseFloat(buyData.selected_rate?.rate || "0") * 100);
+                            supabase.from('payments').insert({
+                                shipment_id: shipmentId,
+                                user_id: '00000000-0000-0000-0000-000000000001',
+                                stripe_payment_intent_id: verifiedPaymentIntent.id,
+                                amount_cents: verifiedPaymentIntent.amount,
+                                capture_method: 'automatic',
+                                status: 'captured',
+                                payment_method: 'card',
+                            }).then(({ error: payErr }: { error: { message: string } | null }) => {
+                                if (payErr) {
+                                    console.error('Stripe payment insert error:', payErr);
+                                    log({
+                                        event_type: "label.stripe_payment_persist_error",
+                                        session_id: sessionId,
+                                        severity: "error",
+                                        entity_type: "payment",
+                                        entity_id: shipmentId,
+                                        properties: { error_message: payErr.message, payment_intent_id: verifiedPaymentIntent!.id },
+                                    });
+                                } else {
+                                    log({
+                                        event_type: "label.stripe_payment_recorded",
+                                        session_id: sessionId,
+                                        severity: "info",
+                                        entity_type: "payment",
+                                        entity_id: shipmentId,
+                                        properties: {
+                                            amount_cents: verifiedPaymentIntent!.amount,
+                                            payment_intent_id: verifiedPaymentIntent!.id,
+                                            rate_cents: rateCents,
+                                        },
+                                    });
+                                }
+                            });
+                        } else if (shipmentId && (isComp || isLive)) {
                             const rateCents = Math.round(parseFloat(buyData.selected_rate?.rate || "0") * 100);
                             supabase.from('payments').insert({
                                 shipment_id: shipmentId,
@@ -302,7 +449,7 @@ serve(async (req: Request) => {
                                 capture_method: 'automatic',
                                 status: 'captured',
                                 payment_method: 'comp',
-                            }).then(({ error: payErr }) => {
+                            }).then(({ error: payErr }: { error: { message: string } | null }) => {
                                 if (payErr) {
                                     console.error('Comp payment insert error:', payErr);
                                     log({
@@ -311,7 +458,6 @@ serve(async (req: Request) => {
                                         severity: "error",
                                         entity_type: "payment",
                                         entity_id: shipmentId,
-                                        duration_ms: 0,
                                         properties: { error_message: payErr.message },
                                     });
                                 } else {
@@ -321,7 +467,6 @@ serve(async (req: Request) => {
                                         severity: "info",
                                         entity_type: "payment",
                                         entity_id: shipmentId,
-                                        duration_ms: 0,
                                         properties: { amount_cents: display_price_cents ?? rateCents },
                                     });
                                 }

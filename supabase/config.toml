@@ -99,6 +99,16 @@ verify_jwt = false
 enabled = true
 verify_jwt = false
 
+# Stripe PaymentIntent creation — called by anon checkout.
+[functions.payments]
+enabled = true
+verify_jwt = false
+
+# Stripe webhook receiver — verified via Stripe's own signature, not JWT.
+[functions.stripe-webhook]
+enabled = true
+verify_jwt = false
+
 # Internal structured event logging — called by other Edge Functions with
 # the service role key. Setting verify_jwt=false avoids any gateway
 # rejection of non-standard tokens; auth is handled inside the function.
