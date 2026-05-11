@@ -104,6 +104,24 @@ export async function fetchRates(
   return { rates, easypost_shipment_id: shipmentId };
 }
 
+// ─── Magic Guestimator (AI) ─────────────────────────────────
+
+export interface GuestimateApiResult {
+  itemName: string;
+  packaging: "box" | "envelope" | "tube";
+  length_in: number;
+  width_in: number;
+  height_in: number;
+  weight_lbs: number;
+  speedHint: "economy" | "standard" | "express" | null;
+  confidence: "high" | "medium" | "low";
+  notes: string;
+}
+
+export async function fetchGuestimate(description: string): Promise<GuestimateApiResult> {
+  return post<GuestimateApiResult>("guestimate", { description });
+}
+
 // ─── Label Purchase ─────────────────────────────────────────
 
 export async function buyLabel(
@@ -326,4 +344,39 @@ export function formatCents(cents: number): string {
 
 export function isOverCap(displayPriceCents: number, capDollars: number = 100): boolean {
   return displayPriceCents > capDollars * 100;
+}
+
+// ─── Recommended Rate Selection ────────────────────────────
+//
+// Picks the "best" rate from the EasyPost rate list given an optional speed hint.
+//   - 'express' → fastest delivery (lowest estimated_days, tiebreak by price)
+//   - 'economy' → cheapest absolute price
+//   - 'standard' or null → best value: cheapest rate arriving in ≤5 business days,
+//     falling back to absolute cheapest if nothing qualifies.
+//
+// Returns null if no rates are available.
+export function pickRecommendedRate<T extends { display_price_cents: number; estimated_days: number | null }>(
+  rates: T[],
+  hint: "economy" | "standard" | "express" | null,
+): T | null {
+  if (!rates.length) return null;
+
+  if (hint === "express") {
+    const sorted = [...rates].sort((a, b) => {
+      const da = a.estimated_days ?? 99;
+      const db = b.estimated_days ?? 99;
+      if (da !== db) return da - db;
+      return a.display_price_cents - b.display_price_cents;
+    });
+    return sorted[0];
+  }
+
+  if (hint === "economy") {
+    return [...rates].sort((a, b) => a.display_price_cents - b.display_price_cents)[0];
+  }
+
+  // standard / null → best value: cheapest among rates arriving in ≤5 days
+  const fast = rates.filter((r) => r.estimated_days !== null && r.estimated_days <= 5);
+  const pool = fast.length > 0 ? fast : rates;
+  return [...pool].sort((a, b) => a.display_price_cents - b.display_price_cents)[0];
 }

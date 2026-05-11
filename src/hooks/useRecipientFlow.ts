@@ -32,6 +32,9 @@ export interface RecipientFlowState {
   availableRates: ShippingRate[];
   easypostShipmentId: string;
   insurance: boolean;
+  // Speed hint from the AI guestimator — drives auto-selection of recommended rate
+  // when fresh rates arrive. Cleared after the user manually picks a different rate.
+  recommendedSpeedHint: SpeedTier | null;
 
   // Step 11-12
   paymentStatus: "idle" | "processing" | "authorized" | "succeeded" | "failed";
@@ -69,6 +72,7 @@ const INITIAL_STATE: RecipientFlowState = {
   availableRates: [],
   easypostShipmentId: "",
   insurance: false,
+  recommendedSpeedHint: null,
 
   paymentStatus: "idle",
   labelResult: null,

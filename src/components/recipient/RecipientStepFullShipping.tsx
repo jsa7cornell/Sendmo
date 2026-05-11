@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { AlertCircle } from "lucide-react";
+import { AlertCircle, Sparkles, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -8,11 +8,11 @@ import SmartAddressInput from "@/components/ui/SmartAddressInput";
 import PriceSummaryCard from "./PriceSummaryCard";
 import ShippingMethodCard from "./ShippingMethodCard";
 import MagicGuestimator from "./MagicGuestimator";
-import { fetchRates, isOverCap } from "@/lib/api";
+import { fetchRates, isOverCap, pickRecommendedRate, fetchGuestimate, formatCents } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { getTotalPriceCents, getTotalWeightOz, canFetchRates } from "@/hooks/useRecipientFlow";
 import type { RecipientFlowState } from "@/hooks/useRecipientFlow";
-import type { AddressInput, GuestimatorResult, PackagingType, ShippingRate } from "@/lib/types";
+import type { AddressInput, GuestimatorResult, PackagingType, ShippingRate, SpeedTier } from "@/lib/types";
 
 // ─── Packaging Options ──────────────────────────────────────
 
@@ -39,6 +39,9 @@ export default function RecipientStepFullShipping({
 }: Props) {
   const [ratesLoading, setRatesLoading] = useState(false);
   const [ratesError, setRatesError] = useState<string | null>(null);
+  const [luckyLoading, setLuckyLoading] = useState(false);
+  const [luckyError, setLuckyError] = useState<string | null>(null);
+  const [luckyNote, setLuckyNote] = useState<string | null>(null);
   const fetchRef = useRef(0);
   const showErrors = tried && errors.length > 0;
 
@@ -94,10 +97,15 @@ export default function RecipientStepFullShipping({
 
         if (id !== fetchRef.current) return; // stale
 
+        // Apply the AI-recommended rate when a speed hint is set; otherwise default
+        // to the cheapest "best value" rate (≤5 day delivery, fall back to cheapest).
+        const hint = stateRef.current.recommendedSpeedHint;
+        const recommended = pickRecommendedRate(rates, hint);
+
         onUpdateRef.current({
           availableRates: rates,
           easypostShipmentId: easypost_shipment_id,
-          selectedRate: rates.length > 0 ? rates[0] : null,
+          selectedRate: recommended,
         });
       } catch (err) {
         if (id !== fetchRef.current) return;
@@ -117,7 +125,10 @@ export default function RecipientStepFullShipping({
 
   // ── Guestimator handler ───────────────────────────────────
 
-  function handleGuestimation(result: GuestimatorResult) {
+  function handleGuestimation(
+    result: GuestimatorResult,
+    meta?: { confidence: "high" | "medium" | "low"; notes: string },
+  ) {
     onUpdate({
       packagingType: result.packaging,
       dimensions: {
@@ -130,7 +141,40 @@ export default function RecipientStepFullShipping({
         oz: String(Math.round((result.weightLbs % 1) * 16)),
       },
       itemDescription: result.itemName,
+      recommendedSpeedHint: (result.speedHint ?? null) as SpeedTier | null,
     });
+    if (meta && meta.confidence !== "high" && meta.notes) {
+      setLuckyNote(meta.notes);
+    } else {
+      setLuckyNote(null);
+    }
+  }
+
+  async function handleFeelingLucky() {
+    const desc = state.itemDescription.trim();
+    if (!desc || luckyLoading) return;
+    setLuckyLoading(true);
+    setLuckyError(null);
+    setLuckyNote(null);
+    try {
+      const est = await fetchGuestimate(desc);
+      handleGuestimation(
+        {
+          packaging: est.packaging,
+          length: est.length_in,
+          width: est.width_in,
+          height: est.packaging === "envelope" ? 1 : est.height_in,
+          weightLbs: est.weight_lbs,
+          speedHint: est.speedHint ?? undefined,
+          itemName: est.itemName,
+        },
+        { confidence: est.confidence, notes: est.notes },
+      );
+    } catch (err) {
+      setLuckyError(err instanceof Error ? err.message : "Couldn't estimate");
+    } finally {
+      setLuckyLoading(false);
+    }
   }
 
   // ── Helpers ───────────────────────────────────────────────
@@ -178,7 +222,7 @@ export default function RecipientStepFullShipping({
       {/* Magic Guestimator */}
       <MagicGuestimator onResult={handleGuestimation} />
 
-      {/* Item description */}
+      {/* Item description + I'm Feeling Lucky */}
       <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
         <label htmlFor="item-desc" className="text-sm font-medium text-foreground">
           Item description <span className="text-muted-foreground font-normal">(optional)</span>
@@ -187,9 +231,50 @@ export default function RecipientStepFullShipping({
           id="item-desc"
           value={state.itemDescription}
           onChange={(e) => onUpdate({ itemDescription: e.target.value })}
-          placeholder="e.g., Used laptop, pair of running shoes"
+          placeholder="e.g., Hardcover cookbook, no rush"
           className="mt-1.5 rounded-xl"
         />
+
+        <div className="flex items-center gap-3 mt-3">
+          <Button
+            type="button"
+            variant="default"
+            size="sm"
+            onClick={handleFeelingLucky}
+            disabled={!state.itemDescription.trim() || luckyLoading}
+            className="rounded-xl gap-1.5"
+          >
+            {luckyLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+            {luckyLoading ? "Thinking…" : "I'm Feeling Lucky"}
+          </Button>
+          <span className="text-xs text-muted-foreground">
+            Auto-fill packaging, dims, weight, and pick a shipping method
+          </span>
+        </div>
+
+        <AnimatePresence>
+          {luckyNote && (
+            <motion.p
+              initial={{ opacity: 0, y: -4 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              className="text-xs text-muted-foreground mt-2"
+            >
+              <Sparkles className="w-3 h-3 inline mr-1 text-primary" />
+              {luckyNote}
+            </motion.p>
+          )}
+          {luckyError && (
+            <motion.p
+              initial={{ opacity: 0, y: -4 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              className="text-xs text-destructive mt-2"
+            >
+              {luckyError}
+            </motion.p>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* Packaging type */}
@@ -324,7 +409,7 @@ export default function RecipientStepFullShipping({
                   selected={state.selectedRate?.id === rate.id}
                   disabled={overCap}
                   disabledReason={overCap ? "Exceeds price cap" : undefined}
-                  onSelect={() => onUpdate({ selectedRate: rate })}
+                  onSelect={() => onUpdate({ selectedRate: rate, recommendedSpeedHint: null })}
                 />
               );
             })}
@@ -367,6 +452,34 @@ export default function RecipientStepFullShipping({
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Final estimate summary */}
+      {state.selectedRate && (
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-primary/5 border border-primary/20 rounded-2xl p-5"
+        >
+          <div className="flex items-center gap-2 mb-2">
+            <Sparkles className="w-4 h-4 text-primary" />
+            <h3 className="text-sm font-semibold text-foreground">Your estimate</h3>
+          </div>
+          <div className="text-sm text-foreground">
+            <span className="font-medium">{state.selectedRate.carrier} {state.selectedRate.service}</span>
+            {state.selectedRate.estimated_days && (
+              <span className="text-muted-foreground">
+                {" "}· arrives in ~{state.selectedRate.estimated_days} {state.selectedRate.estimated_days === 1 ? "day" : "days"}
+              </span>
+            )}
+          </div>
+          <div className="text-2xl font-bold text-primary mt-1">
+            {formatCents(totalCents)}
+            {state.insurance && (
+              <span className="text-xs text-muted-foreground font-normal ml-2">includes insurance</span>
+            )}
+          </div>
+        </motion.div>
+      )}
 
       {/* Buttons */}
       <div className="flex gap-3">

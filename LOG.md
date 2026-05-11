@@ -8,6 +8,26 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-10] Magic Guestimator upgraded to AI + "I'm Feeling Lucky" + auto-rate-recommendation
+**Category:** Feature | LLM | UX
+**Context:** The shipping page's "Magic Guestimator" was branded with a sparkle icon but was a 15-item hardcoded keyword lookup. Anything outside the list ("watch", "ceramic vase", "framed print", etc.) returned "Couldn't match." User reported it as "not working" because most realistic descriptions failed. Also: `speedHint` was being parsed and silently discarded; cheapest/fastest hints in the user's text were never applied to rate selection.
+**Decision/Finding:**
+- New Supabase Edge Function [`guestimate`](supabase/functions/guestimate/index.ts) calls Claude Haiku 4.5 with strict tool-use JSON output. Returns `{itemName, packaging, length_in, width_in, height_in, weight_lbs, speedHint, confidence, notes}`. Prompt biases toward overestimating dims/weight to avoid carrier adjustment fees.
+- `parseGuestimation()` keyword logic deleted from [MagicGuestimator.tsx](src/components/recipient/MagicGuestimator.tsx); component now calls `fetchGuestimate()` with a loading state. Old `tests/unit/guestimator.test.ts` removed (tested keyword logic that no longer exists).
+- New `pickRecommendedRate()` helper in [api.ts](src/lib/api.ts): `express` → fastest delivery; `economy` → cheapest; `standard`/null → cheapest among rates ≤5 days, fall back to absolute cheapest.
+- New `recommendedSpeedHint` field on `RecipientFlowState` carries the AI's hint into the rates effect, which auto-selects the recommended rate when fresh rates arrive. Cleared when user manually picks a different rate so the recommendation doesn't override their choice on next refetch.
+- New "I'm Feeling Lucky" button in [RecipientStepFullShipping.tsx](src/components/recipient/RecipientStepFullShipping.tsx) sits between the item description input and the packaging picker. Reads `state.itemDescription`, calls the same guestimate endpoint, fills everything, surfaces low/medium-confidence assumptions inline ("Assumed standard cylindrical vase…").
+- Final estimate summary card added above "Continue to payment" showing carrier/service, ETA, and total — so the user sees the complete picture before committing.
+**Why:** The keyword approach was fundamentally capped at 15 items; expanding it to 100 wouldn't fix vague descriptions. Haiku 4.5 reliably handles everything from "vintage Polaroid camera" to "framed 18x24 art print" with sensible padding. Cost is ~$0.001 per estimate (300 in / 150 out tokens) with prompt-cached system; effectively free at SendMo's volume.
+**Watch out:**
+- **Carrier adjustment fees are the real risk.** If Haiku under-estimates dims/weight, USPS/UPS measure the actual package at the warehouse and bill the difference back to SendMo (not the user). Mitigated by (a) prompt explicitly biasing toward larger/heavier when uncertain, (b) `confidence` field surfaced inline so users can spot weak guesses, (c) AI-recommended rate is auto-selected but always editable. Track adjustment incidents post-launch; if they spike, tighten prompt or move to confidence-gated auto-select.
+- **No fallback to keyword matcher** — per product call. If the API errors (key missing, Anthropic down, network), the user sees the error and fills dims manually. The dimensions form is still right there.
+- **Vercel AI Gateway considered, declined** — backend lives in Supabase Edge Functions (Deno). Routing through Vercel from there adds a hop for marginal benefit. Direct Anthropic call wins on simplicity until we add a 2nd AI feature, at which point the gateway pays for itself.
+- **Smoke-tested via direct fetch** to the deployed function — UI verification was blocked because the running Vite server was rooted at the main repo path, not the worktree, so HMR didn't pick up the new `fetchGuestimate` export. Verified end-to-end through the function URL with sample inputs (cookbook, Polaroid camera, ceramic vase, dinner plates, framed print) — all returned sensible JSON. Full UI click-through needs to happen after merge or after restarting Vite from the worktree path.
+**Setup:**
+- `ANTHROPIC_API_KEY` set as a Supabase secret (`supabase secrets set ANTHROPIC_API_KEY=…`).
+- Function deployed via `supabase functions deploy guestimate --no-verify-jwt --project-ref fkxykvzsqdjzhurntgah` from the worktree path.
+
 ### [2026-05-10] Google OAuth added alongside magic link
 **Category:** Supabase | Architecture
 **Context:** Stripe work needs a sturdier account-creation story than magic-link-only. Google OAuth is a low-friction second option without making magic link disappear.
