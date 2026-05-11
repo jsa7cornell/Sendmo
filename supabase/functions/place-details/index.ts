@@ -66,6 +66,17 @@ serve(async (req: Request) => {
     const route = components["route"]?.longText || "";
     const street1 = [street_number, route].filter(Boolean).join(" ").trim();
 
+    // Google's Places API (New) only tags `postal_code` as a discrete component
+    // for `street_address`-type places. Some legitimate residential addresses
+    // come back as `geocode` or `route` types where postal_code is absent —
+    // but the canonical `formattedAddress` ("231 Carlester Dr, Los Gatos, CA
+    // 95032, USA") reliably includes the ZIP. Fall back to extracting it.
+    let zip = components["postal_code"]?.longText || "";
+    if (!zip && data.formattedAddress) {
+        const match = String(data.formattedAddress).match(/\b(\d{5})(?:-\d{4})?\b/);
+        if (match) zip = match[1];
+    }
+
     return new Response(
         JSON.stringify({
             street: street1,
@@ -74,7 +85,7 @@ serve(async (req: Request) => {
                 || components["postal_town"]?.longText
                 || "",
             state: components["administrative_area_level_1"]?.shortText || "",
-            zip: components["postal_code"]?.longText || "",
+            zip,
             formatted_address: data.formattedAddress || "",
         }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }

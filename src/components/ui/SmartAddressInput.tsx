@@ -350,7 +350,11 @@ export default function SmartAddressInput({ label, value, onChange, error, nameL
                 {/* Error / hint messages */}
                 {hasError && <p className="mt-1 text-xs text-destructive">{error}</p>}
                 {!isVerified && query.length > 5 && !hasError && !isLoading && predictions.length === 0 && (
-                    <p className="mt-1 text-xs text-muted-foreground">No results — try a different address</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                        {value.place_id
+                            ? "Couldn't get a complete address (missing ZIP) — pick another suggestion or refine the street"
+                            : "No results — try a different address"}
+                    </p>
                 )}
                 {!isVerified && query.length > 5 && !hasError && predictions.length > 0 && (
                     <p className="mt-1 text-xs text-muted-foreground">Select an address from the dropdown to verify ✓</p>

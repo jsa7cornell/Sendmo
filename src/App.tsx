@@ -1,5 +1,5 @@
-import { BrowserRouter, Routes, Route, Outlet, Navigate, useSearchParams, useNavigate } from "react-router-dom";
-import { AuthProvider, useAuth } from "@/contexts/AuthContext";
+import { BrowserRouter, Routes, Route, Outlet, Navigate, useNavigate } from "react-router-dom";
+import { AuthProvider } from "@/contexts/AuthContext";
 import { RecipientFlowProvider } from "@/contexts/RecipientFlowContext";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import Index from "@/pages/Index";
@@ -19,32 +19,27 @@ import NotFound from "@/pages/NotFound";
 import AppHeader from "@/components/AppHeader";
 import RecipientStepPathChoice from "@/components/recipient/RecipientStepPathChoice";
 
-// Auth'd user landed on /onboarding without choosing a path → show the
-// chooser instead of jumping straight into the flexible-link editor. With
-// a deep-link (?path=flexible|full_label) they go directly to the right
-// destination. Anon users get the full wizard wrapped in RecipientFlowProvider.
-function OnboardingLayout() {
-  const { user, loading } = useAuth();
-  const [searchParams] = useSearchParams();
+// Path picker — shown at /onboarding (no flow state needed yet).
+// Sends both anon and authed users into /onboarding/{path-slug}/destination.
+function OnboardingPathPicker() {
   const navigate = useNavigate();
-  if (loading) return null;
-  if (user) {
-    const path = searchParams.get("path");
-    if (path === "flexible") return <Navigate to="/links/new" replace />;
-    if (path === "full_label") return <Navigate to="/links/new?path=full_label" replace />;
-    return (
-      <div className="min-h-screen bg-gradient-to-b from-background to-muted/50">
-        <AppHeader />
-        <div className="max-w-3xl mx-auto px-4 py-8">
-          <RecipientStepPathChoice
-            onSelect={(p) =>
-              navigate(p === "full_label" ? "/links/new?path=full_label" : "/links/new")
-            }
-          />
-        </div>
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-background to-muted/50">
+      <AppHeader />
+      <div className="max-w-3xl mx-auto px-4 py-8">
+        <RecipientStepPathChoice
+          onSelect={(p) =>
+            navigate(p === "full_label" ? "/onboarding/full-label/destination" : "/onboarding/flexible/destination")
+          }
+        />
       </div>
-    );
-  }
+    </div>
+  );
+}
+
+// Wraps the multi-step flow in its provider. Auth-aware prefill happens
+// inside the provider itself; both anon and authed users mount here.
+function OnboardingFlowLayout() {
   return (
     <RecipientFlowProvider>
       <Outlet />
@@ -60,10 +55,12 @@ function App() {
           <Route path="/" element={<Index />} />
           <Route path="/login" element={<Login />} />
 
-          {/* Recipient onboarding — URL-based step routing */}
-          <Route path="/onboarding" element={<OnboardingLayout />}>
-            <Route index element={<RecipientOnboarding />} />
-            <Route path=":step" element={<RecipientOnboarding />} />
+          {/* Recipient onboarding — path-scoped URL routing */}
+          <Route path="/onboarding" element={<OnboardingPathPicker />} />
+          <Route path="/onboarding/:pathSlug" element={<OnboardingFlowLayout />}>
+            {/* Bare /onboarding/{path} → redirect to first step */}
+            <Route index element={<Navigate to="destination" replace />} />
+            <Route path=":stepSlug" element={<RecipientOnboarding />} />
           </Route>
 
           <Route path="/s/:shortCode" element={<SenderFlow />} />

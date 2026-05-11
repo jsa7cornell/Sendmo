@@ -1,5 +1,5 @@
 import { createContext, useContext, useCallback, useEffect, useState, useRef } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import type {
   AddressInput,
   DistanceTier,
@@ -11,15 +11,19 @@ import type {
 } from "@/lib/types";
 import { emptyAddress } from "@/lib/utils";
 import {
+  pathSlugToPath,
   slugToStep,
-  stepToSlug,
+  stepUrl,
   nextStep,
+  prevStep,
   canAccessStep,
   stepIndex,
 } from "@/lib/stepRouting";
 import { getValidationErrors, type RecipientFlowState } from "@/hooks/useRecipientFlow";
+import { useAuth } from "@/contexts/AuthContext";
+import { supabase } from "@/lib/supabase";
 
-// ─── State Shape (same as before, minus currentStep) ────────
+// ─── State Shape ────────────────────────────────────────────
 
 export interface RecipientFlowData {
   path: RecipientPath | null;
@@ -111,7 +115,6 @@ interface RecipientFlowContextValue {
   selectPath: (path: RecipientPath) => void;
   markStepComplete: (step: number) => void;
   getErrors: (step: number) => string[];
-  // For compatibility: expose state in the old RecipientFlowState shape
   state: RecipientFlowState;
 }
 
@@ -122,35 +125,79 @@ const RecipientFlowContext = createContext<RecipientFlowContextValue | null>(nul
 export function RecipientFlowProvider({ children }: { children: React.ReactNode }) {
   const [data, setData] = useState<RecipientFlowData>(INITIAL_DATA);
   const navigate = useNavigate();
-  const params = useParams<{ step?: string }>();
-  const [searchParams] = useSearchParams();
+  const params = useParams<{ pathSlug?: string; stepSlug?: string }>();
   const directionRef = useRef<NavDirection>("forward");
-  const autoPathHandled = useRef(false);
+  const { user } = useAuth();
 
-  // Derive current step from URL
-  const currentStep = params.step ? (slugToStep(params.step) ?? 0) : 0;
+  // URL is the source of truth for path + step
+  const urlPath = pathSlugToPath(params.pathSlug ?? "");
+  const currentStep = slugToStep(urlPath, params.stepSlug);
 
-  // Auto-select path from ?path= query param so callers can deep-link past
-  // the path-choice screen (e.g. Dashboard "Create my link" → flexible).
+  // Sync data.path from URL — also marks step 0 complete since the path
+  // picker is implicit in the URL.
   useEffect(() => {
-    if (autoPathHandled.current || data.path) return;
-    const qp = searchParams.get("path");
-    if (qp !== "flexible" && qp !== "full_label") return;
-    autoPathHandled.current = true;
+    if (!urlPath) return;
+    if (data.path === urlPath) return;
     setData((prev) => ({
       ...prev,
-      path: qp,
+      path: urlPath,
       completedSteps: prev.completedSteps.includes(0) ? prev.completedSteps : [...prev.completedSteps, 0],
     }));
-    directionRef.current = "forward";
-    navigate("/onboarding/address", { replace: true });
-  }, [searchParams, data.path, navigate]);
+  }, [urlPath, data.path]);
 
-  // Build the old-style state object for backward compatibility with step components
-  const state: RecipientFlowState = {
-    ...data,
-    currentStep,
-  };
+  // Auth-aware prefill: when an authenticated user lands here without a
+  // destination address yet, fetch their most recent saved address + profile
+  // and prefill destination + email. Skip if they've already typed something.
+  const prefillRan = useRef(false);
+  useEffect(() => {
+    if (prefillRan.current) return;
+    if (!user) return;
+    if (data.destinationAddress.street || data.email) return;
+    prefillRan.current = true;
+
+    let cancelled = false;
+    (async () => {
+      const [{ data: profile }, { data: recentAddr }] = await Promise.all([
+        supabase.from("profiles").select("email, full_name").eq("id", user.id).single(),
+        supabase
+          .from("addresses")
+          .select("name, street1, street2, city, state, zip, is_verified")
+          .eq("user_id", user.id)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+      ]);
+      if (cancelled) return;
+
+      const recentComplete =
+        recentAddr && !!recentAddr.street1 && !!recentAddr.city && !!recentAddr.state && !!recentAddr.zip;
+
+      setData((prev) => {
+        // Bail out if the user has typed anything in the meantime
+        if (prev.destinationAddress.street || prev.email) return prev;
+        return {
+          ...prev,
+          destinationAddress: recentComplete
+            ? {
+                name: recentAddr.name || profile?.full_name || "",
+                street: recentAddr.street1!,
+                city: recentAddr.city!,
+                state: recentAddr.state!,
+                zip: recentAddr.zip!,
+                verified: !!recentAddr.is_verified,
+              }
+            : profile?.full_name
+            ? { ...prev.destinationAddress, name: profile.full_name }
+            : prev.destinationAddress,
+          email: profile?.email ?? user.email ?? prev.email,
+        };
+      });
+    })();
+    return () => { cancelled = true; };
+  }, [user, data.destinationAddress.street, data.email]);
+
+  // Backward-compat state object (step components still expect currentStep on it)
+  const state: RecipientFlowState = { ...data, currentStep };
 
   const updateData = useCallback((partial: Partial<RecipientFlowData>) => {
     setData((prev) => ({ ...prev, ...partial }));
@@ -170,36 +217,30 @@ export function RecipientFlowProvider({ children }: { children: React.ReactNode 
     if (next !== null) {
       setData((prev) => ({
         ...prev,
-        completedSteps: prev.completedSteps.includes(step)
-          ? prev.completedSteps
-          : [...prev.completedSteps, step],
+        completedSteps: prev.completedSteps.includes(step) ? prev.completedSteps : [...prev.completedSteps, step],
       }));
-      const slug = stepToSlug(next);
       directionRef.current = "forward";
-      if (slug) navigate(`/onboarding/${slug}`);
+      navigate(stepUrl(data.path, next));
     }
     return true;
   }, [data, navigate]);
 
   const goBack = useCallback(() => {
     directionRef.current = "backward";
-    navigate(-1);
-  }, [navigate]);
+    const prev = prevStep(currentStep, data.path);
+    if (prev !== null) {
+      navigate(stepUrl(data.path, prev));
+    } else {
+      navigate("/onboarding");
+    }
+  }, [navigate, currentStep, data.path]);
 
   const goToStep = useCallback((step: number) => {
-    if (!canAccessStep(step, data.completedSteps, data.path) && step !== currentStep) {
-      return;
-    }
+    if (!canAccessStep(step, data.completedSteps, data.path) && step !== currentStep) return;
     const targetIdx = stepIndex(step, data.path);
     const currentIdx = stepIndex(currentStep, data.path);
     directionRef.current = targetIdx < currentIdx ? "backward" : "forward";
-
-    if (step === 0) {
-      navigate("/onboarding");
-    } else {
-      const slug = stepToSlug(step);
-      if (slug) navigate(`/onboarding/${slug}`);
-    }
+    navigate(stepUrl(data.path, step));
   }, [data.completedSteps, data.path, currentStep, navigate]);
 
   const selectPath = useCallback((path: RecipientPath) => {
@@ -209,15 +250,13 @@ export function RecipientFlowProvider({ children }: { children: React.ReactNode 
       completedSteps: prev.completedSteps.includes(0) ? prev.completedSteps : [...prev.completedSteps, 0],
     }));
     directionRef.current = "forward";
-    navigate("/onboarding/address");
+    navigate(stepUrl(path, 1));
   }, [navigate]);
 
   const markStepComplete = useCallback((step: number) => {
     setData((prev) => ({
       ...prev,
-      completedSteps: prev.completedSteps.includes(step)
-        ? prev.completedSteps
-        : [...prev.completedSteps, step],
+      completedSteps: prev.completedSteps.includes(step) ? prev.completedSteps : [...prev.completedSteps, step],
     }));
   }, []);
 

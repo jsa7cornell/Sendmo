@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useLocation, Navigate } from "react-router-dom";
+import { useLocation, useParams, Navigate } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { Package, Link2 } from "lucide-react";
 import { isAdminSession } from "@/pages/Admin";
@@ -9,11 +9,11 @@ import {
   stepToProgressIndex,
   progressIndexToStep,
   canAccessStep,
-  firstIncompleteSlug,
+  firstIncompleteUrl,
   isSlugValidForPath,
+  pathSlugToPath,
 } from "@/lib/stepRouting";
 import ProgressBar from "@/components/recipient/ProgressBar";
-import RecipientStepPathChoice from "@/components/recipient/RecipientStepPathChoice";
 import RecipientStepAddress from "@/components/recipient/RecipientStepAddress";
 import RecipientStepFullShipping from "@/components/recipient/RecipientStepFullShipping";
 import RecipientStepPayment from "@/components/recipient/RecipientStepPayment";
@@ -64,6 +64,7 @@ export default function RecipientOnboarding() {
   const [adminMode, setAdminMode] = useState<AdminMode>("test");
   const liveMode = isAdmin && adminMode === "live_comp";
   const location = useLocation();
+  const params = useParams<{ pathSlug?: string; stepSlug?: string }>();
 
   const {
     data,
@@ -74,28 +75,33 @@ export default function RecipientOnboarding() {
     goToStep,
     goBack,
     tryAdvance,
-    selectPath,
     getErrors,
   } = useRecipientFlowContext();
 
-  // ── Step guard: redirect if step is not accessible ────────
+  // ── Step guard ─────────────────────────────────────────────
 
-  // Extract slug from pathname
-  const pathParts = location.pathname.split("/").filter(Boolean);
-  const slug = pathParts.length > 1 ? pathParts[1] : null; // "address", "shipping", etc.
+  const urlPath = pathSlugToPath(params.pathSlug ?? "");
+  const stepSlug = params.stepSlug ?? "";
 
-  if (slug) {
-    // Validate slug is valid for the selected path
-    if (!isSlugValidForPath(slug, data.path)) {
-      const redirect = firstIncompleteSlug(data.completedSteps, data.path);
-      return <Navigate to={redirect ? `/onboarding/${redirect}` : "/onboarding"} replace />;
-    }
+  // Bad path slug → bounce to picker
+  if (!urlPath) {
+    return <Navigate to="/onboarding" replace />;
+  }
 
-    // Validate step is accessible (all prior steps completed)
-    if (!canAccessStep(currentStep, data.completedSteps, data.path)) {
-      const redirect = firstIncompleteSlug(data.completedSteps, data.path);
-      return <Navigate to={redirect ? `/onboarding/${redirect}` : "/onboarding"} replace />;
-    }
+  // Slug doesn't belong to this path (e.g. /onboarding/full-label/preferences) → bounce to picker
+  if (stepSlug && !isSlugValidForPath(stepSlug, urlPath)) {
+    return <Navigate to="/onboarding" replace />;
+  }
+
+  // Trying to skip ahead → bounce to first incomplete step. Step 0 (path
+  // picker) is implicitly complete whenever the URL carries a valid pathSlug,
+  // so we always pass `[0, ...]` to the guard rather than racing the URL-sync
+  // effect that adds 0 to data.completedSteps.
+  const effectiveCompleted = data.completedSteps.includes(0)
+    ? data.completedSteps
+    : [0, ...data.completedSteps];
+  if (stepSlug && !canAccessStep(currentStep, effectiveCompleted, urlPath)) {
+    return <Navigate to={firstIncompleteUrl(effectiveCompleted, urlPath)} replace />;
   }
 
   // ── Progress bar ──────────────────────────────────────────
@@ -151,11 +157,6 @@ export default function RecipientOnboarding() {
             exit="exit"
             transition={{ duration: 0.25 }}
           >
-            {/* Step 0: Path Choice */}
-            {currentStep === 0 && (
-              <RecipientStepPathChoice onSelect={selectPath} />
-            )}
-
             {/* Step 1: Address + Email */}
             {currentStep === 1 && (
               <RecipientStepAddress
