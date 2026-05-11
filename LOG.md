@@ -10,7 +10,7 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ### [2026-05-11] Stripe Phase 2 directional decisions locked in
 **Category:** Stripe | Architecture
-**Context:** Phase 1 (full-label test-mode charges, label auth gate, auto-refund-on-EasyPost-fail) shipped in commit `90aebca` on 2026-05-10. Before going live and before flex-link/Phase E coding begins, six of the eleven open §11 decisions in `proposals/2026-04-26_stripe-integration-plan_reviewed-2026-04-26.md` needed John's call.
+**Context:** Phase 1 (full-label test-mode charges, label auth gate, auto-refund-on-EasyPost-fail) shipped in commit `90aebca` on 2026-05-10. Before going live and before flex-link/Phase E coding begins, six of the eleven open §11 decisions in [`proposals/2026-04-26_stripe-integration-plan_reviewed-2026-04-26_decided-2026-05-11.md`](proposals/2026-04-26_stripe-integration-plan_reviewed-2026-04-26_decided-2026-05-11.md) needed John's call.
 
 **Decisions:**
 1. **Refund destination (proposal #1):** original card. Not balance. Cleans up the SPEC §13.1 contradiction; balance-refund pattern revisits if/when Phase 2 balance UI ships.
