@@ -9,6 +9,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import SendMoLogo from "@/components/SendMoLogo";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
 import CancelLabelModal from "@/components/CancelLabelModal";
@@ -210,9 +211,9 @@ export default function Dashboard() {
           </div>
 
           <div className="flex items-center gap-2">
-            <Button variant="outline" className="rounded-xl gap-2 text-sm" onClick={() => navigate("/links/new")}>
-              <Link2 className="w-4 h-4" />
-              New Link
+            <Button className="rounded-xl gap-2 text-sm" onClick={() => navigate("/onboarding")}>
+              <SendMoLogo className="w-4 h-4" />
+              Create a new shipment
             </Button>
 
             <div className="relative">
