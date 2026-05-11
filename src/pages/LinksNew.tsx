@@ -38,6 +38,8 @@ export default function LinksNew() {
           zip: recentAddr.zip,
           verified: !!recentAddr.is_verified,
         };
+      } else if (profile?.full_name) {
+        v.address = { ...v.address, name: profile.full_name };
       }
       v.email = profile?.email ?? user.email ?? "";
       setInitial(v);
