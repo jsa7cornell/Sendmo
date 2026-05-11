@@ -46,14 +46,24 @@ export default function LinksEditor({ mode, initialValue, linkId }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [createdShortCode, setCreatedShortCode] = useState<string | null>(null);
 
+  const addressComplete =
+    !!value.address.street &&
+    !!value.address.city &&
+    !!value.address.state &&
+    !!value.address.zip;
+
   const errors: string[] = [];
   if (tried && !value.address.verified) {
     errors.push("Select a destination address from the dropdown");
+  } else if (tried && value.address.verified && !addressComplete) {
+    errors.push(
+      "The selected address is missing details (street, city, state, or ZIP). Please re-pick it from the dropdown.",
+    );
   }
 
   async function handleSubmit() {
     setTried(true);
-    if (!value.address.verified) return;
+    if (!value.address.verified || !addressComplete) return;
     if (!session?.access_token) {
       setError("You're signed out — please sign in again.");
       return;

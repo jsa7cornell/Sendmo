@@ -29,7 +29,14 @@ export default function LinksNew() {
       if (cancelled) return;
 
       const v = defaultFlexValue();
-      if (recentAddr) {
+      const recentComplete =
+        recentAddr &&
+        !!recentAddr.street1 &&
+        !!recentAddr.city &&
+        !!recentAddr.state &&
+        !!recentAddr.zip;
+
+      if (recentComplete) {
         v.address = {
           name: recentAddr.name || profile?.full_name || "",
           street: recentAddr.street1 || "",
@@ -39,6 +46,9 @@ export default function LinksNew() {
           verified: !!recentAddr.is_verified,
         };
       } else if (profile?.full_name) {
+        // Prefill name only — force the user to pick a fresh address via
+        // SmartAddressInput, since the saved address is partial (typically
+        // missing ZIP from Google Places' "Street, City, State" predictions).
         v.address = { ...v.address, name: profile.full_name };
       }
       v.email = profile?.email ?? user.email ?? "";
