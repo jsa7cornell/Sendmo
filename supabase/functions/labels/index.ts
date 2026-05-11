@@ -216,7 +216,7 @@ serve(async (req: Request) => {
                     p_width_in: parcel?.width_in ?? 0,
                     p_height_in: parcel?.height_in ?? 0,
                     p_is_live: isLive
-                }).then(({ data, error }) => {
+                }).then(async ({ data, error }) => {
                     if (error) {
                         console.error('admin_insert_shipment error:', error);
                         log({
