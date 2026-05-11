@@ -1,89 +1,15 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
 import {
-  CheckCircle2, Download, ExternalLink, Copy, CreditCard, Loader2,
+  CheckCircle2, Download, ExternalLink, Copy,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { formatCents, buyLabel } from "@/lib/api";
 import { carrierDisplayName, serviceDisplayName } from "@/lib/utils";
 import { getTotalPriceCents } from "@/hooks/useRecipientFlow";
 import type { RecipientFlowState } from "@/hooks/useRecipientFlow";
 import type { LabelResult } from "@/lib/types";
-
-// ─── Mock Payment Form (Stripe stub) ───────────────────────
-// TODO: Replace with <Elements> + <PaymentElement> when Stripe ships
-
-function MockPaymentForm({
-  totalCents,
-  loading,
-  onPay,
-  liveMode = false,
-}: {
-  totalCents: number;
-  loading: boolean;
-  onPay: () => void;
-  liveMode?: boolean;
-}) {
-  return (
-    <div className={`bg-card rounded-2xl border shadow-sm p-5 ${liveMode ? "border-destructive/30" : "border-border"}`}>
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-2">
-          <CreditCard className="w-4 h-4 text-primary" />
-          <h3 className="text-sm font-semibold text-foreground">Payment</h3>
-        </div>
-        <Badge variant="outline" className={`text-xs ${liveMode ? "border-destructive/50 text-destructive bg-destructive/10" : "border-amber-300 text-amber-700 bg-amber-50"}`}>
-          {liveMode ? "LIVE — Comp" : "Test Mode"}
-        </Badge>
-      </div>
-
-      {/* Decorative card fields */}
-      <div className="space-y-3 mb-4">
-        <div>
-          <label className="text-xs text-muted-foreground">Card number</label>
-          <div className="mt-1 rounded-xl border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
-            4242 4242 4242 4242
-          </div>
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="text-xs text-muted-foreground">Expiry</label>
-            <div className="mt-1 rounded-xl border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
-              12/29
-            </div>
-          </div>
-          <div>
-            <label className="text-xs text-muted-foreground">CVC</label>
-            <div className="mt-1 rounded-xl border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
-              123
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <p className="text-[11px] text-muted-foreground mb-4">
-        {liveMode
-          ? "LIVE mode — a real shipping label will be generated. No payment charged (comp)."
-          : "Payment is simulated in test mode. A test label will be generated via EasyPost test mode."}
-      </p>
-
-      <Button
-        onClick={onPay}
-        disabled={loading}
-        className="w-full rounded-xl shadow-sm text-base py-5"
-      >
-        {loading ? (
-          <>
-            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-            Generating label…
-          </>
-        ) : (
-          `Pay ${formatCents(totalCents)} & generate label`
-        )}
-      </Button>
-    </div>
-  );
-}
+import StripePaymentForm from "./StripePaymentForm";
 
 // ─── Label Ready View ───────────────────────────────────────
 
@@ -225,17 +151,17 @@ export default function RecipientStepPayment({ state, onUpdate, onBack, liveMode
   const totalCents = getTotalPriceCents(state);
   const loading = state.paymentStatus === "processing";
 
-  async function handlePay() {
-    if (!state.selectedRate || !state.easypostShipmentId) return;
-
+  // Called by StripePaymentForm AFTER the card has been successfully charged.
+  // We pass the captured PaymentIntent id to /labels, which verifies it
+  // server-side, buys the EasyPost label, and writes the payment row.
+  async function handlePaymentSuccess(paymentIntentId: string) {
+    if (!state.selectedRate || !state.easypostShipmentId) {
+      throw new Error("Missing rate or shipment id");
+    }
     setError(null);
     onUpdate({ paymentStatus: "processing" });
 
     try {
-      // Simulate payment delay (Stripe stub)
-      await new Promise((r) => setTimeout(r, 1500));
-
-      // Call real EasyPost label API (test or live depending on admin mode)
       const result = await buyLabel(
         state.easypostShipmentId,
         state.selectedRate.id,
@@ -246,16 +172,21 @@ export default function RecipientStepPayment({ state, onUpdate, onBack, liveMode
           recipient_email: state.email || undefined,
           sender_email: state.senderEmail || undefined,
         },
+        {
+          payment_intent_id: paymentIntentId,
+          display_price_cents: totalCents,
+        },
       );
 
       onUpdate({
         paymentStatus: "succeeded",
         labelResult: result,
-        // Advance to step 12 visually handled by labelResult check
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Label generation failed");
+      const msg = err instanceof Error ? err.message : "Label generation failed";
+      setError(msg);
       onUpdate({ paymentStatus: "failed" });
+      throw err; // Let StripePaymentForm show the error inline too
     }
   }
 
@@ -314,12 +245,13 @@ export default function RecipientStepPayment({ state, onUpdate, onBack, liveMode
         </dl>
       </div>
 
-      {/* Mock payment form */}
-      <MockPaymentForm
+      {/* Stripe payment form */}
+      <StripePaymentForm
         totalCents={totalCents}
-        loading={loading}
-        onPay={handlePay}
+        easypostShipmentId={state.easypostShipmentId}
         liveMode={liveMode}
+        receiptEmail={state.email || undefined}
+        onSuccess={handlePaymentSuccess}
       />
 
       {/* Error */}
