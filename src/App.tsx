@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Outlet, Navigate, useSearchParams } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Outlet, Navigate, useSearchParams, useNavigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { RecipientFlowProvider } from "@/contexts/RecipientFlowContext";
 import ProtectedRoute from "@/components/ProtectedRoute";
@@ -16,17 +16,34 @@ import TrackingPage from "@/pages/TrackingPage";
 import LinksNew from "@/pages/LinksNew";
 import LinksEdit from "@/pages/LinksEdit";
 import NotFound from "@/pages/NotFound";
+import AppHeader from "@/components/AppHeader";
+import RecipientStepPathChoice from "@/components/recipient/RecipientStepPathChoice";
 
-// Auth'd users land on /links/new instead of the wizard. Anon users get the wizard
-// wrapped in RecipientFlowProvider. Provider only mounts on the anon branch.
+// Auth'd user landed on /onboarding without choosing a path → show the
+// chooser instead of jumping straight into the flexible-link editor. With
+// a deep-link (?path=flexible|full_label) they go directly to the right
+// destination. Anon users get the full wizard wrapped in RecipientFlowProvider.
 function OnboardingLayout() {
   const { user, loading } = useAuth();
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
   if (loading) return null;
   if (user) {
     const path = searchParams.get("path");
-    const target = path === "full_label" ? "/links/new?path=full_label" : "/links/new";
-    return <Navigate to={target} replace />;
+    if (path === "flexible") return <Navigate to="/links/new" replace />;
+    if (path === "full_label") return <Navigate to="/links/new?path=full_label" replace />;
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-background to-muted/50">
+        <AppHeader />
+        <div className="max-w-3xl mx-auto px-4 py-8">
+          <RecipientStepPathChoice
+            onSelect={(p) =>
+              navigate(p === "full_label" ? "/links/new?path=full_label" : "/links/new")
+            }
+          />
+        </div>
+      </div>
+    );
   }
   return (
     <RecipientFlowProvider>
