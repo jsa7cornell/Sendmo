@@ -2,14 +2,14 @@
 title: Stripe Integration & Financial Systems Wiring
 slug: stripe-integration-plan
 project: sendmo
-status: revised
+status: decided
 created: 2026-04-26
 reviewed: 2026-04-26
 revised: 2026-04-26
-decided: null
+decided: 2026-05-11
 author: Claude (opus-4-7) — fresh planning session, 2026-04-26 (revision passes: round 1 + round 2, 2026-04-26)
 reviewer: Claude (opus-4-7) — fresh-eyes reviewer, 2026-04-26 (round 1); Claude (opus-4-7) — fresh-eyes reviewer, 2026-04-26 (round 2)
-outcome: approve-with-changes (round 2; round-3 author response folded in)
+outcome: approved with directional decisions on §11 #1–#3, #5, #6, #8; #4 deferred for research; #6/#9/#11 deferred to later phases
 ---
 
 ## Revision note (2026-04-26 — round 2 review folded in, round 3 ready)
@@ -1523,3 +1523,49 @@ All ✅ items above are folded into sections 1–11 of this same file. The round
 The round-2 review converted #7 to RESOLVED (John's escrow directive) and added #11 (Phase H MTL, deferred). Decision #10 is now load-bearing for Phase E, not just Phase G. Phase A starts when #1, #2, #3, #4, #6 are decided; #5 only blocks Phase C; #10 blocks Phase E; #8 finalizes pre-Phase-G; #9, #11 finalize pre-Phase-H.
 
 This proposal is ready for John's sign-off on the §11 decisions, or for round-3 review if a fresh-eyes pass is wanted on the round-2 changes (single-PI Connect, JIT KYC, auto-debit caps, §3.11). Author judgment: the architecture is now stable enough that further rounds yield diminishing returns — additional review value is in implementation-PR review, not proposal review.
+
+---
+
+## Decision — 2026-05-11 (John)
+
+John made directional calls on the §11 decisions in a planning session 2026-05-11. Status flips from `revised` → `decided`. Six items decided, one deferred for research, three deferred to later phases. The §11 numbering below is preserved verbatim against the original list.
+
+**Decided:**
+
+- **#1 Refund destination → original card.** Not balance. Cleans up the SPEC §13.1 contradiction. Balance-refund pattern revisits if/when Phase 2 balance UI ships. Phase F implementation: `processRefund()` in [`src/lib/refundService.ts`](src/lib/refundService.ts) calls Stripe Refunds API on the captured PI; ledger insert is `type='refund'`, `funding_source` mirrors the original charge.
+
+- **#2 Stripe fee absorption → flat $1 per label, always.** This is structurally distinct from the proposal's three options — it adds a fixed per-label line item rather than choosing among absorb / threshold-surcharge / margin-bump. Pricing formula is `DisplayPrice = EasyPostRate × 1.15 + $1.00`. **Status:** already in production code as of 2026-05-10 — see `MARKUP_MULTIPLIER = 1.15` + `MARKUP_FLAT_CENTS = 100` in [`supabase/functions/rates/index.ts:5-6`](../supabase/functions/rates/index.ts) and the back-calculation `(display * 100 - 100) / 1.15` in [`src/lib/api.ts:97`](../src/lib/api.ts). PLAYBOOK §"Pricing" already reflects this. **Decision today ratifies the live code rather than triggering a change.** Public messaging implications: the "≈ post office" claim in the planned FAQ pricing table must use representative shipments where the math is favorable; a $3.74 Ground Advantage shipment becomes ~$5.30 (vs USPS retail ~$5.50) which is fine, but very-cheap parcels narrow the gap.
+
+- **#3 Hold-exceeded policy → debit-then-cap (D-then-C).** Sender's flow never blocks. Gap is recovered via off-session debit on recipient's saved card, with notification after the fact. Hard cap per §3.7 ($10 lifetime per shipment, $20 per card per 24h). Picks (a) on §11 #10 by implication — explicit mandate at link creation with Stripe-compliant string. **§11 #10 is therefore resolved.**
+
+- **#5 Live-mode admin UX → "do both."** Ship the 3-mode admin toolbar (Test / Live Comp / Live Charge) **and** replace the PIN gate with role-based auth (`profile.role='admin'`) before Phase C goes live. Live Charge will not ship behind a hardcoded PIN. The role-based-auth side-quest is **prerequisite to Phase C**, not part of the Stripe phase work itself; tracked separately.
+
+- **#8 Carrier adjustment caps → keep proposal recommendation.** $2 absorb / $2–$10 auto-recover off-session / >$10 admin review. Per-shipment $10 lifetime cap, per-card $20/24h cap, per-user $50/7d cap. Final values reviewable post-Phase D data.
+
+- **#10 Off-session auto-debit consent → (a) explicit mandate at link creation.** Resolved as a consequence of #3 above. Implementation must put the Stripe-compliant mandate string in front of recipients at link creation, not buried in ToS.
+
+**Deferred for research (still blocks Phase A):**
+
+- **#4 Account creation timing for full-label.** John requested a research session covering Stripe / Stripe Connect / Substack / Gumroad / Shopify checkout patterns, GDPR data-minimization tradeoffs, Stripe Customer dedup complexity, and the "user abandoned mid-flow" handling for each pattern. Output lands as its own proposal at `proposals/2026-05-1?_account-creation-timing*.md`. Phase A coding does not start until this resolves. Note: the WISHLIST bug "Full Label flow doesn't create account or link" is the same decision in different framing.
+
+**Deferred to later phases (do not block MVP):**
+
+- **#6 Prepaid balance topup discount shape** — Phase 2/H concern.
+- **#9 ACH credit timing** — settle-then-credit per proposal recommendation, Phase H.
+- **#11 Phase H MTL/KYC scope** — explicit Phase H legal review.
+
+**Net gating after this decision:**
+
+- Phase A: blocked on **#4** (account-creation research) only. Once #4 lands, Phase A can begin.
+- Phase B (save card on file): not blocked.
+- Phase C (live charge dogfood): blocked on **role-based admin auth** side-quest landing.
+- Phase E (flex-link auth/capture): blocked on **#4** + mandate-UI implementation.
+- Phase F (refunds): no remaining decisions.
+- Phase G (carrier adjustments): no remaining decisions.
+- Phase 2/H/3: deferred per above.
+
+**Live state vs. proposal at decision time:**
+
+Phase 1 (full-label test-mode charges) is already shipped on `main` (commit `90aebca`, 2026-05-10). The shipped Phase 1 omits the proposal's `transactions` ledger table — the existing `payments` table is still in use. That gap is Phase A's job: migration 012 in the proposal drops `payments`, introduces `transactions`, and rewrites the labels function to write ledger rows. The decision today does not change Phase A's scope.
+
+**Author note:** the $1 fee landing as live code before the proposal flipped to `decided` is technically out-of-protocol (per `~/AI Brain/PROPOSAL-REVIEW-PROTOCOL.md`, code follows a decided proposal). The deviation didn't cause harm because John's directional call ratified the shipped behavior, but the protocol is meant to prevent this exact pattern — code happening before the decision is recorded. Worth flagging here so future agents see the precedent and don't normalize it. The pricing change was small enough to be a soft case; for migration-level work (e.g., `transactions` ledger) the protocol must be followed strictly.
