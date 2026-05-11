@@ -1,34 +1,47 @@
 import { motion } from "framer-motion";
 import { MapPin } from "lucide-react";
 import { formatCents } from "@/lib/api";
+import type { AddressInput } from "@/lib/types";
 
 interface Props {
-  cityState: string;
+  destinationAddress: AddressInput;
   priceCents: number | null;
   estimatedDays: number | null;
   onChangeAddress?: () => void;
 }
 
-export default function PriceSummaryCard({ cityState, priceCents, estimatedDays, onChangeAddress }: Props) {
+function formatFullAddress(addr: AddressInput): string {
+  if (!addr.verified || !addr.street) return "...";
+  const parts = [addr.street, addr.city, addr.state ? `${addr.state} ${addr.zip}` : addr.zip]
+    .filter(Boolean);
+  return parts.join(", ");
+}
+
+export default function PriceSummaryCard({ destinationAddress, priceCents, estimatedDays, onChangeAddress }: Props) {
+  const fullAddress = formatFullAddress(destinationAddress);
+
   return (
     <div className="bg-card rounded-2xl border border-border shadow-sm p-5 sticky top-4 z-10">
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <MapPin className="w-4 h-4" />
-          <span>Shipping to <span className="font-medium text-foreground">{cityState || "..."}</span></span>
+      <div className="flex items-start justify-between gap-3 mb-2">
+        <div className="flex items-start gap-2 text-sm text-muted-foreground min-w-0">
+          <MapPin className="w-4 h-4 shrink-0 mt-0.5" />
+          <span className="min-w-0">
+            Shipping to{" "}
+            <span className="font-medium text-foreground break-words">{fullAddress}</span>
+          </span>
         </div>
         {onChangeAddress && (
           <button
             type="button"
             onClick={onChangeAddress}
-            className="text-xs text-primary hover:underline underline-offset-2"
+            className="text-xs text-primary hover:underline underline-offset-2 shrink-0"
           >
             Change
           </button>
         )}
       </div>
 
-      {priceCents !== null ? (
+      {priceCents !== null && (
         <motion.div
           key={priceCents}
           animate={{ scale: [1, 1.02, 1] }}
@@ -41,10 +54,6 @@ export default function PriceSummaryCard({ cityState, priceCents, estimatedDays,
             </p>
           )}
         </motion.div>
-      ) : (
-        <div>
-          <span className="text-lg text-muted-foreground">Complete details to see cost</span>
-        </div>
       )}
     </div>
   );

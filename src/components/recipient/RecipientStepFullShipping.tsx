@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { AlertCircle, Sparkles, Loader2 } from "lucide-react";
+import { AlertCircle, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -8,7 +8,7 @@ import SmartAddressInput from "@/components/ui/SmartAddressInput";
 import PriceSummaryCard from "./PriceSummaryCard";
 import ShippingMethodCard from "./ShippingMethodCard";
 import MagicGuestimator from "./MagicGuestimator";
-import { fetchRates, isOverCap, pickRecommendedRate, fetchGuestimate, formatCents } from "@/lib/api";
+import { fetchRates, isOverCap, pickRecommendedRate, formatCents } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { getTotalPriceCents, getTotalWeightOz, canFetchRates } from "@/hooks/useRecipientFlow";
 import type { RecipientFlowState } from "@/hooks/useRecipientFlow";
@@ -21,6 +21,16 @@ const PACKAGING_OPTIONS: { id: PackagingType; label: string; desc: string }[] = 
   { id: "envelope", label: "Envelope / Soft Pack", desc: "Padded mailer or poly bag" },
   { id: "tube", label: "Tube / Irregular", desc: "Cylindrical or odd shape" },
 ];
+
+// Title with the Magic Guestimator sparkle — signals these fields can be auto-filled.
+function GuestimatorTitle({ children }: { children: React.ReactNode }) {
+  return (
+    <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-1.5">
+      <Sparkles className="w-3.5 h-3.5 text-primary" />
+      {children}
+    </h3>
+  );
+}
 
 // ─── Props ──────────────────────────────────────────────────
 
@@ -39,9 +49,7 @@ export default function RecipientStepFullShipping({
 }: Props) {
   const [ratesLoading, setRatesLoading] = useState(false);
   const [ratesError, setRatesError] = useState<string | null>(null);
-  const [luckyLoading, setLuckyLoading] = useState(false);
-  const [luckyError, setLuckyError] = useState<string | null>(null);
-  const [luckyNote, setLuckyNote] = useState<string | null>(null);
+  const [usedGuestimator, setUsedGuestimator] = useState(false);
   const fetchRef = useRef(0);
   const showErrors = tried && errors.length > 0;
 
@@ -125,10 +133,8 @@ export default function RecipientStepFullShipping({
 
   // ── Guestimator handler ───────────────────────────────────
 
-  function handleGuestimation(
-    result: GuestimatorResult,
-    meta?: { confidence: "high" | "medium" | "low"; notes: string },
-  ) {
+  function handleGuestimation(result: GuestimatorResult) {
+    setUsedGuestimator(true);
     onUpdate({
       packagingType: result.packaging,
       dimensions: {
@@ -143,56 +149,17 @@ export default function RecipientStepFullShipping({
       itemDescription: result.itemName,
       recommendedSpeedHint: (result.speedHint ?? null) as SpeedTier | null,
     });
-    if (meta && meta.confidence !== "high" && meta.notes) {
-      setLuckyNote(meta.notes);
-    } else {
-      setLuckyNote(null);
-    }
   }
-
-  async function handleFeelingLucky() {
-    const desc = state.itemDescription.trim();
-    if (!desc || luckyLoading) return;
-    setLuckyLoading(true);
-    setLuckyError(null);
-    setLuckyNote(null);
-    try {
-      const est = await fetchGuestimate(desc);
-      handleGuestimation(
-        {
-          packaging: est.packaging,
-          length: est.length_in,
-          width: est.width_in,
-          height: est.packaging === "envelope" ? 1 : est.height_in,
-          weightLbs: est.weight_lbs,
-          speedHint: est.speedHint ?? undefined,
-          itemName: est.itemName,
-        },
-        { confidence: est.confidence, notes: est.notes },
-      );
-    } catch (err) {
-      setLuckyError(err instanceof Error ? err.message : "Couldn't estimate");
-    } finally {
-      setLuckyLoading(false);
-    }
-  }
-
-  // ── Helpers ───────────────────────────────────────────────
-
-  const cityState = state.destinationAddress.verified
-    ? `${state.destinationAddress.city}, ${state.destinationAddress.state}`
-    : "";
 
   const totalCents = getTotalPriceCents(state);
-  const estimatedDays = state.selectedRate?.estimated_days ?? null;
 
   return (
     <div className="space-y-5">
       {/* Sticky price card */}
       <PriceSummaryCard
-        cityState={cityState}
+        destinationAddress={state.destinationAddress}
         priceCents={state.selectedRate ? totalCents : null}
-        estimatedDays={estimatedDays}
+        estimatedDays={state.selectedRate?.estimated_days ?? null}
       />
 
       {/* Ship From */}
@@ -219,67 +186,26 @@ export default function RecipientStepFullShipping({
         </div>
       </div>
 
-      {/* Magic Guestimator */}
+      {/* Magic Guestimator — primary input */}
       <MagicGuestimator onResult={handleGuestimation} />
 
-      {/* Item description + I'm Feeling Lucky */}
+      {/* Item description (auto-filled by guestimator, but editable) */}
       <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
         <label htmlFor="item-desc" className="text-sm font-medium text-foreground">
-          Item description <span className="text-muted-foreground font-normal">(optional)</span>
+          Item description <span className="text-muted-foreground font-normal">(optional — for the shipping label)</span>
         </label>
         <Input
           id="item-desc"
           value={state.itemDescription}
           onChange={(e) => onUpdate({ itemDescription: e.target.value })}
-          placeholder="e.g., Hardcover cookbook, no rush"
+          placeholder="e.g., Hardcover cookbook"
           className="mt-1.5 rounded-xl"
         />
-
-        <div className="flex items-center gap-3 mt-3">
-          <Button
-            type="button"
-            variant="default"
-            size="sm"
-            onClick={handleFeelingLucky}
-            disabled={!state.itemDescription.trim() || luckyLoading}
-            className="rounded-xl gap-1.5"
-          >
-            {luckyLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-            {luckyLoading ? "Thinking…" : "I'm Feeling Lucky"}
-          </Button>
-          <span className="text-xs text-muted-foreground">
-            Auto-fill packaging, dims, weight, and pick a shipping method
-          </span>
-        </div>
-
-        <AnimatePresence>
-          {luckyNote && (
-            <motion.p
-              initial={{ opacity: 0, y: -4 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0 }}
-              className="text-xs text-muted-foreground mt-2"
-            >
-              <Sparkles className="w-3 h-3 inline mr-1 text-primary" />
-              {luckyNote}
-            </motion.p>
-          )}
-          {luckyError && (
-            <motion.p
-              initial={{ opacity: 0, y: -4 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0 }}
-              className="text-xs text-destructive mt-2"
-            >
-              {luckyError}
-            </motion.p>
-          )}
-        </AnimatePresence>
       </div>
 
       {/* Packaging type */}
       <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
-        <h3 className="text-sm font-semibold text-foreground mb-3">Packaging type</h3>
+        <GuestimatorTitle>Packaging type</GuestimatorTitle>
         <div className="grid grid-cols-3 gap-2">
           {PACKAGING_OPTIONS.map((opt) => (
             <button
@@ -310,7 +236,7 @@ export default function RecipientStepFullShipping({
 
       {/* Dimensions */}
       <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
-        <h3 className="text-sm font-semibold text-foreground mb-3">Package dimensions (inches)</h3>
+        <GuestimatorTitle>Package dimensions (inches)</GuestimatorTitle>
         <div className={cn("grid gap-3", state.packagingType === "envelope" ? "grid-cols-2" : "grid-cols-3")}>
           <div>
             <label className="text-xs text-muted-foreground">Length</label>
@@ -349,7 +275,7 @@ export default function RecipientStepFullShipping({
 
       {/* Weight */}
       <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
-        <h3 className="text-sm font-semibold text-foreground mb-3">Package weight</h3>
+        <GuestimatorTitle>Package weight</GuestimatorTitle>
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="text-xs text-muted-foreground">Pounds</label>
@@ -376,7 +302,7 @@ export default function RecipientStepFullShipping({
 
       {/* Shipping method */}
       <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
-        <h3 className="text-sm font-semibold text-foreground mb-3">Shipping method</h3>
+        <GuestimatorTitle>Shipping method</GuestimatorTitle>
 
         {ratesLoading && (
           <div className="space-y-3">
@@ -453,33 +379,42 @@ export default function RecipientStepFullShipping({
         )}
       </AnimatePresence>
 
-      {/* Final estimate summary */}
-      {state.selectedRate && (
-        <motion.div
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="bg-primary/5 border border-primary/20 rounded-2xl p-5"
-        >
-          <div className="flex items-center gap-2 mb-2">
-            <Sparkles className="w-4 h-4 text-primary" />
-            <h3 className="text-sm font-semibold text-foreground">Your estimate</h3>
-          </div>
-          <div className="text-sm text-foreground">
-            <span className="font-medium">{state.selectedRate.carrier} {state.selectedRate.service}</span>
-            {state.selectedRate.estimated_days && (
-              <span className="text-muted-foreground">
-                {" "}· arrives in ~{state.selectedRate.estimated_days} {state.selectedRate.estimated_days === 1 ? "day" : "days"}
-              </span>
-            )}
-          </div>
-          <div className="text-2xl font-bold text-primary mt-1">
-            {formatCents(totalCents)}
-            {state.insurance && (
-              <span className="text-xs text-muted-foreground font-normal ml-2">includes insurance</span>
-            )}
-          </div>
-        </motion.div>
-      )}
+      {/* Estimated cost — always shown right above the payment button */}
+      <div className="bg-primary/5 border border-primary/20 rounded-2xl p-5">
+        <div className="flex items-center gap-2 mb-2">
+          <Sparkles className="w-4 h-4 text-primary" />
+          <h3 className="text-sm font-semibold text-foreground">Estimated cost</h3>
+        </div>
+        {state.selectedRate ? (
+          <>
+            <div className="text-sm text-foreground">
+              <span className="font-medium">{state.selectedRate.carrier} {state.selectedRate.service}</span>
+              {state.selectedRate.estimated_days && (
+                <span className="text-muted-foreground">
+                  {" "}· arrives in ~{state.selectedRate.estimated_days} {state.selectedRate.estimated_days === 1 ? "day" : "days"}
+                </span>
+              )}
+            </div>
+            <div className="text-2xl font-bold text-primary mt-1">
+              {formatCents(totalCents)}
+              {state.insurance && (
+                <span className="text-xs text-muted-foreground font-normal ml-2">includes insurance</span>
+              )}
+            </div>
+          </>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            Fill in addresses, dimensions, and weight to see your estimated cost.
+          </p>
+        )}
+
+        {usedGuestimator && (
+          <p className="text-[11px] text-muted-foreground mt-3 leading-snug">
+            Magic Guestimator is in beta. The estimated cost shown is based on the AI's predicted package
+            dimensions and weight — actual cost may differ if the carrier measures differently at the warehouse.
+          </p>
+        )}
+      </div>
 
       {/* Buttons */}
       <div className="flex gap-3">
@@ -490,6 +425,16 @@ export default function RecipientStepFullShipping({
           Continue to payment
         </Button>
       </div>
+
+      {/* Page-level T&C */}
+      <p className="text-[11px] text-muted-foreground text-center leading-snug pt-1">
+        By continuing you agree to SendMo's{" "}
+        <a href="/terms" target="_blank" rel="noopener noreferrer" className="underline hover:text-foreground">Terms</a>
+        {" "}and{" "}
+        <a href="/privacy" target="_blank" rel="noopener noreferrer" className="underline hover:text-foreground">Privacy Policy</a>.
+        Shipping rates include carrier price plus SendMo's service fee. Final cost may be adjusted by the carrier
+        if package dimensions or weight differ from what was declared.
+      </p>
     </div>
   );
 }

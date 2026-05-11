@@ -12,12 +12,14 @@ interface Props {
 export default function MagicGuestimator({ onResult }: Props) {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [feedback, setFeedback] = useState<{ type: "success" | "fail"; text: string } | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   async function handleGuestimate() {
     if (!input.trim() || loading) return;
     setLoading(true);
-    setFeedback(null);
+    setError(null);
+    setNote(null);
     try {
       const est = await fetchGuestimate(input);
       const result: GuestimatorResult = {
@@ -30,63 +32,75 @@ export default function MagicGuestimator({ onResult }: Props) {
         itemName: est.itemName,
       };
       onResult(result, { confidence: est.confidence, notes: est.notes });
-      const tag = est.confidence === "high" ? "" : ` (${est.confidence} confidence)`;
-      setFeedback({ type: "success", text: `Filled from: ${est.itemName}${tag}` });
+      if (est.notes && est.confidence !== "high") {
+        setNote(est.notes);
+      }
     } catch (err) {
-      setFeedback({
-        type: "fail",
-        text: err instanceof Error ? err.message : "Couldn't estimate — please fill in details manually",
-      });
+      setError(err instanceof Error ? err.message : "Couldn't estimate — please fill in details manually");
     } finally {
       setLoading(false);
-      setTimeout(() => setFeedback(null), 5000);
     }
   }
 
   return (
     <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
-      <div className="flex items-center gap-2 mb-3">
+      <div className="flex items-center gap-2 mb-1">
         <Sparkles className="w-4 h-4 text-primary" />
         <h3 className="text-sm font-semibold text-foreground">Magic Guestimator</h3>
       </div>
+      <p className="text-xs text-muted-foreground mb-3">
+        Describe what you're shipping and we'll fill in everything else.
+      </p>
 
       <textarea
         value={input}
         onChange={(e) => setInput(e.target.value)}
-        placeholder="Describe what's being shipped (e.g., a hardcover cookbook, no rush)"
+        placeholder="e.g., a hardcover cookbook, no rush"
         rows={2}
         disabled={loading}
         className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary transition-colors placeholder:text-muted-foreground resize-none disabled:opacity-60"
       />
 
-      <div className="flex items-center gap-3 mt-2">
+      <div className="flex items-center gap-3 mt-2 flex-wrap">
         <Button
           type="button"
-          variant="outline"
+          variant="default"
           size="sm"
           onClick={handleGuestimate}
           disabled={!input.trim() || loading}
           className="rounded-xl gap-1.5"
         >
           {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-          {loading ? "Thinking…" : "Guestimate it"}
+          {loading ? "Thinking…" : "I'm Feeling Lucky"}
         </Button>
-
-        <AnimatePresence>
-          {feedback && (
-            <motion.span
-              initial={{ opacity: 0, x: -8 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0 }}
-              className={`text-xs font-medium ${
-                feedback.type === "success" ? "text-success" : "text-muted-foreground"
-              }`}
-            >
-              {feedback.text}
-            </motion.span>
-          )}
-        </AnimatePresence>
+        <span className="text-xs text-muted-foreground">
+          Auto-fill packaging, dims, weight, and pick a shipping method
+        </span>
       </div>
+
+      <AnimatePresence>
+        {note && (
+          <motion.p
+            initial={{ opacity: 0, y: -4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            className="text-xs text-muted-foreground mt-2 flex items-start gap-1"
+          >
+            <Sparkles className="w-3 h-3 text-primary shrink-0 mt-0.5" />
+            <span>{note}</span>
+          </motion.p>
+        )}
+        {error && (
+          <motion.p
+            initial={{ opacity: 0, y: -4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            className="text-xs text-destructive mt-2"
+          >
+            {error}
+          </motion.p>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
