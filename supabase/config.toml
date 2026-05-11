@@ -44,12 +44,64 @@ entrypoint = "./functions/admin-report/index.ts"
 # For example, if you want to serve static HTML pages in your function:
 # static_files = [ "./functions/admin-report/*.html" ]
 
-# Public Google Places proxies — no user data, called from anon and authed
-# contexts alike. Must be reachable without a JWT.
+# ─── verify_jwt = false ─────────────────────────────────────
+#
+# Anon-callable functions. The client passes the publishable anon key
+# (`sb_publishable_*`), which is NOT JWT-formatted, so Supabase's gateway
+# rejects it under the default `verify_jwt = true`. Listing them here
+# locks the setting in config so a bare `supabase functions deploy <fn>`
+# can't accidentally regress to verify_jwt=true (as happened on
+# 2026-05-10 with place-details — see LOG.md).
+#
+# Belt + suspenders: also pass `--no-verify-jwt` on per-function deploys.
+
+# Public Google Places proxies — no user data, called from anon + authed.
 [functions.autocomplete]
 enabled = true
 verify_jwt = false
 
 [functions.place-details]
+enabled = true
+verify_jwt = false
+
+# Address verification (EasyPost) for the recipient onboarding flow.
+[functions.addresses]
+enabled = true
+verify_jwt = false
+
+# OTP send/confirm for the flexible-link email verification step.
+[functions.email]
+enabled = true
+verify_jwt = false
+
+# Magic Guestimator — Anthropic Haiku 4.5 dim/weight estimation.
+[functions.guestimate]
+enabled = true
+verify_jwt = false
+
+# EasyPost rate fetch for the prepaid-label flow.
+[functions.rates]
+enabled = true
+verify_jwt = false
+
+# EasyPost label purchase — anon checkout flow uses a placeholder user_id.
+[functions.labels]
+enabled = true
+verify_jwt = false
+
+# Public tracking page lookup — no auth.
+[functions.tracking]
+enabled = true
+verify_jwt = false
+
+# EasyPost webhook receiver — verified via EasyPost's own signature, not JWT.
+[functions.webhooks]
+enabled = true
+verify_jwt = false
+
+# Internal structured event logging — called by other Edge Functions with
+# the service role key. Setting verify_jwt=false avoids any gateway
+# rejection of non-standard tokens; auth is handled inside the function.
+[functions.ingest]
 enabled = true
 verify_jwt = false
