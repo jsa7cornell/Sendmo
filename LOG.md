@@ -8,6 +8,42 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-12] Launch blockers Track 1 + 3 — `admin_insert_shipment` overload collision + real Share Link
+**Category:** Database | Launch blocker | RPC | Address handling
+**Cross-link:** [WISHLIST.md](WISHLIST.md) launch blockers #1 and #3 (filed in commit [3a0371d](https://github.com/jsa7cornell/Sendmo/commit/3a0371d)); follows [2026-05-12 Stripe Phase A](#2026-05-12-stripe-phase-a--transactions-ledger-replaces-payments-comp-labels-now-book-negative-margin) which surfaced both bugs during smoke test.
+
+**Three pre-existing bugs, one combined fix:**
+
+1. **Overload collision** — production `admin_insert_shipment` had multiple sibling overloads (008's UUID-returning + 014's TABLE-returning + a partially-applied 012). PostgREST couldn't resolve the call, returning "function not found." Result: zero `label.db_persisted` rows since 2026-03-18 (~57 days of EasyPost label buys never written to `shipments`).
+2. **`addressToApi` silent drop** — `src/lib/api.ts` mapped `addr.street → street1` but never validated `addr.street` was defined. `JSON.stringify` silently dropped the undefined key, so the RPC param lookup failed against any signature requiring `p_from_street1`.
+3. **Comp path bypassed `addressToApi` entirely** — inline `buyCompLabel` in [RecipientStepPayment.tsx](src/components/recipient/RecipientStepPayment.tsx) passed `state.originAddress` raw (shape `{name, street, city, state, zip}`), so the labels function received `from_address.street = "..."` but `from_address.street1` was undefined. This is the actual culprit for the Live Comp smoke-test failure, layered on top of #1 and #2.
+
+**What shipped:**
+- [supabase/migrations/018_fix_admin_insert_shipment_overloads.sql](supabase/migrations/018_fix_admin_insert_shipment_overloads.sql) — `pg_proc` loop drops every existing overload, then recreates the canonical 29-param version with `RETURNS TABLE(id, public_code, short_code)`. Adding `short_code` to the return shape closes launch blocker #3: the link row is already minted inside the RPC, just never surfaced. **John's step to run** via Supabase dashboard SQL editor on project `fkxykvzsqdjzhurntgah` per Rule 0.5.
+- [src/lib/api.ts](src/lib/api.ts) — `addressToApi` now throws if any of `street/city/state/zip` is missing. Fail-loud at the boundary so the next address-shape regression surfaces at the call site, not as a PostgREST 404.
+- [src/components/recipient/RecipientStepPayment.tsx](src/components/recipient/RecipientStepPayment.tsx) — `buyCompLabel` now routes `state.originAddress`/`state.destinationAddress` through `addressToApi`. Share Link card uses `labelResult.short_code` and only renders when a real code is present (no more `sendmo.co/s/test` fallback).
+- [supabase/functions/labels/index.ts](supabase/functions/labels/index.ts) — reads `short_code` from the RPC return row, threads through to the response body.
+- [src/lib/types.ts](src/lib/types.ts) — `LabelResult.short_code` added.
+
+**Audit results:**
+- `npx tsc -b --noEmit` → exit 0.
+- `npx vitest run --root . --dir tests/unit` → 236 passed / 0 failed.
+
+**Acceptance (post-migration, to verify when John runs it):**
+1. `SELECT count(*) FROM event_logs WHERE event_type = 'label.db_persisted' AND created_at > now() - interval '5 minutes';` ≥ 1 after a fresh Live Comp.
+2. `SELECT * FROM transactions WHERE type = 'comp_grant' ORDER BY created_at DESC LIMIT 1;` returns the new row (closes Phase A's deferred smoke-test acceptance).
+3. `SELECT * FROM shipments ORDER BY created_at DESC LIMIT 1;` shows non-null `public_code`.
+4. Label & Link step renders `sendmo.co/s/<real-short-code>` (not `sendmo.co/s/test`).
+5. Visiting that link resolves the sender flow.
+
+**Track 2 (EasyPost webhook HMAC) is separate** — still open pending secret reconciliation between Supabase and the EasyPost dashboard. Not bundled here because Track 2 is a config/rotation question, not a code change.
+
+**Notes for future agents:**
+- Function overloads in Postgres are silent landmines under PostgREST. When changing an RPC signature, prefer `DROP FUNCTION` via a `pg_proc` discovery loop over `DROP FUNCTION IF EXISTS(<exact-signature>)` — the exact-signature form is a no-op if the historical apply order on prod differs from your local expectation.
+- Any new boundary mapper (`addressToApi`-style) should fail loudly on missing fields. `JSON.stringify` dropping `undefined` is the kind of silent-data-loss bug that takes 57 days to discover.
+
+---
+
 ### [2026-05-12] Stripe Phase A — `transactions` ledger replaces `payments`; comp labels now book negative margin
 **Category:** Database | Stripe | Payments | Phase A
 **Cross-link:** [`proposals/2026-04-26_stripe-integration-plan_reviewed-2026-04-26_decided-2026-05-11.md`](proposals/2026-04-26_stripe-integration-plan_reviewed-2026-04-26_decided-2026-05-11.md) §3.1, §3.4, §4.3, §6 Phase A.

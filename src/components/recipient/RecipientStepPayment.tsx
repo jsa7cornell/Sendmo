@@ -4,7 +4,7 @@ import {
   CheckCircle2, Download, ExternalLink, Copy, Gift, Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { formatCents, buyLabel } from "@/lib/api";
+import { formatCents, buyLabel, addressToApi } from "@/lib/api";
 import { carrierDisplayName, serviceDisplayName } from "@/lib/utils";
 import { getTotalPriceCents } from "@/hooks/useRecipientFlow";
 import type { RecipientFlowState } from "@/hooks/useRecipientFlow";
@@ -51,9 +51,12 @@ function LabelReady({
   state: RecipientFlowState;
 }) {
   const [copied, setCopied] = useState(false);
-  const shortLink = `sendmo.co/s/${labelResult.sendmo_id || "test"}`;
+  const shortLink = labelResult.short_code
+    ? `sendmo.co/s/${labelResult.short_code}`
+    : null;
 
   function handleCopy() {
+    if (!shortLink) return;
     navigator.clipboard.writeText(`https://${shortLink}`);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
@@ -101,22 +104,24 @@ function LabelReady({
         </div>
       </div>
 
-      {/* Share link */}
-      <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
-        <h3 className="text-sm font-semibold text-foreground mb-3">Share Link</h3>
-        <div className="flex items-center gap-2 bg-muted/50 rounded-xl px-3 py-2.5">
-          <span className="text-sm text-foreground font-mono flex-1 truncate">{shortLink}</span>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleCopy}
-            className="rounded-lg gap-1.5 shrink-0"
-          >
-            <Copy className="w-3.5 h-3.5" />
-            {copied ? "Copied!" : "Copy"}
-          </Button>
+      {/* Share link — only renders when the labels function returned a real short_code */}
+      {shortLink && (
+        <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
+          <h3 className="text-sm font-semibold text-foreground mb-3">Share Link</h3>
+          <div className="flex items-center gap-2 bg-muted/50 rounded-xl px-3 py-2.5">
+            <span className="text-sm text-foreground font-mono flex-1 truncate">{shortLink}</span>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleCopy}
+              className="rounded-lg gap-1.5 shrink-0"
+            >
+              <Copy className="w-3.5 h-3.5" />
+              {copied ? "Copied!" : "Copy"}
+            </Button>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Shipment summary */}
       <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
@@ -315,8 +320,8 @@ export default function RecipientStepPayment({ state, onUpdate, onBack, liveMode
                   accessToken: session.access_token,
                   easypost_shipment_id: state.easypostShipmentId,
                   easypost_rate_id: state.selectedRate.id,
-                  from_address: state.originAddress,
-                  to_address: state.destinationAddress,
+                  from_address: addressToApi(state.originAddress),
+                  to_address: addressToApi(state.destinationAddress),
                   recipient_email: state.email || undefined,
                   sender_email: state.senderEmail || undefined,
                   display_price_cents: totalCents,

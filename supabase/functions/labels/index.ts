@@ -564,6 +564,7 @@ serve(async (req: Request) => {
         // Phase A round-2 B2 mandates; landing it here pre-empts that work.
         let dbShipmentId: string | null = null;
         let dbPublicCode: string | null = null;
+        let dbShortCode: string | null = null;
         if (from_address && to_address && supabase) {
             try {
                 const { data, error } = await supabase.rpc('admin_insert_shipment', {
@@ -622,12 +623,14 @@ serve(async (req: Request) => {
                         }
                     });
                 } else {
-                    // admin_insert_shipment returns TABLE(id, public_code) — array of rows.
-                    const row = Array.isArray(data) ? data[0] : (data as { id: string; public_code: string } | null);
+                    // admin_insert_shipment returns TABLE(id, public_code, short_code) — array of rows.
+                    const row = Array.isArray(data) ? data[0] : (data as { id: string; public_code: string; short_code: string } | null);
                     const shipmentId: string | undefined = row?.id;
                     const publicCode: string | undefined = row?.public_code;
+                    const shortCode: string | undefined = row?.short_code;
                     dbShipmentId = shipmentId ?? null;
                     dbPublicCode = publicCode ?? null;
+                    dbShortCode = shortCode ?? null;
                         log({
                             event_type: "label.db_persisted",
                             session_id: sessionId,
@@ -806,6 +809,7 @@ serve(async (req: Request) => {
                 carrier,
                 service,
                 public_code: dbPublicCode,
+                short_code: dbShortCode,
                 shipment_id: dbShipmentId,
             }),
             { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }

@@ -61,6 +61,15 @@ interface RatesResponse {
 }
 
 export function addressToApi(addr: AddressInput) {
+  // Fail loudly at the boundary if street is missing — JSON.stringify
+  // silently drops undefined keys, which previously masked an upstream
+  // address-shape bug as a PostgREST "function not found" error (LOG
+  // 2026-05-12, launch blocker fix).
+  if (!addr.street || !addr.city || !addr.state || !addr.zip) {
+    throw new Error(
+      `addressToApi: incomplete address (street=${!!addr.street}, city=${!!addr.city}, state=${!!addr.state}, zip=${!!addr.zip})`
+    );
+  }
   return {
     street1: addr.street,
     city: addr.city,

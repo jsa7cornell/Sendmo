@@ -203,6 +203,7 @@ export interface LabelResult {
     label_url: string;
     sendmo_id?: string;
     public_code?: string | null;
+    short_code?: string | null;
     shipment_id?: string | null;
 }
 
