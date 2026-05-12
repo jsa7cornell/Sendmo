@@ -89,6 +89,14 @@ verify_jwt = false
 enabled = true
 verify_jwt = false
 
+# `links` GET ?code= is public (anonymous sender flow). POST + PATCH do their
+# own JWT validation via supabase.auth.getUser(token) inside the function.
+# Section was missing entirely until 2026-05-11; Supabase defaulted to
+# verify_jwt = true and the sender flow's first fetchLink call 401'd in prod.
+[functions.links]
+enabled = true
+verify_jwt = false
+
 # Public tracking page lookup — no auth.
 [functions.tracking]
 enabled = true

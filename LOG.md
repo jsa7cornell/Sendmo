@@ -29,6 +29,30 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 - The 3rd mode does NOT yet honor an env-allowlist of "real-charge-allowed users" (Stripe proposal round-1 P3 / §6 Phase C). Today the only admin is John, so the practical allowlist is "John." When more admins exist, this should tighten — `PAYMENTS_ALLOWED_USERS` env check is the proposal's pattern.
 - **Live keys not configured yet.** Live Charge will hit `<StripePaymentForm liveMode={true}>` which calls `/payments` with `live_mode: true`. That requires `STRIPE_SECRET_KEY_LIVE` + `STRIPE_WEBHOOK_SECRET_LIVE` in Supabase secrets and `VITE_STRIPE_PUBLISHABLE_KEY_LIVE` in Vercel. None set yet — Phase 1 shipped test-only. Live Charge will fail with a clear error in the UI until John completes Stripe proposal §7 "Requires external setup."
 
+### [2026-05-11] verify_jwt regression — `links` GET 401'd in prod on first sender-flow dogfood
+**Category:** Edge Functions | Deploy gotcha | Recurrence of the 2026-05-10 + 2026-05-11 verify_jwt pattern
+**Context:** John clicked his own flex link `https://sendmo.co/s/mUgagu3HrS` immediately after the sender-flow wizard deploy. The page showed "Hmm, that link didn't work — Link not found (401)" instead of Step 0. The `links` function was returning 401 to the anon-key GET — not because the function rejected the call, but because the Supabase gateway was enforcing JWT verification on the function.
+
+**Root cause:** `[functions.links]` was **missing entirely** from `supabase/config.toml`. Without an explicit entry Supabase defaults to `verify_jwt = true`. The sender flow was the first feature to actually call `fetchLink()` from an anonymous client; the recipient flow only POSTs to `/links` with a real Supabase Auth JWT, which the gateway happily accepted. So the bug had been latent since the function shipped — never exercised because no anon GET ever happened in production until the wizard launched.
+
+**Fix:**
+- Added `[functions.links] verify_jwt = false` to `supabase/config.toml`. The GET `?code=` path is intentionally public; POST + PATCH paths still validate the JWT internally via `supabase.auth.getUser(token)`, so flipping the gateway doesn't weaken auth on the privileged paths.
+- Redeployed: `supabase functions deploy links --no-verify-jwt`.
+- Verified: `curl https://fkxykvzsqdjzhurntgah.supabase.co/functions/v1/links?code=mUgagu3HrS` returns 200 (was 401).
+
+**Why this keeps biting:**
+- 2026-05-10 LOG entry "Edge Function deploys" named the pattern: `--no-verify-jwt` on the CLI invocation doesn't persist; only `config.toml` does.
+- 2026-05-11 LOG entry "verify_jwt regression hit `tracking` + `webhooks`" caught it on two other functions. Same pattern.
+- The lesson keeps not generalizing because there's no test in CI for "every public-facing function has `verify_jwt = false` documented." Every new function is one human-memory step away from this exact bug.
+
+**Watch out — soft rule to harden:**
+- **Before deploying any new Edge Function**, grep `config.toml` for the function name. If the section is absent, add it with the intended `verify_jwt` value. Default-true is fine for admin/auth'd functions but breaks anything anon-callable.
+- A precommit hook or test could enforce: "every `supabase/functions/*/index.ts` directory has a matching `[functions.X]` section." Worth filing.
+
+**Files touched:** [supabase/config.toml](supabase/config.toml).
+
+---
+
 ### [2026-05-11] Sender flow wizard — flex links produce real EasyPost labels end-to-end
 **Category:** Feature | UX | Security | Schema-adjacent
 **Proposal:** [proposals/2026-05-11_sender-flow-wizard_reviewed-2026-05-11_decided-2026-05-11.md](proposals/2026-05-11_sender-flow-wizard_reviewed-2026-05-11_decided-2026-05-11.md)
