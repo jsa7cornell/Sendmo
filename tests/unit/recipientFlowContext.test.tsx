@@ -1,25 +1,55 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, act } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Routes, Route, Outlet } from "react-router-dom";
+
+// Mock Supabase before importing anything that touches it. Both AuthContext
+// and RecipientFlowContext call into supabase.auth on mount; we return a no-
+// session, no-user state so the auto-prefill + auto-verify effects skip.
+const mockGetSession = vi.fn();
+const mockOnAuthStateChange = vi.fn();
+
+vi.mock("@/lib/supabase", () => ({
+  supabase: {
+    auth: {
+      getSession: (...args: unknown[]) => mockGetSession(...args),
+      onAuthStateChange: (...args: unknown[]) => mockOnAuthStateChange(...args),
+      signInWithOtp: vi.fn().mockResolvedValue({ data: {}, error: null }),
+      signInWithOAuth: vi.fn().mockResolvedValue({ data: {}, error: null }),
+      signOut: vi.fn().mockResolvedValue({ error: null }),
+    },
+    from: () => ({
+      select: () => ({
+        eq: () => ({
+          single: () => Promise.resolve({ data: null }),
+          order: () => ({ limit: () => ({ maybeSingle: () => Promise.resolve({ data: null }) }) }),
+        }),
+      }),
+      insert: () => Promise.resolve({}),
+    }),
+  },
+}));
+
+import { AuthProvider } from "@/contexts/AuthContext";
 import {
   RecipientFlowProvider,
   useRecipientFlowContext,
 } from "@/contexts/RecipientFlowContext";
 
-// Mock Supabase (some components may import it)
-vi.mock("@/lib/supabase", () => ({
-  supabase: {
-    auth: {
-      getSession: vi.fn().mockResolvedValue({ data: { session: null } }),
-      onAuthStateChange: vi.fn().mockReturnValue({
-        data: { subscription: { unsubscribe: vi.fn() } },
-      }),
-    },
-  },
-}));
+beforeEach(() => {
+  vi.clearAllMocks();
+  mockGetSession.mockResolvedValue({ data: { session: null } });
+  mockOnAuthStateChange.mockReturnValue({
+    data: { subscription: { unsubscribe: vi.fn() } },
+  });
+  // Reset session-scoped persistence the provider hydrates from on mount.
+  try {
+    window.sessionStorage.removeItem("sendmo:recipient_flow:v1");
+  } catch {
+    /* jsdom may not expose sessionStorage in all environments */
+  }
+});
 
-// A test harness component that renders flow state
 function StepDisplay() {
   const { currentStep, data, direction, selectPath, tryAdvance, goBack, updateData } =
     useRecipientFlowContext();
@@ -39,8 +69,7 @@ function StepDisplay() {
           updateData({
             destinationAddress: {
               name: "Jane",
-              street1: "123 Main",
-              street2: "",
+              street: "123 Main",
               city: "SF",
               state: "CA",
               zip: "94105",
@@ -67,13 +96,18 @@ function TestLayout() {
 function renderWithRouter(initialEntries: string[] = ["/onboarding"]) {
   return render(
     <MemoryRouter initialEntries={initialEntries}>
-      <Routes>
-        <Route path="/onboarding" element={<TestLayout />}>
-          <Route index element={<StepDisplay />} />
-          <Route path=":step" element={<StepDisplay />} />
-        </Route>
-      </Routes>
-    </MemoryRouter>
+      <AuthProvider>
+        <Routes>
+          <Route path="/onboarding" element={<TestLayout />}>
+            <Route index element={<StepDisplay />} />
+            <Route path=":pathSlug">
+              <Route index element={<StepDisplay />} />
+              <Route path=":stepSlug" element={<StepDisplay />} />
+            </Route>
+          </Route>
+        </Routes>
+      </AuthProvider>
+    </MemoryRouter>,
   );
 }
 
@@ -85,27 +119,32 @@ describe("RecipientFlowContext", () => {
   });
 
   it("derives step from URL param", () => {
-    renderWithRouter(["/onboarding/address"]);
+    renderWithRouter(["/onboarding/full-label/destination"]);
     expect(screen.getByTestId("current-step").textContent).toBe("1");
   });
 
   it("maps shipping slug to step 10", () => {
-    renderWithRouter(["/onboarding/shipping"]);
+    renderWithRouter(["/onboarding/full-label/shipping"]);
     expect(screen.getByTestId("current-step").textContent).toBe("10");
   });
 
-  it("maps payment slug to step 11", () => {
-    renderWithRouter(["/onboarding/payment"]);
+  it("maps verify slug to step 11 (full-label)", () => {
+    renderWithRouter(["/onboarding/full-label/verify"]);
     expect(screen.getByTestId("current-step").textContent).toBe("11");
   });
 
-  it("maps preferences slug to step 20", () => {
-    renderWithRouter(["/onboarding/preferences"]);
+  it("maps payment slug to step 12 (full-label, post account-creation-timing)", () => {
+    renderWithRouter(["/onboarding/full-label/payment"]);
+    expect(screen.getByTestId("current-step").textContent).toBe("12");
+  });
+
+  it("maps preferences slug to step 20 (flexible)", () => {
+    renderWithRouter(["/onboarding/flexible/preferences"]);
     expect(screen.getByTestId("current-step").textContent).toBe("20");
   });
 
   it("falls back to step 0 for unknown slug", () => {
-    renderWithRouter(["/onboarding/unknown-step"]);
+    renderWithRouter(["/onboarding/full-label/unknown-step"]);
     expect(screen.getByTestId("current-step").textContent).toBe("0");
   });
 
@@ -115,7 +154,6 @@ describe("RecipientFlowContext", () => {
 
     await user.click(screen.getByText("Select Full Label"));
 
-    // After selecting path, should navigate to /onboarding/address (step 1)
     expect(screen.getByTestId("current-step").textContent).toBe("1");
     expect(screen.getByTestId("path").textContent).toBe("full_label");
     expect(screen.getByTestId("completed").textContent).toContain("0");
@@ -137,26 +175,20 @@ describe("RecipientFlowContext", () => {
 
     await user.click(screen.getByText("Fill Step 1"));
 
-    // Re-render shows same component — data is in context
+    // Stays on step 0 (no path picked yet); data exists in context regardless.
     expect(screen.getByTestId("current-step").textContent).toBe("0");
   });
 
-  it("tryAdvance with valid data marks step complete and navigates forward", async () => {
+  it("tryAdvance with valid data marks step complete and navigates from 1 → 10", async () => {
     const user = userEvent.setup();
     renderWithRouter();
 
-    // Select path first
     await user.click(screen.getByText("Select Full Label"));
-    // Now on step 1 (address)
     expect(screen.getByTestId("current-step").textContent).toBe("1");
 
-    // Fill valid data
     await user.click(screen.getByText("Fill Step 1"));
-
-    // Try to advance from step 1
     await user.click(screen.getByText("Try Advance"));
 
-    // Should have advanced to step 10 and step 1 should be completed
     expect(screen.getByTestId("current-step").textContent).toBe("10");
     expect(screen.getByTestId("completed").textContent).toContain("1");
   });
@@ -168,10 +200,9 @@ describe("RecipientFlowContext", () => {
     await user.click(screen.getByText("Select Full Label"));
     expect(screen.getByTestId("current-step").textContent).toBe("1");
 
-    // Try to advance without filling data
+    // Try to advance without filling — validation errors fire, no nav.
     await user.click(screen.getByText("Try Advance"));
 
-    // Should stay on step 1
     expect(screen.getByTestId("current-step").textContent).toBe("1");
   });
 });
