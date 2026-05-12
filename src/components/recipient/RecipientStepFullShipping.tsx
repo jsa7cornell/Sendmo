@@ -8,7 +8,7 @@ import SmartAddressInput from "@/components/ui/SmartAddressInput";
 import PriceSummaryCard from "./PriceSummaryCard";
 import ShippingMethodCard from "./ShippingMethodCard";
 import MagicGuestimator from "./MagicGuestimator";
-import { fetchRates, isOverCap, pickRecommendedRate, formatCents } from "@/lib/api";
+import { fetchRates, pickRecommendedRate, formatCents } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { getTotalPriceCents, getTotalWeightOz, canFetchRates } from "@/hooks/useRecipientFlow";
 import type { RecipientFlowState } from "@/hooks/useRecipientFlow";
@@ -326,19 +326,14 @@ export default function RecipientStepFullShipping({
 
         {!ratesLoading && state.availableRates.length > 0 && (
           <div className="space-y-2">
-            {state.availableRates.map((rate: ShippingRate) => {
-              const overCap = isOverCap(rate.display_price_cents);
-              return (
-                <ShippingMethodCard
-                  key={rate.id}
-                  rate={rate}
-                  selected={state.selectedRate?.id === rate.id}
-                  disabled={overCap}
-                  disabledReason={overCap ? "Exceeds price cap" : undefined}
-                  onSelect={() => onUpdate({ selectedRate: rate, recommendedSpeedHint: null })}
-                />
-              );
-            })}
+            {state.availableRates.map((rate: ShippingRate) => (
+              <ShippingMethodCard
+                key={rate.id}
+                rate={rate}
+                selected={state.selectedRate?.id === rate.id}
+                onSelect={() => onUpdate({ selectedRate: rate, recommendedSpeedHint: null })}
+              />
+            ))}
           </div>
         )}
       </div>
