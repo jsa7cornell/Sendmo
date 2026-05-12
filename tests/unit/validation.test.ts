@@ -28,6 +28,7 @@ function makeState(overrides: Partial<RecipientFlowState> = {}): RecipientFlowSt
 
 const verifiedAddr = () => ({
   ...emptyAddress(),
+  name: "Pat Smith",
   street: "388 Townsend St",
   city: "San Francisco",
   state: "CA",

@@ -151,6 +151,7 @@ export function getValidationErrors(state: RecipientFlowState, step: number): st
   }
 
   if (step === 10) {
+    if (!state.originAddress.name) errors.push("Sender name is required");
     if (!state.originAddress.verified) errors.push("Ship from address is required");
 
     const l = parseFloat(state.dimensions.length);
