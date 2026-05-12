@@ -139,11 +139,33 @@ export default function Admin() {
                     });
                 } else {
                     for (const sh of shs) {
-                        const pays = Array.isArray(sh.payments) ? sh.payments : (sh.payments ? [sh.payments] : []);
-                        const collected = pays.length > 0 ? pays.reduce((sum: number, p: any) => sum + (p.amount_cents || 0), 0) : null;
+                        // Stripe Phase A: derive margin from the transactions ledger,
+                        // not the legacy payments table (which was dropped in migration 017).
+                        //
+                        //   collected = SUM(charge)          -- card/balance customer payments (positive)
+                        //   refunded  = SUM(refund)          -- money returned (negative)
+                        //   compCost  = SUM(comp_grant)      -- SendMo absorbs EasyPost cost (negative)
+                        //
+                        // Comp shipments now correctly show negative margin (WISHLIST closed).
+                        const txs: Array<{ amount_cents: number; type: string }> =
+                            Array.isArray(sh.transactions) ? sh.transactions : (sh.transactions ? [sh.transactions] : []);
+                        const sumByType = (t: string) =>
+                            txs.filter((x) => x.type === t).reduce((sum, x) => sum + (x.amount_cents || 0), 0);
+                        const chargeSum = sumByType("charge");
+                        const refundSum = sumByType("refund");     // negative
+                        const compSum   = sumByType("comp_grant"); // negative
+                        const collected = chargeSum !== 0 ? chargeSum : null;
                         const cost = sh.rate_cents ?? null;
                         const ins = 0;
-                        const margin = collected !== null && cost !== null ? collected - cost - ins : null;
+                        let margin: number | null;
+                        if (compSum !== 0 && collected === null) {
+                            // Pure comp shipment: margin = comp_grant (negative — cost to SendMo).
+                            margin = compSum;
+                        } else if (collected !== null && cost !== null) {
+                            margin = collected - cost - ins + refundSum;
+                        } else {
+                            margin = null;
+                        }
 
 
                         rows.push({

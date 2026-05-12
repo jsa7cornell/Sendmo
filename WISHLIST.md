@@ -34,7 +34,7 @@
 
 ## Data / Reporting
 
-- [ ] **Comp labels should show negative margin** — When a live label is created via "Live Comp" mode (no revenue), the admin report should show margin as negative (cost to SendMo), not zero.
+- [x] **Comp labels should show negative margin** — Shipped 2026-05-12 with Stripe Phase A (migration 017). Live Comp shipments now write a `transactions` row of `type='comp_grant'` with negative `amount_cents` (SendMo absorbs the EasyPost cost). The admin report derives margin from the ledger and renders comp shipments with negative margin = the comp_grant amount. See LOG entry "Stripe Phase A — transactions ledger" and proposal [2026-04-26_stripe-integration-plan_reviewed-2026-04-26_decided-2026-05-11.md](proposals/2026-04-26_stripe-integration-plan_reviewed-2026-04-26_decided-2026-05-11.md).
 
 ## Features
 

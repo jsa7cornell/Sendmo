@@ -162,10 +162,23 @@ Never show the SendMo fee separately. Single "Shipping" price.
 
 ## Database Tables (Production Schema)
 
-See `supabase/migrations/001_initial_schema.sql` for full schema.
-See `supabase/migrations/002_add_refund_fields.sql` for label refund columns.
+See `supabase/migrations/001_initial_schema.sql` for the base schema, `002_add_refund_fields.sql` for label refund columns, and `017_stripe_phase_a_transactions_ledger.sql` for the Stripe Phase A ledger.
 
-Key tables: `profiles`, `addresses`, `sendmo_links`, `shipments`, `payments`, `balances`, `webhook_events`
+**Core tables:** `profiles`, `addresses`, `sendmo_links`, `shipments`, `balances`, `webhook_events`, `event_logs`, `notification_contacts`, `notifications_log`, `email_verifications`.
+
+**Stripe Phase A ledger** (migration 017, shipped 2026-05-12 — the legacy `payments` table was dropped):
+
+| Table | Role |
+|-------|------|
+| `transactions` | **Append-only money-movement ledger (Rule 16).** Signed `amount_cents` (+ = SendMo gains, − = SendMo loses). REVOKE UPDATE/DELETE + trigger enforce immutability. The `stripe-webhook` function is the sole writer for `charge` / `refund` / `chargeback` / `refund_fee_recovered` / `fee_stripe` rows; the `labels` function writes only `comp_grant` rows. |
+| `stripe_intents` | Stripe PaymentIntent / SetupIntent state mirror (NOT the ledger). UPSERTed by the webhook. `transfer_group` is the Phase-3 Connect seam (`sm_<shipment_id>`). |
+| `payment_methods` | Saved cards / ACH for Phase B+. Soft-delete via `deleted_at`. |
+| `holds` | Flex-link manual-capture authorizations (Phase E). |
+| `refunds` | Mirror of Stripe Refund objects (Phase F). |
+| `carrier_adjustments` | Post-pickup rate adjustments from EasyPost (Phase G recovery loop). |
+| `user_wallet_balance` (view) | Derived per-(user, mode) balance from `transactions`. Read by Phase 2 wallet UI. |
+
+Also shipped in 017: `shipments.payment_method` (`card`/`balance`/`split`/`comp`/`us_bank_account`), `shipments.stripe_payment_intent_id`, `shipments.escrow_id` (Phase-3 slot), `sendmo_links.is_test` (server-derived per round-1 B3), `profiles.stripe_customer_id_test` / `_live`.
 
 **Shipments — refund fields (added in migration 002):**
 
@@ -252,8 +265,10 @@ When working as a Claude Code agent, you may be assigned one of these roles:
 - [x] **Email notifications (Resend)** — OTP verification, label confirmation, tracking updates. Edge Functions deployed (`email`, `webhooks`), sendmo.co domain verified, API key set as Supabase secret.
 - [x] **Shipping notifications (sender + recipient)** — Notification dispatcher with channel-based routing (email now, SMS/push extensible). notification_contacts + notifications_log tables (migration 011). Role-aware email templates with ETA, carrier, and "Track Package" button. Public tracking page at `/track/:trackingNumber`.
 - [x] **Sender flow (5-step wizard at /s/:shortCode)** — 2026-05-11: Intro → Package → Rates → Review → Done. Routes around blocked Stripe Phase E via hardened comp-only path (admin-JWT-or-active-flex-link gate, server-resolved to_address + recipient_email, server-derived cap enforcement). See LOG entry 2026-05-11 "Sender flow wizard". Components in `src/components/sender/`.
-- [ ] Stripe payment integration (stubbed for now, real integration needed)
-- [ ] Server-side admin token validation (replace PIN gate with role-based check)
+- [x] **Stripe Phase A — `transactions` ledger** (shipped 2026-05-12, migration 017): legacy `payments` table dropped; append-only `transactions` ledger + `stripe_intents`, `payment_methods`, `holds`, `refunds`, `carrier_adjustments` tables stood up; `stripe-webhook` is the sole writer for charge/refund/chargeback rows; comp labels now book negative margin. Unblocks Phases B/C/D/E/F/G/H. See LOG entry "Stripe Phase A — `transactions` ledger" and [proposals/2026-04-26_stripe-integration-plan_reviewed-2026-04-26_decided-2026-05-11.md](proposals/2026-04-26_stripe-integration-plan_reviewed-2026-04-26_decided-2026-05-11.md).
+- [ ] Stripe Phase B — save card on file (SetupIntent + dashboard "Add card")
+- [ ] Stripe Phase C — live charge dogfood (real Stripe Elements + reconciliation)
+- [x] Server-side admin token validation — `requireAdmin` helper + `profiles.role` (shipped 2026-05-11 via migration 016)
 
 **What exists on disk but is a stub**:
 - `src/pages/SenderFlow.tsx` — placeholder text (needs 5-step sender wizard)

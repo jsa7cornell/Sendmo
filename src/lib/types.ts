@@ -87,24 +87,40 @@ export interface Shipment {
     updated_at: string;
 }
 
-// ─── Payments ────────────────────────────────────────────────
-export type PaymentStatus =
-    | "pending"
-    | "authorized"
-    | "captured"
-    | "refunded"
-    | "failed";
+// ─── Transactions (Stripe Phase A — migration 017) ──────────
+// Append-only ledger. The legacy `payments` table was dropped.
+// Signed amount_cents: + = SendMo gains, − = SendMo loses.
 
-export interface Payment {
+export type TransactionType =
+    | "charge"
+    | "fee_stripe"
+    | "refund"
+    | "refund_fee_recovered"
+    | "comp_grant"
+    | "balance_topup"
+    | "balance_topup_bonus"
+    | "balance_redeem"
+    | "carrier_adjustment"
+    | "chargeback"
+    | "adjustment";
+
+export type FundingSource = "card" | "balance" | "split" | "us_bank_account" | "comp";
+export type LedgerMode = "test" | "live";
+
+export interface Transaction {
     id: string;
-    shipment_id: string;
     user_id: string;
-    stripe_payment_intent_id: string;
+    shipment_id: string | null;
+    link_id: string | null;
+    stripe_intent_id: string | null;
+    stripe_charge_id: string | null;
+    type: TransactionType;
+    funding_source: FundingSource | null;
     amount_cents: number;
-    capture_method: "automatic" | "manual";
-    status: PaymentStatus;
+    description: string | null;
+    mode: LedgerMode;
+    idempotency_key: string;
     created_at: string;
-    updated_at: string;
 }
 
 // ─── Balances ────────────────────────────────────────────────

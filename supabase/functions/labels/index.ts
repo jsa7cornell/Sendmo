@@ -731,80 +731,58 @@ serve(async (req: Request) => {
                             }
                         }
 
-                        // Record the payment row. Three cases:
-                        //   1. Real Stripe-charged label → verifiedPaymentIntent present
-                        //   2. Admin comp (free label, no card) → isComp
-                        //   3. Pre-Stripe legacy live-mode flow → kept as fallback
-                        //      until everything is on PI, then removable.
-                        if (shipmentId && verifiedPaymentIntent) {
+                        // ── Ledger write (Phase A — migration 017) ──────────
+                        // Two paths:
+                        //   (a) Stripe-charged label → NO LEDGER WRITE HERE.
+                        //       Per proposal §3.4 + round-1 B4, the stripe-webhook
+                        //       function is the sole writer for charge/refund/
+                        //       chargeback transactions. The webhook lands within
+                        //       seconds of payment_intent.succeeded and writes the
+                        //       +charge and −fee_stripe rows. Reconciliation's 24h
+                        //       grace window (§5.4) tolerates the in-flight gap.
+                        //
+                        //   (b) Admin comp (no Stripe path) → write the comp_grant
+                        //       row directly. Awaited (not fire-and-forget) so the
+                        //       insert error surfaces and we don't return 200 with
+                        //       missing ledger state (round-2 B2 await discipline).
+                        if (shipmentId && (isComp || (!verifiedPaymentIntent && isLive))) {
                             const rateCents = Math.round(parseFloat(buyData.selected_rate?.rate || "0") * 100);
-                            supabase.from('payments').insert({
+                            // comp_grant amount is negative — SendMo absorbs the EasyPost cost.
+                            const compAmountCents = -Math.abs(rateCents || display_price_cents || 0);
+                            const userId = resolvedLink?.user_id ?? callerUserId ?? '00000000-0000-0000-0000-000000000001';
+                            const mode = isLive ? 'live' : 'test';
+                            const { error: txErr } = await supabase.from('transactions').insert({
+                                user_id: userId,
                                 shipment_id: shipmentId,
-                                user_id: resolvedLink?.user_id ?? callerUserId ?? '00000000-0000-0000-0000-000000000001',
-                                stripe_payment_intent_id: verifiedPaymentIntent.id,
-                                amount_cents: verifiedPaymentIntent.amount,
-                                capture_method: 'automatic',
-                                status: 'captured',
-                                payment_method: 'card',
-                            }).then(({ error: payErr }: { error: { message: string } | null }) => {
-                                if (payErr) {
-                                    console.error('Stripe payment insert error:', payErr);
-                                    log({
-                                        event_type: "label.stripe_payment_persist_error",
-                                        session_id: sessionId,
-                                        severity: "error",
-                                        entity_type: "payment",
-                                        entity_id: shipmentId,
-                                        properties: { error_message: payErr.message, payment_intent_id: verifiedPaymentIntent!.id },
-                                    });
-                                } else {
-                                    log({
-                                        event_type: "label.stripe_payment_recorded",
-                                        session_id: sessionId,
-                                        severity: "info",
-                                        entity_type: "payment",
-                                        entity_id: shipmentId,
-                                        properties: {
-                                            amount_cents: verifiedPaymentIntent!.amount,
-                                            payment_intent_id: verifiedPaymentIntent!.id,
-                                            rate_cents: rateCents,
-                                        },
-                                    });
-                                }
+                                link_id: resolvedLink?.id ?? null,
+                                type: 'comp_grant',
+                                funding_source: 'comp',
+                                amount_cents: compAmountCents,
+                                mode,
+                                idempotency_key: `label.${easypost_shipment_id}.comp_grant`,
+                                description: 'Comp label — SendMo absorbs EasyPost cost',
                             });
-                        } else if (shipmentId && (isComp || isLive)) {
-                            const rateCents = Math.round(parseFloat(buyData.selected_rate?.rate || "0") * 100);
-                            supabase.from('payments').insert({
-                                shipment_id: shipmentId,
-                                user_id: resolvedLink?.user_id ?? callerUserId ?? '00000000-0000-0000-0000-000000000001',
-                                stripe_payment_intent_id: null,
-                                amount_cents: display_price_cents ?? rateCents,
-                                capture_method: 'automatic',
-                                status: 'captured',
-                                payment_method: 'comp',
-                            }).then(({ error: payErr }: { error: { message: string } | null }) => {
-                                if (payErr) {
-                                    console.error('Comp payment insert error:', payErr);
-                                    log({
-                                        event_type: "label.comp_payment_error",
-                                        session_id: sessionId,
-                                        severity: "error",
-                                        entity_type: "payment",
-                                        entity_id: shipmentId,
-                                        properties: { error_message: payErr.message },
-                                    });
-                                } else {
-                                    log({
-                                        event_type: "label.comp_payment_recorded",
-                                        session_id: sessionId,
-                                        severity: "info",
-                                        entity_type: "payment",
-                                        entity_id: shipmentId,
-                                        properties: { amount_cents: display_price_cents ?? rateCents },
-                                    });
-                                }
-                            });
-                    }
+                            if (txErr) {
+                                console.error('Comp transaction insert error:', txErr);
+                                log({
+                                    event_type: "label.comp_grant_error",
+                                    session_id: sessionId,
+                                    severity: "error",
+                                    entity_type: "transaction",
+                                    entity_id: shipmentId,
+                                    properties: { error_message: txErr.message },
+                                });
+                            } else {
+                                log({
+                                    event_type: "label.comp_grant_recorded",
+                                    session_id: sessionId,
+                                    severity: "info",
+                                    entity_type: "transaction",
+                                    entity_id: shipmentId,
+                                    properties: { amount_cents: compAmountCents, rate_cents: rateCents },
+                                });
+                            }
+                        }
                 }
             } catch (err) {
                 console.error('Unhandled DB insertion error:', err);

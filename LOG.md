@@ -8,6 +8,71 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-12] Stripe Phase A — `transactions` ledger replaces `payments`; comp labels now book negative margin
+**Category:** Database | Stripe | Payments | Phase A
+**Cross-link:** [`proposals/2026-04-26_stripe-integration-plan_reviewed-2026-04-26_decided-2026-05-11.md`](proposals/2026-04-26_stripe-integration-plan_reviewed-2026-04-26_decided-2026-05-11.md) §3.1, §3.4, §4.3, §6 Phase A.
+
+**Context:** Phase A of the decided Stripe integration plan. Single atomic migration drops the legacy `payments` table and stands up the proposal's full schema: `transactions` (append-only ledger, Rule 16), `stripe_intents` (Stripe state mirror), `payment_methods` (Phase B+ saved cards), `holds` (Phase E flex-link authorizations), `refunds` (Phase F), `carrier_adjustments` (Phase G). Adds the Phase-3 forward-compat slots on `shipments` (`stripe_payment_intent_id`, `escrow_id`) and the server-derived `is_test` column on `sendmo_links` per round-1 B3. Backfills `shipments.payment_method` from `payments` before the DROP, then backfills the `transactions` ledger from `payments` so historical comp + Stripe-test rows survive the table drop as ledger entries.
+
+**What shipped:**
+- [supabase/migrations/017_stripe_phase_a_transactions_ledger.sql](supabase/migrations/017_stripe_phase_a_transactions_ledger.sql) — one atomic file. Postgres wraps migrations in a single transaction; if any statement errors, the whole thing rolls back and we're at 016. All-or-nothing per proposal §6 Phase A round-2 N5.
+- [supabase/functions/labels/index.ts](supabase/functions/labels/index.ts) — the two fire-and-forget `payments.insert(...).then(...)` blocks (~line 741, ~line 777 pre-edit) collapsed into a single **awaited** `transactions.insert` for the comp path only. The Stripe-charge ledger row is **no longer written by labels** — per proposal §3.4 + round-1 B4 the `stripe-webhook` function is the sole writer for charge/refund/chargeback rows. Reconciliation's 24h grace (§5.4) tolerates the in-flight window between label issuance and webhook arrival.
+- [supabase/functions/stripe-webhook/index.ts](supabase/functions/stripe-webhook/index.ts) — full rewrite. UPSERTs `stripe_intents` on `payment_intent.succeeded` / `payment_intent.payment_failed`. Appends `+charge` on `payment_intent.succeeded`, `−refund` on `charge.refunded` (plus UPSERTs `refunds`), `−chargeback` on `charge.dispute.created`. Idempotency_key uses `stripe.${event.id}:<kind>`; UNIQUE constraint dedups Stripe retries. Also fixes a latent bug in the original dedup query — `webhook_events` was being checked on `id` (the local UUID PK) instead of `event_id` (the Stripe event id); pre-existing dedup never worked.
+- [supabase/functions/admin-report/index.ts](supabase/functions/admin-report/index.ts) — joins `transactions` (filtered by `mode` query-string, default `live`) instead of `payments`. Mode filter is client-side after the PostgREST join.
+- [src/pages/Admin.tsx](src/pages/Admin.tsx) — derives `collected_cents` from `SUM(charge)`, applies refund deltas, and for pure comp shipments sets `margin = comp_grant` (negative). Closes the WISHLIST item "Comp labels should show negative margin."
+- [src/lib/refundService.ts](src/lib/refundService.ts) — stub still throws but the type signature now references `chargeTransactionId` (the `transactions.id` of the originating type='charge' row) instead of `paymentId`. Phase F populates the wire call.
+- [src/lib/types.ts](src/lib/types.ts) — `Payment` interface replaced with `Transaction` + `TransactionType` + `FundingSource` + `LedgerMode` types matching the new schema.
+
+**Audit results (acceptance criteria):**
+- `grep -rn "from('payments')\|payments\.insert\|payments\.update" supabase/ src/` → **0 hits**. Verified pre-commit.
+- `npx tsc -b --noEmit` → exit 0.
+- `npx vitest run --root . --dir tests/unit` → **236 passed, 0 failed** (all 21 test files).
+- `cancel-label` was audited and contains zero `payments` references already; no changes needed there. The deferred `proposals/2026-05-11_label-cancel-and-change.md` is on ice — not touched.
+
+**Backfill design (executed inside the migration transaction):**
+1. `comp_grant` rows for any `payments.payment_method='comp'` row — amount NEGATIVE = `-ABS(shipments.rate_cents OR payments.amount_cents)`.
+2. `charge` rows for any `payments.payment_method IN ('card','balance') AND status='captured'` — amount POSITIVE = `payments.amount_cents`, carries the `stripe_payment_intent_id`.
+3. `refund` rows for any `payments.status='refunded' OR shipments.refund_status='refunded'` — amount NEGATIVE.
+- `idempotency_key` = `backfill.<payments.id>.<kind>` (UNIQUE so re-runs are no-ops).
+- `mode` derived from `shipments.is_live`, never trusted from any client.
+- Actual row counts will be recorded by John when the migration runs against prod via the Supabase dashboard SQL editor — this PR ships the code change; the database mutation is John's step per Rule 0.5.
+
+**Rule 16 enforcement (`transactions` append-only):**
+- Layer 1: `REVOKE UPDATE, DELETE` from `anon`, `authenticated`, `service_role`. `GRANT SELECT, INSERT` to `service_role` only.
+- Layer 2: `BEFORE UPDATE / DELETE` trigger raises `'transactions is append-only (Rule 16). UPDATE/DELETE blocked. Record a compensating row instead (type=adjustment).'`
+- Verification test (manual, post-migration): `UPDATE transactions SET amount_cents = 0 WHERE id = '<any-row>';` should error.
+
+**Rollback story:** none beyond Postgres' implicit transaction. The migration is one BEGIN/COMMIT-wrapped file. If any statement errors on prod, the entire thing rolls back and the DB is at migration 016. There is no partial-state recovery path — the fix is to repair the failing statement in `017` and re-run from a clean state.
+
+**Deploy order (matters):**
+1. **Open Supabase dashboard SQL editor (project `fkxykvzsqdjzhurntgah`)**. Paste contents of `017_stripe_phase_a_transactions_ledger.sql`. Run. Verify success.
+2. Verify tables exist: `SELECT count(*) FROM transactions;` Verify backfill: `SELECT type, count(*), SUM(amount_cents) FROM transactions GROUP BY type;`
+3. Verify trigger fires: try `UPDATE transactions SET amount_cents = 0 WHERE id = (SELECT id FROM transactions LIMIT 1);` — should raise.
+4. Verify RLS: as the system user, attempt to SELECT another user's row — should return empty.
+5. Deploy functions: `labels`, `stripe-webhook`, `admin-report` — one at a time.
+6. Smoke test: open `/admin` as John; report renders; comp shipments show negative margin.
+7. Generate one Live Comp label end-to-end; verify exactly one new `transactions` row appears with `type='comp_grant'` and negative `amount_cents`.
+
+**Why the migration step is John's (not the agent's):**
+Per `~/AI Brain/CLAUDE.md` Rule 0.5, irreversible production DB ops have severity equal to Rule 0 (leaked secrets). Both are non-undoable. After the 2026-05-04 prod-DB-wipe incident, agents do not execute `DROP TABLE` / `TRUNCATE` / `prisma migrate reset` / hand-rolled `psql` against production. The migration file is the agent's deliverable; running it against `fkxykvzsqdjzhurntgah` is John's step.
+
+**What this unblocks:**
+- **Phase B** (save card on file via SetupIntent) — no remaining decisions.
+- **Phase C** (live charge dogfood) — blocked only on the separate role-based admin auth side-quest (already landed 2026-05-11 per migration 016) + Stripe live keys (John's external setup).
+- **Phase D + F** (public launch + refunds) — no remaining decisions.
+- **Phase E** (flex-link auth/capture) — needs the mandate-UI work from the §11 #10 decision.
+- **Phase G** (carrier adjustment recovery) — schema slot now present; impl is Phase G's own work.
+- **Phase 2 / H** (prepaid balance + ACH topup) — schema and `user_wallet_balance` view ship in this PR; UI is Phase 2/H.
+
+**Notes for future agents:**
+- Webhook is the **sole writer** for `transactions` rows of type `charge`, `refund`, `chargeback`. If you find yourself wanting to write a charge row from a function other than `stripe-webhook`, re-read proposal §3.4 — you're about to recreate the split-brain bug round-1 B4 was added to prevent.
+- The labels function only writes `comp_grant` rows. That insert is **awaited**, never fire-and-forget (round-2 B2).
+- Every row in `transactions`, `stripe_intents`, `holds`, `refunds`, `payment_methods` carries a `mode` column. Every reconciliation query MUST filter by `mode='live'` or test data will pollute live margin.
+- `user_wallet_balance` is a regular view (not materialized) — Phase 2 reads it for the dashboard wallet card. If it gets slow past ~1M ledger rows, materialize it; the read shape doesn't change.
+- The `escrow_id UUID` slot on `shipments` is a Phase-3 forward-compat column. Don't drop it just because Phase 3 is years away — the FK constraint to `escrows(id)` is added when that table ships.
+
+---
+
 ### [2026-05-12] CI was red on `main` for 21 commits — three test files had drifted from their subjects, not a real failure
 **Category:** Tests | Tech debt | CI hygiene
 **Context:** While shipping the account-creation-timing iteration, noticed that GitHub Actions had been failing on every push to `main` for ~21 consecutive commits (since 2026-04-19's `feat(routing): path-scoped onboarding URLs`). Vercel deploys never gated on this so production was always fine, but the CI signal had been worthless for a month. Three test files were the entire problem:
