@@ -549,7 +549,11 @@ serve(async (req: Request) => {
         if (from_address && to_address && supabase) {
             try {
                 const { data, error } = await supabase.rpc('admin_insert_shipment', {
-                    p_user_id: '00000000-0000-0000-0000-000000000001',
+                    // Sender-flow flex-link shipments are owned by the link
+                    // recipient (so they show up in their Dashboard). The
+                    // system-user placeholder remains the right answer for
+                    // admin-comp full-label flows that have no resolved link.
+                    p_user_id: resolvedLink?.user_id ?? '00000000-0000-0000-0000-000000000001',
                     p_from_name: from_address.name,
                     p_from_street1: from_address.street1,
                     p_from_street2: from_address.street2 ?? null,
