@@ -29,6 +29,22 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 - `npx vitest run --root . --dir tests/unit` → **236 passed, 0 failed** (all 21 test files).
 - `cancel-label` was audited and contains zero `payments` references already; no changes needed there. The deferred `proposals/2026-05-11_label-cancel-and-change.md` is on ice — not touched.
 
+**End-to-end smoke test result (2026-05-12 evening):** Migration 017 applied cleanly via Supabase dashboard SQL editor. Append-only trigger verified — `UPDATE transactions SET amount_cents = 0` raised the expected `P0001` exception. All three Edge Functions deployed without error. Backfill from legacy `payments` table produced exactly **one** `comp_grant` ledger row (the March-18 historical dogfood comp, `amount_cents = -1129`, idempotency_key `backfill.fc9ac8d1-…-comp_grant`).
+
+**The fresh Live Comp smoke test (the ledger row from a new label) did NOT produce a new `comp_grant` row** — but the cause is two pre-existing latent bugs unrelated to Phase A:
+
+1. **`admin_insert_shipment` RPC overload collision.** Production has TWO overloads of the function sitting alongside each other (confirmed via `information_schema.parameters` — every base param appears twice). Migration 014's `DROP FUNCTION IF EXISTS` targeted a 29-param signature from migration 012 that may not have applied cleanly; the surviving 28-param version from migration 008 is still in place. PostgREST can't resolve the call, returns "function not found." `event_logs` shows **only one `label.db_persisted` row in the entire history** (March 18) — meaning every label since then has been bought from EasyPost but never written to `shipments`. The labels function's comp_grant insert is correctly gated on `shipmentId`, so when the RPC returns null, the ledger insert skips — exactly as designed.
+2. **Frontend address-shape bug.** `addressToApi` in `src/lib/api.ts:63-71` maps `addr.street → street1`, but at runtime `addr.street` is `undefined`, so JSON serialization drops `street1` from the labels call body. This compounds with the overload collision: even if only one function existed, the call would still fail to match a signature that requires `p_from_street1`/`p_to_street1`.
+
+**Plus two additional discoveries from the same smoke test:**
+
+3. **EasyPost webhook HMAC verification rejecting every event** — 9 `webhook.hmac_invalid` rows in `event_logs` between 22:49–22:54. Tracking updates aren't landing for any shipment.
+4. **Share Link on Label & Link step is hardcoded `sendmo.co/s/test`** — the Full Label flow doesn't write a `sendmo_links` row, so there's no real short_code to surface (already filed 2026-05-12 as launch blocker via [73958d5](https://github.com/jsa7cornell/Sendmo/commit/73958d5)).
+
+All three new discoveries are filed in `WISHLIST.md` as launch blockers and are tracked separately from Phase A.
+
+**Phase A status: shipped, with smoke-test acceptance deferred to follow-up.** The migration + ledger schema + RLS + trigger + Edge Function rewrites are all live and correct. Phase B (save card on file via SetupIntent) is unblocked from a schema perspective and can begin in parallel with the launch-blocker fixes. The launch-blocker fixes are pre-existing bugs that Phase A's smoke test surfaced — they would have blocked launch regardless of when discovered.
+
 **Backfill design (executed inside the migration transaction):**
 1. `comp_grant` rows for any `payments.payment_method='comp'` row — amount NEGATIVE = `-ABS(shipments.rate_cents OR payments.amount_cents)`.
 2. `charge` rows for any `payments.payment_method IN ('card','balance') AND status='captured'` — amount POSITIVE = `payments.amount_cents`, carries the `stripe_payment_intent_id`.
