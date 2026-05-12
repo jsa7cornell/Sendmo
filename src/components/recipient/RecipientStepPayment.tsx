@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
 import {
-  CheckCircle2, Download, ExternalLink, Copy,
+  CheckCircle2, Download, ExternalLink, Copy, Gift, Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { formatCents, buyLabel } from "@/lib/api";
@@ -10,6 +10,36 @@ import { getTotalPriceCents } from "@/hooks/useRecipientFlow";
 import type { RecipientFlowState } from "@/hooks/useRecipientFlow";
 import type { LabelResult } from "@/lib/types";
 import StripePaymentForm from "./StripePaymentForm";
+import { useAuth } from "@/contexts/AuthContext";
+
+// Direct fetch for comp-mode label buys — bypasses Stripe entirely and
+// passes the user's JWT so the labels function's admin gate accepts the
+// `comp: true` claim. Avoids the shared post() helper which sends the
+// anon key, which has no user identity attached.
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
+async function buyCompLabel(args: {
+  accessToken: string;
+  easypost_shipment_id: string;
+  easypost_rate_id: string;
+  from_address: unknown;
+  to_address: unknown;
+  recipient_email?: string;
+  sender_email?: string;
+  display_price_cents: number;
+}): Promise<LabelResult> {
+  const { accessToken, ...body } = args;
+  const res = await fetch(`${SUPABASE_URL}/functions/v1/labels`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({ ...body, live_mode: true, comp: true }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || data.message || `API error ${res.status}`);
+  return data as LabelResult;
+}
 
 // ─── Label Ready View ───────────────────────────────────────
 
@@ -138,10 +168,13 @@ interface Props {
   onUpdate: (partial: Partial<RecipientFlowState>) => void;
   onBack: () => void;
   liveMode?: boolean;
+  compMode?: boolean;
 }
 
-export default function RecipientStepPayment({ state, onUpdate, onBack, liveMode = false }: Props) {
+export default function RecipientStepPayment({ state, onUpdate, onBack, liveMode = false, compMode = false }: Props) {
   const [error, setError] = useState<string | null>(null);
+  const [compLoading, setCompLoading] = useState(false);
+  const { session } = useAuth();
 
   // If label already generated, show the ready state
   if (state.labelResult) {
@@ -246,14 +279,71 @@ export default function RecipientStepPayment({ state, onUpdate, onBack, liveMode
         </dl>
       </div>
 
-      {/* Stripe payment form */}
-      <StripePaymentForm
-        totalCents={totalCents}
-        easypostShipmentId={state.easypostShipmentId}
-        liveMode={liveMode}
-        receiptEmail={state.email || undefined}
-        onSuccess={handlePaymentSuccess}
-      />
+      {/* Comp button (admin "Live Comp" mode) OR Stripe payment form */}
+      {compMode ? (
+        <div className="bg-card rounded-2xl border border-amber-300 bg-amber-50/50 shadow-sm p-5 space-y-3">
+          <div className="flex items-start gap-2">
+            <Gift className="w-5 h-5 text-amber-700 mt-0.5 shrink-0" />
+            <div>
+              <h3 className="text-sm font-semibold text-amber-900">Live Comp mode</h3>
+              <p className="text-xs text-amber-800 mt-1">
+                EasyPost will charge SendMo for a real, printable label. The recipient is not charged.
+                Recorded as <code className="bg-amber-100 px-1 rounded">payment_method = comp</code> in the admin report.
+              </p>
+            </div>
+          </div>
+          <Button
+            onClick={async () => {
+              if (!session?.access_token) {
+                setError("Not signed in — re-authenticate to comp a label.");
+                return;
+              }
+              if (!state.selectedRate || !state.easypostShipmentId) {
+                setError("Missing rate or shipment id.");
+                return;
+              }
+              setError(null);
+              setCompLoading(true);
+              onUpdate({ paymentStatus: "processing" });
+              try {
+                const result = await buyCompLabel({
+                  accessToken: session.access_token,
+                  easypost_shipment_id: state.easypostShipmentId,
+                  easypost_rate_id: state.selectedRate.id,
+                  from_address: state.originAddress,
+                  to_address: state.destinationAddress,
+                  recipient_email: state.email || undefined,
+                  sender_email: state.senderEmail || undefined,
+                  display_price_cents: totalCents,
+                });
+                onUpdate({ paymentStatus: "succeeded", labelResult: result });
+              } catch (err) {
+                const msg = err instanceof Error ? err.message : "Comp label failed";
+                setError(msg);
+                onUpdate({ paymentStatus: "failed" });
+              } finally {
+                setCompLoading(false);
+              }
+            }}
+            disabled={compLoading || loading}
+            className="w-full rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-medium"
+          >
+            {compLoading ? (
+              <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Generating comp label…</>
+            ) : (
+              <>Generate Comp Label ({formatCents(totalCents)} value)</>
+            )}
+          </Button>
+        </div>
+      ) : (
+        <StripePaymentForm
+          totalCents={totalCents}
+          easypostShipmentId={state.easypostShipmentId}
+          liveMode={liveMode}
+          receiptEmail={state.email || undefined}
+          onSuccess={handlePaymentSuccess}
+        />
+      )}
 
       {/* Error */}
       {error && (

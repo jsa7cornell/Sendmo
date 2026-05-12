@@ -8,6 +8,27 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-11] Admin toolbar gains 3rd mode "Live Charge"; "Live Comp" repaired to match its name
+**Category:** Stripe | Admin | Architecture
+**Proposal:** [proposals/2026-04-26_stripe-integration-plan_reviewed-2026-04-26_decided-2026-05-11.md](proposals/2026-04-26_stripe-integration-plan_reviewed-2026-04-26_decided-2026-05-11.md) §6 Phase C + §11 #5
+**Context:** The admin toolbar on `/onboarding` had two modes — Test and Live Comp. PLAYBOOK has always documented Live Comp as "real label, NO Stripe charge (comp)." But the code at `RecipientStepPayment.tsx` passed `liveMode={liveMode}` straight to `StripePaymentForm` and never set `comp: true` on the `buyLabel` call. **The mode named "Live Comp" actually charged real cards in Stripe live mode.** A name/behavior mismatch that went unnoticed because John had been using the existing path effectively for testing.
+**Decision/Finding:**
+- `AdminMode` is now `"test" | "live_comp" | "live_charge"`:
+  - **test**: EasyPost test + Stripe test (unchanged)
+  - **live_comp**: EasyPost LIVE + no Stripe (real label, amber comp button, admin JWT gates `comp:true` server-side)
+  - **live_charge**: EasyPost LIVE + Stripe LIVE charge (what the prior "live_comp" actually did)
+- `RecipientOnboarding` derives `liveMode = mode in {live_comp, live_charge}` and `compMode = mode === live_comp`, passes both as props.
+- `RecipientStepPayment` branches on `compMode` — renders an amber "Generate Comp Label" button instead of `<StripePaymentForm>`. The button POSTs to `/labels` directly with `Authorization: Bearer ${session.access_token}` so the labels function's admin gate (the role check added 2026-05-11 in commit `f137b06`, hardened further by the sender-flow session's labels rewrite) accepts the `comp:true` claim.
+- PLAYBOOK §"Admin Mode" rewritten to document all three modes + the rename.
+
+**Why:** The 3-mode UX is what the Stripe proposal §6 Phase C calls for (Live Charge needed for Phase C dogfooding). Repairing Live Comp's broken intent at the same time costs ~5 extra LOC and stops the documentation lie. The comp button does its own raw fetch (not `buyLabel()` in `api.ts`) on purpose: the shared `post()` helper always sends `ANON_KEY`, which has no user identity, so the comp gate would reject. Keeping the bearer-JWT path local to this one button avoids global helper changes.
+
+**Watch out:**
+- **Live Charge is irreversible by design** — a real card is hit. Use a small-dollar rate first (USPS Ground Advantage short hop ≈ $5–6). Confirm in the Stripe dashboard before walking away.
+- The labels function's comp gate (hardened by the sender-flow session) requires the caller to be EITHER an admin user (JWT + `profile.role='admin'`) OR a valid active flex link short code. Admin role bootstrapping was done in migration 016.
+- The 3rd mode does NOT yet honor an env-allowlist of "real-charge-allowed users" (Stripe proposal round-1 P3 / §6 Phase C). Today the only admin is John, so the practical allowlist is "John." When more admins exist, this should tighten — `PAYMENTS_ALLOWED_USERS` env check is the proposal's pattern.
+- **Live keys not configured yet.** Live Charge will hit `<StripePaymentForm liveMode={true}>` which calls `/payments` with `live_mode: true`. That requires `STRIPE_SECRET_KEY_LIVE` + `STRIPE_WEBHOOK_SECRET_LIVE` in Supabase secrets and `VITE_STRIPE_PUBLISHABLE_KEY_LIVE` in Vercel. None set yet — Phase 1 shipped test-only. Live Charge will fail with a clear error in the UI until John completes Stripe proposal §7 "Requires external setup."
+
 ### [2026-05-11] Sender flow wizard — flex links produce real EasyPost labels end-to-end
 **Category:** Feature | UX | Security | Schema-adjacent
 **Proposal:** [proposals/2026-05-11_sender-flow-wizard_reviewed-2026-05-11_decided-2026-05-11.md](proposals/2026-05-11_sender-flow-wizard_reviewed-2026-05-11_decided-2026-05-11.md)

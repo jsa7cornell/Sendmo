@@ -34,23 +34,40 @@ function getVariants(direction: "forward" | "backward") {
 
 // ─── Admin Toolbar ──────────────────────────────────────────
 
-type AdminMode = "test" | "live_comp";
+// Per Stripe proposal §6 Phase C (decided 2026-05-11), three modes:
+//   - test       → EasyPost test API, Stripe test mode. Free fake label.
+//   - live_comp  → EasyPost LIVE API, NO Stripe charge. Real label, comped
+//                  to SendMo. For dogfood / friends-and-family / marketing.
+//   - live_charge → EasyPost LIVE API, real Stripe charge. Dogfood real
+//                  payment flow end-to-end (Phase C self-charge).
+// Note: prior to 2026-05-11, "live_comp" mistakenly charged the card —
+// the rename + comp button below brings code in line with PLAYBOOK's
+// long-standing documented semantics.
+type AdminMode = "test" | "live_comp" | "live_charge";
 
 function AdminToolbar({ mode, onModeChange }: { mode: AdminMode; onModeChange: (m: AdminMode) => void }) {
+  const labels: Record<AdminMode, string> = {
+    test: "Test",
+    live_comp: "Live Comp",
+    live_charge: "Live Charge",
+  };
+  const styles: Record<AdminMode, { active: string }> = {
+    test: { active: "bg-primary/10 text-primary border border-primary/30" },
+    live_comp: { active: "bg-amber-100 text-amber-800 border border-amber-300" },
+    live_charge: { active: "bg-destructive/10 text-destructive border border-destructive/30" },
+  };
   return (
     <div className="fixed bottom-4 right-4 z-50 bg-card border border-border rounded-xl shadow-lg px-3 py-2 flex items-center gap-2 text-xs">
       <span className="font-medium text-muted-foreground">Mode:</span>
-      {(["test", "live_comp"] as const).map((m) => (
+      {(["test", "live_comp", "live_charge"] as const).map((m) => (
         <button
           key={m}
           onClick={() => onModeChange(m)}
           className={`px-2.5 py-1 rounded-lg font-medium transition-colors ${
-            mode === m
-              ? m === "live_comp" ? "bg-destructive/10 text-destructive border border-destructive/30" : "bg-primary/10 text-primary border border-primary/30"
-              : "text-muted-foreground hover:bg-muted"
+            mode === m ? styles[m].active : "text-muted-foreground hover:bg-muted"
           }`}
         >
-          {m === "test" ? "Test" : "Live Comp"}
+          {labels[m]}
         </button>
       ))}
     </div>
@@ -62,7 +79,11 @@ function AdminToolbar({ mode, onModeChange }: { mode: AdminMode; onModeChange: (
 export default function RecipientOnboarding() {
   const { isAdmin } = useAuth();
   const [adminMode, setAdminMode] = useState<AdminMode>("test");
-  const liveMode = isAdmin && adminMode === "live_comp";
+  // liveMode = use EasyPost LIVE API (both comp and charge variants).
+  // compMode = bypass Stripe entirely, use the labels function's `comp:true`
+  //   path with an admin JWT. Only meaningful when liveMode is true.
+  const liveMode = isAdmin && (adminMode === "live_comp" || adminMode === "live_charge");
+  const compMode = isAdmin && adminMode === "live_comp";
   const location = useLocation();
   const params = useParams<{ pathSlug?: string; stepSlug?: string }>();
 
@@ -192,6 +213,7 @@ export default function RecipientOnboarding() {
                 onUpdate={updateData}
                 onBack={goBack}
                 liveMode={liveMode}
+                compMode={compMode}
               />
             )}
 

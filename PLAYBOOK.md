@@ -236,7 +236,7 @@ When working as a Claude Code agent, you may be assigned one of these roles:
 - [x] LabelTest page working (test harness for backend APIs)
 - [x] Admin page working (PIN-gated, reporting + label void)
 - [x] **Recipient onboarding flow (Full Prepaid Label path)** — Steps 0→1→10→11→12, Stripe stubbed, real EasyPost test rates
-- [x] Admin test/live toggle — floating toolbar on /onboarding (Test | Live Comp)
+- [x] Admin test/live toggle — floating toolbar on /onboarding (Test | Live Comp | Live Charge, since 2026-05-11)
 - [x] Magic Guestimator — 15 item types + urgency keywords, client-side
 - [x] Landing page (hero, how it works, value props, use cases, CTA, footer)
 - [x] Service name polish — 30+ EasyPost service name mappings + camelCase fallback
@@ -373,24 +373,29 @@ Auth required: 4000 0025 0000 3155
 
 ---
 
-## Admin Mode (Test/Live Toggle)
+## Admin Mode (Test / Live Comp / Live Charge)
 
-`/admin` is PIN-gated (PIN: `2026`). After entering the PIN, `sessionStorage.sendmo_admin` is set to `true`.
+`/admin` requires the signed-in user's profile to have `role='admin'`. The hardcoded `2026` PIN was removed 2026-05-11; gate is now `requireAdmin()` in [`supabase/functions/_shared/auth.ts`](supabase/functions/_shared/auth.ts) (server-side) + `useAuth().isAdmin` (client-side).
 
-When admin session is active, `/onboarding` shows a floating toolbar at bottom-right with two modes:
-- **Test** (default): Uses EasyPost test key. Generates dummy labels. Free.
-- **Live Comp**: Passes `live_mode: true` to Edge Functions. Uses EasyPost live key. Generates real, printable labels. Costs real money on EasyPost. No Stripe charge (comp).
+When admin session is active, `/onboarding` shows a floating toolbar at bottom-right with three modes (per Stripe proposal §6 Phase C, decided 2026-05-11):
 
-**To create a real label for someone:**
-1. Go to `/admin` → enter PIN `2026`
-2. Go to `/onboarding` → select "Live Comp" in the floating toolbar
-3. Complete the Full Prepaid Label flow as normal
-4. The generated PDF is a real shipping label
+- **Test** (default): EasyPost TEST API + Stripe TEST mode. Fake label, test cards. Free.
+- **Live Comp** (amber): EasyPost LIVE API + **no Stripe charge**. Real, printable label; SendMo eats the EasyPost cost. Recorded as `payment_method=comp` in the admin report. Use for dogfood, friends-and-family, marketing comps. Requires admin JWT — the labels function's `comp:true` path is gated on `profile.role='admin'`.
+- **Live Charge** (red): EasyPost LIVE API + real Stripe charge. Real money moves end-to-end. Phase C self-charge mode — dogfood the real payment + reconciliation path before public launch.
 
-**TODO (before launch):**
-- Replace hardcoded PIN with `profile.role === 'admin'` check (requires auth)
-- Add server-side admin token validation on Edge Functions
-- Add `payment_method: 'comp'` support in the payments table
+**Prior to 2026-05-11 the toolbar had only 2 modes ("Test" + "Live Comp"), and "Live Comp" actually charged the card in Stripe live mode** — a long-standing mismatch with the PLAYBOOK's documented intent. The 3-mode rework brings code in line with what was always documented and adds the explicit Live Charge mode the Stripe proposal calls for.
+
+**To generate a real comp label** (no money moves):
+1. Sign in with your admin account → go to `/admin` (loads the report directly, no PIN).
+2. Go to `/onboarding` → select **Live Comp** in the floating toolbar.
+3. Complete the Full Prepaid Label flow as normal.
+4. At the payment step you'll see an amber "Generate Comp Label" button (not Stripe Elements). Click it.
+5. The generated PDF is a real shipping label.
+
+**To dogfood a real charge** (your card actually gets billed):
+1. Same as above but pick **Live Charge** in the toolbar.
+2. Use your real card in the Stripe Elements form. The "LIVE" badge will be red.
+3. Verify the charge in your bank within minutes; verify it reconciles in the admin report.
 
 ---
 
