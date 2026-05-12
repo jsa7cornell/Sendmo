@@ -58,7 +58,10 @@ serve(async (req: Request) => {
   // `public_code` is UNIQUE post-migration 015 → .single() is correct.
   // `tracking_number` legacy path may match multiple rows (EasyPost test-mode
   // fixture collisions); order by created_at DESC and take the first.
-  const selectFields = "id, tracking_number, public_code, carrier, service, status, easypost_tracker_id, is_test, created_at, updated_at, promised_delivery_date, delivered_at";
+  // Joins sendmo_links to derive link_short_code (for the Ship-Again CTA) and
+  // user_id (server-side viewer_is_recipient determination — link.user_id is
+  // never exposed in the response).
+  const selectFields = "id, tracking_number, public_code, carrier, service, status, easypost_tracker_id, is_test, created_at, updated_at, promised_delivery_date, delivered_at, label_pdf_url, link_id, sendmo_links!inner(short_code, user_id)";
   const baseQuery = supabase.from("shipments").select(selectFields);
   const lookup = publicCode
     ? baseQuery.eq("public_code", publicCode).single()
@@ -145,6 +148,19 @@ serve(async (req: Request) => {
     }
   }
 
+  // Derive viewer_is_recipient server-side. When the request carries a valid
+  // JWT and the user is the link owner, the client knows to hide the
+  // Ship-Again CTA. link.user_id is NEVER returned — only the boolean.
+  const linkJoin = shipment.sendmo_links as unknown as { short_code: string; user_id: string } | null;
+  let viewerIsRecipient = false;
+  const authHeader = req.headers.get("Authorization") || req.headers.get("authorization") || "";
+  const token = authHeader.replace(/^Bearer\s+/i, "");
+  const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || Deno.env.get("VITE_SUPABASE_ANON_KEY") || "";
+  if (token && token !== anonKey && linkJoin?.user_id) {
+    const { data: userResp } = await supabase.auth.getUser(token);
+    if (userResp?.user?.id === linkJoin.user_id) viewerIsRecipient = true;
+  }
+
   return new Response(
     JSON.stringify({
       tracking_number: shipment.tracking_number,
@@ -158,6 +174,9 @@ serve(async (req: Request) => {
       updated_at: shipment.updated_at,
       promised_delivery_date: shipment.promised_delivery_date,
       delivered_at: shipment.delivered_at,
+      label_url: shipment.label_pdf_url ?? null,
+      link_short_code: linkJoin?.short_code ?? null,
+      viewer_is_recipient: viewerIsRecipient,
     }),
     { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
   );

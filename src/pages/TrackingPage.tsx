@@ -1,8 +1,12 @@
-import { useParams, Link } from "react-router-dom";
+import { useParams, useSearchParams, Link } from "react-router-dom";
 import AppHeader from "@/components/AppHeader";
 import { useState, useEffect } from "react";
-import { Package, Truck, CheckCircle2, AlertCircle, Clock, ArrowLeft, MapPin, Calendar, ExternalLink } from "lucide-react";
+import { Package, Truck, CheckCircle2, AlertCircle, Clock, ArrowLeft, MapPin, Calendar, ExternalLink, Sparkles } from "lucide-react";
 import { carrierTrackingUrl } from "@/lib/utils";
+import { useAuth } from "@/contexts/AuthContext";
+import { supabase as supabaseClient } from "@/lib/supabase";
+import ShipmentLabelSection from "@/components/tracking/ShipmentLabelSection";
+import ShipAgainCTA from "@/components/tracking/ShipAgainCTA";
 
 const BASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
 
@@ -25,7 +29,23 @@ interface TrackingData {
   updated_at: string;
   promised_delivery_date: string | null;
   delivered_at: string | null;
+  // Round 2 additions (proposal §11):
+  label_url: string | null;
+  link_short_code: string | null;
+  viewer_is_recipient: boolean;
 }
+
+// Terminal statuses get a banner instead of the lifecycle card (per B5).
+const TERMINAL_BANNERS: Record<string, { title: string; body: string }> = {
+  cancelled: {
+    title: "This label was voided",
+    body: "The shipment will not ship. If a refund is due, it'll appear on your SendMo account within 2–4 weeks.",
+  },
+  return_to_sender: {
+    title: "The package is being returned",
+    body: "The carrier couldn't deliver and is returning the package to the sender.",
+  },
+};
 
 /**
  * Compare delivered date vs promised date (both DATEs, no time component).
@@ -90,6 +110,21 @@ function formatDeliveryDate(iso: string): string {
 
 export default function TrackingPage() {
   const { code } = useParams<{ code: string }>();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { user } = useAuth();
+
+  // ?fresh=1 → just landed here from the sender flow's Confirm. Show the
+  // celebration banner on first paint, strip the param after first render
+  // (per author-response B3 — React Router primitives, not history.replaceState).
+  const [showCelebration, setShowCelebration] = useState(() => searchParams.get("fresh") === "1");
+  useEffect(() => {
+    if (searchParams.get("fresh") === "1") {
+      searchParams.delete("fresh");
+      setSearchParams(searchParams, { replace: true });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const [data, setData] = useState<TrackingData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -97,8 +132,15 @@ export default function TrackingPage() {
   useEffect(() => {
     if (!code) return;
     setLoading(true);
-    // No auth header — tracking function is deployed with --no-verify-jwt
-    fetch(`${BASE_URL}/functions/v1/tracking?code=${encodeURIComponent(code)}`)
+    // Tracking fn is verify_jwt=false at the gateway, but we still attach the
+    // user's session token (if signed in) so the server can derive
+    // viewer_is_recipient. Anonymous viewers omit the header.
+    (async () => {
+      const { data: { session } } = await supabaseClient.auth.getSession();
+      const headers: Record<string, string> = {};
+      if (session?.access_token) headers.Authorization = `Bearer ${session.access_token}`;
+      return fetch(`${BASE_URL}/functions/v1/tracking?code=${encodeURIComponent(code)}`, { headers });
+    })()
       .then(async (res) => {
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
@@ -143,6 +185,47 @@ export default function TrackingPage() {
 
         {data && config && (
           <div className="space-y-6">
+            {/* Celebration banner — first paint only when ?fresh=1 was in URL */}
+            {showCelebration && (
+              <div className="bg-success/10 border border-success/30 rounded-2xl p-5 flex items-start gap-3">
+                <Sparkles className="w-5 h-5 text-success flex-shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <h2 className="text-base font-semibold text-foreground">Label ready!</h2>
+                  <p className="text-sm text-muted-foreground">
+                    Print it, tape it to the package, and drop it off.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowCelebration(false)}
+                  className="text-xs text-muted-foreground hover:text-foreground"
+                  aria-label="Dismiss"
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
+
+            {/* Terminal-state banner: shipment is cancelled or returning */}
+            {TERMINAL_BANNERS[data.status] && (
+              <div className="bg-destructive/10 border border-destructive/30 rounded-2xl p-5 flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 text-destructive flex-shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <h2 className="text-base font-semibold text-foreground">{TERMINAL_BANNERS[data.status].title}</h2>
+                  <p className="text-sm text-muted-foreground">{TERMINAL_BANNERS[data.status].body}</p>
+                </div>
+              </div>
+            )}
+
+            {/* Label section: only while not-yet-shipped, never in terminal states */}
+            {data.status === "label_created" && !TERMINAL_BANNERS[data.status] && data.label_url && (
+              <ShipmentLabelSection
+                labelUrl={data.label_url}
+                trackingNumber={data.tracking_number}
+                carrier={data.carrier}
+              />
+            )}
+
             {/* Status card */}
             <div className="bg-card rounded-2xl border border-border shadow-sm p-6">
               <div className="flex items-center gap-4 mb-6">
@@ -209,7 +292,8 @@ export default function TrackingPage() {
               </div>
             </div>
 
-            {/* Progress bar */}
+            {/* Progress bar — hidden in terminal states (cancelled, returning) */}
+            {!TERMINAL_BANNERS[data.status] && (
             <div className="bg-card rounded-2xl border border-border shadow-sm p-6">
               <h2 className="text-sm font-semibold text-foreground mb-4">Progress</h2>
               <div className="space-y-0">
@@ -240,6 +324,8 @@ export default function TrackingPage() {
                 })}
               </div>
             </div>
+
+            )}
 
             {/* Live tracking events */}
             {data.events.length > 0 && (
@@ -275,6 +361,15 @@ export default function TrackingPage() {
                 </div>
               </div>
             )}
+
+            {/* Ship-Again upsell — visibility per the layered signal in ShipAgainCTA */}
+            <ShipAgainCTA
+              isFresh={showCelebration}
+              isAuthenticated={!!user}
+              viewerIsRecipient={data.viewer_is_recipient}
+              linkShortCode={data.link_short_code}
+              recipientName={null}
+            />
 
             <Link to="/" className="inline-flex items-center gap-1 text-sm text-primary hover:underline">
               <ArrowLeft className="w-4 h-4" /> Back to SendMo

@@ -29,6 +29,48 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 - The 3rd mode does NOT yet honor an env-allowlist of "real-charge-allowed users" (Stripe proposal round-1 P3 / §6 Phase C). Today the only admin is John, so the practical allowlist is "John." When more admins exist, this should tighten — `PAYMENTS_ALLOWED_USERS` env check is the proposal's pattern.
 - **Live keys not configured yet.** Live Charge will hit `<StripePaymentForm liveMode={true}>` which calls `/payments` with `live_mode: true`. That requires `STRIPE_SECRET_KEY_LIVE` + `STRIPE_WEBHOOK_SECRET_LIVE` in Supabase secrets and `VITE_STRIPE_PUBLISHABLE_KEY_LIVE` in Vercel. None set yet — Phase 1 shipped test-only. Live Charge will fail with a clear error in the UI until John completes Stripe proposal §7 "Requires external setup."
 
+### [2026-05-11] Sender flow Round 2 — `/t/<public_code>` becomes the shipment page (label + lifecycle + Ship-Again)
+**Category:** Feature | UX | Privacy | Architecture
+**Proposal:** [proposals/2026-05-11_sender-flow-wizard_reviewed-2026-05-11_decided-2026-05-11.md](proposals/2026-05-11_sender-flow-wizard_reviewed-2026-05-11_decided-2026-05-11.md) §11–§14 (Round 2)
+**Context:** Round 1 shipped a 5-step wizard with a transient `step="done"` component — bookmarking `/s/<short_code>` started over, no stable per-shipment URL. John's dogfood surfaced: (1) per-label URL gap, (2) tracker widget belongs on top, (3) ship-again upsell. Round 2 promoted `/t/<public_code>` from tracker-only to **the shipment page**.
+
+**Decision/Finding:**
+- **One URL per shipment.** `SenderFlow.handleConfirm` now `navigate('/t/<public_code>?fresh=1', { replace: true })` on success. The Round-1 `step='done'` branch is removed; `SenderStepDone.tsx` is absorbed into the new tracking surface, not deleted-without-replacement. Re-using the existing TrackingPage's Progress card as the lifecycle hero (didn't build a parallel `ShipmentLifecycleCard.tsx` — extension over invention per PLAYBOOK Rule 6).
+- **Server contract change** ([supabase/functions/tracking/index.ts](supabase/functions/tracking/index.ts)): response gains `label_url`, `link_short_code` (via new `sendmo_links!inner` join on `shipments.link_id`), and `viewer_is_recipient: boolean` (derived server-side from JWT vs. `sendmo_links.user_id` — link.user_id never returned to client). Authenticated callers now optionally send `Authorization: Bearer <session.access_token>` from `TrackingPage`; anonymous callers omit it.
+- **New components in `src/components/tracking/`:**
+  - [`ShipmentLabelSection.tsx`](src/components/tracking/ShipmentLabelSection.tsx) — label preview thumbnail, primary Print Label (PDF) CTA opening in new tab, secondary Download, single-use + privacy warning copy ("Anyone with this link can see the recipient's address. Don't share it publicly."), drop-off copy keyed to selected carrier. Renders only when `status === 'label_created'`.
+  - [`ShipAgainCTA.tsx`](src/components/tracking/ShipAgainCTA.tsx) — upsell card linking to `/s/<short_code>` (sender's address pre-fills via existing `localStorage["sendmo:sender:v1"]`). Visibility is the layered signal from author-response B4: `(?fresh=1) ∨ (anonymous + saved sender) ∨ (authenticated AND !viewer_is_recipient)`; hidden for the authenticated link owner. `shouldShowShipAgain()` is a pure function with 6 dedicated tests.
+- **Terminal-state banner.** When `status ∈ {cancelled, return_to_sender}`, lifecycle card hides and a red-coded `AlertCircle` banner shows ("This label was voided" / "The package is being returned"). The Progress card and label section both hide.
+- **`?fresh=1` celebration handling.** `TrackingPage` uses `useSearchParams` to read `fresh=1` once on mount, then strips it with `setSearchParams({}, { replace: true })`. Celebration banner renders on first paint only; dismiss button hides it before the auto-strip lands. **No `history.replaceState` calls** — author-response B3, React Router primitives only.
+- **Privacy decision (John, 2026-05-11):** Option (a) — `/t/<public_code>` keeps Print/Download accessible to anyone with the URL. Pair with the strengthened warning copy. Alternatives (b) device-gate or (c) auth-gate would have broken John's OQ#1 answer (link owner sees Print/Download) or the anonymous-sender model. Pre-launch dogfood is the right time to test "does anyone actually share the link?"; if abuse appears, hardening to (b)/(c) is a single conditional.
+- **`admin_insert_shipment` `user_id` fix** ([supabase/functions/labels/index.ts](supabase/functions/labels/index.ts)): sender-flow flex-link shipments now pass `resolvedLink.user_id` instead of the system-user placeholder. Dashboard's `sendmo_links.user_id` join finally matches; the recipient sees their shipments. (Pre-existing bug surfaced during Round-2 dogfood. Shipped separately in commit `8bdd7f7`.)
+
+**Tests:** 16 new unit tests across [tests/unit/ShipAgainCTA.test.tsx](tests/unit/ShipAgainCTA.test.tsx) (10 — full visibility matrix + rendering) and [tests/unit/ShipmentLabelSection.test.tsx](tests/unit/ShipmentLabelSection.test.tsx) (6 — Print/Download href, warning copy, carrier-keyed drop-off, unknown-carrier fallback). All passing alongside the 22 Round-1 tests = 38 sender-flow tests green. `npx tsc -b --noEmit` clean.
+
+**Why this shape:** One URL per shipment beats two parallel surfaces. The viewer-state matrix (just-shipped sender, returning sender, recipient, anonymous third party) collapses cleanly into one page with conditional sections. The privacy decision was real (link sharing leaks address-on-PDF) but the alternatives broke load-bearing use cases John had already validated.
+
+**Watch out:**
+- **`label_url` is `null` on shipments persisted before this deploy** — the labels function has always written `label_pdf_url` per [migration 005](supabase/migrations/) (verified by grep), but historical rows from pre-Round-1 might lack it. The label section's `&& data.label_url` guard handles this gracefully (hides Print/Download); no broken-button surface. Future check: backfill from EasyPost if needed for any pre-existing shipments.
+- **Mobile Safari celebration-banner timing.** `?fresh=1` strips inside a `useEffect` after first paint; if a slow mount races, the URL might briefly carry `?fresh=1` past the celebration display. Acceptable — the dismiss button works regardless and the strip is best-effort.
+- **`viewer_is_recipient` requires the tracking fn to validate the JWT** — that's an extra `supabase.auth.getUser(token)` round-trip per authenticated request. Latency impact is small (~50ms) but worth noting if tracking gets called frequently from authenticated surfaces.
+- **`sendmo_links!inner` join in the SELECT** — every shipment must have a `link_id`. Confirmed by [migration 001](supabase/migrations/001_initial_schema.sql) — `shipments.link_id` is `REFERENCES sendmo_links(id) NOT NULL`. If that ever changes, the inner join silently drops rows.
+- **Round-1 `SenderStepDone.tsx` deletion.** No test file orphaned (verified: only `SenderStepIntro.test.tsx` + `senderState.test.ts` existed). The content moved into `ShipmentLabelSection` (label + warning + drop-off) and `TrackingPage` (shipment summary + back-to-home nav). Next agent reading Round-1's LOG entry will see the file referenced; this LOG entry is the back-pointer.
+
+**Deploy steps:** `supabase functions deploy tracking --no-verify-jwt` (already done), then push to `main` (Vercel auto-deploys the client).
+
+**Files touched:**
+- [supabase/functions/tracking/index.ts](supabase/functions/tracking/index.ts) (SELECT + JSON response + viewer_is_recipient derivation)
+- [src/components/tracking/ShipmentLabelSection.tsx](src/components/tracking/ShipmentLabelSection.tsx) (new)
+- [src/components/tracking/ShipAgainCTA.tsx](src/components/tracking/ShipAgainCTA.tsx) (new)
+- [src/pages/TrackingPage.tsx](src/pages/TrackingPage.tsx) (data interface + celebration banner + terminal-state banner + label section + Ship-Again CTA + authenticated JWT in tracking fetch)
+- [src/pages/SenderFlow.tsx](src/pages/SenderFlow.tsx) (`navigate` on Confirm; `done` step removed)
+- [src/components/sender/senderState.ts](src/components/sender/senderState.ts) (`SenderStep` no longer includes `"done"`; `SenderResult` removed — was unused after redirect)
+- [src/components/sender/SenderStepDone.tsx](src/components/sender/SenderStepDone.tsx) (deleted; absorbed into ShipmentLabelSection + TrackingPage)
+- [tests/unit/ShipAgainCTA.test.tsx](tests/unit/ShipAgainCTA.test.tsx) (new — 10 tests)
+- [tests/unit/ShipmentLabelSection.test.tsx](tests/unit/ShipmentLabelSection.test.tsx) (new — 6 tests)
+
+---
+
 ### [2026-05-11] verify_jwt regression — `links` GET 401'd in prod on first sender-flow dogfood
 **Category:** Edge Functions | Deploy gotcha | Recurrence of the 2026-05-10 + 2026-05-11 verify_jwt pattern
 **Context:** John clicked his own flex link `https://sendmo.co/s/mUgagu3HrS` immediately after the sender-flow wizard deploy. The page showed "Hmm, that link didn't work — Link not found (401)" instead of Step 0. The `links` function was returning 401 to the anon-key GET — not because the function rejected the call, but because the Supabase gateway was enforcing JWT verification on the function.

@@ -6,10 +6,13 @@ import type { AddressInput, ShippingRate } from "@/lib/types";
 import type { LinkData } from "@/lib/api";
 import { classifySpeedTier } from "@/lib/utils";
 
-export type SenderStep = "intro" | "package" | "rates" | "review" | "done";
+// Round 2 (proposal §11+§13): the "done" step is gone — the post-confirm
+// surface is the shipment page at /t/<public_code>. The progress bar still
+// shows 4 dots because the wizard has 4 form steps after the intro.
+export type SenderStep = "intro" | "package" | "rates" | "review";
 
 export const SENDER_STEP_ORDER: SenderStep[] = [
-  "intro", "package", "rates", "review", "done",
+  "intro", "package", "rates", "review",
 ];
 
 export type PackagingType = "box" | "envelope" | "tube";
@@ -21,14 +24,6 @@ export interface SenderParcel {
   weightOz: number;
   description: string;
   packaging: PackagingType;
-}
-
-export interface SenderResult {
-  labelUrl: string;
-  trackingNumber: string;
-  publicCode: string | null;
-  carrier: string;
-  service: string;
 }
 
 // localStorage versioning per author-response non-blocking nit. Bump VERSION

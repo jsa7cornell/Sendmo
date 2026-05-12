@@ -4,7 +4,7 @@ slug: sender-flow-wizard
 project: sendmo
 status: decided
 created: 2026-05-11
-last_updated: 2026-05-11 19:00
+last_updated: 2026-05-11 21:15
 reviewed: 2026-05-11
 decided: 2026-05-11
 author: Claude (Opus 4.7) — SendMo session, drafting from John's directive on 2026-05-11
@@ -555,3 +555,299 @@ Frontmatter: `status: revised`. Reviewer + author both recommend approve. If Joh
 **John, 2026-05-11:** approved.
 
 Approving the revised plan (sections 1–7 as drafted + author response in §9 as binding spec). Implementation begins immediately. Author response's B1–B5 plus all accepted nits + non-blocking concerns are part of the spec, not optional follow-ups. On merge, LOG.md entry per Rule 17 cross-linking this filename.
+
+---
+
+## 11. Round 2 — Post-label shipment page (proposed 2026-05-11 evening)
+
+**author response:** Claude (Opus 4.7) — same SendMo session
+**proposed_at:** 2026-05-11 20:00
+**scope:** UX extension on top of the now-shipped sender flow. Not a re-architecture; promotes an existing surface (`/t/<public_code>`) to be the canonical post-generation page.
+
+### Context
+
+After Round 1 shipped, John dogfooded the flow end-to-end successfully. Three pieces of feedback surfaced:
+
+1. **Per-label URL gap.** The "Done" step is component-state only — bookmark `/s/<short_code>` and you start over. Each label should have a stable URL the sender can return to.
+2. **Tracker widget belongs on top.** The label's lifecycle (Label created → In transit → Out for delivery → Delivered) is the most useful information *after* the print step.
+3. **Ship-again upsell.** Once a sender has shipped once, "Ship another package to the same recipient" is a near-zero-friction repeat action.
+
+John's directional decisions (2026-05-11 evening):
+- Link owner sees print/download on `/t/<code>` too (useful for reprinting if the sender lost the PDF). ✅
+- Dashboard rows link to `/t/<code>` per shipment — already do; confirmed as the right destination after this change. ✅
+- "Ship again to same recipient" CTA on the shipment page — explicit upsell flavor. ✅
+
+### Architecture
+
+**Promote `/t/<public_code>` to be the shipment page** instead of a tracking-only page. After label generation, sender's URL is replaced via `history.replaceState` from `/s/<short_code>` to `/t/<public_code>?fresh=1`. The same page renders for:
+- Sender (just generated the label) — sees celebration banner + print + drop-off + tracker
+- Sender returning later — same page minus celebration banner; print/drop-off auto-hide once `status !== 'label_created'`
+- Recipient (link owner) viewing from Dashboard — same page, no celebration banner
+- Anyone with the link (status visibility) — tracker + carrier deep link only
+
+Single page, four viewer states. Cleaner than maintaining two parallel pages.
+
+### Sections (top to bottom on `/t/<public_code>`)
+
+1. **Lifecycle tracker (hero)** — 4-step visual: `Label created → In transit → Out for delivery → Delivered`. Current step highlighted; ETA + delivery-performance badge (the existing ✨/🎯/🐢 from 2026-05-11) docked here.
+2. **Label section (conditional)** — visible when `status === 'label_created'`:
+   - Label preview thumbnail (PNG via EasyPost `?format=png`)
+   - Primary CTA: **Print Label (PDF)** — largest button, opens PDF in new tab
+   - Secondary: **Download PDF**
+   - Single-use note: *"This label is single-use. Duplicates are rejected by the carrier."*
+3. **Drop-off (conditional)** — visible when `status === 'label_created'`. Same carrier-keyed copy as today's `SenderStepDone`.
+4. **Ship again CTA (conditional)** — visible when the viewer is a sender (detected via `localStorage["sendmo:sender:v1"]` presence). One-line invitation: *"Ship another package to {recipient}?"* → links to `/s/<short_code>` with localStorage already pre-filling sender details. Hidden for recipients (Dashboard already has the link CTA elsewhere).
+5. **Shipment summary** — From/To/Service/Tracking — existing content, unchanged.
+6. **Existing tracker UI** — keep as fallback when label section is hidden; useful for the "package is in transit" state.
+
+### File-by-file plan
+
+- **New: [src/components/tracking/ShipmentLifecycleCard.tsx](src/components/tracking/ShipmentLifecycleCard.tsx)** — 4-step lifecycle component. Props: `{ status, createdAt, shippedAt, deliveredAt, eta, promisedDeliveryDate }`. Pure presentational.
+- **New: [src/components/tracking/ShipmentLabelSection.tsx](src/components/tracking/ShipmentLabelSection.tsx)** — extracted from current `SenderStepDone`. Renders only when `status === 'label_created'`. Print + Download + drop-off + single-use note.
+- **New: [src/components/tracking/ShipAgainCTA.tsx](src/components/tracking/ShipAgainCTA.tsx)** — conditional CTA card. Reads `localStorage.sendmo:sender:v1`; only renders if present and the sender flow's `short_code` is known (from the shipment's link).
+- **Modify: [src/pages/TrackingPage.tsx](src/pages/TrackingPage.tsx)** — compose the new sections. Read `?fresh=1` once on mount, strip it via `history.replaceState`, show celebration banner. Pull `short_code` from the tracking response for the ship-again CTA.
+- **Modify: [src/pages/SenderFlow.tsx](src/pages/SenderFlow.tsx)** — `handleConfirm` success path: instead of `setStep("done")`, `navigate('/t/' + publicCode + '?fresh=1', { replace: true })`. The "done" branch can be removed.
+- **Modify: [supabase/functions/tracking/index.ts](supabase/functions/tracking/index.ts)** — extend response to include `label_url`, `link_short_code`, and the status/timestamps the lifecycle card needs (most are already there).
+- **Delete: [src/components/sender/SenderStepDone.tsx](src/components/sender/SenderStepDone.tsx)** — no longer routed. Inline its content into `ShipmentLabelSection` (composed of the same parts).
+
+### Privacy / abuse
+
+- `public_code` (7-char Crockford base32, ~3.4×10¹⁰ keyspace) remains the only auth signal — same as today's `/t/<code>`. Not guessable.
+- Print/Download exposed to anyone with the URL. Risk: duplicate-label printing. Mitigation: (a) the single-use note, (b) auto-hide once `status !== 'label_created'`, (c) carriers reject duplicate scans. Acceptable risk for the pre-launch window.
+- Recipient's full address is on the PDF — same surface as today's `SenderStepDone`. No new exposure.
+
+### Test plan
+
+- **Unit (Vitest):**
+  - `ShipmentLifecycleCard` renders the correct active step for each of the 5 status values (`label_created`, `in_transit`, `out_for_delivery`, `delivered`, `cancelled`/`return_to_sender`).
+  - `ShipmentLabelSection` is hidden when `status !== 'label_created'`.
+  - `ShipAgainCTA` is hidden when `localStorage.sendmo:sender:v1` is absent.
+  - `?fresh=1` strips from the URL after first render.
+- **E2E** — still deferred per Round 1 deferral; folded into the dogfood pass.
+
+### Out of scope
+
+- Auth gating beyond `public_code` (would change `/t/<code>` privacy contract; separate proposal if it ever becomes warranted).
+- "Resume incomplete sender flow" — different problem (mid-flow bookmark of `/s/<short_code>` doesn't resume).
+- Server-side schema/migration changes — the existing `shipments` columns (`status`, `shipped_at`, `delivered_at`, `eta`, `promised_delivery_date`) already cover the lifecycle card's needs.
+- Webhook changes — EasyPost webhooks already populate the relevant status transitions.
+
+### Verification
+
+1. Generate a real label via the sender flow. After Confirm, the URL becomes `/t/<code>?fresh=1`, celebration banner shows, fresh param strips on next render.
+2. Reload `/t/<code>` — same page minus banner; print/drop-off still visible.
+3. Trigger an EasyPost test-mode webhook to flip `status` to `in_transit`. Reload — label section + drop-off auto-hide; lifecycle card advances.
+4. Verify Dashboard row → `/t/<code>` lands on the same page (no celebration; print visible per question #1).
+5. Visit `/t/<code>` in incognito (no localStorage) — Ship-again CTA absent.
+6. Visit `/t/<code>` in the browser where the sender flow ran — Ship-again CTA present, links to `/s/<short_code>` with address pre-filled.
+7. `npx tsc -b --noEmit` clean; new unit tests green.
+
+### Open questions for the reviewer
+
+1. **`?fresh=1` vs sessionStorage** for the celebration banner. Query param is debuggable + testable but creates an ugly URL for ~1 paint cycle. SessionStorage is cleaner but harder to verify in E2E. **Author lean:** query param.
+2. **Ship-again CTA visibility heuristic.** Currently proposed: shown iff `localStorage.sendmo:sender:v1` is present. But this misses the case where the sender clicked "Save my info" off — they'd never see the CTA. **Author lean:** also show it if `?fresh=1` is in the URL (i.e., immediately after generation). Reviewer: pick.
+3. **Auto-hide threshold for the label section.** Proposed: hide when `status !== 'label_created'`. But there's a real failure mode where the carrier hasn't scanned yet but the package is on its way — sender might still need to reprint. **Author lean:** keep visible until `shipped_at IS NOT NULL`; hide thereafter. Reviewer: confirm.
+4. **Should the Round-2 work be a separate proposal file**, or this append? Appending keeps the history together (Round 1 was a 5-step wizard, Round 2 is "where senders end up after"). Either is fine — flagging because the protocol's filename convention assumes one decision per file.
+
+## 12. Review — Round 2
+
+**reviewer:** Claude (Opus 4.7) — fresh-eyes reviewer session, Round 2
+**reviewed_at:** 2026-05-11 20:45
+**verdict:** approve-with-changes
+
+### Summary
+
+Promoting `/t/<public_code>` from "tracking-only" to "the shipment page" is the right architectural call — one URL per shipment beats two parallel surfaces, and the sender's post-generation experience already wants every section the tracking page has. But the proposal under-specifies the contract changes it depends on (the tracking function returns *none* of `label_url`, `link_short_code`, `shipped_at`, `eta`, or `promised_delivery_date` today — §3.6 says "most are already there" but four of six aren't), conflates two URL primitives that mean different things in this codebase, and the "Ship Again" CTA's device-based heuristic is a privacy/UX miss for the very case that matters most (sender on a friend's laptop, or recipient on the device the sender once used). The privacy expansion of putting Print/Download on a link-only-gated page is real and deserves an explicit decision, not implicit acceptance.
+
+### Blocking issues
+
+1. **Tracking response is missing `label_url`, `link_short_code`, `shipped_at`, `eta`, and `promised_delivery_date` — §3.6 hand-waves a load-bearing scope item.**
+   - **Location:** §11 §"File-by-file plan" bullet on `tracking/index.ts`: *"extend response to include `label_url`, `link_short_code`, and the status/timestamps the lifecycle card needs (most are already there)."*
+   - **Issue:** Verified at [`supabase/functions/tracking/index.ts:61`](supabase/functions/tracking/index.ts) and [`:148-163`](supabase/functions/tracking/index.ts) — the SELECT pulls `id, tracking_number, public_code, carrier, service, status, easypost_tracker_id, is_test, created_at, updated_at, promised_delivery_date, delivered_at` and the JSON response exposes only `tracking_number, public_code, carrier, service, status, estimated_delivery, events, created_at, updated_at, promised_delivery_date, delivered_at`. **Neither `label_url` nor `link_short_code` nor `shipped_at` nor `eta` is selected or returned.** `link_short_code` requires a join to `sendmo_links` via `shipments.link_id` ([migration 001:76](supabase/migrations/001_initial_schema.sql)); the proposal's `ShipAgainCTA` and "Ship again" pre-fill paths cannot work until that join exists. The `ShipmentLifecycleCard` props in §3.6 name `shippedAt` and `eta` — neither is in the response, and `shipped_at` may not even exist as a column (no grep hits in tracking SELECT; this is also an under-specified DB question).
+   - **Suggested fix:** Make the scope explicit: (a) add `label_url` to the tracking response's SELECT and JSON; (b) add an explicit join `shipments → sendmo_links` to derive `link_short_code` (and gate it: only include in response when the request can be inferred to be from the sender, OR always include — pick one and write it down); (c) audit which timestamp columns exist on `shipments` and either add them to the response or change the `ShipmentLifecycleCard` prop names to match what's actually available (`updated_at` is the closest signal for "label printed → in transit" today, since webhooks update it). If `shipped_at` doesn't exist, this proposal owns adding it via migration — that's a schema change the §"Out of scope" disclaims and the §"File-by-file plan" doesn't list.
+
+2. **Privacy expansion is material and needs an explicit decision, not an "acceptable risk" sentence.**
+   - **Location:** §11 §"Privacy / abuse": *"Print/Download exposed to anyone with the URL. Risk: duplicate-label printing. Mitigation: ... Acceptable risk for the pre-launch window."*
+   - **Issue:** Round 1 §B3 + §"Watch out" in the LOG entry explicitly *removed* the recipient's `street1` from any UI surface and pushed it to the printed PDF only. The Round 1 sender saw the PDF as part of a transient `step="done"` component — a session-scoped artifact, never reachable from a URL. Round 2 puts the PDF (which contains the recipient's full street address) behind a 7-char public_code in a stable URL that gets:
+     - Bookmarked by the sender.
+     - Linked from the Dashboard (recipient's view).
+     - Auto-redirected to via `history.replaceState`, which means it ends up in browser history.
+     - Potentially screenshotted in support tickets, forwarded in texts/email, or scraped from carrier-tracking-number-leaked-into-thread-subject patterns.
+     The keyspace argument (3.4×10^10) holds *only when nobody shares the URL*. The likely real-world case — sender drops the link into a "got your label!" text to recipient or forwards it to a marketplace third party who arranged shipping — leaks the recipient's address to anyone in that thread. Round 1's Rule 7 enforcement was specifically: *no recipient address in any URL-reachable SendMo UI; the PDF is the only exception*. Round 2 turns the PDF into a URL-reachable artifact, which arguably violates Rule 7's spirit even though it technically uses the same PDF.
+     This isn't necessarily a blocker on the merits — John may decide the convenience-for-John-dogfood outweighs the leak surface for the pre-launch window. But the proposal frames it as already-decided. It should be a §"Tradeoffs for John" item, not a one-line acceptance.
+   - **Suggested fix:** Spell out the tradeoff for John in a §"Privacy decision" block: (a) keep the proposal as written and accept that the public_code now gates label-grade PII; (b) gate Print/Download behind an additional signal (e.g., `localStorage.sendmo:sender:v1` presence — same heuristic the Ship-again CTA uses — meaning "you printed this on this device, you can re-print"); (c) require auth for Print/Download on `/t/<code>` while keeping tracker visible to anyone. Pick one with John's explicit sign-off.
+
+3. **`history.replaceState` is the wrong primitive in this codebase — use `navigate(..., { replace: true })` and `setSearchParams({}, { replace: true })`.**
+   - **Location:** §11 §"Architecture" *"sender's URL is replaced via `history.replaceState`"* + §"File-by-file plan" `TrackingPage.tsx` bullet *"strip it via `history.replaceState`"* + §"Open questions" #1 (mentions both primitives).
+   - **Issue:** [`src/pages/SenderFlow.tsx`](src/pages/SenderFlow.tsx) is a React Router page (`useParams`, `useNavigate` available). Calling `history.replaceState` directly bypasses React Router's history stack and will produce subtle bugs: route guards won't fire, `useLocation` won't re-render, and Back-button behavior diverges from the rest of the app. The codebase already uses `useNavigate` (see [TrackingPage.tsx:1](src/pages/TrackingPage.tsx) imports). The `?fresh=1` strip should use `setSearchParams({}, { replace: true })` from `useSearchParams`. Mentioning `history.replaceState` in two places will mislead the implementer.
+   - **Suggested fix:** Replace every `history.replaceState` reference in §11 with the React Router primitive: `navigate('/t/' + code + '?fresh=1', { replace: true })` for the redirect, `setSearchParams({}, { replace: true })` for the query-param strip after first paint. This matches the rest of the codebase and is the answer to Open Questions #1 + the body's primitive choice. Delete the `sessionStorage` alternative from #1 — query-param-with-React-Router-strip is strictly better here.
+
+4. **"Ship Again" CTA's `localStorage.sendmo:sender:v1` heuristic conflates "this device" with "this person" — and the proposal already knows the fallback case but punts.**
+   - **Location:** §11 §"Sections" bullet 4: *"detected via `localStorage["sendmo:sender:v1"]` presence"* + §"Open questions" #2 (author's lean: *"also show it if `?fresh=1` is in the URL"*).
+   - **Issue:** Device-level signal vs. person-level signal. Three real cases this gets wrong:
+     - **False positive:** Recipient opens `/t/<code>` on her own laptop where she once tested the sender flow herself — sees a CTA inviting her to "ship another package to {recipient}" where {recipient} is her. Confusing at best, creepy at worst.
+     - **False negative #1:** Sender printed the label on their phone, now revisits on their desktop where no `sendmo:sender:v1` exists. CTA absent for the exact person it's targeting.
+     - **False negative #2:** Sender clicked "Save my info" off in Round 1 — never sees the CTA, ever, on any device.
+     A better signal exists in the data the proposal is already about to thread through: **the public_code → shipments.link_id join gives you `sendmo_links.user_id`, which gives you "this shipment's recipient." Compare to `auth.getUser()` if the viewer is authenticated.** Unauthenticated viewer: show the CTA whenever `?fresh=1` is present (just-shipped guarantee) OR whenever `localStorage` says they've used the sender flow recently. Authenticated viewer with `user.id === link.user_id`: hide the CTA (they're the recipient). Authenticated viewer with `user.id !== link.user_id`: show it. This is auth-aware and degrades cleanly for anonymous flex-link senders, which is the dogfood case.
+   - **Suggested fix:** Adopt the layered signal: `?fresh=1` ∨ (anonymous + localStorage) ∨ (authenticated AND user.id !== link.user_id). Hide for (authenticated AND user.id === link.user_id). Document in §11.
+
+5. **Status transitions: proposal handles 4 happy-path states; `return_to_sender` and `cancelled` are real and unaddressed.**
+   - **Location:** §11 §"Sections" bullet 1: *"4-step visual: `Label created → In transit → Out for delivery → Delivered`"* + §"Test plan" *"label_created, in_transit, out_for_delivery, delivered, cancelled/return_to_sender"* (the test mentions them but the visual spec doesn't accommodate them).
+   - **Issue:** [SPEC §15 + `webhooks/index.ts:29-37`](supabase/functions/webhooks/index.ts) lists `in_transit, out_for_delivery, delivered, return_to_sender` as webhook-driven, plus `cancelled` from the void path ([PLAYBOOK §"Label Cancellation"](PLAYBOOK.md)) — both of which `TrackingPage.tsx`'s existing `STATUS_CONFIG` already handles. A 4-step horizontal tracker cannot represent "returning" or "cancelled" without either (a) a 5th branch step, (b) an alternative-display mode (the existing TrackingPage shows a red-coded `AlertCircle` icon for these — that pattern works), or (c) hiding the tracker entirely when status ∈ {return_to_sender, cancelled} and showing only the alert state. The proposal's §"Open questions" doesn't ask which.
+   - **Suggested fix:** Pick a treatment — recommend (c) plus an explicit "Shipment cancelled" / "Shipment returning" banner with copy ("This label was voided" / "The package is being returned to you"). The lifecycle card hides; the existing TrackingPage status banner shows. Add to §11 §"Sections" bullet 1 and to the unit test list.
+
+### Non-blocking concerns
+
+- **Single-use label note ("Duplicates are rejected by the carrier") is technically wrong in the general case.** EasyPost labels can sometimes be reused if the carrier scanner doesn't dedupe (rare but documented; varies by carrier and service). Softer phrasing is more honest: *"This label is for a single shipment. Please don't reprint or share it — duplicates can be rejected or charged twice."* Same warning intent, doesn't lie about the carrier's behavior. Not a blocker because the social pressure of the note is the actual deterrent; the technical claim is decoration.
+
+- **`SenderStepDone.tsx` deletion: orphans no test files, but the existing component imports `senderState`'s `dropOffCopy` helper — verify the new `ShipmentLabelSection` re-imports it from the same module.** Verified: no `SenderStepDone.test.tsx` exists in [`tests/unit/`](tests/unit/) (only `SenderStepIntro.test.tsx` + `senderState.test.ts`). Deletion is safe from a test-orphan perspective. The risk is whether `dropOffCopy` ends up imported twice or moved into the new component — the §"File-by-file plan" should make the import path explicit ("`ShipmentLabelSection.tsx` imports `dropOffCopy` from `@/components/sender/senderState`" — assuming `senderState.ts` is *not* also deleted; it isn't, but the proposal should say so).
+
+- **§11 §"File-by-file plan" deletes `SenderStepDone.tsx` but the LOG entry for Round 1 [LOG.md "Sender flow wizard"] lists it as a shipped artifact and the components folder structure is now load-bearing — this is the first time a Round-1-shipped component is being removed.** Document in the §"Reconciliation" note or in the new Round 2 LOG entry that Round 1's `SenderStepDone.tsx` is being absorbed into `ShipmentLabelSection.tsx`, not deleted-with-no-replacement. Important for the next agent reading the LOG to understand why a file referenced in Round 1's LOG is gone.
+
+- **Test plan asymmetry: Round 1 had ~22 unit tests planned (delivered), Round 2 lists only "unit tests for the 3 new components + `?fresh=1` strip" — count is undeclared.** A round number target like "≥12 new unit tests" gives the implementer something to optimize against and stops a "I'll write 3 happy paths and call it done" outcome.
+
+- **Auto-hide threshold (§11 §"Open questions" #3): `shipped_at IS NOT NULL` is a fine boundary, but `shipped_at` may not exist as a column today (see Blocking #1) — verify before locking the threshold. If it doesn't exist, the threshold becomes `status !== 'label_created'` and the "carrier hasn't scanned yet" case the question asks about goes unaddressed. Worth a quick column-check before the proposal closes.**
+
+- **The proposal claims `?fresh=1` is "debuggable + testable" — true for E2E, but the strip happens on first render (one paint cycle), which means an unmounted test environment will frequently fail to observe the param at all.** SessionStorage or a state-machine-derived flag passed from `SenderFlow` → `TrackingPage` via Router state would be cleaner. Author lean is fine; flagging because the testability win the proposal claims is partial.
+
+### Nits
+
+- **"Same page, four viewer states" undercounts.** With the auth-aware ship-again signal (Blocking #4), there are actually six viewer states: just-shipped sender (fresh=1, anonymous), returning sender (anonymous + localStorage), authenticated sender (link.user_id !== viewer.id), authenticated recipient (link.user_id === viewer.id), anonymous third party (no localStorage, no fresh), authenticated third party (link.user_id !== viewer.id, no localStorage, no fresh). Most collapse to the same UI, but the matrix is worth sketching to avoid logic regressions.
+
+- **§11 §"Sections" numbering is inconsistent with the rest of the proposal.** The body uses `### Sections` with prose bullets; Round 1 used numbered sub-sections (§3.1, §3.2, ...). Implementer-grep-ability suffers when the structure changes mid-document. Consider renumbering Round 2's sections to §11.1 / §11.2 / ... for consistency.
+
+- **"Existing tracker UI — keep as fallback when label section is hidden" is ambiguous.** The existing TrackingPage already has a "Progress" card and a "Tracking History" card — both will remain by default. Saying "keep as fallback" reads like "only render when the new card is hidden," which would lose the per-event tracking history entirely. Clarify: the new `ShipmentLifecycleCard` is the *hero* (top), the existing Progress and Tracking History sections render *below* unchanged.
+
+- **"Inline its content into `ShipmentLabelSection`" — minor: `SenderStepDone.tsx` has FROM/TO shipment-summary, "Track this package" CTA, and "Back to SendMo" CTA on top of label + drop-off.** Those don't belong in `ShipmentLabelSection` (they belong elsewhere on `/t/<code>`). The proposal should say where each of the four sub-blocks lands, not "inline the whole thing."
+
+- **Open Question #4 ("separate proposal file vs append"): append.** This Round 2 is a coherent UX extension of Round 1, history reads better with both in one file, and the protocol's filename suffix already records both review dates. Don't fragment.
+
+### Predicted pitfalls
+
+1. **`label_url` not in the tracking response = silently-broken Print button.** This is the same R-class as Round 1's Blocking #2 (the labels function returned data only in a `.then()` callback the client never saw). The Round 1 fix was "await the RPC + add fields to the response body." Round 2 is one layer over: the tracking function never owned these fields, and the proposal says "extend response" without spelling out what extends to what. If the implementer ships `ShipmentLabelSection` against a `label_url` that returns `undefined`, the Print button will be `<a href={undefined}>` — clicks fire but go nowhere, no console error, no Sentry. This is the *exact* failure mode of the 2026-04-26 notification incident (LOG: "notification system silently 100% broken — three independent bugs") and the 2026-05-11 tracking-code "every `.then()` callback on a Supabase write..." Mitigation: write the `TrackingPage` test that asserts the Print button's `href` is defined before merging.
+
+2. **`history.replaceState` ships, breaks Back-button behavior in subtle ways, John dogfoods, finds a "the back button takes me to /s/<code> which then immediately re-redirects to /t/<code>" loop.** R-class: bypassing React Router's history. The 2026-05-11 LOG entries on verify_jwt are the closest documented sibling — code that works locally (where the back button doesn't matter for the manual test) breaks in real-user-pattern usage. Mitigation: blocking #3 — use the React Router primitive.
+
+3. **Ship-Again CTA shown to a recipient on their own laptop creates the "creepy CTA" support ticket — exactly the kind of pre-launch dogfood signal that's hard to recover from.** R-class: device-signal-mistaken-for-person-signal. No prior LOG entry on this specifically, but the broader pattern — Round 1's "Save my info on this device" was already a device signal; Round 2 builds another check on the same signal — compounds the original sin. Mitigation: blocking #4's auth-aware layered signal.
+
+4. **Print/Download URL leaks recipient address via shared link → Rule 7 spirit-violation incident.** No prior LOG entry; this would be the first. Closest sibling pattern: the 2026-05-11 admin-PIN incident — a security/privacy boundary that "looked fine in pre-launch" but was 5 seconds from devtools-bypass. Pre-launch tolerance for privacy edges erodes the team's pattern-matching on what's acceptable. Mitigation: blocking #2 — explicit John decision, not silent acceptance.
+
+5. **`return_to_sender` / `cancelled` shipment lands on the page, lifecycle card renders with no active step, looks broken.** R-class: edge-state forgotten in happy-path UI design. The 2026-05-11 LOG entry on the admin toolbar's 3-mode rework names a similar pattern (the "Live Comp" mode that didn't do what its name said, undetected for weeks because nobody walked the edge path). Mitigation: blocking #5 — explicit terminal-state treatment + a unit test for each terminal status.
+
+### What the proposal got right
+
+- **The architectural move — one URL per shipment, four viewer states, replace the transient `step="done"` component with a stable surface — is the right call.** Round 1's `step="done"` component was always going to be a dead-end (sender bookmarks `/s/<code>`, starts over, loses the label). Promoting `/t/<code>` from "tracker" to "shipment page" reuses existing infra (the tracking function already exists, the page already renders status, the Dashboard already links there) instead of inventing a parallel `/shipments/<id>` surface.
+
+- **Deleting `SenderStepDone.tsx` rather than leaving two parallel post-generation surfaces.** Easy temptation to keep both ("`/s/<code>` ends at SenderStepDone, `/t/<code>` is for later returns") — that would be the worse architecture. Picking one canonical page now, even with the disruption of removing a Round-1-shipped component, is the right call.
+
+- **`localStorage["sendmo:sender:v1"]` is the right key namespace to read from** — it was set up correctly in Round 1 (versioned, namespaced). The CTA conditional needs improvement (blocking #4) but reading from the same key is correct.
+
+- **Recognizing that the tracking function needs extending rather than building a new `/api/shipment/<code>` endpoint** is the right minimalism. The tracker is already public, already has EasyPost sync logic, already handles the public_code lookup. Extending its response is the small-change path.
+
+- **The out-of-scope discipline holds.** Auth gating, resume-incomplete-flow, schema migrations, webhook changes — all correctly out of scope, all correctly named. The proposal resists scope creep that would balloon Round 2 into Round 1-sized work.
+
+- **Open Question #4 (separate file vs append) shows good protocol awareness.** Naming the question rather than silently picking a non-standard structure is exactly the kind of "flag-don't-decide" that the protocol rewards.
+
+## 13. Author response — Round 2
+
+**author response:** Claude (Opus 4.7) — same SendMo session
+**responded_at:** 2026-05-11 21:00
+
+Reviewer is right on all five blockers. Four are mechanical fixes I'll fold into the plan; one (Blocking #2, the privacy expansion) is a real tradeoff and goes to John. Nits + non-blockers all accepted.
+
+### Blocking issues
+
+**B1. Tracking response missing `label_url`, `link_short_code`, `shipped_at`, `eta`, `promised_delivery_date` — ✅ accept; rewrite §11.3 to be explicit.**
+
+Concrete contract change on `tracking/index.ts`:
+- Add to SELECT: `label_url`. Add join: `sendmo_links!inner(short_code, user_id)` via `shipments.link_id`.
+- Add to JSON response: `label_url`, `link_short_code`, `viewer_is_recipient` (boolean — computed server-side: if the request has a valid JWT and `auth.getUser().id === sendmo_links.user_id`, set true).
+- `shipped_at` column existence check: confirmed absent from current schema (verified by grep of `supabase/migrations/`; `shipments` has `created_at`, `updated_at`, `delivered_at`, `cancelled_at`, `refund_submitted_at`, `promised_delivery_date` — no `shipped_at`). **Decision: don't add a column for this round.** Use `status` as the visibility gate; the "in-transit but not yet scanned" edge the open-question raised is rare in practice and the cost of carrying a label section into the in-transit view is small (it's just hidden behind a "needed to reprint?" disclosure). Threshold becomes `status === 'label_created'`.
+- `eta` is informational only; the response already exposes `promised_delivery_date`. Drop `eta` from the lifecycle-card prop list and rename internally to `promisedDeliveryDate`.
+
+**B2. Privacy expansion of Print/Download on `/t/<code>` — ❓ needs John.**
+
+Reviewer is correct that Round 1's Rule 7 enforcement kept the PDF as a session-scoped artifact. Round 2 puts it behind a URL-reachable surface. Three options:
+
+- **(a) Keep as proposed (URL gates the PDF).** The 7-char public_code is non-guessable; risk is *shared* URLs leaking, not *guessed* URLs. Pair with a strengthened note: *"This link shows your shipping label. Anyone with the link can see the recipient's address. Don't share it publicly."* Strictly clearer than what Round 2 had ("single-use, duplicates rejected").
+- **(b) Gate Print/Download behind `localStorage["sendmo:sender:v1"]` presence.** Same device signal as the Ship-Again CTA. Pro: shared link doesn't leak the PDF. Con: breaks the exact reprint-from-another-device case John flagged in question #1 (link owner should see print/download too). Recipient could still see it via authenticated path, but that adds gateway complexity.
+- **(c) Require auth for Print/Download on `/t/<code>`.** Tracker stays public; print is auth'd. Cleanest privacy; breaks the anonymous-sender-reprint case entirely (sender has no auth signal).
+
+**Author recommendation: (a).** Reasoning: (i) the link-share leak is a behavior we can warn against in copy more cheaply than we can engineer around it; (ii) the alternative gates either break a use case John explicitly approved (recipient sees print) or break the anonymous-sender model; (iii) pre-launch window is the right time to test "does anyone actually share this link?" — if abuse appears, hardening to (b) or (c) is a single conditional. Brought to John for explicit sign-off rather than silent acceptance.
+
+**B3. `history.replaceState` → React Router primitives — ✅ accept.**
+
+§11 §"Architecture" and §"File-by-file plan" updates:
+- `SenderFlow.tsx` `handleConfirm` success: `navigate(\`/t/${publicCode}?fresh=1\`, { replace: true })` via `useNavigate()`.
+- `TrackingPage.tsx` first-render strip: `const [params, setParams] = useSearchParams(); useEffect(() => { if (params.get("fresh") === "1") setParams({}, { replace: true }); }, [])`.
+- Drop the sessionStorage alternative from Open Question #1 entirely. Closed.
+
+**B4. Ship-Again CTA visibility heuristic — ✅ accept; adopt layered signal.**
+
+Visibility rules:
+- **Show** if `?fresh=1` is present (just-shipped guarantee, regardless of device or auth).
+- **Show** if anonymous AND `localStorage["sendmo:sender:v1"]` is present (returning sender on the same device).
+- **Show** if authenticated AND `viewer_is_recipient === false` (an authenticated user who is *not* the link owner — e.g., a future signed-in sender scenario).
+- **Hide** if authenticated AND `viewer_is_recipient === true` (the link owner viewing their own shipment — they have the Dashboard for this).
+- **Hide** otherwise (anonymous third party with no signal).
+
+Depends on `viewer_is_recipient` being returned by the tracking endpoint — folded into B1's response shape.
+
+**B5. `return_to_sender` / `cancelled` terminal states — ✅ accept; hide lifecycle card, show banner.**
+
+When `status ∈ {return_to_sender, cancelled}`:
+- `ShipmentLifecycleCard` does not render.
+- `ShipmentLabelSection` does not render (no reprinting a voided/returning label).
+- Banner above the shipment summary: red-coded `AlertCircle` icon + copy:
+  - `cancelled`: *"This label was voided and the package will not ship."*
+  - `return_to_sender`: *"The package is being returned to the sender."*
+- The existing TrackingPage's status-banner pattern (verified in [TrackingPage.tsx](src/pages/TrackingPage.tsx)) is the right host for this; extend its copy table rather than building a new banner.
+
+Unit tests gain coverage for both terminal statuses.
+
+### Non-blocking concerns
+
+- **Single-use note phrasing — ✅ accept, soften.** New copy: *"This label is for a single shipment. Please don't reprint or share — duplicates can be rejected by the carrier or charged twice."*
+- **Document Round-1 component absorption in the next LOG entry — ✅ accept.** The Round-2 LOG entry will explicitly note: *"`SenderStepDone.tsx` is absorbed into `ShipmentLabelSection.tsx` (label preview + Print/Download + drop-off) plus `TrackingPage.tsx` (summary card + 'back to SendMo' nav). Not deleted-without-replacement; renamed to reflect its new home."*
+- **Test count target — ✅ accept, ≥12 new unit tests.** Coverage: lifecycle card (5 status branches incl. terminals = 5), label section visibility (3), ship-again CTA visibility matrix (≥4), `?fresh=1` strip behavior (1), terminal-banner copy (2). Floor 15, target ~18.
+- **`?fresh=1` testability caveat — ✅ acknowledged.** Stick with query param + React Router primitives. The "easier to E2E" claim was real for the dogfood pass; unit testing the strip uses `MemoryRouter` with initial entries that include `?fresh=1`.
+- **`shipped_at` open question (§11 OQ#3) — ✅ closed by B1.** Threshold is `status === 'label_created'`. No new column.
+
+### Nits
+
+- **Six viewer states matrix — ✅ accept, document in §11.**
+- **Numbering inconsistency — ✅ accept; the implementation work renumbers Round 2's sub-sections to §11.1, §11.2, etc.**
+- **"Existing tracker UI — keep as fallback" clarification — ✅ accept; explicit composition: new `ShipmentLifecycleCard` is the hero, existing Progress + Tracking History cards render below unchanged.**
+- **`SenderStepDone` sub-block placement — ✅ accept; explicit mapping:**
+  - Label preview + Print + Download → `ShipmentLabelSection`
+  - Drop-off block → `ShipmentLabelSection` (same visibility threshold)
+  - Shipment summary (From/To/Service/Tracking) → goes directly on `TrackingPage`, above the existing tracker section
+  - "Track this package" link → DELETED (we ARE the tracking page now)
+  - "Back to SendMo" nav → moves to `TrackingPage`'s footer
+- **Open Question #4 (separate file vs append) — ✅ append confirmed.** Reviewer agrees; closed.
+
+### Predicted pitfalls — response
+
+1. **`label_url` not in tracking response → silent broken Print button.** Folded into B1. Test plan adds an assertion: `TrackingPage` test mocks the tracking endpoint with a label_url-present response and asserts the Print anchor's `href` matches; second test asserts a label_url-absent response renders no Print button (graceful degradation, not broken-button).
+2. **`history.replaceState` → Back button loop.** Folded into B3.
+3. **Creepy CTA via device-signal mistake.** Folded into B4 (auth-aware layered signal).
+4. **PDF leak via shared link → Rule 7 spirit violation.** Folded into B2 — John's call. The strengthened warning copy is the mitigation if (a) is chosen.
+5. **Terminal-state status renders broken-looking lifecycle card.** Folded into B5.
+
+### Status
+
+Four of five blockers resolved in this response with concrete spec updates. **Blocking #2 (privacy expansion) is the one outstanding tradeoff for John.** Bringing it to him explicitly:
+
+- Recommended: **(a) keep Print/Download on `/t/<code>` accessible to anyone with the URL; pair with strengthened warning copy.**
+- Alternative: **(b) gate Print/Download behind device-signal**.
+- Alternative: **(c) require auth for Print/Download.**
+
+On John's pick:
+- If (a): I fold the warning copy into §11, flip frontmatter to `decided`, rename file to add `_redecided-2026-05-11` suffix (or note Round-2 decision inline in the existing `_decided` suffix — flagging the protocol's silence on multi-round filename conventions), and begin implementation.
+- If (b) or (c): I re-spec the gating (touches tracking endpoint, `ShipmentLabelSection`, possibly a new auth path) and bring the revised plan back before coding.
+
+## 14. Decision — Round 2
+
+**John, 2026-05-11:** approved Round 2 with Option (a) on the privacy tradeoff.
+
+Print/Download stays accessible to anyone with the `/t/<public_code>` URL. Pair with the strengthened warning copy: *"Anyone with this link can see the recipient's address. Don't share it publicly."* All five blocker resolutions in §13 are binding spec for implementation. File stays at the existing `_decided-2026-05-11` suffix (Round 2 decided same day; renaming would be churn).

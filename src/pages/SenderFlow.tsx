@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { Loader2, AlertCircle, Shield } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -16,9 +16,8 @@ import SenderStepIntro from "@/components/sender/SenderStepIntro";
 import SenderStepPackage from "@/components/sender/SenderStepPackage";
 import SenderStepRates from "@/components/sender/SenderStepRates";
 import SenderStepReview from "@/components/sender/SenderStepReview";
-import SenderStepDone from "@/components/sender/SenderStepDone";
 import {
-  type SenderStep, type SenderParcel, type SenderResult,
+  type SenderStep, type SenderParcel,
   loadSavedSender, saveSender, sortRatesForSender,
 } from "@/components/sender/senderState";
 
@@ -26,6 +25,7 @@ import {
 // proposals/2026-05-11_sender-flow-wizard...md for the canonical spec.
 export default function SenderFlow() {
   const { shortCode } = useParams<{ shortCode: string }>();
+  const navigate = useNavigate();
 
   const [linkData, setLinkData] = useState<LinkData | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -47,7 +47,6 @@ export default function SenderFlow() {
 
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const [result, setResult] = useState<SenderResult | null>(null);
 
   useEffect(() => {
     if (!shortCode) {
@@ -123,14 +122,19 @@ export default function SenderFlow() {
         { short_code: linkData.short_code },
         { comp: true, display_price_cents: selectedRate.display_price_cents },
       );
-      setResult({
-        labelUrl: labelResult.label_url,
-        trackingNumber: labelResult.tracking_number,
-        publicCode: labelResult.public_code ?? null,
-        carrier: labelResult.carrier,
-        service: labelResult.service,
-      });
-      setStep("done");
+      // Per proposal §11/§13 B3: navigate to the shipment page with a fresh
+      // celebration flag; the URL is the bookmark-friendly post-generation surface.
+      // Fall back to the in-flow "done" placeholder only if the labels function
+      // didn't return a public_code (shouldn't happen post-Round-1 B2 — the RPC
+      // is awaited and public_code is in the response — but defends against a
+      // partial regression).
+      if (labelResult.public_code) {
+        navigate(`/t/${labelResult.public_code}?fresh=1`, { replace: true });
+      } else {
+        setSubmitError(
+          "Label generated but we couldn't build the tracking link. Check your dashboard or contact support.",
+        );
+      }
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : "Failed to generate label");
     } finally {
@@ -235,11 +239,9 @@ export default function SenderFlow() {
               </motion.div>
             )}
 
-            {step === "done" && linkData && result && (
-              <motion.div key="done" initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
-                <SenderStepDone linkData={linkData} senderAddress={senderAddress} result={result} />
-              </motion.div>
-            )}
+            {/* Post-Round-2: "done" step removed — handleConfirm navigates to
+                /t/<public_code>?fresh=1 on success. Kept only as a fallback path
+                when public_code is missing from the labels response. */}
           </AnimatePresence>
         </div>
       </div>
