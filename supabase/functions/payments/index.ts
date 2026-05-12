@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { log } from "../_shared/logger.ts";
 import { createPaymentIntent, retrievePaymentIntent } from "../_shared/stripe.ts";
@@ -58,6 +59,24 @@ serve(async (req: Request) => {
 
         const isLive = live_mode === true;
 
+        // Resolve the calling user from the JWT, when present. The full-label
+        // flow now reaches this endpoint authenticated (proposal
+        // 2026-05-11_account-creation-timing). Stamping metadata.user_id on the
+        // PI is groundwork for Phase B (Stripe Customer dedup).
+        let resolvedUserId: string | null = null;
+        const authHeader = req.headers.get("Authorization") || req.headers.get("authorization") || "";
+        const token = authHeader.replace(/^Bearer\s+/i, "");
+        const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || Deno.env.get("VITE_SUPABASE_ANON_KEY") || "";
+        if (token && token !== anonKey) {
+            const sbUrl = Deno.env.get("SUPABASE_URL") || Deno.env.get("VITE_SUPABASE_URL");
+            const sbKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || Deno.env.get("SB_SERVICE_ROLE_KEY");
+            if (sbUrl && sbKey) {
+                const sb = createClient(sbUrl, sbKey, { auth: { autoRefreshToken: false, persistSession: false } });
+                const { data: userResp } = await sb.auth.getUser(token);
+                if (userResp?.user?.id) resolvedUserId = userResp.user.id;
+            }
+        }
+
         // Idempotency key: shipment_id ensures the same shipment never
         // gets two PaymentIntents. Stripe will return the existing PI if
         // we hit this endpoint again with the same key.
@@ -71,6 +90,7 @@ serve(async (req: Request) => {
                 easypost_shipment_id,
                 session_id: sessionId,
                 source: "sendmo_full_label",
+                ...(resolvedUserId ? { user_id: resolvedUserId } : {}),
                 ...(description ? { description } : {}),
             },
             receipt_email,

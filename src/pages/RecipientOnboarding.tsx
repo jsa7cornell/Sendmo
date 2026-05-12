@@ -19,6 +19,7 @@ import RecipientStepFullShipping from "@/components/recipient/RecipientStepFullS
 import RecipientStepPayment from "@/components/recipient/RecipientStepPayment";
 import RecipientStepFlexPreferences from "@/components/recipient/RecipientStepFlexPreferences";
 import RecipientStepEmailVerify from "@/components/recipient/RecipientStepEmailVerify";
+import RecipientStepEmailVerifySupabase from "@/components/recipient/RecipientStepEmailVerifySupabase";
 import RecipientStepFlexPayment from "@/components/recipient/RecipientStepFlexPayment";
 import RecipientStepLinkReady from "@/components/recipient/RecipientStepLinkReady";
 
@@ -206,8 +207,18 @@ export default function RecipientOnboarding() {
               />
             )}
 
-            {/* Step 11/12: Payment + Label Ready */}
-            {(currentStep === 11 || currentStep === 12) && (
+            {/* Step 11: Full Label — Supabase OTP verify (proposal 2026-05-11_account-creation-timing) */}
+            {currentStep === 11 && data.path === "full_label" && (
+              <RecipientStepEmailVerifySupabase
+                state={state}
+                onUpdate={updateData}
+                onContinue={() => tryAdvance(11)}
+                onBack={goBack}
+              />
+            )}
+
+            {/* Step 12/13: Payment + Label Ready */}
+            {(currentStep === 12 || currentStep === 13) && data.path === "full_label" && (
               <RecipientStepPayment
                 state={state}
                 onUpdate={updateData}

@@ -49,7 +49,8 @@ describe("stepToSlug", () => {
 
 describe("stepsForPath", () => {
   it("returns full label steps for full_label", () => {
-    expect(stepsForPath("full_label")).toEqual([0, 1, 10, 11, 12]);
+    // 11 = Supabase OTP verify (proposal 2026-05-11_account-creation-timing).
+    expect(stepsForPath("full_label")).toEqual([0, 1, 10, 11, 12, 13]);
   });
 
   it("returns flex steps for flexible", () => {
@@ -57,7 +58,7 @@ describe("stepsForPath", () => {
   });
 
   it("defaults to full label when path is null", () => {
-    expect(stepsForPath(null)).toEqual([0, 1, 10, 11, 12]);
+    expect(stepsForPath(null)).toEqual([0, 1, 10, 11, 12, 13]);
   });
 });
 
@@ -66,7 +67,8 @@ describe("nextStep / prevStep", () => {
     expect(nextStep(0, "full_label")).toBe(1);
     expect(nextStep(1, "full_label")).toBe(10);
     expect(nextStep(10, "full_label")).toBe(11);
-    expect(nextStep(12, "full_label")).toBeNull();
+    expect(nextStep(11, "full_label")).toBe(12);
+    expect(nextStep(13, "full_label")).toBeNull();
   });
 
   it("returns prev step in flexible path", () => {
@@ -83,8 +85,9 @@ describe("stepToProgressIndex", () => {
     expect(stepToProgressIndex(0)).toBe(-1);
     expect(stepToProgressIndex(1)).toBe(0);
     expect(stepToProgressIndex(10)).toBe(1);
-    expect(stepToProgressIndex(11)).toBe(2);
-    expect(stepToProgressIndex(12)).toBe(3);
+    expect(stepToProgressIndex(11)).toBe(2); // verify
+    expect(stepToProgressIndex(12)).toBe(2); // payment shares the verify segment
+    expect(stepToProgressIndex(13)).toBe(3); // label
   });
 });
 
@@ -92,8 +95,8 @@ describe("progressIndexToStep", () => {
   it("maps progress index back to step for full_label", () => {
     expect(progressIndexToStep(0, "full_label")).toBe(1);
     expect(progressIndexToStep(1, "full_label")).toBe(10);
-    expect(progressIndexToStep(2, "full_label")).toBe(11);
-    expect(progressIndexToStep(3, "full_label")).toBe(12);
+    expect(progressIndexToStep(2, "full_label")).toBe(11); // entry into verify segment
+    expect(progressIndexToStep(3, "full_label")).toBe(13);
   });
 
   it("maps progress index back to step for flexible", () => {

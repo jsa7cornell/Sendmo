@@ -247,6 +247,24 @@ serve(async (req: Request) => {
             }
         }
 
+        // ─── Caller identity (proposal 2026-05-11_account-creation-timing) ─
+        // Resolve auth.uid() from the Authorization header when present.
+        // Used downstream as shipments.user_id + payments.user_id for the
+        // full-label flow now that step 11 verifies email via Supabase Auth
+        // before the label call. Falls back to the system placeholder for
+        // unauthenticated callers (admin comp without resolvedLink, legacy
+        // anon flows during the rollout window).
+        let callerUserId: string | null = null;
+        {
+            const ah = req.headers.get("Authorization") || req.headers.get("authorization") || "";
+            const tok = ah.replace(/^Bearer\s+/i, "");
+            const anon = Deno.env.get("SUPABASE_ANON_KEY") || Deno.env.get("VITE_SUPABASE_ANON_KEY") || "";
+            if (tok && tok !== anon && supabase) {
+                const { data: userResp } = await supabase.auth.getUser(tok);
+                if (userResp?.user?.id) callerUserId = userResp.user.id;
+            }
+        }
+
         // ─── Comp-gate hardening (proposal §3.5) ────────────────
         // `comp: true` is now allowed only when EITHER (a) a valid active flex
         // link authorized the call (resolvedLink !== null), OR (b) the caller
@@ -553,7 +571,11 @@ serve(async (req: Request) => {
                     // recipient (so they show up in their Dashboard). The
                     // system-user placeholder remains the right answer for
                     // admin-comp full-label flows that have no resolved link.
-                    p_user_id: resolvedLink?.user_id ?? '00000000-0000-0000-0000-000000000001',
+                    // Owner preference: flex-link recipient first (sender-flow case),
+                    // then the authenticated caller (full-label after OTP per proposal
+                    // 2026-05-11_account-creation-timing), then the system placeholder
+                    // (admin comp with no link, legacy anon flows during rollout).
+                    p_user_id: resolvedLink?.user_id ?? callerUserId ?? '00000000-0000-0000-0000-000000000001',
                     p_from_name: from_address.name,
                     p_from_street1: from_address.street1,
                     p_from_street2: from_address.street2 ?? null,
@@ -718,7 +740,7 @@ serve(async (req: Request) => {
                             const rateCents = Math.round(parseFloat(buyData.selected_rate?.rate || "0") * 100);
                             supabase.from('payments').insert({
                                 shipment_id: shipmentId,
-                                user_id: '00000000-0000-0000-0000-000000000001',
+                                user_id: resolvedLink?.user_id ?? callerUserId ?? '00000000-0000-0000-0000-000000000001',
                                 stripe_payment_intent_id: verifiedPaymentIntent.id,
                                 amount_cents: verifiedPaymentIntent.amount,
                                 capture_method: 'automatic',
@@ -754,7 +776,7 @@ serve(async (req: Request) => {
                             const rateCents = Math.round(parseFloat(buyData.selected_rate?.rate || "0") * 100);
                             supabase.from('payments').insert({
                                 shipment_id: shipmentId,
-                                user_id: '00000000-0000-0000-0000-000000000001',
+                                user_id: resolvedLink?.user_id ?? callerUserId ?? '00000000-0000-0000-0000-000000000001',
                                 stripe_payment_intent_id: null,
                                 amount_cents: display_price_cents ?? rateCents,
                                 capture_method: 'automatic',

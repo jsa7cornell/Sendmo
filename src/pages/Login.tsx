@@ -1,20 +1,76 @@
-import { useState } from "react";
-import { Navigate } from "react-router-dom";
+import { useCallback, useRef, useState } from "react";
+import { Navigate, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { Mail, ArrowRight, CheckCircle2, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/contexts/AuthContext";
+import { supabase } from "@/lib/supabase";
 
 export default function Login() {
   const { session, loading: authLoading, signIn, signInWithGoogle } = useAuth();
+  const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [tried, setTried] = useState(false);
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [googleLoading, setGoogleLoading] = useState(false);
+  const [digits, setDigits] = useState(["", "", "", "", "", ""]);
+  const [verifying, setVerifying] = useState(false);
+  const [verifyError, setVerifyError] = useState<string | null>(null);
+  const digitRefs = useRef<(HTMLInputElement | null)[]>([]);
+
+  const handleDigitChange = useCallback((index: number, value: string) => {
+    if (!/^\d*$/.test(value)) return;
+    const char = value.slice(-1);
+    setDigits((prev) => {
+      const next = [...prev];
+      next[index] = char;
+      return next;
+    });
+    if (char && index < 5) digitRefs.current[index + 1]?.focus();
+  }, []);
+
+  function handleDigitKeyDown(index: number, e: React.KeyboardEvent) {
+    if (e.key === "Backspace" && !digits[index] && index > 0) {
+      digitRefs.current[index - 1]?.focus();
+    }
+  }
+
+  function handleDigitPaste(e: React.ClipboardEvent) {
+    const pasted = e.clipboardData.getData("text").replace(/\D/g, "").slice(0, 6);
+    if (pasted.length === 0) return;
+    e.preventDefault();
+    const next = ["", "", "", "", "", ""];
+    for (let i = 0; i < pasted.length; i++) next[i] = pasted[i];
+    setDigits(next);
+    digitRefs.current[Math.min(pasted.length, 5)]?.focus();
+  }
+
+  async function handleVerify() {
+    const code = digits.join("");
+    if (code.length < 6) {
+      setVerifyError("Enter the full 6-digit code");
+      return;
+    }
+    setVerifyError(null);
+    setVerifying(true);
+    const { error: verifyErr } = await supabase.auth.verifyOtp({
+      email,
+      token: code,
+      type: "email",
+    });
+    setVerifying(false);
+    if (verifyErr) {
+      setVerifyError(verifyErr.message || "Verification failed");
+      return;
+    }
+    // Same destination as the email-link click — the welcome=1 toast on
+    // Dashboard fires either way so the two paths feel identical.
+    navigate("/dashboard?welcome=1");
+  }
 
   async function handleGoogle() {
     setError(null);
@@ -93,7 +149,7 @@ export default function Login() {
               >
                 <h2 className="text-lg font-semibold text-foreground mb-1">Sign in</h2>
                 <p className="text-sm text-muted-foreground mb-5">
-                  Continue with Google or get a magic link by email
+                  Continue with Google, or get a confirmation link + code by email.
                 </p>
 
                 <Button
@@ -175,7 +231,7 @@ export default function Login() {
                   ) : (
                     <ArrowRight className="w-4 h-4" />
                   )}
-                  {sending ? "Sending..." : "Send magic link"}
+                  {sending ? "Sending..." : "Email me a link + code"}
                 </Button>
               </motion.form>
             ) : (
@@ -184,25 +240,79 @@ export default function Login() {
                 initial={{ opacity: 0, x: 20 }}
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ duration: 0.2 }}
-                className="text-center py-4"
+                className="py-2"
               >
-                <div className="w-12 h-12 rounded-full bg-success/10 flex items-center justify-center mx-auto mb-4">
-                  <CheckCircle2 className="w-6 h-6 text-success" />
+                <div className="text-center mb-4">
+                  <div className="w-12 h-12 rounded-full bg-success/10 flex items-center justify-center mx-auto mb-3">
+                    <CheckCircle2 className="w-6 h-6 text-success" />
+                  </div>
+                  <h2 className="text-lg font-semibold text-foreground mb-1">Check your email</h2>
+                  <p className="text-sm text-muted-foreground">
+                    We sent a link + 6-digit code to <span className="font-medium text-foreground">{email}</span>
+                  </p>
                 </div>
-                <h2 className="text-lg font-semibold text-foreground mb-1">Check your email</h2>
-                <p className="text-sm text-muted-foreground mb-4">
-                  We sent a magic link to <span className="font-medium text-foreground">{email}</span>
-                </p>
-                <p className="text-xs text-muted-foreground mb-4">
-                  Click the link in the email to sign in. Check your spam folder if you don't see it.
-                </p>
-                <button
+
+                <label className="text-sm font-medium text-foreground block mb-2 text-center">
+                  Paste or type the code
+                </label>
+                <div className="flex justify-center gap-2 mb-3">
+                  {digits.map((d, i) => (
+                    <Input
+                      key={i}
+                      ref={(el) => {
+                        digitRefs.current[i] = el;
+                      }}
+                      type="text"
+                      inputMode="numeric"
+                      maxLength={1}
+                      value={d}
+                      onChange={(e) => handleDigitChange(i, e.target.value)}
+                      onKeyDown={(e) => handleDigitKeyDown(i, e)}
+                      onPaste={i === 0 ? handleDigitPaste : undefined}
+                      aria-label={`Digit ${i + 1}`}
+                      className="w-10 h-12 text-center text-xl font-semibold rounded-xl"
+                      autoFocus={i === 0}
+                    />
+                  ))}
+                </div>
+
+                {verifyError && (
+                  <p className="text-xs text-destructive text-center mb-3">{verifyError}</p>
+                )}
+
+                <Button
                   type="button"
-                  onClick={() => { setSent(false); setTried(false); setError(null); }}
-                  className="text-xs text-primary hover:underline underline-offset-2"
+                  onClick={handleVerify}
+                  disabled={verifying || digits.join("").length < 6}
+                  className="w-full rounded-xl shadow-sm gap-2"
                 >
-                  Didn't receive it? Try again
-                </button>
+                  {verifying ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <ArrowRight className="w-4 h-4" />
+                  )}
+                  {verifying ? "Signing you in…" : "Verify and sign in"}
+                </Button>
+
+                <p className="text-[11px] text-muted-foreground text-center mt-3">
+                  Or tap the link in the email — it'll bring you right back here, signed in.
+                </p>
+
+                <div className="text-center mt-4">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSent(false);
+                      setTried(false);
+                      setError(null);
+                      setVerifyError(null);
+                      setDigits(["", "", "", "", "", ""]);
+                    }}
+                    className="text-xs text-primary hover:underline underline-offset-2"
+                  >
+                    Didn't receive it? Try again
+                  </button>
+                </div>
               </motion.div>
             )}
           </AnimatePresence>

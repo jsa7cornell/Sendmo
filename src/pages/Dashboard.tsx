@@ -118,6 +118,18 @@ export default function Dashboard() {
   const [searchParams, setSearchParams] = useSearchParams();
   const updatedLinkId = searchParams.get("updated_link");
   const [showUpdatedBanner, setShowUpdatedBanner] = useState(!!updatedLinkId);
+  // One-shot welcome banner triggered by ?welcome=1 — set by AuthContext's
+  // emailRedirectTo/redirectTo for both the magic-link click and the Google
+  // OAuth return, AND by the /login OTP-verify flow's programmatic navigate.
+  // Strip the param on first paint so the banner doesn't reappear on refresh.
+  const [showWelcome, setShowWelcome] = useState(searchParams.get("welcome") === "1");
+  useEffect(() => {
+    if (searchParams.get("welcome") === "1") {
+      const next = new URLSearchParams(searchParams);
+      next.delete("welcome");
+      setSearchParams(next, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
   const [copied, setCopied] = useState(false);
   const [shipments, setShipments] = useState<DashboardShipment[]>([]);
   const [loadingShipments, setLoadingShipments] = useState(true);
@@ -247,6 +259,32 @@ export default function Dashboard() {
             </div>
           </div>
         </div>
+
+        {/* Welcome banner — one-shot, fires after magic-link click, Google
+            OAuth return, or /login's OTP-verify path. */}
+        <AnimatePresence>
+          {showWelcome && (
+            <motion.div
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, height: 0, marginBottom: 0 }}
+              className="mb-5 rounded-xl border border-success/30 bg-success/10 px-4 py-3 flex items-center gap-3"
+            >
+              <CheckCircle2 className="w-4 h-4 text-success shrink-0" />
+              <p className="text-sm text-foreground flex-1">
+                Signed in{user?.email ? <> as <span className="font-medium">{user.email}</span></> : null}.
+              </p>
+              <button
+                type="button"
+                onClick={() => setShowWelcome(false)}
+                className="w-7 h-7 rounded-lg hover:bg-success/10 flex items-center justify-center"
+                aria-label="Dismiss"
+              >
+                <X className="w-3.5 h-3.5 text-muted-foreground" />
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Updated-link confirmation banner */}
         <AnimatePresence>

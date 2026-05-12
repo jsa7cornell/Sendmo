@@ -8,6 +8,100 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-12] Account-creation iteration #2: Google CTA at step 1, verify step reframed as "Confirm your email", link+code dual path
+**Category:** Auth | Onboarding | UX
+**Proposal:** [proposals/2026-05-11_account-creation-timing_reviewed-2026-05-11_decided-2026-05-11.md](proposals/2026-05-11_account-creation-timing_reviewed-2026-05-11_decided-2026-05-11.md) — design iteration *on top of* the 2026-05-11 implementation; not a new proposal.
+
+**Context:** John flagged in dogfood-review that the original PR's UX was wrong on three points: (1) framing the step as account creation rather than email verification, (2) placing the Google CTA at the verify step *after* the user has already typed their email (defeats the purpose of the shortcut), and (3) leaning on OTP-only when a magic link is materially lower-friction for users who'd rather tap than type. The fix is a UX-only iteration — no proposal changes, no Phase A blocker shifts.
+
+**Decision/Finding:**
+- **Google CTA moves to step 1 (destination), above the email field.** [RecipientStepAddress.tsx](src/components/recipient/RecipientStepAddress.tsx) renders Google as the primary affordance, then an "or type your email" divider, then the email input. OAuth redirectTo is the current step-1 URL — sessionStorage-backed flow data preserves typed destination across the roundtrip. On return, the email field locks to the Google identity (disabled, "Signed in as {email}" copy). Only renders for the full-label path; flex is untouched.
+- **Verify step (step 11) reframed.** [RecipientStepEmailVerifySupabase.tsx](src/components/recipient/RecipientStepEmailVerifySupabase.tsx) headline changes from "Check your email" → **"Confirm your email"**, with the explicit "Just making sure {email} is yours" framing. Goal: this isn't account creation, it's address verification. The Google CTA is removed from this surface (it lives at step 1 now).
+- **Magic-link + 6-digit code in the same email.** `signInWithOtp` calls now pass `emailRedirectTo: ${origin}/onboarding/full-label/verify?confirmed=1` so the link click lands back on the verify step in the same tab — Supabase processes the session, the verify component's auth-detection useEffect notices a live session whose email matches `state.email`, marks `email_verified=true`, and auto-advances to payment. Same end state as typing the code, no flicker, no context loss. (Cross-device link click is the only thing not covered — the email copy points the user to use the code instead.)
+- **Auto-skip verify when already authenticated.** [RecipientFlowContext.tsx](src/contexts/RecipientFlowContext.tsx) now: (a) auto-marks `email_verified=true` whenever a live session's email matches `data.email`, (b) `tryAdvance(10)` detects this and jumps `11 → 12` in the URL directly, marking step 11 complete so the back button still works. Returning users (active session, scenario A) and Google-CTA users (just OAuth'd at step 1) both skip the verify screen entirely.
+- **Login page (`/login`) copy mirrors the new framing.** [Login.tsx](src/pages/Login.tsx) — "Continue with Google, or get a confirmation link + code by email" subheading; submit button is "Email me a link + code"; the success screen says "We sent a link + 6-digit code … Tap the link to sign in instantly, or open the email and use the code." No structural changes — already had the right shape (Google above email).
+
+**Tests:** updated [tests/unit/RecipientStepEmailVerifySupabase.test.tsx](tests/unit/RecipientStepEmailVerifySupabase.test.tsx) — 7 tests still pass. Renamed "renders the OTP entry UI" → "renders the confirm-your-email UI" (copy change). Resend test now asserts the `emailRedirectTo` is the verify step. Added a new test asserting **no** Google CTA renders on the verify step (it lives at step 1). `npx tsc -b --noEmit` clean. Full unit run: 195 passing / 27 failing — all 27 are pre-existing pre-iteration failures.
+
+**Why this shape:**
+- Google-CTA-above-email is a real UX hint: "this is the recommended path; the field below is the fallback." Putting Google below the email means people type their address before they notice the shortcut exists, and at that point they're committed.
+- "Verify the email" vs "Verify your account" framing matters. The latter sounds like a security step; the former sounds like a delivery-confirmation step (which is what it actually is). Users intuitively understand "we just need to make sure jane@example.com is real" much faster than "verify your email to continue." Notion + Substack engineering blogs both call this out specifically.
+- Magic link + OTP in the same email is the dual-affordance pattern. The link is for users on the same device (one tap, no typing). The code is for users on a different device than where they typed, or who'd rather paste than tap. The Supabase template emits both — the user picks.
+
+**John parallel actions for this iteration (still TODO):**
+1. **Edit the Supabase Magic Link email template** to include BOTH `{{ .Token }}` (6-digit code) and `{{ .ConfirmationURL }}` (tap-to-confirm link), with friendly "verify your email" framing copy. Today's template is link-only — the verify step would receive a link the user can't paste as a code. **Hard blocker for deploy.**
+2. **Extend Supabase refresh-token inactivity timeout** (Authentication → Sessions → "Inactivity timeout"). Default 30 days is too short for a shipping app where re-engagement is monthly-quarterly. Push to the Free-tier maximum (or whatever Supabase caps at) so returning users actually stay signed in. Next time we're in the browser I can find the exact knob and confirm the cap.
+3. **Verify "Allow manual linking" toggle** — currently OFF. Not blocking; flip it on as cheap insurance for the future Phase B Customer-dedup story (lets us call `linkIdentity()` programmatically if auto-linking ever falls short).
+
+**Watch out:**
+- **Cross-device link click is not synced.** If the user types their email on laptop and taps the link on their phone, the phone is now signed in but the laptop tab still shows the OTP input. The email copy points them at the code path instead. A Realtime subscription on `auth.users` filtered by email could close this gap (~80 LOC additive follow-up) — punted for v1 because dogfood will tell us whether it matters.
+- **`/login` page still uses AuthContext's `signIn()` which redirects to `/dashboard`.** That's right for /login but means if a user goes through /login mid-shipment (unusual), they leave the funnel. Step-1 Google CTA solves this by redirecting back to step 1; /login keeps its dashboard redirect.
+- **The verify-step auto-skip in tryAdvance modifies completedSteps in a slightly hairy way** (push step 11 alongside the current step so back-navigation works). Worth a glance if anyone touches step routing again.
+- **Disabled email input when `user` is set** — the user can't edit the email at step 1 once Google is in play. Intentional (the email-on-file = the OAuth identity), but means a sign-out flow is the only way to switch identities. Acceptable for now; if it becomes a complaint, "use a different email" should sign-out + re-prompt.
+
+**Files touched (this iteration):**
+- [src/components/recipient/RecipientStepAddress.tsx](src/components/recipient/RecipientStepAddress.tsx) (Google CTA above email; OAuth-return locks email; emailRedirectTo on OTP send)
+- [src/components/recipient/RecipientStepEmailVerifySupabase.tsx](src/components/recipient/RecipientStepEmailVerifySupabase.tsx) (reframe "Confirm your email"; drop Google CTA; ?confirmed=1 query-param handler; emailRedirectTo on Resend)
+- [src/contexts/RecipientFlowContext.tsx](src/contexts/RecipientFlowContext.tsx) (auto-mark email_verified when session.email matches; tryAdvance skips step 11 when already verified)
+- [src/pages/Login.tsx](src/pages/Login.tsx) (copy tweaks to match "link + code" framing)
+- [tests/unit/RecipientStepEmailVerifySupabase.test.tsx](tests/unit/RecipientStepEmailVerifySupabase.test.tsx) (router wrapper; Resend assertion; no-Google-CTA assertion; updated headline assertion)
+
+**Deploy steps:** push to main. No Edge Function changes in this iteration (labels + payments JWT plumbing from the 2026-05-11 entry still applies unchanged). Vercel auto-deploys. The Supabase template edit (John task #1 above) MUST land before users actually use the verify step in production — otherwise the link works fine but the code path is broken.
+
+**Preview note:** I did not verify this iteration in a live browser preview. The dev server requires Supabase credentials injected via `op run --env-file=.env.tpl -- npm run dev`; the preview harness starts `npm run dev` directly so the Supabase client fails to initialize and the React tree never mounts. tsc + unit tests pass; full visual verification is John's first manual run-through post-deploy.
+
+---
+
+### [2026-05-11] Full Prepaid Label flow auto-creates Supabase auth user via OTP between rates and payment
+**Category:** Auth | Onboarding | Architecture | Stripe-Phase-A unblocker
+**Proposal:** [proposals/2026-05-11_account-creation-timing_reviewed-2026-05-11_decided-2026-05-11.md](proposals/2026-05-11_account-creation-timing_reviewed-2026-05-11_decided-2026-05-11.md) (Pattern A, T1 parallel + T2 between-rates-and-payment with step-1-priming)
+**Context:** Full Label path was `destination → shipping → payment → label` and never created an `auth.users` row, so recipients couldn't return to manage their shipment, and Stripe Phase B's "one Customer per `auth.users.id`" dedup story had no key to dedupe on. Last open blocker on Stripe Phase A per the Stripe proposal §11 #4.
+
+**Decision/Finding:**
+- New step 11 `verify` lands between shipping (10) and payment (now 12; label is now 13). [stepRouting.ts](src/lib/stepRouting.ts) renumbered; the legacy [useRecipientFlow.ts](src/hooks/useRecipientFlow.ts) FULL_LABEL_STEPS + progress mapping mirrored. Validation: step 11 (full-label) requires `state.email_verified`.
+- New component [RecipientStepEmailVerifySupabase.tsx](src/components/recipient/RecipientStepEmailVerifySupabase.tsx) — Supabase-native `signInWithOtp` + `verifyOtp({type:"email"})`. Includes "Continue with Google" + a 6-digit paste-friendly code input + Resend + "Use a different email" (back to step 1). Per author-response B1, **a separate component from the bespoke `RecipientStepEmailVerify.tsx` flex flow uses** — the flex `email_verifications`-table flow is intentionally untouched (LOG 2026-03-19 explained why; rewriting in place would have given flex an unintended session at step 21).
+- **OTP fires on step-1 email blur** (T2 implementation upgrade): [RecipientStepAddress.tsx](src/components/recipient/RecipientStepAddress.tsx) silently calls `signInWithOtp({email})` on blur for the full-label flow once the email is valid. By the time the user finishes shipping + rate selection (~30–90s), the code is in their inbox. Idempotent via `lastPrimedEmail` ref + 60s throttle (Supabase rate limit).
+- **B2 lock-to-OAuth-email:** if the user picks Google and returns signed in with a different email than typed, the verify component locks `state.email + verification_email` to the OAuth identity and surfaces a disclosure ("Signed in as `<x>`. Shipment notifications will go to that address."). Either way, mark `email_verified=true` and auto-advance.
+- **OAuth roundtrip survives** via sessionStorage persistence in [RecipientFlowContext.tsx](src/contexts/RecipientFlowContext.tsx) (`sendmo:recipient_flow:v1`). Without this, redirecting to accounts.google.com would blow away destination + rate selection + everything else. Cleared implicitly by sessionStorage's per-tab lifetime.
+- **JWT plumbing for `auth.uid()` propagation (B5):** `post()` helper takes optional `accessToken`; [`buyLabel`](src/lib/api.ts) and [`createPaymentIntent`](src/lib/api.ts) both accept it. [`RecipientStepPayment.tsx`](src/components/recipient/RecipientStepPayment.tsx) reads `useAuth().session?.access_token` and passes through to both calls. The labels function ([`supabase/functions/labels/index.ts`](supabase/functions/labels/index.ts)) and payments function ([`supabase/functions/payments/index.ts`](supabase/functions/payments/index.ts)) now resolve `callerUserId` from the bearer token; labels uses it as `admin_insert_shipment.p_user_id` (preference order: resolvedLink → callerUserId → system placeholder) and on the `payments` row insert, payments stamps `metadata.user_id` on the PI for Phase B Stripe Customer dedup groundwork.
+- **B4 (comp-mode placeholder):** verified migration 004 already inserts the system-user `profiles` row (`00000000-…-0001`), so Stripe Phase A migration 012's `transactions.user_id NOT NULL REFERENCES profiles(id)` FK is already satisfied for comp-path writes. No new migration in this PR.
+
+**Tests:** 7 new unit tests in [tests/unit/RecipientStepEmailVerifySupabase.test.tsx](tests/unit/RecipientStepEmailVerifySupabase.test.tsx) — UI render, verifyOtp call, error surfacing, Resend, Google OAuth, "Use different email" → onBack, verified success state. Updated 5 [tests/unit/stepRouting.test.ts](tests/unit/stepRouting.test.ts) assertions for the new step (the rest of that test file remains broken on main and is pre-existing technical debt — uses an outdated `slugToStep(slug)` API that the source removed). `npx tsc -b --noEmit` clean. Unit run: 196 passing / 27 failing — all 27 failures are pre-existing on main (verified via `git stash` round-trip).
+
+**Why this shape:** Pattern A is the right call (research §3 — Substack/Gumroad/Ghost converge on it for recipient-becomes-user products). Pre-priming the OTP at step 1 is the move John's call surfaced — turns the inbox-bounce friction into a glance. New component (rather than rewriting the shared one) keeps flex semantics frozen until a follow-up proposal explicitly owns flex's migration.
+
+**John parallel actions (still TODO — proposal §10 + T1):**
+1. **Verify Supabase Auth's email-OTP template sends a 6-digit code** (not a magic link). The verify step's UI promises a code; if the template is configured for magic link, the code input never receives anything. Pitfall #5 from the review.
+2. **Verify "Link this identity to an existing user" is enabled on our Supabase plan** (T1). Per LOG.md 2026-05-10 the toggle was named but never tested. Concretely: OTP-sign-in with `john@example.com`, sign out, then Google sign-in with the same email → confirm a single `auth.users.id` row exists. If linking fails, a follow-up `profiles.email`-keyed merge step proposal must land before Phase B unblocks.
+3. **Run the OTP-then-Google-same-email test in production after deploy** (proposal §10 verification step 3, promoted from "noted" to "required").
+
+**Watch out:**
+- **Stripe Phase A is now unblocked.** Don't start Phase A in this session — separate work per the brief.
+- **Comp-mode admin path still uses the system-user placeholder** when `resolvedLink` is null (admin opens /onboarding directly without a flex link). That's by design: Live Comp is admin-impersonating-the-recipient and we don't want to attribute the comp shipment to the admin's personal balance. callerUserId could land in `payments.user_id` for admin comp specifically — left alone here so admin comp accounting stays as it was.
+- **sessionStorage persistence has a quiet failure mode:** if the user opens the same flow in two tabs, both write to the same key and last-write-wins. Acceptable today (single-user product); revisit if it ever surprises someone.
+- **OAuth roundtrip lands back on the verify URL** because the component sets `redirectTo: window.location.href`. If that URL ever changes (e.g., flow redesign), the OAuth-return UX breaks silently — there's no test for the post-redirect handler since it requires a real Supabase OAuth callback.
+- **OTP-step abandonment isn't yet instrumented** (proposal C2 deferred — author-response accepted). Add a `recipient.email_verify.abandoned` PostHog event when volume reaches signal.
+- **Two parallel OTP paths in production now** (bespoke `email_verifications` for flex, Supabase-native for full-label). Per proposal C3, removed by end of Stripe Phase A — not indefinite.
+
+**Files touched:**
+- [src/lib/stepRouting.ts](src/lib/stepRouting.ts) (FULL_LABEL maps + progress mapping)
+- [src/hooks/useRecipientFlow.ts](src/hooks/useRecipientFlow.ts) (FULL_LABEL_STEPS + progress + step-11 validation)
+- [src/contexts/RecipientFlowContext.tsx](src/contexts/RecipientFlowContext.tsx) (sessionStorage persist/load)
+- [src/components/recipient/RecipientStepAddress.tsx](src/components/recipient/RecipientStepAddress.tsx) (`maybePrimeOtp` on email blur, full-label only; copy update)
+- [src/components/recipient/RecipientStepEmailVerifySupabase.tsx](src/components/recipient/RecipientStepEmailVerifySupabase.tsx) (new)
+- [src/components/recipient/RecipientStepPayment.tsx](src/components/recipient/RecipientStepPayment.tsx) (pass JWT to buyLabel + StripePaymentForm)
+- [src/components/recipient/StripePaymentForm.tsx](src/components/recipient/StripePaymentForm.tsx) (accept + forward `accessToken`)
+- [src/lib/api.ts](src/lib/api.ts) (auth-aware `post()`, `createPaymentIntent`, `buyLabel`)
+- [src/pages/RecipientOnboarding.tsx](src/pages/RecipientOnboarding.tsx) (render new verify step at 11; payment/label at 12/13)
+- [supabase/functions/payments/index.ts](supabase/functions/payments/index.ts) (resolve callerUserId, stamp `metadata.user_id` on PI)
+- [supabase/functions/labels/index.ts](supabase/functions/labels/index.ts) (resolve callerUserId, prefer it for `shipments.user_id` + `payments.user_id`)
+- [tests/unit/RecipientStepEmailVerifySupabase.test.tsx](tests/unit/RecipientStepEmailVerifySupabase.test.tsx) (new — 7 tests)
+- [tests/unit/stepRouting.test.ts](tests/unit/stepRouting.test.ts) (5 assertions updated for the renumber)
+
+**Deploy steps:** push to main (Vercel auto-deploys client). Edge fns: `supabase functions deploy payments` + `supabase functions deploy labels` — both already had explicit `[functions.X]` entries in `config.toml` (verified — no `verify_jwt` regression risk per the 2026-05-11 entries).
+
+---
+
 ### [2026-05-11] Admin toolbar gains 3rd mode "Live Charge"; "Live Comp" repaired to match its name
 **Category:** Stripe | Admin | Architecture
 **Proposal:** [proposals/2026-04-26_stripe-integration-plan_reviewed-2026-04-26_decided-2026-05-11.md](proposals/2026-04-26_stripe-integration-plan_reviewed-2026-04-26_decided-2026-05-11.md) §6 Phase C + §11 #5

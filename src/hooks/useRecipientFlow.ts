@@ -91,7 +91,7 @@ const INITIAL_STATE: RecipientFlowState = {
 
 // ─── Step Navigation Maps ───────────────────────────────────
 
-const FULL_LABEL_STEPS = [0, 1, 10, 11, 12];
+const FULL_LABEL_STEPS = [0, 1, 10, 11, 12, 13];
 const FLEX_LINK_STEPS = [0, 1, 20, 21, 22, 23];
 
 function stepsForPath(path: RecipientPath | null): number[] {
@@ -115,9 +115,9 @@ function prevStep(current: number, path: RecipientPath | null): number | null {
 export function stepToProgressIndex(step: number): number {
   if (step === 0 || step === 1) return 0;
   if (step === 10) return 1;
-  if (step === 11) return 2;
-  if (step === 12) return 3;
-  // Flexible link mapping (future)
+  if (step === 11 || step === 12) return 2; // verify + payment share segment
+  if (step === 13) return 3;
+  // Flexible link mapping
   if (step === 20) return 1;
   if (step === 21 || step === 22) return 2;
   if (step === 23) return 3;
@@ -142,6 +142,12 @@ export function getValidationErrors(state: RecipientFlowState, step: number): st
 
   if (step === 21) {
     if (!state.email_verified) errors.push("Email must be verified to continue");
+  }
+
+  // Full-label verify step (proposal 2026-05-11_account-creation-timing).
+  // Same shape as flex step 21 but a separate component fires Supabase OTP.
+  if (step === 11 && state.path === "full_label") {
+    if (!state.email_verified) errors.push("Verify your email to continue");
   }
 
   if (step === 10) {

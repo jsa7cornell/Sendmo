@@ -87,10 +87,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [ensureProfile]);
 
   const signIn = useCallback(async (email: string) => {
+    // ?welcome=1 triggers a transient "Signed in as X" toast on /dashboard.
+    // One-shot — Dashboard strips the param on first paint.
     const { error } = await supabase.auth.signInWithOtp({
       email,
       options: {
-        emailRedirectTo: `${window.location.origin}/dashboard`,
+        emailRedirectTo: `${window.location.origin}/dashboard?welcome=1`,
       },
     });
     return { error: error?.message ?? null };
@@ -100,7 +102,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
-        redirectTo: `${window.location.origin}/dashboard`,
+        redirectTo: `${window.location.origin}/dashboard?welcome=1`,
       },
     });
     return { error: error?.message ?? null };

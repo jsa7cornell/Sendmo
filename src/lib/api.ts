@@ -5,17 +5,17 @@ const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
 
 // ─── Helpers ────────────────────────────────────────────────
 
-function headers() {
+function headers(accessToken?: string) {
   return {
     "Content-Type": "application/json",
-    Authorization: `Bearer ${ANON_KEY}`,
+    Authorization: `Bearer ${accessToken || ANON_KEY}`,
   };
 }
 
-async function post<T>(fn: string, body: unknown): Promise<T> {
+async function post<T>(fn: string, body: unknown, accessToken?: string): Promise<T> {
   const res = await fetch(`${BASE_URL}/functions/v1/${fn}`, {
     method: "POST",
-    headers: headers(),
+    headers: headers(accessToken),
     body: JSON.stringify(body),
   });
   const data = await res.json();
@@ -118,14 +118,19 @@ export async function createPaymentIntent(params: {
   live_mode?: boolean;
   receipt_email?: string;
   description?: string;
+  access_token?: string;
 }): Promise<CreatePaymentIntentResult> {
-  return post<CreatePaymentIntentResult>("payments", {
-    easypost_shipment_id: params.easypost_shipment_id,
-    amount_cents: params.amount_cents,
-    live_mode: params.live_mode ?? false,
-    receipt_email: params.receipt_email,
-    description: params.description,
-  });
+  return post<CreatePaymentIntentResult>(
+    "payments",
+    {
+      easypost_shipment_id: params.easypost_shipment_id,
+      amount_cents: params.amount_cents,
+      live_mode: params.live_mode ?? false,
+      receipt_email: params.receipt_email,
+      description: params.description,
+    },
+    params.access_token,
+  );
 }
 
 // ─── Magic Guestimator (AI) ─────────────────────────────────
@@ -157,6 +162,7 @@ export async function buyLabel(
   contacts?: { recipient_email?: string; sender_email?: string },
   link?: { short_code?: string },  // flex-link auth claim (sender flow)
   payment?: { payment_intent_id?: string; comp?: boolean; display_price_cents?: number },
+  accessToken?: string,  // user JWT — labels fn stamps shipments.user_id off this (full-label)
 ): Promise<LabelResult> {
   const body = {
     easypost_shipment_id: easypostShipmentId,
@@ -171,7 +177,7 @@ export async function buyLabel(
     comp: payment?.comp,
     display_price_cents: payment?.display_price_cents,
   };
-  return post<LabelResult>("labels", body);
+  return post<LabelResult>("labels", body, accessToken);
 }
 
 // ─── Email Verification ────────────────────────────────────

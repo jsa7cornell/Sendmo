@@ -7,8 +7,9 @@ import type { RecipientPath } from "@/lib/types";
 //   /onboarding                          → path picker (step 0)
 //   /onboarding/full-label/destination   → step 1 (recipient + email)
 //   /onboarding/full-label/shipping      → step 10
-//   /onboarding/full-label/payment       → step 11
-//   /onboarding/full-label/label         → step 12
+//   /onboarding/full-label/verify        → step 11  (Supabase OTP — proposal 2026-05-11_account-creation-timing)
+//   /onboarding/full-label/payment       → step 12
+//   /onboarding/full-label/label         → step 13
 //   /onboarding/flexible/destination     → step 1
 //   /onboarding/flexible/preferences     → step 20
 //   /onboarding/flexible/verify          → step 21
@@ -29,6 +30,10 @@ export type StepSlug =
   | "authorize"
   | "share";
 
+// Verify slug is shared between full-label (step 11, Supabase OTP) and flex
+// (step 21, bespoke email_verifications table). The bespoke flex path is
+// intentionally untouched per proposal 2026-05-11_account-creation-timing B1.
+
 export function pathSlugToPath(slug: string): RecipientPath | null {
   if (slug === "full-label") return "full_label";
   if (slug === "flexible") return "flexible";
@@ -44,15 +49,17 @@ export function pathToPathSlug(path: RecipientPath): PathSlug {
 const FULL_LABEL_STEP_BY_SLUG: Record<string, number> = {
   destination: 1,
   shipping: 10,
-  payment: 11,
-  label: 12,
+  verify: 11,
+  payment: 12,
+  label: 13,
 };
 
 const FULL_LABEL_SLUG_BY_STEP: Record<number, StepSlug> = {
   1: "destination",
   10: "shipping",
-  11: "payment",
-  12: "label",
+  11: "verify",
+  12: "payment",
+  13: "label",
 };
 
 const FLEX_STEP_BY_SLUG: Record<string, number> = {
@@ -92,7 +99,7 @@ export function stepUrl(path: RecipientPath | null, step: number): string {
 
 // ─── Step Ordering ──────────────────────────────────────────
 
-const FULL_LABEL_STEPS = [0, 1, 10, 11, 12];
+const FULL_LABEL_STEPS = [0, 1, 10, 11, 12, 13];
 const FLEX_LINK_STEPS = [0, 1, 20, 21, 22, 23];
 
 export function stepsForPath(path: RecipientPath | null): number[] {
@@ -117,12 +124,16 @@ export function stepIndex(step: number, path: RecipientPath | null): number {
 
 // ─── Progress Bar Mapping ───────────────────────────────────
 
+// Progress bar has 4 segments. Full-label collapses verify (11) + payment (12)
+// into the third segment so the visual cadence (destination/shipping/pay/label)
+// stays the same after inserting the OTP step.
 const STEP_TO_PROGRESS: Record<number, number> = {
   0: -1,
   1: 0,
   10: 1,
   11: 2,
-  12: 3,
+  12: 2,
+  13: 3,
   20: 1,
   21: 2,
   22: 2,
@@ -137,7 +148,8 @@ export function progressIndexToStep(index: number, path: RecipientPath | null): 
   if (path === "flexible") {
     return [1, 20, 21, 23][index] ?? 1;
   }
-  return [1, 10, 11, 12][index] ?? 1;
+  // Index 2 routes to verify (11) — payment (12) follows immediately after.
+  return [1, 10, 11, 13][index] ?? 1;
 }
 
 // ─── Slug Validation ────────────────────────────────────────

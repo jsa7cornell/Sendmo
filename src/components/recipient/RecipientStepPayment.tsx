@@ -210,6 +210,11 @@ export default function RecipientStepPayment({ state, onUpdate, onBack, liveMode
           payment_intent_id: paymentIntentId,
           display_price_cents: totalCents,
         },
+        // Full-label users now reach payment step authenticated (proposal
+        // 2026-05-11_account-creation-timing). Sending the JWT lets the labels
+        // function stamp shipments.user_id from auth.uid() instead of the
+        // system placeholder.
+        session?.access_token,
       );
 
       onUpdate({
@@ -342,6 +347,7 @@ export default function RecipientStepPayment({ state, onUpdate, onBack, liveMode
           liveMode={liveMode}
           receiptEmail={state.email || undefined}
           onSuccess={handlePaymentSuccess}
+          accessToken={session?.access_token}
         />
       )}
 

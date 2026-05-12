@@ -122,8 +122,35 @@ const RecipientFlowContext = createContext<RecipientFlowContextValue | null>(nul
 
 // ─── Provider ───────────────────────────────────────────────
 
+// SessionStorage-backed flow data so the Google OAuth roundtrip in
+// RecipientStepEmailVerifySupabase preserves user-entered destination, email,
+// shipping selection, etc. across the redirect to accounts.google.com and back.
+// Cleared when the user finishes (label step) or starts a new path.
+const STORAGE_KEY = "sendmo:recipient_flow:v1";
+
+function loadPersisted(): RecipientFlowData | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<RecipientFlowData>;
+    return { ...INITIAL_DATA, ...parsed };
+  } catch {
+    return null;
+  }
+}
+
+function persist(data: RecipientFlowData): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  } catch {
+    /* sessionStorage full / disabled — best-effort, tolerate */
+  }
+}
+
 export function RecipientFlowProvider({ children }: { children: React.ReactNode }) {
-  const [data, setData] = useState<RecipientFlowData>(INITIAL_DATA);
+  const [data, setData] = useState<RecipientFlowData>(() => loadPersisted() ?? INITIAL_DATA);
   const navigate = useNavigate();
   const params = useParams<{ pathSlug?: string; stepSlug?: string }>();
   const directionRef = useRef<NavDirection>("forward");
@@ -132,6 +159,29 @@ export function RecipientFlowProvider({ children }: { children: React.ReactNode 
   // URL is the source of truth for path + step
   const urlPath = pathSlugToPath(params.pathSlug ?? "");
   const currentStep = slugToStep(urlPath, params.stepSlug);
+
+  // Mirror data → sessionStorage so the OAuth roundtrip in the verify step
+  // doesn't blow away the user's destination, rate selection, etc.
+  useEffect(() => {
+    persist(data);
+  }, [data]);
+
+  // If the user is already authenticated with a session whose email matches
+  // the typed destination email, the verify step is redundant — the session
+  // IS the verification. Mark email_verified=true so the step-11 validation
+  // passes and the user goes straight from shipping → payment. Handles
+  // (a) Google CTA at step 1 and (b) returning users with a live session.
+  useEffect(() => {
+    if (!user?.email) return;
+    if (data.email_verified) return;
+    if (!data.email) return;
+    if (user.email.toLowerCase() !== data.email.toLowerCase()) return;
+    setData((prev) => ({
+      ...prev,
+      email_verified: true,
+      verification_email: prev.verification_email || prev.email,
+    }));
+  }, [user?.email, data.email, data.email_verified]);
 
   // Sync data.path from URL — also marks step 0 complete since the path
   // picker is implicit in the URL.
@@ -213,11 +263,25 @@ export function RecipientFlowProvider({ children }: { children: React.ReactNode 
       return false;
     }
 
-    const next = nextStep(step, data.path);
+    let next = nextStep(step, data.path);
+    // Skip the verify step (11) when the email is already verified — either
+    // the user picked Google at step 1, or they had a live session whose
+    // email matched. Without this jump the verify screen flashes for ~1s
+    // before its own auto-advance fires; jumping straight to payment is
+    // the same outcome with no flicker.
+    if (next === 11 && data.email_verified && data.path === "full_label") {
+      next = nextStep(11, data.path);
+    }
     if (next !== null) {
       setData((prev) => ({
         ...prev,
-        completedSteps: prev.completedSteps.includes(step) ? prev.completedSteps : [...prev.completedSteps, step],
+        completedSteps: prev.completedSteps.includes(step)
+          ? (next === 12 && !prev.completedSteps.includes(11)
+              ? [...prev.completedSteps, 11]
+              : prev.completedSteps)
+          : (next === 12
+              ? [...prev.completedSteps, step, 11]
+              : [...prev.completedSteps, step]),
       }));
       directionRef.current = "forward";
       navigate(stepUrl(data.path, next));

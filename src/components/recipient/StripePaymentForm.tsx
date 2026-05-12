@@ -33,6 +33,9 @@ interface StripePaymentFormProps {
   liveMode: boolean;
   receiptEmail?: string;
   onSuccess: (paymentIntentId: string) => Promise<void>;
+  // Optional user JWT — when present, the payments fn stamps PI metadata.user_id
+  // off auth.uid() (proposal 2026-05-11_account-creation-timing, §7 step 5).
+  accessToken?: string;
 }
 
 // Outer component creates the PaymentIntent + mounts Stripe Elements.
@@ -54,6 +57,7 @@ export default function StripePaymentForm(props: StripePaymentFormProps) {
           amount_cents: props.totalCents,
           live_mode: props.liveMode,
           receipt_email: props.receiptEmail,
+          access_token: props.accessToken,
         });
         if (cancelled) return;
         setClientSecret(result.client_secret);
@@ -64,7 +68,7 @@ export default function StripePaymentForm(props: StripePaymentFormProps) {
       }
     })();
     return () => { cancelled = true; };
-  }, [props.easypostShipmentId, props.totalCents, props.liveMode, props.receiptEmail]);
+  }, [props.easypostShipmentId, props.totalCents, props.liveMode, props.receiptEmail, props.accessToken]);
 
   const elementsOptions = useMemo(
     () => clientSecret ? {
