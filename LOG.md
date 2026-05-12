@@ -8,6 +8,27 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-11] Role-based admin auth replaces the hardcoded `2026` PIN gate
+**Category:** Security | Auth | Architecture
+**Context:** `/admin` was gated by a client-side `2026` PIN stored in `sessionStorage.sendmo_admin`. The PIN was theater — the `admin-report` Edge Function accepted any anon-key Bearer token, and `cancel-label` had a "no JWT = allow" code path that meant anyone with the function URL could void any label. Stripe proposal §11 #5 (decided 2026-05-11) requires real admin auth before Live Charge mode ships behind the admin toolbar.
+**Decision/Finding:**
+- New migration [`016_add_profile_role.sql`](supabase/migrations/016_add_profile_role.sql): `profiles.role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user','admin'))` + partial index on admins + idempotent bootstrap `UPDATE profiles SET role='admin' WHERE email='jsa7cornell@gmail.com'`.
+- New shared helper [`supabase/functions/_shared/auth.ts`](supabase/functions/_shared/auth.ts) — `requireAdmin(req, corsHeaders)` extracts Bearer JWT, validates via `supabase.auth.getUser(token)`, queries `profiles.role`, throws a `Response` (401/403/500) on failure.
+- [`admin-report/index.ts`](supabase/functions/admin-report/index.ts) wrapped in `requireAdmin`. The anon-key shortcut in `Admin.tsx` (`Bearer ${ANON_KEY}`) replaced with `Bearer ${session.access_token}`.
+- [`cancel-label/index.ts`](supabase/functions/cancel-label/index.ts) now requires a valid JWT and authorizes admin OR link-owner (server-side join on `sendmo_links.user_id`). The legacy "no JWT = allow" path is removed.
+- `AuthContext` adds `isAdmin: boolean`, read from `profiles.role` during `ensureProfile()`.
+- `Admin.tsx` replaces `AdminPinGate` with three states: `authLoading` → null, `!user` → redirect to `/login?redirectTo=/admin`, `!isAdmin` → friendly access-denied screen with email shown.
+- `RecipientOnboarding.tsx` admin toolbar visibility now `useAuth().isAdmin`, not `sessionStorage.sendmo_admin`.
+- The exports `isAdminSession()`, `ADMIN_PIN`, `ADMIN_SESSION_KEY`, `AdminPinGate` are all gone.
+
+**Why:** Server-side enforcement closes the actual gap (the PIN was bypassable in 5 seconds with browser devtools). Role on `profiles` keeps the source of truth where the rest of the auth lives, not in environment variables or hardcoded UID lists. Bootstrapping John in the migration itself avoids a follow-up manual SQL run.
+
+**Watch out:**
+- **Migration 016 must be applied before /admin works for John.** The shipped Edge Functions reference `profiles.role`; without the column, `requireAdmin` throws 403 (role lookup fails silently). For regular users voiding their own labels, the ownership path still works (the role check failure leaves `isAdmin=false`, ownership check then matches). Only the admin surface is broken until migration lands.
+- **`SUPABASE_DB_PASSWORD` must be set in the shell for `supabase db push --linked` to work.** The predeploy script doesn't include it and the CLI errors out without it. Alternative: apply via Supabase dashboard SQL editor (paste the migration contents).
+- The role check is in two places (Edge Function + AuthContext), but the **client check is UX-only**. Anyone who flips `isAdmin` in DevTools gets the admin UI rendered but every server call still rejects. Don't move authorization into the client.
+- Old worktrees in `.claude/worktrees/` get picked up by vitest because the `exclude` list in `vitest.config.ts` doesn't include `.claude/**`. Pass `--exclude '.claude/**'` to bypass when running locally. Worth fixing in the config — separate cleanup task.
+
 ### [2026-05-11] Stripe Phase 2 directional decisions locked in
 **Category:** Stripe | Architecture
 **Context:** Phase 1 (full-label test-mode charges, label auth gate, auto-refund-on-EasyPost-fail) shipped in commit `90aebca` on 2026-05-10. Before going live and before flex-link/Phase E coding begins, six of the eleven open §11 decisions in [`proposals/2026-04-26_stripe-integration-plan_reviewed-2026-04-26_decided-2026-05-11.md`](proposals/2026-04-26_stripe-integration-plan_reviewed-2026-04-26_decided-2026-05-11.md) needed John's call.

@@ -6,6 +6,7 @@ interface AuthContextValue {
   user: User | null;
   session: Session | null;
   loading: boolean;
+  isAdmin: boolean;
   signIn: (email: string) => Promise<{ error: string | null }>;
   signInWithGoogle: () => Promise<{ error: string | null }>;
   signOut: () => Promise<void>;
@@ -17,10 +18,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isAdmin, setIsAdmin] = useState(false);
 
   // Ensure profile row exists and is populated from OAuth metadata.
   // A DB trigger (handle_new_user) auto-inserts {id, email} on auth.users insert,
   // so we backfill full_name/avatar_url here when Google/OAuth provides them.
+  // Also reads `role` so the client can render admin UI conditionally — the
+  // server still enforces role-based access independently (see _shared/auth.ts).
   const ensureProfile = useCallback(async (u: User) => {
     const meta = (u.user_metadata ?? {}) as {
       full_name?: string;
@@ -33,7 +37,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const { data } = await supabase
       .from("profiles")
-      .select("id, full_name, avatar_url")
+      .select("id, full_name, avatar_url, role")
       .eq("id", u.id)
       .single();
 
@@ -44,8 +48,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         full_name: fullName,
         avatar_url: avatarUrl,
       });
+      setIsAdmin(false);
       return;
     }
+
+    setIsAdmin(data.role === "admin");
 
     const update: Record<string, string> = {};
     if (fullName && !data.full_name) update.full_name = fullName;
@@ -61,6 +68,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setSession(s);
       setUser(s?.user ?? null);
       if (s?.user) ensureProfile(s.user);
+      else setIsAdmin(false);
       setLoading(false);
     });
 
@@ -71,6 +79,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setSession(s);
       setUser(s?.user ?? null);
       if (s?.user) ensureProfile(s.user);
+      else setIsAdmin(false);
       setLoading(false);
     });
 
@@ -102,7 +111,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, session, loading, signIn, signInWithGoogle, signOut }}>
+    <AuthContext.Provider value={{ user, session, loading, isAdmin, signIn, signInWithGoogle, signOut }}>
       {children}
     </AuthContext.Provider>
   );

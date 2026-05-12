@@ -1,8 +1,10 @@
 import { useState, useEffect } from "react";
+import { Navigate } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import CancelLabelModal from "@/components/CancelLabelModal";
 import { Ban } from "lucide-react";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface ReportRow {
     created_at: string;
@@ -39,57 +41,8 @@ type CancelTarget = {
     isTest: boolean;
 };
 
-// ─── Admin PIN Gate ──────────────────────────────────────────
-// Simple pre-auth admin access. PIN is checked client-side for now.
-// TODO: Replace with role-based check when Supabase Auth ships.
-const ADMIN_PIN = "2026";
-const ADMIN_SESSION_KEY = "sendmo_admin";
-
-function AdminPinGate({ onAuth }: { onAuth: () => void }) {
-    const [pin, setPin] = useState("");
-    const [err, setErr] = useState(false);
-
-    function handleSubmit(e: React.FormEvent) {
-        e.preventDefault();
-        if (pin === ADMIN_PIN) {
-            sessionStorage.setItem(ADMIN_SESSION_KEY, "true");
-            onAuth();
-        } else {
-            setErr(true);
-            setPin("");
-        }
-    }
-
-    return (
-        <div className="min-h-screen bg-gradient-to-b from-background to-muted/50 flex items-center justify-center">
-            <form onSubmit={handleSubmit} className="bg-card rounded-2xl border border-border shadow-sm p-8 w-full max-w-xs text-center">
-                <h2 className="text-lg font-bold text-foreground mb-1">Admin Access</h2>
-                <p className="text-sm text-muted-foreground mb-4">Enter PIN to continue</p>
-                <input
-                    type="password"
-                    inputMode="numeric"
-                    maxLength={6}
-                    value={pin}
-                    onChange={(e) => { setPin(e.target.value); setErr(false); }}
-                    placeholder="••••"
-                    className={`w-full text-center text-2xl tracking-[0.5em] rounded-xl border px-3 py-3 outline-none focus:ring-2 focus:ring-primary/40 ${err ? "border-destructive" : "border-border"}`}
-                    autoFocus
-                />
-                {err && <p className="text-xs text-destructive mt-2">Incorrect PIN</p>}
-                <button type="submit" className="mt-4 w-full rounded-xl bg-primary text-primary-foreground py-2.5 text-sm font-medium">
-                    Enter
-                </button>
-            </form>
-        </div>
-    );
-}
-
-export function isAdminSession(): boolean {
-    return sessionStorage.getItem(ADMIN_SESSION_KEY) === "true";
-}
-
 export default function Admin() {
-    const [authed, setAuthed] = useState(() => isAdminSession());
+    const { user, session, loading: authLoading, isAdmin } = useAuth();
     const [data, setData] = useState<ReportRow[]>([]);
     const [filteredData, setFilteredData] = useState<ReportRow[]>([]);
     const [loading, setLoading] = useState(true);
@@ -99,28 +52,49 @@ export default function Admin() {
     const [cancelTarget, setCancelTarget] = useState<CancelTarget | null>(null);
 
     useEffect(() => {
-        if (authed) fetchReport();
-    }, [authed]);
+        if (user && isAdmin && session) fetchReport();
+    }, [user, isAdmin, session]);
 
     useEffect(() => {
-        if (authed) applyFilter(data, dateFilter, envFilter);
-    }, [authed, data, dateFilter, envFilter]);
+        if (user && isAdmin) applyFilter(data, dateFilter, envFilter);
+    }, [user, isAdmin, data, dateFilter, envFilter]);
 
-    if (!authed) return <AdminPinGate onAuth={() => setAuthed(true)} />;
+    // Wait for auth to resolve before deciding what to render.
+    if (authLoading) return null;
+
+    // Signed out → bounce to login with return path.
+    if (!user) return <Navigate to="/login?redirectTo=/admin" replace />;
+
+    // Signed in but not an admin → friendly access-denied screen.
+    if (!isAdmin) {
+        return (
+            <div className="min-h-screen bg-gradient-to-b from-background to-muted/50 flex items-center justify-center px-6">
+                <div className="bg-card rounded-2xl border border-border shadow-sm p-8 w-full max-w-md text-center">
+                    <h2 className="text-lg font-bold text-foreground mb-1">Admin access required</h2>
+                    <p className="text-sm text-muted-foreground mb-4">
+                        Your account ({user.email}) isn't an admin. If you should have access,
+                        ask John to flip your role.
+                    </p>
+                    <Button asChild variant="outline" className="rounded-xl">
+                        <a href="/dashboard">Back to dashboard</a>
+                    </Button>
+                </div>
+            </div>
+        );
+    }
 
     async function fetchReport() {
         setLoading(true);
         setError(null);
         try {
             const BASE_URL = import.meta.env.VITE_SUPABASE_URL;
-            const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
             const res = await fetch(`${BASE_URL}/functions/v1/admin-report`, {
                 method: "GET",
                 headers: {
                     "Content-Type": "application/json",
-                    "Authorization": `Bearer ${ANON_KEY}`
-                }
+                    "Authorization": `Bearer ${session!.access_token}`,
+                },
             });
 
             if (!res.ok) {

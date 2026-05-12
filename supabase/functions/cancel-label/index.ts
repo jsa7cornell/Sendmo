@@ -49,27 +49,35 @@ serve(async (req: Request) => {
             auth: { autoRefreshToken: false, persistSession: false },
         });
 
-        // ── Auth: verify caller identity + ownership ─────────────────
-        // If a JWT is provided, verify it and enforce ownership.
-        // If no JWT (admin/anon), allow through (legacy admin path).
-        const authHeader = req.headers.get("Authorization");
-        const token = authHeader?.replace("Bearer ", "");
-        let callerId: string | null = null;
-
-        if (token && token !== Deno.env.get("VITE_SUPABASE_ANON_KEY")) {
-            const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || Deno.env.get("VITE_SUPABASE_ANON_KEY");
-            if (anonKey && token !== anonKey) {
-                // Looks like a real JWT — verify it
-                const userClient = createClient(sbUrl, anonKey || sbKey, {
-                    auth: { autoRefreshToken: false, persistSession: false },
-                    global: { headers: { Authorization: `Bearer ${token}` } },
-                });
-                const { data: { user }, error: authError } = await userClient.auth.getUser(token);
-                if (!authError && user) {
-                    callerId = user.id;
-                }
-            }
+        // ── Auth: require a valid user JWT; allow either admin or owner ──
+        // Previously the function fell through to "admin/anon = allow" when
+        // no JWT was present, which meant anyone with the function URL
+        // could void any label. Now we require a Bearer token, resolve the
+        // user, check role + ownership.
+        const authHeader = req.headers.get("Authorization") || req.headers.get("authorization");
+        const token = authHeader?.replace(/^Bearer\s+/i, "");
+        if (!token) {
+            return new Response(
+                JSON.stringify({ error: "Missing Authorization header" }),
+                { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
         }
+
+        const { data: userResp, error: userErr } = await supabase.auth.getUser(token);
+        if (userErr || !userResp?.user) {
+            return new Response(
+                JSON.stringify({ error: "Invalid or expired token" }),
+                { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+        const callerId = userResp.user.id;
+
+        const { data: callerProfile } = await supabase
+            .from("profiles")
+            .select("role")
+            .eq("id", callerId)
+            .single();
+        const isAdmin = callerProfile?.role === "admin";
 
         // ── Fetch shipment with ownership join ───────────────────────
         const { data: shipment, error: fetchError } = await supabase
@@ -78,8 +86,8 @@ serve(async (req: Request) => {
             .eq("id", shipment_id)
             .single();
 
-        // ── Ownership check (authenticated users only) ───────────────
-        if (callerId && shipment && (shipment as any).sendmo_links?.user_id !== callerId) {
+        // ── Authorization: admin OR link owner ───────────────────────
+        if (!isAdmin && shipment && (shipment as any).sendmo_links?.user_id !== callerId) {
             return new Response(
                 JSON.stringify({ error: "You do not have permission to void this label." }),
                 { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }

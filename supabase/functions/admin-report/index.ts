@@ -1,5 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import { requireAdmin } from "../_shared/auth.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -20,19 +20,14 @@ serve(async (req: Request) => {
   }
 
   try {
-    const sbUrl = Deno.env.get("SUPABASE_URL") || Deno.env.get("VITE_SUPABASE_URL");
-    const sbKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || Deno.env.get("SB_SERVICE_ROLE_KEY");
-
-    if (!sbUrl || !sbKey) {
-      return new Response(JSON.stringify({ error: "Server DB config missing" }), {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+    // Admin auth. requireAdmin throws a Response on failure (401/403/500).
+    let supabase;
+    try {
+      ({ supabase } = await requireAdmin(req, corsHeaders));
+    } catch (r) {
+      if (r instanceof Response) return r;
+      throw r;
     }
-
-    const supabase = createClient(sbUrl, sbKey, {
-      auth: { autoRefreshToken: false, persistSession: false },
-    });
 
     const { data, error } = await supabase
       .from("sendmo_links")

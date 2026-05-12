@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useLocation, useParams, Navigate } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { Package, Link2 } from "lucide-react";
-import { isAdminSession } from "@/pages/Admin";
+import { useAuth } from "@/contexts/AuthContext";
 import { useRecipientFlowContext } from "@/contexts/RecipientFlowContext";
 import AppHeader from "@/components/AppHeader";
 import {
@@ -60,7 +60,7 @@ function AdminToolbar({ mode, onModeChange }: { mode: AdminMode; onModeChange: (
 // ─── Layout Component ───────────────────────────────────────
 
 export default function RecipientOnboarding() {
-  const isAdmin = isAdminSession();
+  const { isAdmin } = useAuth();
   const [adminMode, setAdminMode] = useState<AdminMode>("test");
   const liveMode = isAdmin && adminMode === "live_comp";
   const location = useLocation();
