@@ -152,9 +152,10 @@ export async function buyLabel(
   easypostShipmentId: string,
   easypostRateId: string,
   from: AddressInput,
-  to: AddressInput,
+  to: AddressInput,  // pass minimal/empty when link_short_code is set; server resolves
   liveMode: boolean = false,
   contacts?: { recipient_email?: string; sender_email?: string },
+  link?: { short_code?: string },  // flex-link auth claim (sender flow)
   payment?: { payment_intent_id?: string; comp?: boolean; display_price_cents?: number },
 ): Promise<LabelResult> {
   const body = {
@@ -165,6 +166,7 @@ export async function buyLabel(
     live_mode: liveMode,
     recipient_email: contacts?.recipient_email,
     sender_email: contacts?.sender_email,
+    link_short_code: link?.short_code,
     payment_intent_id: payment?.payment_intent_id,
     comp: payment?.comp,
     display_price_cents: payment?.display_price_cents,

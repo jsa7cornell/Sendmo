@@ -6,6 +6,17 @@ import { sendEmail } from "../_shared/resend.ts";
 import { labelConfirmationEmail } from "../_shared/email-templates.ts";
 import { retrievePaymentIntent, createRefund } from "../_shared/stripe.ts";
 
+// Pricing markup MUST stay in sync with supabase/functions/rates/index.ts.
+// Server-derives display_price_cents from EasyPost rate for the flex-link
+// cap check (proposal 2026-05-11_sender-flow-wizard §3.6 / B5: client-supplied
+// display_price_cents is not trusted).
+const MARKUP_MULTIPLIER = 1.15;
+const MARKUP_FLAT_CENTS = 100;
+
+function applyMarkup(rateDollars: number): number {
+    return Math.round(rateDollars * 100 * MARKUP_MULTIPLIER) + MARKUP_FLAT_CENTS;
+}
+
 serve(async (req: Request) => {
     // Handle CORS preflight
     const corsResponse = handleCors(req);
@@ -26,14 +37,23 @@ serve(async (req: Request) => {
             easypost_rate_id,
             live_mode,
             from_address,
-            to_address,
+            to_address: bodyToAddress,
             parcel,
-            display_price_cents,
-            recipient_email,
+            display_price_cents: bodyDisplayPriceCents,
+            recipient_email: bodyRecipientEmail,
             sender_email,
             payment_intent_id,
             comp,  // admin override — bypass payment requirement (live comp labels)
+            link_short_code,  // sender-flow flex-link auth claim
         } = await req.json();
+
+        // Per proposal 2026-05-11_sender-flow-wizard B3: when link_short_code is
+        // present, the server resolves to_address + recipient_email and ignores
+        // any client-supplied values for those fields. This prevents an attacker
+        // from buying a label to a different address than the recipient set.
+        let to_address = bodyToAddress;
+        let recipient_email = bodyRecipientEmail;
+        let display_price_cents = bodyDisplayPriceCents;
 
         if (!easypost_shipment_id || !easypost_rate_id) {
             return new Response(
@@ -44,6 +64,245 @@ serve(async (req: Request) => {
 
         const isLive = live_mode === true;
         const isComp = comp === true;
+
+        // Service-role Supabase client (shared between link resolution and
+        // post-buy persistence). Created lazily — only when we need it.
+        const sbUrl = Deno.env.get("SUPABASE_URL") || Deno.env.get("VITE_SUPABASE_URL");
+        const sbKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || Deno.env.get("SB_SERVICE_ROLE_KEY");
+        const supabase = (sbUrl && sbKey)
+            ? createClient(sbUrl, sbKey, { auth: { autoRefreshToken: false, persistSession: false } })
+            : null;
+
+        // ─── Flex-link resolution (proposal §3.5 + §3.6 + B3/B5) ─
+        // When link_short_code is present, the server:
+        //   1. Validates the link is active and is a flex link
+        //   2. Resolves to_address from sendmo_links → addresses (FK)
+        //   3. Resolves recipient_email from sendmo_links.user_id → profiles.email
+        //   4. Server-derives display_price_cents from EasyPost rate and
+        //      compares to link.max_price_cents (cap re-check)
+        // The flex-link is the auth claim that authorizes the `comp` path —
+        // see comp gate below.
+        let resolvedLink: {
+            id: string;
+            short_code: string;
+            user_id: string;
+            max_price_cents: number;
+        } | null = null;
+        if (link_short_code) {
+            if (typeof link_short_code !== "string" || !link_short_code.match(/^[a-zA-Z0-9]{1,20}$/)) {
+                return new Response(
+                    JSON.stringify({ error: "Invalid link_short_code" }),
+                    { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+            if (!supabase) {
+                return new Response(
+                    JSON.stringify({ error: "Server configuration error" }),
+                    { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+            const { data: link, error: linkErr } = await supabase
+                .from("sendmo_links")
+                .select(`
+                    id, short_code, user_id, status, link_type, max_price_cents,
+                    recipient_address:addresses!recipient_address_id (
+                        name, street1, street2, city, state, zip, country
+                    )
+                `)
+                .eq("short_code", link_short_code)
+                .single();
+            if (linkErr || !link) {
+                return new Response(
+                    JSON.stringify({ error: "Link not found" }),
+                    { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+            if (link.status !== "active") {
+                return new Response(
+                    JSON.stringify({ error: `Link not active (status=${link.status})` }),
+                    { status: 410, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+            // The DB stores 'flexible' (not 'flexible_link') per links/index.ts:189
+            // and the migration-001 CHECK constraint. Author-response B1.
+            if (link.link_type !== "flexible") {
+                return new Response(
+                    JSON.stringify({ error: "Link is not a flexible link" }),
+                    { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+            // Resolve to_address from the link (ignore any client-supplied value).
+            const recipientAddr = link.recipient_address as unknown as {
+                name: string; street1: string; street2: string | null;
+                city: string; state: string; zip: string; country: string | null;
+            } | null;
+            if (!recipientAddr || !recipientAddr.street1) {
+                return new Response(
+                    JSON.stringify({ error: "Link has no resolvable destination address" }),
+                    { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+            to_address = {
+                name: recipientAddr.name,
+                street1: recipientAddr.street1,
+                street2: recipientAddr.street2 ?? undefined,
+                city: recipientAddr.city,
+                state: recipientAddr.state,
+                zip: recipientAddr.zip,
+                country: recipientAddr.country ?? "US",
+            };
+            // Resolve recipient_email server-side (never returned to client).
+            const { data: prof } = await supabase
+                .from("profiles")
+                .select("email")
+                .eq("id", link.user_id)
+                .single();
+            recipient_email = prof?.email ?? null;
+            resolvedLink = {
+                id: link.id,
+                short_code: link.short_code,
+                user_id: link.user_id,
+                max_price_cents: link.max_price_cents,
+            };
+
+            // Server-derive display_price_cents from EasyPost rate (B5).
+            // Client-supplied value is used only for audit logging; the gate
+            // decision is on the server-derived number.
+            const rateLookupKey = Deno.env.get(isLive ? "EASYPOST_API_KEY" : "EASYPOST_TEST_API_KEY");
+            if (!rateLookupKey) {
+                return new Response(
+                    JSON.stringify({ error: `EasyPost ${isLive ? 'Live' : 'Test'} API key not configured` }),
+                    { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+            const rateLookupResp = await fetch(
+                `https://api.easypost.com/v2/shipments/${easypost_shipment_id}/rates/${easypost_rate_id}`,
+                { headers: { Authorization: "Basic " + btoa(rateLookupKey + ":") } },
+            );
+            if (!rateLookupResp.ok) {
+                // Fallback: pull the rate off the shipment payload (single roundtrip,
+                // works regardless of EasyPost's per-rate endpoint availability).
+                const shipResp = await fetch(
+                    `https://api.easypost.com/v2/shipments/${easypost_shipment_id}`,
+                    { headers: { Authorization: "Basic " + btoa(rateLookupKey + ":") } },
+                );
+                if (!shipResp.ok) {
+                    return new Response(
+                        JSON.stringify({ error: "Could not verify rate against price cap" }),
+                        { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                    );
+                }
+                const shipData = await shipResp.json();
+                const matched = (shipData.rates || []).find((r: { id: string }) => r.id === easypost_rate_id);
+                if (!matched) {
+                    return new Response(
+                        JSON.stringify({ error: "Rate not found on shipment" }),
+                        { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                    );
+                }
+                const serverCents = applyMarkup(parseFloat(matched.rate));
+                if (serverCents > link.max_price_cents) {
+                    log({
+                        event_type: "label.cap_exceeded",
+                        session_id: sessionId,
+                        severity: "warn",
+                        entity_type: "label",
+                        entity_id: easypost_shipment_id,
+                        properties: {
+                            link_short_code,
+                            server_derived_cents: serverCents,
+                            client_supplied_cents: bodyDisplayPriceCents ?? null,
+                            max_price_cents: link.max_price_cents,
+                        },
+                    });
+                    return new Response(
+                        JSON.stringify({ error: "Rate exceeds the recipient's price cap" }),
+                        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                    );
+                }
+                display_price_cents = serverCents;
+            } else {
+                const rateData = await rateLookupResp.json();
+                const serverCents = applyMarkup(parseFloat(rateData.rate));
+                if (serverCents > link.max_price_cents) {
+                    log({
+                        event_type: "label.cap_exceeded",
+                        session_id: sessionId,
+                        severity: "warn",
+                        entity_type: "label",
+                        entity_id: easypost_shipment_id,
+                        properties: {
+                            link_short_code,
+                            server_derived_cents: serverCents,
+                            client_supplied_cents: bodyDisplayPriceCents ?? null,
+                            max_price_cents: link.max_price_cents,
+                        },
+                    });
+                    return new Response(
+                        JSON.stringify({ error: "Rate exceeds the recipient's price cap" }),
+                        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                    );
+                }
+                display_price_cents = serverCents;
+            }
+        }
+
+        // ─── Comp-gate hardening (proposal §3.5) ────────────────
+        // `comp: true` is now allowed only when EITHER (a) a valid active flex
+        // link authorized the call (resolvedLink !== null), OR (b) the caller
+        // has an admin JWT. Anonymous callers with comp=true are rejected.
+        if (isComp && !resolvedLink) {
+            const authHeader = req.headers.get("Authorization") || req.headers.get("authorization") || "";
+            const token = authHeader.replace(/^Bearer\s+/i, "");
+            const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || Deno.env.get("VITE_SUPABASE_ANON_KEY") || "";
+            // Anon key carries no user identity; reject early.
+            if (!token || token === anonKey) {
+                log({
+                    event_type: "label.comp_gate_rejected",
+                    session_id: sessionId,
+                    severity: "warn",
+                    entity_type: "label",
+                    entity_id: easypost_shipment_id,
+                    properties: { reason: "no_jwt_no_link" },
+                });
+                return new Response(
+                    JSON.stringify({ error: "Comp labels require an admin session or a valid flex link" }),
+                    { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+            if (!supabase) {
+                return new Response(
+                    JSON.stringify({ error: "Server configuration error" }),
+                    { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+            const { data: userResp, error: userErr } = await supabase.auth.getUser(token);
+            if (userErr || !userResp?.user) {
+                return new Response(
+                    JSON.stringify({ error: "Invalid or expired token" }),
+                    { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+            const { data: profile } = await supabase
+                .from("profiles")
+                .select("role")
+                .eq("id", userResp.user.id)
+                .single();
+            if (profile?.role !== "admin") {
+                log({
+                    event_type: "label.comp_gate_rejected",
+                    session_id: sessionId,
+                    severity: "warn",
+                    entity_type: "label",
+                    entity_id: easypost_shipment_id,
+                    properties: { reason: "not_admin", user_id: userResp.user.id },
+                });
+                return new Response(
+                    JSON.stringify({ error: "Comp labels require an admin session or a valid flex link" }),
+                    { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+        }
 
         // ─── Payment authorization gate ─────────────────────────
         // Every label purchase must reference a captured Stripe PaymentIntent
@@ -280,21 +539,16 @@ serve(async (req: Request) => {
             },
         });
 
-        // Fire-and-forget DB Persistence
-        if (from_address && to_address) {
-            const sbUrl = Deno.env.get("SUPABASE_URL") || Deno.env.get("VITE_SUPABASE_URL");
-            const sbKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || Deno.env.get("SB_SERVICE_ROLE_KEY");
-
-            if (sbUrl && sbKey) {
-                const supabase = createClient(sbUrl, sbKey, {
-                    auth: {
-                        autoRefreshToken: false,
-                        persistSession: false
-                    }
-                });
-
-                // Fire and forget - do not await
-                supabase.rpc('admin_insert_shipment', {
+        // ─── DB persistence — AWAITED (proposal B2/B4) ──────────
+        // The RPC is awaited so we can return public_code + shipment_id in
+        // the response body. Email send remains fire-and-forget; payment-row
+        // insert is awaited. This is the same `await`-discipline shift Stripe
+        // Phase A round-2 B2 mandates; landing it here pre-empts that work.
+        let dbShipmentId: string | null = null;
+        let dbPublicCode: string | null = null;
+        if (from_address && to_address && supabase) {
+            try {
+                const { data, error } = await supabase.rpc('admin_insert_shipment', {
                     p_user_id: '00000000-0000-0000-0000-000000000001',
                     p_from_name: from_address.name,
                     p_from_street1: from_address.street1,
@@ -326,27 +580,28 @@ serve(async (req: Request) => {
                     p_promised_delivery_date: buyData.selected_rate?.delivery_date
                         ? new Date(buyData.selected_rate.delivery_date).toISOString().slice(0, 10)
                         : null
-                }).then(async ({ data, error }) => {
-                    if (error) {
-                        console.error('admin_insert_shipment error:', error);
-                        log({
-                            event_type: "label.db_persist_error",
-                            session_id: sessionId,
-                            severity: "error",
-                            entity_type: "label",
-                            entity_id: easypost_shipment_id,
-                            duration_ms: 0,
-                            properties: {
-                                error_message: error.message,
-                                error_details: error.details,
-                            }
-                        });
-                    } else {
-                        // admin_insert_shipment now returns a TABLE(id, public_code).
-                        // Supabase JS surfaces this as an array of rows.
-                        const row = Array.isArray(data) ? data[0] : (data as { id: string; public_code: string } | null);
-                        const shipmentId: string | undefined = row?.id;
-                        const publicCode: string | undefined = row?.public_code;
+                });
+                if (error) {
+                    console.error('admin_insert_shipment error:', error);
+                    log({
+                        event_type: "label.db_persist_error",
+                        session_id: sessionId,
+                        severity: "error",
+                        entity_type: "label",
+                        entity_id: easypost_shipment_id,
+                        duration_ms: 0,
+                        properties: {
+                            error_message: error.message,
+                            error_details: error.details,
+                        }
+                    });
+                } else {
+                    // admin_insert_shipment returns TABLE(id, public_code) — array of rows.
+                    const row = Array.isArray(data) ? data[0] : (data as { id: string; public_code: string } | null);
+                    const shipmentId: string | undefined = row?.id;
+                    const publicCode: string | undefined = row?.public_code;
+                    dbShipmentId = shipmentId ?? null;
+                    dbPublicCode = publicCode ?? null;
                         log({
                             event_type: "label.db_persisted",
                             session_id: sessionId,
@@ -523,19 +778,22 @@ serve(async (req: Request) => {
                                     });
                                 }
                             });
-                        }
                     }
-                }).catch((err) => {
-                    console.error('Unhandled DB insertion error:', err);
+                }
+            } catch (err) {
+                console.error('Unhandled DB insertion error:', err);
+                log({
+                    event_type: "label.db_persist_unhandled",
+                    session_id: sessionId,
+                    severity: "error",
+                    entity_type: "label",
+                    entity_id: easypost_shipment_id,
+                    properties: { error_message: err instanceof Error ? err.message : String(err) },
                 });
-            } else {
-                console.error("Missing SUPABASE_URL or SERVICE_ROLE_KEY for fire-and-forget save");
             }
+        } else if (from_address && to_address && !supabase) {
+            console.error("Missing SUPABASE_URL or SERVICE_ROLE_KEY for label persistence");
         }
-
-        // Label-confirmation email send was here; moved into the
-        // admin_insert_shipment .then() callback above so it has access
-        // to the generated public_code and only fires on successful DB persist.
 
         return new Response(
             JSON.stringify({
@@ -543,6 +801,8 @@ serve(async (req: Request) => {
                 label_url: buyData.postage_label?.label_url || buyData.label_url,
                 carrier,
                 service,
+                public_code: dbPublicCode,
+                shipment_id: dbShipmentId,
             }),
             { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );

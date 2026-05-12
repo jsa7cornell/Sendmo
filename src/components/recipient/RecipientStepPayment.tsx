@@ -172,6 +172,7 @@ export default function RecipientStepPayment({ state, onUpdate, onBack, liveMode
           recipient_email: state.email || undefined,
           sender_email: state.senderEmail || undefined,
         },
+        undefined,
         {
           payment_intent_id: paymentIntentId,
           display_price_cents: totalCents,

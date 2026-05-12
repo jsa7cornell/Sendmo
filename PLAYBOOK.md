@@ -251,7 +251,7 @@ When working as a Claude Code agent, you may be assigned one of these roles:
 - [x] **Unit tests** — 145 tests across 14 files, all passing
 - [x] **Email notifications (Resend)** — OTP verification, label confirmation, tracking updates. Edge Functions deployed (`email`, `webhooks`), sendmo.co domain verified, API key set as Supabase secret.
 - [x] **Shipping notifications (sender + recipient)** — Notification dispatcher with channel-based routing (email now, SMS/push extensible). notification_contacts + notifications_log tables (migration 011). Role-aware email templates with ETA, carrier, and "Track Package" button. Public tracking page at `/track/:trackingNumber`.
-- [ ] Sender flow (5-step wizard at /s/:shortCode) — SenderFlow.tsx is a placeholder
+- [x] **Sender flow (5-step wizard at /s/:shortCode)** — 2026-05-11: Intro → Package → Rates → Review → Done. Routes around blocked Stripe Phase E via hardened comp-only path (admin-JWT-or-active-flex-link gate, server-resolved to_address + recipient_email, server-derived cap enforcement). See LOG entry 2026-05-11 "Sender flow wizard". Components in `src/components/sender/`.
 - [ ] Stripe payment integration (stubbed for now, real integration needed)
 - [ ] Server-side admin token validation (replace PIN gate with role-based check)
 

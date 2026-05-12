@@ -8,6 +8,58 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-11] Sender flow wizard — flex links produce real EasyPost labels end-to-end
+**Category:** Feature | UX | Security | Schema-adjacent
+**Proposal:** [proposals/2026-05-11_sender-flow-wizard_reviewed-2026-05-11_decided-2026-05-11.md](proposals/2026-05-11_sender-flow-wizard_reviewed-2026-05-11_decided-2026-05-11.md)
+**Context:** `/s/:shortCode` was a 4-step skeleton ending at "Label generation coming soon — Stripe payment integration in progress." Flex links had no functional sender path. Stripe Phase E (auth-at-link-creation + capture-at-label-buy) is blocked on Phase A which is blocked on §11 #4 (account-creation timing research) — so the sender flow was blocked indefinitely on a chained decision. Proposal routed around it via comp-only labels, server-hardened so the comp path is no longer a free-label exploit.
+
+**Decision/Finding:**
+- **5-step wizard** at `/s/:shortCode` matching SPEC §8 exactly: Intro → Package → Rates → Review → Done. New components in [src/components/sender/](src/components/sender/): `SenderStepIntro`, `SenderStepPackage` (origin + parcel + packaging type + sticky destination), `SenderStepRates` (no prices visible, "Preferred by {recipient}" badge), `SenderStepReview` (Edit buttons + email + AlertDialog-equivalent confirm), `SenderStepDone` (largest "Print Label (PDF)" CTA → opens EasyPost PDF in new tab, drop-off copy keyed to selected rate, `/t/<publicCode>` track link), `SenderProgressBar`, `senderState.ts` (typed state + helpers).
+- **Server-side comp gate hardened** ([labels/index.ts:65-188](supabase/functions/labels/index.ts)): `comp: true` now requires EITHER an admin JWT (validated against `profiles.role`) OR a valid active flex-link short_code. Anonymous callers with `comp=true` are rejected 403. The pre-change behavior — "anyone with the function URL can mint free labels" — was a real exploit; this closes it.
+- **Server resolves to_address + recipient_email** when `link_short_code` is present (B3). Client-supplied `to_address` is ignored; the function joins `sendmo_links → addresses` to get the canonical destination and `sendmo_links.user_id → profiles.email` for the label-confirmation email recipient. Sender client never sees recipient PII (Rule 7); also closes an attack surface where the sender could swap addresses.
+- **Server-derived cap enforcement** (B5, PLAYBOOK Rule 14 fix): `display_price_cents` is no longer trusted from the client. Labels function fetches the rate from EasyPost (`GET /v2/shipments/{id}/rates/{rate_id}` with `/v2/shipments/{id}` fallback), applies the canonical markup formula (`rate × 1.15 + $1.00`), and compares to `link.max_price_cents`. Closes the "client tampers with display_price_cents" loophole AND the "rate shifts between rate fetch and label buy" race.
+- **`admin_insert_shipment` RPC is now awaited** (B2) instead of fire-and-forget `.then()`. This lets the labels function return `public_code` + `shipment_id` in the response body (was previously only logged inside a `.then()` callback the client never saw). Email send remains fire-and-forget *inside* the awaited success branch. This shift lands the `await`-discipline mandated by Stripe Phase A round-2 B2 — Phase A inherits the change rather than coordinating it.
+- **`buyLabel()` signature change** in [src/lib/api.ts](src/lib/api.ts:151): added a `link?: { short_code?: string }` parameter between `contacts` and `payment`. The one existing caller ([RecipientStepPayment.tsx:175](src/components/recipient/RecipientStepPayment.tsx)) passes `undefined` to keep its behavior unchanged.
+- **`LabelResult`** ([src/lib/types.ts](src/lib/types.ts:183)) gained `public_code?: string | null` and `shipment_id?: string | null`.
+- **localStorage versioning** for sender pre-fill: key is `sendmo:sender:v1`, payload carries a `version` field, reads tolerate mismatch by returning null. Three lines that prevent a 3-month-out regret.
+- **Drop-off copy keyed to the SELECTED rate's carrier**, not `linkData.preferred_carrier` — verified by unit test. USPS / UPS / FedEx / DHL / fallback strings live in `senderState.dropOffCopy`.
+- **`isPreferredRate`** re-uses the canonical `classifySpeedTier` from [src/lib/utils.ts](src/lib/utils.ts) (PLAYBOOK Rule 6: extend, don't invent).
+
+**Tests:** 22 new unit tests across [tests/unit/senderState.test.ts](tests/unit/senderState.test.ts) (18 tests: localStorage round-trip incl. version-mismatch + malformed-JSON tolerance, speedTierForService, isPreferredRate, dropOffCopy carrier-keyed, isValidEmail) and [tests/unit/SenderStepIntro.test.tsx](tests/unit/SenderStepIntro.test.tsx) (4 tests: recipient-name rendering, generic fallback, Rule 7 privacy assertion, CTA wiring). `npx tsc -b --noEmit` clean. Pre-existing test failures on `main` (16 in `emailTemplates` + `stepRouting` + `recipientFlowContext`) are unchanged.
+
+**Why:** Phase E was the "right" answer but indefinitely blocked. Comp-only with a hardened server-side gate produces a real working product John can dogfood today; when Phase E lands, the only client-side change is `{ comp: true }` → `{ payment_intent_id }` in [SenderFlow.tsx](src/pages/SenderFlow.tsx) `handleConfirm`. Step components, copy, layout, and tests all stay identical.
+
+**Watch out:**
+- **Migration needed for the `admin_insert_shipment` RPC's idempotency.** EasyPost `/buy` is idempotent server-side (same rate ID → same label), but `admin_insert_shipment` will create a duplicate `shipments` row if called twice with the same `easypost_shipment_id`. Network disconnect mid-Confirm + retry could hit this. The RPC currently has no UNIQUE constraint on `easypost_shipment_id`. Follow-up: add `UNIQUE` or change the RPC to be an upsert. Flagged but not blocking — the practical retry rate is low.
+- **`comp` is now strictly gated, but legacy code paths can still mint comp labels via admin JWT.** That's correct behavior (the existing Live Comp admin toolbar mode still works). The change is that *anonymous* callers with `comp=true` are blocked. If anyone calls `/labels` from outside the new sender flow or the admin toolbar with `comp=true` they will now 403 — verify before deploy.
+- **`SUPABASE_ANON_KEY` env var must be set on the labels function** for the comp-gate rejection of anon-key tokens to work. Without it the check still rejects (no token = reject), but the explicit "token === anonKey → reject" path won't fire. Setting it makes the rejection reason cleaner in logs.
+- **Insurance banner on Step 0 was dropped.** SPEC §8 calls for a "green badge if recipient enabled protection" but the `sendmo_links.insurance` column documented in SPEC §12 does not actually exist in any migration (verified by `grep -r insurance supabase/migrations/` — zero hits). Adding the column is a future small migration; the banner can ship when the column does. Tracked in proposal §7 #2.
+- **Mobile-Safari PDF behavior** is the failure mode the reviewer specifically flagged. Step 4's "Print Label (PDF)" uses `<a target="_blank">` to EasyPost's PDF URL — works reliably on mobile Safari where iframe-PDFs intermittently fail. Verified by inspection; full mobile dogfood pending John's pass on a real device.
+- **`vitest.config.ts` `exclude` doesn't filter `.claude/worktrees/`** so `npm run test:unit` runs both the canonical suite and any worktree copies. The new tests passed in both. Per the 2026-05-11 admin-auth LOG entry: "worth fixing in the config — separate cleanup task." Still worth fixing.
+- **The labels function is now 800+ lines.** It's doing flex-link resolution, comp gating, payment gating, EasyPost EndShipper creation, EasyPost label purchase, auto-refund on EasyPost failure, awaited RPC persistence, awaited notification_contacts insert, and still-fire-and-forget email + payments. Splitting this into discrete handlers is a future refactor — not blocking, but the file is approaching the size where "where does X happen" stops being grep-friendly.
+
+**Files touched:**
+- [src/components/sender/senderState.ts](src/components/sender/senderState.ts) (new)
+- [src/components/sender/SenderProgressBar.tsx](src/components/sender/SenderProgressBar.tsx) (new)
+- [src/components/sender/SenderStepIntro.tsx](src/components/sender/SenderStepIntro.tsx) (new)
+- [src/components/sender/SenderStepPackage.tsx](src/components/sender/SenderStepPackage.tsx) (new)
+- [src/components/sender/SenderStepRates.tsx](src/components/sender/SenderStepRates.tsx) (new)
+- [src/components/sender/SenderStepReview.tsx](src/components/sender/SenderStepReview.tsx) (new)
+- [src/components/sender/SenderStepDone.tsx](src/components/sender/SenderStepDone.tsx) (new)
+- [src/pages/SenderFlow.tsx](src/pages/SenderFlow.tsx) (refactored from 545 lines → ~225 lines, pure orchestrator)
+- [src/lib/api.ts](src/lib/api.ts) (`buyLabel` signature gains `link?` param)
+- [src/lib/types.ts](src/lib/types.ts) (`LabelResult` gains `public_code` + `shipment_id`)
+- [src/components/recipient/RecipientStepPayment.tsx](src/components/recipient/RecipientStepPayment.tsx) (pass `undefined` for new `link` param)
+- [supabase/functions/labels/index.ts](supabase/functions/labels/index.ts) (link resolution + comp gate + cap re-derive + awaited RPC + `public_code` in response)
+- [tests/unit/senderState.test.ts](tests/unit/senderState.test.ts) (new — 18 tests)
+- [tests/unit/SenderStepIntro.test.tsx](tests/unit/SenderStepIntro.test.tsx) (new — 4 tests)
+
+**Deploy steps:**
+1. `supabase functions deploy labels --no-verify-jwt` (per the 2026-05-10 verify_jwt gotcha — labels stays anon-callable for the sender flow).
+2. Vercel auto-deploy from `main` for the client changes.
+3. Dogfood pass: John creates a flex link via `/onboarding` → opens `/s/<code>` in an incognito window → walks through all 5 steps with test-mode EasyPost addresses → verifies PDF renders + drop-off copy matches selected carrier + `/t/<publicCode>` resolves.
+
+
 ### [2026-05-11] EasyPost webhook HMAC verification (Stripe proposal Phase 0)
 **Category:** Security | EasyPost
 **Context:** `webhooks/index.ts` accepted any POST with a `tracker.updated` body. Anyone who knew the URL could push fake status updates and corrupt shipment state. The Stripe proposal lists this as Phase 0 — must close before Phase A starts.

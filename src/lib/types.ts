@@ -186,6 +186,8 @@ export interface LabelResult {
     service: string;
     label_url: string;
     sendmo_id?: string;
+    public_code?: string | null;
+    shipment_id?: string | null;
 }
 
 // API request/response types are defined inline in api.ts to match
