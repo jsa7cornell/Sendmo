@@ -79,6 +79,34 @@ export function isPreferredRate(rate: ShippingRate, linkData: LinkData): boolean
   return speedTierForService(rate.carrier, rate.service) === linkData.preferred_speed;
 }
 
+// Sort rates for the sender picker: preferred (matches link's speed tier)
+// first, then cheapest within each group. The sender doesn't see prices but
+// the ordering reflects what the recipient wants AND what they'd pay.
+export function sortRatesForSender<T extends ShippingRate>(rates: T[], linkData: LinkData): T[] {
+  return [...rates].sort((a, b) => {
+    const ap = isPreferredRate(a, linkData) ? 0 : 1;
+    const bp = isPreferredRate(b, linkData) ? 0 : 1;
+    if (ap !== bp) return ap - bp;
+    return a.display_price_cents - b.display_price_cents;
+  });
+}
+
+// Rough cost indicator for the sender — they don't see the exact price but
+// $-symbols give an order-of-magnitude signal so they can pick mindfully.
+// Bucket boundaries chosen against the SPEC §7.1 rate tables so a "cheap
+// envelope" lands at $ and a "premium cross-country express" lands at the
+// top of the scale.
+export function priceTierSymbol(displayPriceCents: number): string {
+  const dollars = displayPriceCents / 100;
+  const buckets = [5, 10, 15, 20, 30, 50, 75, 100, 150];
+  let n = 1;
+  for (const b of buckets) {
+    if (dollars < b) break;
+    n += 1;
+  }
+  return "$".repeat(Math.min(n, 10));
+}
+
 // Drop-off copy keyed to the SELECTED rate's carrier, not the link's
 // preferred carrier (reviewer non-blocking #3).
 export function dropOffCopy(carrier: string): { body: string; locationUrl: string | null } {

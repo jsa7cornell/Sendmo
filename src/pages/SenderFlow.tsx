@@ -5,7 +5,7 @@ import { Loader2, AlertCircle, Shield } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import AppHeader from "@/components/AppHeader";
 import {
-  fetchLink, fetchSenderRates, buyLabel, pickRecommendedRate,
+  fetchLink, fetchSenderRates, buyLabel,
 } from "@/lib/api";
 import type { LinkData } from "@/lib/api";
 import type { AddressInput, ShippingRate } from "@/lib/types";
@@ -19,7 +19,7 @@ import SenderStepReview from "@/components/sender/SenderStepReview";
 import SenderStepDone from "@/components/sender/SenderStepDone";
 import {
   type SenderStep, type SenderParcel, type SenderResult,
-  loadSavedSender, saveSender,
+  loadSavedSender, saveSender, sortRatesForSender,
 } from "@/components/sender/senderState";
 
 // 5-step sender wizard for flex shipping links. See SPEC §8 and
@@ -86,14 +86,16 @@ export default function SenderFlow() {
           preferred_carrier: linkData.preferred_carrier,
           preferred_speed: linkData.preferred_speed,
           max_price_cents: linkData.max_price_cents,
+          short_code: linkData.short_code,
         },
       );
       setRates(r);
       setEasypostShipmentId(easypost_shipment_id);
-      // Default-select the recommended rate matching the link's speed preference.
-      const speed = (linkData.preferred_speed as "economy" | "standard" | "express" | null) || "standard";
-      const recommended = pickRecommendedRate(r, speed);
-      if (recommended) setSelectedRate(recommended);
+      // Default-select the top of the sender-sorted list (preferred-by-recipient
+      // first, then cheapest). Matches what the user visually sees as the
+      // first option.
+      const sorted = sortRatesForSender(r, linkData);
+      if (sorted.length > 0) setSelectedRate(sorted[0]);
     } catch (err) {
       setRatesError(err instanceof Error ? err.message : "Failed to fetch rates");
     } finally {

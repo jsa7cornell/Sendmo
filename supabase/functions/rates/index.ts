@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { log } from "../_shared/logger.ts";
 
@@ -21,13 +22,54 @@ serve(async (req: Request) => {
     const sessionId = req.headers.get("x-session-id") || "unknown";
 
     try {
-        const { from_address, to_address, parcel, live_mode, preferred_carrier, preferred_speed, max_price_cents } = await req.json();
+        const { from_address, to_address: bodyToAddress, parcel, live_mode, preferred_carrier, preferred_speed, max_price_cents, link_short_code } = await req.json();
 
-        if (!from_address || !to_address || !parcel) {
+        if (!from_address || !bodyToAddress || !parcel) {
             return new Response(
                 JSON.stringify({ error: "Missing required fields: from_address, to_address, parcel" }),
                 { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
             );
+        }
+
+        // When the sender flow calls rates with a link_short_code, resolve the
+        // full to_address server-side. The sender's client only has city/state
+        // (Rule 7), and EasyPost rejects /buy on a shipment with no street1
+        // even though /shipments accepts it and returns rates. Mirrors the
+        // labels function's server-resolve pattern (proposal §3.5/B3).
+        let to_address = bodyToAddress;
+        if (link_short_code && typeof link_short_code === "string") {
+            const sbUrl = Deno.env.get("SUPABASE_URL") || Deno.env.get("VITE_SUPABASE_URL");
+            const sbKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || Deno.env.get("SB_SERVICE_ROLE_KEY");
+            if (sbUrl && sbKey) {
+                const supabase = createClient(sbUrl, sbKey, {
+                    auth: { autoRefreshToken: false, persistSession: false },
+                });
+                const { data: link } = await supabase
+                    .from("sendmo_links")
+                    .select(`
+                        status, link_type,
+                        recipient_address:addresses!recipient_address_id (
+                            name, street1, street2, city, state, zip, country
+                        )
+                    `)
+                    .eq("short_code", link_short_code)
+                    .single();
+                const addr = link?.recipient_address as unknown as {
+                    name: string; street1: string; street2: string | null;
+                    city: string; state: string; zip: string; country: string | null;
+                } | null;
+                if (link && link.status === "active" && link.link_type === "flexible" && addr?.street1) {
+                    to_address = {
+                        name: addr.name,
+                        street1: addr.street1,
+                        street2: addr.street2 ?? undefined,
+                        city: addr.city,
+                        state: addr.state,
+                        zip: addr.zip,
+                        country: addr.country ?? "US",
+                    };
+                }
+            }
         }
 
         const isLive = live_mode === true;

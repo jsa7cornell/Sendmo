@@ -315,6 +315,7 @@ export async function fetchSenderRates(
     preferred_carrier?: string | null;
     preferred_speed?: string | null;
     max_price_cents?: number;
+    short_code?: string;
   },
   liveMode: boolean = false,
 ): Promise<{ rates: ShippingRate[]; easypost_shipment_id: string }> {
@@ -333,10 +334,12 @@ export async function fetchSenderRates(
       weight_oz: parcel.weight,
     },
     live_mode: liveMode,
-    // Link preference filters — rates function will use these
     preferred_carrier: linkPrefs?.preferred_carrier || undefined,
     preferred_speed: linkPrefs?.preferred_speed || undefined,
     max_price_cents: linkPrefs?.max_price_cents || undefined,
+    // Sender flow: server resolves the full to_address server-side so
+    // EasyPost's /buy doesn't reject for missing street1.
+    link_short_code: linkPrefs?.short_code || undefined,
   };
   const data = await post<RatesResponse>("rates", body);
 

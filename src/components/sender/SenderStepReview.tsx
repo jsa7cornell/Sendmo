@@ -186,9 +186,9 @@ export default function SenderStepReview({
       <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Generate label for {recipient}?</DialogTitle>
+            <DialogTitle>Are you sure?</DialogTitle>
             <DialogDescription>
-              This will create a real shipping label. You can print it on the next screen.
+              Generating a real label will charge {recipient}'s account. You can print the label on the next screen.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="gap-2">

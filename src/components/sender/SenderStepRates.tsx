@@ -2,7 +2,7 @@ import { Button } from "@/components/ui/button";
 import { Loader2, AlertCircle, Package, ArrowLeft, ArrowRight } from "lucide-react";
 import type { LinkData } from "@/lib/api";
 import type { ShippingRate } from "@/lib/types";
-import { isPreferredRate } from "./senderState";
+import { isPreferredRate, sortRatesForSender, priceTierSymbol } from "./senderState";
 import { carrierDisplayName, serviceDisplayName } from "@/lib/utils";
 
 interface Props {
@@ -79,9 +79,10 @@ export default function SenderStepRates({
       </div>
 
       <div className="space-y-3">
-        {rates.map((rate) => {
+        {sortRatesForSender(rates, linkData).map((rate) => {
           const isSelected = selectedRate?.id === rate.id;
           const preferred = isPreferredRate(rate, linkData);
+          const tier = priceTierSymbol(rate.display_price_cents);
           return (
             <button
               key={rate.id}
@@ -112,8 +113,17 @@ export default function SenderStepRates({
                       : "Estimated delivery TBD"}
                   </p>
                 </div>
-                <div className={"w-5 h-5 rounded-full border-2 flex-shrink-0 " + (isSelected ? "border-primary" : "border-border")}>
-                  {isSelected && <div className="w-full h-full rounded-full bg-primary scale-50" />}
+                <div className="flex items-center gap-3 flex-shrink-0">
+                  <span
+                    className="font-mono text-sm text-muted-foreground tabular-nums"
+                    aria-label={`Cost tier ${tier.length} of 10`}
+                    title="Relative cost (recipient pays)"
+                  >
+                    {tier}
+                  </span>
+                  <div className={"w-5 h-5 rounded-full border-2 " + (isSelected ? "border-primary" : "border-border")}>
+                    {isSelected && <div className="w-full h-full rounded-full bg-primary scale-50" />}
+                  </div>
                 </div>
               </div>
             </button>
