@@ -5,6 +5,12 @@
 
 ---
 
+## 🚨 Launch blockers
+
+- [ ] **Share Link on Label & Link step is hardcoded `sendmo.co/s/test`** — 🚨 **LAUNCH BLOCKER.** After a Full Prepaid Label flow completes (Label & Link step), the Share Link card surfaces a placeholder URL (`sendmo.co/s/test`) instead of a real shareable link tied to this shipment. The Full Label path doesn't write a `sendmo_links` row, so there's no real `short_code` to surface. Recipients can't share the label with anyone today. Confirmed live 2026-05-12 — see UPS Ground `1Z13J52C0333598579` Phase A smoke-test screenshot. Two-part fix: (1) labels function (or a new step) writes a `sendmo_links` row with a generated `short_code` after the shipment lands, owned by the verified recipient; (2) RecipientStepLinkReady reads the real `short_code` and displays `sendmo.co/s/<code>`. Until this lands, the Full Prepaid Label flow is end-to-end demo-able but not actually launchable. Related: the existing "Full Label flow doesn't create account or link" item below covers the account-creation half (which shipped 2026-05-11 via the OTP rework); the link-creation half is what remains.
+
+---
+
 ## UX / Polish
 
 - [ ] **Signed-in users should land on their dashboard, not the public homepage** — When an authenticated user hits `/` (or returns to the site), redirect to their dashboard/home rather than rendering the marketing landing page. Public landing should only show for unauthenticated visitors.
