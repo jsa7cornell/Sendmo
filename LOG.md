@@ -20,15 +20,10 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 **Why:** The skip-when-unset pattern lets us land the code in production immediately without risking dropped webhooks. John flips enforcement when (a) `EASYPOST_WEBHOOK_HMAC_SECRET` is set as a Supabase function secret AND (b) the same value is configured in the EasyPost dashboard webhook settings.
 
 **Operational steps for John (one-time, in this order):**
-1. Set the secret in Supabase secrets:
-   ```bash
-   op item get "EasyPost Webhook HMAC Secret" --vault="Secrets" --field=password \
-     | xargs -I{} supabase secrets set EASYPOST_WEBHOOK_HMAC_SECRET={} \
-       --project-ref fkxykvzsqdjzhurntgah
-   ```
-   (or copy/paste from 1Password into the Supabase dashboard → Edge Functions → Secrets if you prefer)
-2. Configure the same value in EasyPost dashboard → Settings → Webhooks → edit the production endpoint → set "HMAC Secret" → save.
-3. Watch `event_logs` for 24–48h:
+1. EasyPost dashboard → Settings → Webhooks → edit the production endpoint → set or generate the "HMAC Secret". Copy the value.
+2. Save to 1Password: new item `EasyPost Webhook HMAC Secret` in the Secrets vault (it didn't exist before — `op_session_preauth` assumption from the original LOG draft was wrong).
+3. Set the secret on Supabase Edge Functions — copy/paste into the Supabase dashboard → Edge Functions → Secrets → add `EASYPOST_WEBHOOK_HMAC_SECRET`. (Or `supabase secrets set EASYPOST_WEBHOOK_HMAC_SECRET=… --project-ref fkxykvzsqdjzhurntgah` from a shell where the value is in env.)
+4. Watch `event_logs` for 24–48h:
    ```sql
    SELECT event_type, properties, created_at FROM event_logs
    WHERE event_type LIKE 'webhook.hmac%' AND created_at > now() - INTERVAL '24 hours'
