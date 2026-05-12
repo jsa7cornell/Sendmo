@@ -10,6 +10,20 @@ import { dispatchNotifications } from "../_shared/notifications.ts";
  *
  * Updates shipment status in DB and dispatches notifications to all
  * registered contacts (sender + recipient) via the notification system.
+ *
+ * HMAC verification (Stripe-proposal Phase 0):
+ * EasyPost signs each webhook body with HMAC-SHA256 of the raw request
+ * body using a shared secret. We verify the X-Hmac-Signature header.
+ *
+ * Rollout-safe enforcement: if EASYPOST_WEBHOOK_HMAC_SECRET is unset,
+ * verification is skipped (current behavior) and we log a warning so
+ * John can see it's not configured. Once the secret is set as a Supabase
+ * function secret AND the matching value is in the EasyPost dashboard,
+ * verification turns on automatically with the next request — no code
+ * deploy needed to flip it.
+ *
+ * Header name is `X-Hmac-Signature` per EasyPost docs (round-2 N6 fix
+ * in the Stripe proposal).
  */
 
 const STATUS_MAP: Record<string, string> = {
@@ -33,6 +47,61 @@ function getSupabase() {
   });
 }
 
+// Constant-time string compare to avoid timing side channels.
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let mismatch = 0;
+  for (let i = 0; i < a.length; i++) mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return mismatch === 0;
+}
+
+function bytesToHex(bytes: ArrayBuffer): string {
+  const arr = new Uint8Array(bytes);
+  let out = "";
+  for (let i = 0; i < arr.length; i++) out += arr[i].toString(16).padStart(2, "0");
+  return out;
+}
+
+/**
+ * Compute HMAC-SHA256(secret, rawBody) and compare against the header.
+ * Returns { ok: true } when signature matches, { ok: false, reason } otherwise.
+ * Returns { ok: true, skipped: true } when secret is not configured — the
+ * caller should log this so John can see verification is dormant.
+ */
+async function verifyEasypostHmac(
+  rawBody: string,
+  signatureHeader: string | null,
+): Promise<{ ok: true; skipped?: boolean } | { ok: false; reason: string }> {
+  const secret = Deno.env.get("EASYPOST_WEBHOOK_HMAC_SECRET");
+  if (!secret) return { ok: true, skipped: true };
+
+  if (!signatureHeader) {
+    return { ok: false, reason: "missing_signature_header" };
+  }
+
+  try {
+    const enc = new TextEncoder();
+    const key = await crypto.subtle.importKey(
+      "raw",
+      enc.encode(secret),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"],
+    );
+    const sigBytes = await crypto.subtle.sign("HMAC", key, enc.encode(rawBody));
+    const computedHex = bytesToHex(sigBytes);
+    // EasyPost sends lower-case hex; we lower the header just in case.
+    const provided = signatureHeader.trim().toLowerCase();
+    if (timingSafeEqual(computedHex, provided)) return { ok: true };
+    return { ok: false, reason: "signature_mismatch" };
+  } catch (err) {
+    return {
+      ok: false,
+      reason: `crypto_error: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+}
+
 serve(async (req: Request) => {
   const corsResponse = handleCors(req);
   if (corsResponse) return corsResponse;
@@ -44,9 +113,46 @@ serve(async (req: Request) => {
     });
   }
 
-  // Always respond 200 to webhooks to prevent retries
+  // Read raw body BEFORE parsing — signature verification needs the
+  // exact bytes EasyPost signed, not a re-serialized JSON shape.
+  const rawBody = await req.text();
+
+  // HMAC verification (skipped silently when secret is unset; rejects on
+  // mismatch otherwise).
+  const sigHeader =
+    req.headers.get("X-Hmac-Signature") ||
+    req.headers.get("x-hmac-signature");
+  const hmacResult = await verifyEasypostHmac(rawBody, sigHeader);
+  if (!hmacResult.ok) {
+    log({
+      event_type: "webhook.hmac_invalid",
+      severity: "error",
+      source: "webhook",
+      properties: {
+        reason: hmacResult.reason,
+        has_header: !!sigHeader,
+        body_len: rawBody.length,
+      },
+    });
+    return new Response(
+      JSON.stringify({ error: "Invalid signature" }),
+      { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
+  }
+  if (hmacResult.skipped) {
+    log({
+      event_type: "webhook.hmac_skipped",
+      severity: "warn",
+      source: "webhook",
+      properties: {
+        reason: "EASYPOST_WEBHOOK_HMAC_SECRET not set — verification dormant",
+      },
+    });
+  }
+
+  // Always respond 200 to webhooks to prevent retries (after auth)
   try {
-    const body = await req.json();
+    const body = JSON.parse(rawBody);
     const description = body.description || "";
     const result = body.result || {};
 

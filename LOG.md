@@ -8,6 +8,51 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-11] EasyPost webhook HMAC verification (Stripe proposal Phase 0)
+**Category:** Security | EasyPost
+**Context:** `webhooks/index.ts` accepted any POST with a `tracker.updated` body. Anyone who knew the URL could push fake status updates and corrupt shipment state. The Stripe proposal lists this as Phase 0 — must close before Phase A starts.
+**Decision/Finding:**
+- New `verifyEasypostHmac()` helper in [`supabase/functions/webhooks/index.ts`](supabase/functions/webhooks/index.ts) computes HMAC-SHA256 of the **raw** request body using `EASYPOST_WEBHOOK_HMAC_SECRET` and compares against the `X-Hmac-Signature` header (per round-2 N6 fix in the Stripe proposal).
+- The handler now reads `await req.text()` for the raw bytes EasyPost signed, then `JSON.parse(rawBody)` for processing. Calling `req.json()` first would re-serialize and break byte-exact signature verification.
+- Constant-time hex compare via a small `timingSafeEqual` to avoid timing side channels.
+- **Rollout-safe enforcement:** when the secret is unset, verification is *skipped* and a `webhook.hmac_skipped` warning fires once per request. When the secret is set, verification is mandatory — missing or mismatched signatures return 401 with `webhook.hmac_invalid` logged. **No code redeploy needed to flip enforcement** — just set the secret.
+
+**Why:** The skip-when-unset pattern lets us land the code in production immediately without risking dropped webhooks. John flips enforcement when (a) `EASYPOST_WEBHOOK_HMAC_SECRET` is set as a Supabase function secret AND (b) the same value is configured in the EasyPost dashboard webhook settings.
+
+**Operational steps for John (one-time, in this order):**
+1. Set the secret in Supabase secrets:
+   ```bash
+   op item get "EasyPost Webhook HMAC Secret" --vault="Secrets" --field=password \
+     | xargs -I{} supabase secrets set EASYPOST_WEBHOOK_HMAC_SECRET={} \
+       --project-ref fkxykvzsqdjzhurntgah
+   ```
+   (or copy/paste from 1Password into the Supabase dashboard → Edge Functions → Secrets if you prefer)
+2. Configure the same value in EasyPost dashboard → Settings → Webhooks → edit the production endpoint → set "HMAC Secret" → save.
+3. Watch `event_logs` for 24–48h:
+   ```sql
+   SELECT event_type, properties, created_at FROM event_logs
+   WHERE event_type LIKE 'webhook.hmac%' AND created_at > now() - INTERVAL '24 hours'
+   ORDER BY created_at DESC;
+   ```
+   Expectation: zero `webhook.hmac_invalid`, zero `webhook.hmac_skipped`. If `webhook.hmac_invalid` shows up with `reason='signature_mismatch'`, the EasyPost and Supabase values don't match — re-check.
+
+**Verification (post-deploy curl):**
+```bash
+# Should return 401 — invalid signature
+curl -i -X POST https://fkxykvzsqdjzhurntgah.supabase.co/functions/v1/webhooks \
+  -H 'X-Hmac-Signature: 00deadbeef' \
+  -H 'Content-Type: application/json' \
+  -d '{"description":"tracker.updated","result":{"tracking_code":"TEST","status":"in_transit"}}'
+
+# Should return 200 — secret unset OR signature valid
+# (real test requires the secret + a real EasyPost-signed body, easiest via the EP dashboard "Send Test Event" button)
+```
+
+**Watch out:**
+- **`req.text()` vs `req.json()`:** must read text first. Multiple Edge Functions in the repo currently use `await req.json()` which makes them un-verifiable for any future webhook integration (Stripe being the most important — see `supabase/functions/stripe-webhook/index.ts` which should be audited for the same pattern). Filed as follow-up.
+- **Header name is `X-Hmac-Signature`, not `x-easypost-hmac-signature`.** A previous draft of the Stripe proposal used the longer form; round-2 N6 corrected it. The handler accepts either casing per HTTP norms but EasyPost sends the title-case version.
+- **The `webhook.hmac_skipped` log spam will be loud until John sets the secret.** That's intentional — better signal than silence. Drops to zero once enforcement turns on.
+
 ### [2026-05-11] Role-based admin auth replaces the hardcoded `2026` PIN gate
 **Category:** Security | Auth | Architecture
 **Context:** `/admin` was gated by a client-side `2026` PIN stored in `sessionStorage.sendmo_admin`. The PIN was theater — the `admin-report` Edge Function accepted any anon-key Bearer token, and `cancel-label` had a "no JWT = allow" code path that meant anyone with the function URL could void any label. Stripe proposal §11 #5 (decided 2026-05-11) requires real admin auth before Live Charge mode ships behind the admin toolbar.
