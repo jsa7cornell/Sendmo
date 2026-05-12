@@ -235,7 +235,7 @@ When working as a Claude Code agent, you may be assigned one of these roles:
 - [x] Database schema applied (11 migrations on remote Supabase — includes email_verifications, notification_contacts, notifications_log)
 - [x] LabelTest page working (test harness for backend APIs)
 - [x] Admin page working (PIN-gated, reporting + label void)
-- [x] **Recipient onboarding flow (Full Prepaid Label path)** — Steps 0→1→10→11→12, Stripe stubbed, real EasyPost test rates
+- [x] **Recipient onboarding flow (Full Prepaid Label path)** — Steps 0→1→10→11(verify)→12(payment)→13(label); step 11 is the Supabase OTP confirm-email step inserted 2026-05-11 (auto-skipped for authenticated users); real Stripe + EasyPost test rates
 - [x] Admin test/live toggle — floating toolbar on /onboarding (Test | Live Comp | Live Charge, since 2026-05-11)
 - [x] Magic Guestimator — 15 item types + urgency keywords, client-side
 - [x] Landing page (hero, how it works, value props, use cases, CTA, footer)
@@ -244,7 +244,7 @@ When working as a Claude Code agent, you may be assigned one of these roles:
 - [x] **Domain setup** — sendmo.co → Vercel (A record 76.76.21.21), www.sendmo.co CNAME, wind.sendmo.co → coyote-wind
 - [x] **EasyPost live key** — set as Supabase secrets (EASYPOST_API_KEY + EASYPOST_TEST_API_KEY)
 - [x] **Comp label ledger** — migration 009 adds `payment_method` column ('card'|'balance'|'comp')
-- [x] **Auth UI (magic link login)** — Supabase Auth with magic link, Login page, ProtectedRoute, AuthContext, auto-create profile on first login
+- [x] **Auth UI (link + OTP code login)** — Supabase Auth with both magic-link and 6-digit OTP paths. `/login` has Google CTA + email field; success view has a 6-digit input plus the link-in-email option. Magic-link email template ("Confirm your email for SendMo") emits both `{{ .Token }}` and `{{ .ConfirmationURL }}` so users pick whichever is faster. Custom SMTP via Resend (sendmo.co domain verified 2026-05-12). ProtectedRoute + AuthContext auto-create profile on first sign-in. ?welcome=1 query-param triggers a one-shot "Signed in as X" banner on /dashboard for any auth handoff (magic-link click, Google return, /login OTP-verify).
 - [x] **Dashboard with real data** — connected to Supabase via AuthContext, shows shipment history for authenticated user, user menu with sign out
 - [x] **Recipient onboarding flow (Flexible Link path)** — Steps 20-23: shipping preferences, email OTP verification, payment (stubbed), link activated view
 - [x] **E2E tests (Playwright)** — 12 tests covering home, admin, auth, onboarding, 404

@@ -181,19 +181,27 @@ SendMo uses **"try-then-show"** validation: user clicks Continue → `tried` fla
 The flow uses numeric step IDs for branching:
 - `0` = Path Choice
 - `1` = Address + Email (shared by both paths)
-- `10-12` = Full Label path (Shipment Details -> Payment -> Label)
+- `10-13` = Full Label path (Shipment Details -> Confirm Email -> Payment -> Label)
 - `20-23` = Flexible Link path (Shipping Prefs -> Email Verify -> Payment -> Link Activated)
+
+> Step 11 (Confirm Email) for the Full Label path was inserted 2026-05-11 per the
+> [account-creation-timing proposal](proposals/2026-05-11_account-creation-timing_reviewed-2026-05-11_decided-2026-05-11.md).
+> Uses Supabase-native `signInWithOtp` so verifying the email also creates the
+> `auth.users` row, allowing shipments.user_id to be stamped from `auth.uid()`.
+> Auto-skipped when the user is already authenticated (Google OAuth at step 1,
+> or returning user with a live session).
 
 ### Component File Structure
 
 ```
 src/components/recipient/
-  RecipientStepPathChoice.tsx      # Step 0: Full vs Flexible
-  RecipientStepAddress.tsx          # Step 1: Address + email (shared)
-  RecipientStepFullShipping.tsx     # Full path: shipment details (Step 10)
-  RecipientStepShipping.tsx         # Link path: shipping prefs (Step 20)
-  RecipientStepVerify.tsx           # Link path: OTP email verify (Step 21)
-  RecipientStepPayment.tsx          # Payment + activated state (Steps 11/12/22/23)
+  RecipientStepPathChoice.tsx              # Step 0: Full vs Flexible
+  RecipientStepAddress.tsx                  # Step 1: Address + email + Google CTA (shared)
+  RecipientStepFullShipping.tsx             # Full path: shipment details (Step 10)
+  RecipientStepEmailVerifySupabase.tsx      # Full path: Supabase OTP confirm email (Step 11)
+  RecipientStepFlexPreferences.tsx          # Link path: shipping prefs (Step 20)
+  RecipientStepEmailVerify.tsx              # Link path: bespoke email_verifications OTP (Step 21)
+  RecipientStepPayment.tsx                  # Payment + activated state (Steps 12/13/22/23)
 ```
 
 ### Progress Bar (4 visual steps, varies by path)
@@ -279,22 +287,36 @@ final = base x carrier_multiplier (1.0-1.8) + insurance ($2.50 if selected)
 
 **Validation**: Ship from address, all dimensions, weight, shipping method, computed price -- all required. Summary block lists up to 6 issues.
 
-#### Step 11: Payment (Full Label)
-**Component**: `RecipientStepPayment.tsx` -- Step ID: `11`
+#### Step 11: Confirm Your Email (Full Label)
+**Component**: `RecipientStepEmailVerifySupabase.tsx` -- Step ID: `11` (inserted 2026-05-11)
+
+- Headline: "Confirm your email"
+- Body: "Just making sure {email} is yours so we can send your SendMo shipping label and updates."
+- Two ways to confirm — user picks whichever is faster:
+  - **6-digit code input** (paste or type) — calls `supabase.auth.verifyOtp({ type: "email" })`
+  - **Tap "Confirm email" button in the inbox** — Supabase processes the token and redirects back to `/onboarding/full-label/verify?confirmed=1`; the step's session-detection effect auto-advances
+- Code/link are sent silently at step 1 (email blur) so they're in the inbox by the time the user reaches this screen
+- **Auto-skipped** when the user is already authenticated (Google CTA picked at step 1, or returning user with a live session whose email matches the typed email)
+- Validation: requires `state.email_verified === true` (mirrors the flex flow's step 21 contract)
+- Companion to the flex flow's bespoke `email_verifications`-table OTP at step 21 (intentionally untouched)
+
+#### Step 12: Payment (Full Label)
+**Component**: `RecipientStepPayment.tsx` -- Step ID: `12` (was `11` pre-2026-05-11)
 
 - **Shipment summary card**: To, From, Service, Est. delivery, Package type + dimensions + weight, Total charge (exact price, large blue text)
 - **Payment form** (tabbed: Credit Card / SendMo Balance)
 - **No insurance toggle** here (already selected in Step 10)
 - **CTA**: "Pay & generate label" -- charges card immediately (not a hold)
+- User JWT is now in scope (step 11 created/restored the session), so the labels function stamps `shipments.user_id` from `auth.uid()`
 
 **Full Label Payment Flow**:
 1. Recipient completes details -> exact price calculated
-2. Stripe charges card immediately (PaymentIntent with immediate capture)
+2. Stripe charges card immediately (PaymentIntent with immediate capture); `metadata.user_id` stamped server-side from the bearer token
 3. Label PDF generated via EasyPost
 4. Recipient downloads/shares label
 
-#### Step 12: Label & Link Ready (Full Label)
-**Component**: `RecipientStepPayment.tsx` with `isActivated=true` -- Step ID: `12`
+#### Step 13: Label & Link Ready (Full Label)
+**Component**: `RecipientStepPayment.tsx` with `isActivated=true` -- Step ID: `13` (was `12` pre-2026-05-11)
 
 - Title: "Your shipping label and link are ready"
 - **View/download/print card** -- "View label" + "Download PDF" buttons

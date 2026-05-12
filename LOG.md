@@ -8,6 +8,67 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-12] CI was red on `main` for 21 commits — three test files had drifted from their subjects, not a real failure
+**Category:** Tests | Tech debt | CI hygiene
+**Context:** While shipping the account-creation-timing iteration, noticed that GitHub Actions had been failing on every push to `main` for ~21 consecutive commits (since 2026-04-19's `feat(routing): path-scoped onboarding URLs`). Vercel deploys never gated on this so production was always fine, but the CI signal had been worthless for a month. Three test files were the entire problem:
+
+- [tests/unit/recipientFlowContext.test.tsx](tests/unit/recipientFlowContext.test.tsx) — rendered `RecipientFlowProvider` without wrapping in `<AuthProvider>`. The provider's internal `useAuth()` call threw on every render. Also used the obsolete flat `/onboarding/:step` route shape and the old `address` slug naming.
+- [tests/unit/stepRouting.test.ts](tests/unit/stepRouting.test.ts) — called `slugToStep(slug)` and `firstIncompleteSlug` (functions that no longer exist in that shape). The current API is `slugToStep(path, slug)` and `firstIncompleteUrl(completedSteps, path)`.
+- [tests/unit/emailTemplates.test.ts](tests/unit/emailTemplates.test.ts) — `trackingUpdateEmail` gained a required `carrierTracking` parameter at position 3 some time ago, but the tests kept passing args one slot off. Also asserted lowercase status labels ("in transit") against Title-Case source output ("In Transit").
+
+**Decision/Finding:** repaired all three files in a separate test-only commit ([a6b6dff](https://github.com/jsa7cornell/Sendmo/commit/a6b6dff)). Zero touches to `src/` or `supabase/functions/`. Full unit suite went from 27 failing / 196 passing → **0 failing / 236 passing**. CI flipped green on the next push (run [25754754391](https://github.com/jsa7cornell/Sendmo/actions/runs/25754754391)) — first green main in 21 commits.
+
+**Why this matters:** the actual code these tests covered (RecipientFlowContext, stepRouting, email templates) was working in production the whole time. The tests just hadn't been updated when the underlying APIs changed. The "tests broken" signal was indistinguishable from "code broken" in CI; that's the kind of background noise that trains you to ignore CI, which means the next *real* regression slips through.
+
+**Watch out — soft rule for future drift:**
+- **Test files have a code-side counterpart that may move.** When you rename a function, change its signature, or rename a slug, grep `tests/unit/` for the symbol *and* fix matches in the same commit. The CI failure is the late signal; the test edit at refactor time is the cheap one.
+- **CI red for >1 commit is a real bug to investigate**, not background noise to filter out. The longer it stays red the harder it is to tell the difference between drift like this and a real regression buried under stale-test noise.
+- **Vercel's build is the production gate; GitHub Actions is the regression gate.** They serve different purposes. A green Vercel doesn't mean the regression gate is working.
+
+---
+
+### [2026-05-12] Resend domain verification was silently failing for 2 months — label-confirmation emails never went out
+**Category:** Email | Resend | Silent failure
+**Context:** While wiring the Supabase Auth SMTP for the new "Confirm your email" template (proposal 2026-05-11_account-creation-timing), the first `signInWithOtp` from `/login` returned 500 with auth log: `gomail: could not send email 1: 550 The sendmo.co domain is not verified. Please, add and verify your domain on https://resend.com/domains`.
+
+**Root cause:** the `sendmo.co` domain was added to Resend ~2 months ago but never finished verifying. All three required DNS records (DKIM, SPF MX, SPF TXT) showed "Failed" — Cloudflare DNS never got the records added. The domain sat in "Pending → Failed" state, ignored, until something actually tried to send from `noreply@sendmo.co`.
+
+**The silent-failure surface:** [supabase/functions/_shared/resend.ts:26](supabase/functions/_shared/resend.ts:26) uses `from = "SendMo <noreply@sendmo.co>"` for every email sent by Edge Functions (label-confirmation, tracking updates). The labels function's `sendEmail()` call is fire-and-forget — the catch logs `email.label_confirmation_error` to `event_logs` but never surfaces to the user, never alerts John. **Every label-confirmation email since the domain was added has been silently rejected by Resend.** The LOG entry from 2026-03 (`Email notifications (Resend)`) said "sendmo.co domain verified" — that was wishful; verification was started but never completed.
+
+**Fix:** clicked Resend's **Auto configure** button on the Domains page → granted Resend OAuth access to Cloudflare → Resend wrote all three DNS records itself → status flipped from "Failed" to "Verified" in <5 minutes. After verification, the `/login` magic-link flow worked end-to-end (subject "Confirm your email for SendMo", From `SendMo <noreply@sendmo.co>`, link + 6-digit code in the body).
+
+**Watch out:**
+- **Resend domain verification is independent of API key validity.** Edge Functions can authenticate against Resend with a valid API key and *still* have every send rejected if the domain isn't verified. The 401/403 you'd expect from "auth broke" never fires — Resend returns 200 from the HTTP API and 550 from SMTP.
+- **`onboarding@resend.dev` works without domain verification** (Resend's sandbox sender). If you ever see emails going through during the unverified-domain window, check whether the From address was the sandbox fallback. The labels function does **not** fall back to sandbox — it sends from sendmo.co or fails silently.
+- **Fire-and-forget email sends mask domain issues.** Consider surfacing `email.label_confirmation_error` rates in the admin report so a Resend regression isn't invisible. Today the only signal is John not getting his own test-label emails.
+- **Auto configure is Cloudflare-specific.** It only appears when Resend detects Cloudflare as your DNS provider. For other DNS providers you'd add three records (DKIM TXT `resend._domainkey`, SPF MX `send`, SPF TXT `send`) by hand. Resend's UI shows the exact values; just match them at the DNS provider.
+
+**Backfill question (open):** label-confirmation emails for the past ~2 months of test/dogfood shipments never arrived. The `event_logs` table has the receipts (`event_type = 'email.label_confirmation_error'`). Worth a follow-up to (a) count the missed emails, (b) decide whether to resend them, and (c) audit `notification_contacts` rows that were inserted with the expectation that the email would arrive.
+
+**Files touched:** none in repo — entirely Supabase dashboard (email template) + Resend dashboard (Auto configure) + Cloudflare DNS (records added by Resend OAuth).
+
+---
+
+### [2026-05-12] Custom SMTP via Resend was already wired for noreply@sendmo.co — just needed the domain to verify
+**Category:** Email | Auth | Reference
+**Context:** During the account-creation-timing iteration we needed to confirm that Supabase Auth emails (the new "Confirm your email" template) would send from `sendmo.co`, not from `noreply@mail.app.supabase.io` (the default).
+
+**Decision/Finding:** Custom SMTP was already enabled in Supabase **Authentication → Email Templates → SMTP Settings**:
+- Host: `smtp.resend.com`
+- Port: `465` (SMTPS)
+- Username: `resend`
+- Sender email: `noreply@sendmo.co`
+- Sender name: `SendMo`
+- Min interval per user: `1 second`
+
+Once the Resend domain finished verifying (see entry above), all paths went green: Supabase renders the template → hands rendered email to Resend via SMTP → Resend sends from `noreply@sendmo.co` → recipient inbox.
+
+**Watch out:**
+- **Don't conflate "API key in Supabase secrets" with "SMTP configured in Supabase Auth."** They're separate. API key (used by Edge Functions via Resend's HTTP API) lives in `SUPABASE_SERVICE_ROLE_KEY` / Edge Function env. SMTP credentials (used by Supabase Auth itself for `signInWithOtp`, password reset, etc.) live in the Auth dashboard's SMTP panel and never appear in Edge Function code. Both need to be valid for the full system to work.
+- **Free tier Supabase locks session expiry at "never."** The Inactivity Timeout / Time-box Session knobs are Pro-only and greyed out on Free. Sessions persist indefinitely until the user signs out or storage is cleared — refresh tokens roll forward automatically. No action needed for "max out session length"; you're already there.
+
+---
+
 ### [2026-05-12] Account-creation iteration #2: Google CTA at step 1, verify step reframed as "Confirm your email", link+code dual path
 **Category:** Auth | Onboarding | UX
 **Proposal:** [proposals/2026-05-11_account-creation-timing_reviewed-2026-05-11_decided-2026-05-11.md](proposals/2026-05-11_account-creation-timing_reviewed-2026-05-11_decided-2026-05-11.md) — design iteration *on top of* the 2026-05-11 implementation; not a new proposal.
