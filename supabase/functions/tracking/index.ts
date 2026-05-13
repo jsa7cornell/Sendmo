@@ -61,7 +61,7 @@ serve(async (req: Request) => {
   // Joins sendmo_links to derive link_short_code (for the Ship-Again CTA) and
   // user_id (server-side viewer_is_recipient determination — link.user_id is
   // never exposed in the response).
-  const selectFields = "id, tracking_number, public_code, carrier, service, status, refund_status, easypost_tracker_id, is_test, created_at, updated_at, promised_delivery_date, delivered_at, label_url, link_id, stripe_payment_intent_id, sendmo_links!inner(short_code, user_id)";
+  const selectFields = "id, tracking_number, public_code, carrier, service, status, refund_status, easypost_tracker_id, is_test, created_at, updated_at, promised_delivery_date, delivered_at, label_url, link_id, stripe_payment_intent_id, cancelled_at, sendmo_links!inner(short_code, user_id)";
   const baseQuery = supabase.from("shipments").select(selectFields);
   const lookup = publicCode
     ? baseQuery.eq("public_code", publicCode).single()
@@ -148,6 +148,28 @@ serve(async (req: Request) => {
     }
   }
 
+  // For cancelled shipments, look up the latest 'shipment.cancelled' event_logs
+  // row to surface the actor (admin / link_owner / session_token / email_token).
+  // Per the cancel-flow proposal §audit-log, the actor is captured in
+  // properties.actor at cancel time. Cheaper than a dedicated column;
+  // cancelled shipments are a small minority of tracking fetches.
+  let cancelledByActor: string | null = null;
+  if (liveStatus === "cancelled") {
+    const { data: cancelEvent } = await supabase
+      .from("event_logs")
+      .select("properties")
+      .eq("event_type", "shipment.cancelled")
+      .eq("entity_type", "shipment")
+      .eq("entity_id", shipment.id)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const a = (cancelEvent?.properties as { actor?: string } | undefined)?.actor;
+    if (a === "admin" || a === "link_owner" || a === "session_token" || a === "email_token") {
+      cancelledByActor = a;
+    }
+  }
+
   // Derive viewer_is_recipient server-side. When the request carries a valid
   // JWT and the user is the link owner, the client knows to hide the
   // Ship-Again CTA. link.user_id is NEVER returned — only the boolean.
@@ -191,6 +213,8 @@ serve(async (req: Request) => {
       // flag lets the UI render a TEST banner and hide things that would
       // mislead the viewer (e.g. "View on USPS site" link).
       is_test: shipment.is_test === true,
+      cancelled_at: shipment.cancelled_at ?? null,
+      cancelled_by_actor: cancelledByActor,
     }),
     { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
   );

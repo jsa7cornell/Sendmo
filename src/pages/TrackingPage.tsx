@@ -8,6 +8,7 @@ import { supabase as supabaseClient } from "@/lib/supabase";
 import ShipmentLabelSection from "@/components/tracking/ShipmentLabelSection";
 import ShipAgainCTA from "@/components/tracking/ShipAgainCTA";
 import CancelLabelDialog from "@/components/tracking/CancelLabelDialog";
+import CancelledShipmentBanner from "@/components/tracking/CancelledShipmentBanner";
 import { cancelShipment } from "@/lib/api";
 
 const BASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
@@ -41,6 +42,9 @@ interface TrackingData {
   amount_paid_cents?: number | null;
   // Test-mode flag — surface to UI so viewers know the tracking is synthetic.
   is_test?: boolean;
+  // Cancelled-state metadata (populated server-side when status='cancelled')
+  cancelled_at?: string | null;
+  cancelled_by_actor?: "admin" | "link_owner" | "session_token" | "email_token" | null;
 }
 
 // Persisted cancel-token storage. The token can arrive via two transports:
@@ -251,11 +255,10 @@ export default function TrackingPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      <AppHeader
-        actions={
-          <span className="text-sm text-muted-foreground">Track Package</span>
-        }
-      />
+      {/* AppHeader renders its default UserMenu / Sign In affordance — don't
+          override `actions`. The page body already labels itself; the prior
+          "Track Package" header label was duplicative and hid the user menu. */}
+      <AppHeader />
 
       <main className="max-w-2xl mx-auto px-4 py-8">
         {loading && (
@@ -315,13 +318,24 @@ export default function TrackingPage() {
               </div>
             )}
 
-            {/* Terminal-state banner: shipment is cancelled or returning */}
-            {TERMINAL_BANNERS[data.status] && (
+            {/* Cancelled state: rich banner with timestamp, actor, refund chip */}
+            {data.status === "cancelled" && (
+              <CancelledShipmentBanner
+                cancelledAt={data.cancelled_at ?? null}
+                actor={data.cancelled_by_actor ?? null}
+                viewerIsRecipient={data.viewer_is_recipient}
+                refundStatus={data.refund_status ?? "none"}
+                amountPaidCents={data.amount_paid_cents ?? null}
+              />
+            )}
+
+            {/* Return-to-sender: simple terminal banner */}
+            {data.status === "return_to_sender" && (
               <div className="bg-destructive/10 border border-destructive/30 rounded-2xl p-5 flex items-start gap-3">
                 <AlertCircle className="w-5 h-5 text-destructive flex-shrink-0 mt-0.5" />
                 <div className="flex-1">
-                  <h2 className="text-base font-semibold text-foreground">{TERMINAL_BANNERS[data.status].title}</h2>
-                  <p className="text-sm text-muted-foreground">{TERMINAL_BANNERS[data.status].body}</p>
+                  <h2 className="text-base font-semibold text-foreground">{TERMINAL_BANNERS.return_to_sender.title}</h2>
+                  <p className="text-sm text-muted-foreground">{TERMINAL_BANNERS.return_to_sender.body}</p>
                 </div>
               </div>
             )}

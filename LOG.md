@@ -8,6 +8,52 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-13] Tracking page UX polish — Ask 1 / 2 / 3 from John dogfood
+**Category:** UX | Tracking | Cancel-flow
+**Context:** Handoff [`proposals/2026-05-13_tracking-page-ux-polish-handoff.md`](proposals/2026-05-13_tracking-page-ux-polish-handoff.md) — three asks from the 2026-05-13 dogfood pass on `/t/<public_code>`, the canonical shipment-management surface. Cross-links the decided cancel-flow proposal [`proposals/2026-05-11_label-cancel-and-change_reviewed-2026-05-12_decided-2026-05-12.md`](proposals/2026-05-11_label-cancel-and-change_reviewed-2026-05-12_decided-2026-05-12.md).
+
+**Decision/Finding:**
+
+**Ask 3 — AppHeader user/login on `/t/<code>`.** [`TrackingPage.tsx`](src/pages/TrackingPage.tsx) was passing `actions={<span>Track Package</span>}` to `<AppHeader>`, which overrode the default `UserMenu`/`Sign In` slot. Dropped the `actions` prop. AppHeader's default behavior now renders: signed-in → user menu; anonymous → FAQ + Sign In buttons. The decorative "Track Package" label was duplicative with the body's status banner/card.
+
+**Ask 2 — Cancellation timestamp + actor on the cancelled-state page.** New component [`CancelledShipmentBanner.tsx`](src/components/tracking/CancelledShipmentBanner.tsx) renders: void title + body, relative + absolute cancel time (with hover tooltip), actor label, and a refund-status chip (`submitted` / `refunded` / `rejected` / `not_applicable`).
+
+- **Actor lookup:** tracking edge function ([`supabase/functions/tracking/index.ts`](supabase/functions/tracking/index.ts)) now reads the latest `event_logs` row where `event_type='shipment.cancelled' AND entity_type='shipment' AND entity_id=<shipment.id>` and surfaces `properties.actor` as `cancelled_by_actor` on the response. Option (b) from the handoff — no migration, single extra read for cancelled shipments only (small minority of tracking fetches).
+- **Actor → UI copy:** `admin` → "Cancelled by SendMo admin"; `link_owner` + `viewer_is_recipient` → "Cancelled by you"; `link_owner` + recipient-viewer-false → "Cancelled by the recipient"; `session_token` / `email_token` → "Cancelled by the sender".
+- **`cancelled_at` is sourced from the `shipments` row directly** (already populated by `cancel-label`). Tracking response now includes it.
+- **Audit-row future-proofing:** [`supabase/functions/cancel-label/index.ts`](supabase/functions/cancel-label/index.ts) now writes `properties.user_id = callerId` on the `shipment.cancelled` event_logs row. Not surfaced in UI today — just captured so future agents can resolve a display name when actor is `admin` or `link_owner`. Anonymous (session/email-token) cancellations land with `user_id = null`.
+
+**Ask 1 — State-aware UI polish.** Replaced the single `TERMINAL_BANNERS` branch with two paths: `status === 'cancelled'` → new `CancelledShipmentBanner` (rich, with metadata); `status === 'return_to_sender'` → existing red banner pattern. Other states (in_transit / out_for_delivery / delivered / label_created / test / fresh) were already well-handled; resisted the urge to repaint per the handoff.
+
+**Refund-chip mapping (matches proposal §2.3):**
+| `refund_status` | Visual |
+|---|---|
+| `submitted` | amber chip "Cancellation in progress — refund pending" |
+| `refunded` | emerald chip "Refund of $X.XX issued" (uses `amount_paid_cents` if present, else "Refund issued") |
+| `rejected` | destructive chip "Cancellation rejected — please contact support" |
+| `not_applicable` | neutral chip "No charge was made" |
+| `none` | not rendered (defensive — shouldn't reach cancelled state with `refund_status='none'`) |
+
+**Watch out:**
+- **Edge-function deploy required.** The tracking function changes (`cancelled_by_actor`, `cancelled_at`) and the cancel-label audit change (`user_id`) are server-side. Vercel auto-deploys handle the front-end on push, but `supabase functions deploy tracking --no-verify-jwt` and `supabase functions deploy cancel-label --no-verify-jwt` must run separately. **Until deployed, the UI gracefully degrades** — `cancelled_by_actor` returns undefined and the actor row simply doesn't render. The relative timestamp still renders once `cancelled_at` is exposed.
+- **Preview verification was blocked.** Dev server requires `op run --env-file=.env.tpl -- npm run dev` to inject Supabase env vars; plain `npm run dev` (what `preview_start` uses) renders a blank screen. Type-check + 257 unit tests (+12 new in `CancelledShipmentBanner.test.tsx`) provide correctness coverage; manual visual verification falls to John on the staging URLs (`/t/NEC7J3E` for cancelled + not_applicable).
+- **Anonymous-third-party still sees Print/Download** (no Cancel) per the Round-2 privacy decision (Option a). Not regressed.
+- **No new migration.** `shipments.cancelled_at` and `event_logs.properties.actor` already exist; no schema change needed.
+
+**Tests:** 257 unit tests pass (was 245; +12 in [tests/unit/CancelledShipmentBanner.test.tsx](tests/unit/CancelledShipmentBanner.test.tsx) covering all four actor variants, all five refund-status visuals, relative-time rendering, and the no-metadata graceful-degradation case). `npx tsc -b --noEmit` clean.
+
+**Files touched:**
+- [src/pages/TrackingPage.tsx](src/pages/TrackingPage.tsx) — drop `actions` prop on AppHeader; route `status='cancelled'` to new banner; surface `cancelled_at` / `cancelled_by_actor` in the `TrackingData` interface.
+- [src/components/tracking/CancelledShipmentBanner.tsx](src/components/tracking/CancelledShipmentBanner.tsx) — NEW.
+- [supabase/functions/tracking/index.ts](supabase/functions/tracking/index.ts) — select `cancelled_at`; look up latest `shipment.cancelled` event_logs row for actor; surface both on response.
+- [supabase/functions/cancel-label/index.ts](supabase/functions/cancel-label/index.ts) — write `properties.user_id = callerId` on the audit row.
+- [tests/unit/CancelledShipmentBanner.test.tsx](tests/unit/CancelledShipmentBanner.test.tsx) — NEW.
+
+**Follow-ups (flag, don't bundle):**
+- **Dashboard "Created on" copy** for orphan-recovered shipments shows the recovery timestamp, not the EasyPost-buy time. Cosmetic.
+
+---
+
 ### [2026-05-13] Orphan-shipment recovery + Cancel works without `label_url`
 **Category:** Recovery | UX | Data integrity
 **Context:** Dogfood pass surfaced that 4 EasyPost LIVE labels John printed on 2026-05-12 (22:48 – 23:48 UTC) don't appear in his Dashboard. Cross-checked the EasyPost CSV export against `shipments` via MCP: **zero matches**. Pulled `event_logs` for the same window — each EasyPost `label.created` was followed by `label.db_persist_error`. Two distinct error shapes:

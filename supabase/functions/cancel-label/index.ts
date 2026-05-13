@@ -439,6 +439,10 @@ serve(async (req: Request) => {
             properties: {
                 reason: cancelReason,
                 actor,
+                // Capture the auth user_id when present (admin / link_owner)
+                // so future agents can resolve a display name. Anonymous
+                // session/email-token cancellations have no user_id.
+                user_id: callerId,
                 refund_outcome: refundOutcome,
                 previous_status: "label_created",
                 link_revived: linkRevived,
