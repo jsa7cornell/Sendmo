@@ -57,13 +57,15 @@ serve(async (req: Request) => {
             );
         }
 
-        const isLive = live_mode === true;
+        const clientWantsLive = live_mode === true;
 
         // Resolve the calling user from the JWT, when present. The full-label
         // flow now reaches this endpoint authenticated (proposal
         // 2026-05-11_account-creation-timing). Stamping metadata.user_id on the
         // PI is groundwork for Phase B (Stripe Customer dedup).
         let resolvedUserId: string | null = null;
+        let callerRole: string | null = null;
+        let callerAdminMode: string = "test";
         const authHeader = req.headers.get("Authorization") || req.headers.get("authorization") || "";
         const token = authHeader.replace(/^Bearer\s+/i, "");
         const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || Deno.env.get("VITE_SUPABASE_ANON_KEY") || "";
@@ -73,7 +75,55 @@ serve(async (req: Request) => {
             if (sbUrl && sbKey) {
                 const sb = createClient(sbUrl, sbKey, { auth: { autoRefreshToken: false, persistSession: false } });
                 const { data: userResp } = await sb.auth.getUser(token);
-                if (userResp?.user?.id) resolvedUserId = userResp.user.id;
+                if (userResp?.user?.id) {
+                    resolvedUserId = userResp.user.id;
+                    const { data: profile } = await sb
+                        .from("profiles")
+                        .select("role, admin_active_mode")
+                        .eq("id", resolvedUserId)
+                        .maybeSingle();
+                    callerRole = (profile?.role as string) ?? null;
+                    callerAdminMode = (profile?.admin_active_mode as string) ?? "test";
+                }
+            }
+        }
+
+        // Phase C: server-derived liveMode. The client's live_mode param is
+        // accepted ONLY when the caller is admin AND their server-truthed
+        // admin_active_mode is 'live_charge'. (Live Comp shouldn't charge —
+        // it's the no-Stripe path for comped labels.) PLAYBOOK Rule 14 +
+        // master proposal §4.4.
+        const isLive = clientWantsLive && callerRole === "admin" && callerAdminMode === "live_charge";
+
+        // Phase C: live-charge allowlist gate. Even with the admin role + mode
+        // checks above, restrict live charging to a comma-separated env
+        // allowlist of UUIDs during the dogfood window. Empty allowlist =
+        // closed (no live charges allowed). Round-1 P3 in the master Stripe
+        // proposal §6 Phase C row.
+        if (isLive) {
+            const allowlist = (Deno.env.get("PAYMENTS_ALLOWED_USERS") || "")
+                .split(",")
+                .map((s) => s.trim())
+                .filter(Boolean);
+            if (!resolvedUserId || !allowlist.includes(resolvedUserId)) {
+                log({
+                    event_type: "payment.live_charge_blocked",
+                    session_id: sessionId,
+                    severity: "warn",
+                    entity_type: "payment_intent",
+                    properties: {
+                        user_id: resolvedUserId,
+                        reason: !resolvedUserId
+                            ? "no_resolved_user"
+                            : allowlist.length === 0
+                                ? "allowlist_empty"
+                                : "user_not_allowlisted",
+                    },
+                });
+                return new Response(
+                    JSON.stringify({ error: "Live charges are not enabled for this account." }),
+                    { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
             }
         }
 

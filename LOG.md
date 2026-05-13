@@ -8,6 +8,38 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-13] Stripe Phase B (saved cards) + Phase C (live-charge dogfood gate)
+**Category:** Stripe | Phase rollout | Mode resolution | Edge Functions | Auth context
+**Cross-link:** [proposals/2026-05-13_phase-b-saved-cards-implementation_reviewed-2026-05-13_decided-2026-05-13.md](proposals/2026-05-13_phase-b-saved-cards-implementation_reviewed-2026-05-13_decided-2026-05-13.md) + master [proposals/2026-04-26_stripe-integration-plan_reviewed-2026-04-26_decided-2026-05-11.md](proposals/2026-04-26_stripe-integration-plan_reviewed-2026-04-26_decided-2026-05-11.md) §6 rows B + C.
+
+**Context:** Phase A (migration 017 ledger) and Phase 1 (test-mode PaymentIntent) were already on `main`. Phase B ships the saved-cards surface — SetupIntent + Stripe Customer + Dashboard wallet, no charging. Phase C opens the live-charge path with an env-var allowlist. Live-mode Stripe was activated by John today (live keys + webhook endpoint placed; signature-plumbing verification deferred to first real live event because Stripe blocks `stripe trigger` in live mode).
+
+**Phase B shipped (commit `541f0b9`):**
+- **Migration 022** — `profiles.admin_active_mode` column (server-trusted `test` | `live_comp` | `live_charge`), `set_admin_active_mode()` RPC (SECURITY DEFINER + role check), partial indexes on `profiles.stripe_customer_id_{test,live}` for webhook hot-path lookups.
+- **New `/payment-methods` Edge Function** — POST creates SetupIntent in server-resolved mode (reads `profile.admin_active_mode`; client sends NO mode param per Rule 14 / master §4.4); DELETE `/:pm_id` detaches + soft-deletes. `verify_jwt = true` explicit in `config.toml` (review B3 — precedent: 2026-05-11 `links` 401 incident).
+- **`_shared/stripe.ts` helpers** — `createCustomer`, `createSetupIntent`, `retrievePaymentMethod`, `detachPaymentMethod` + flat type defs matching the existing `PaymentIntent`/`Refund` style.
+- **`stripe-webhook/index.ts`** — three new handlers: `setup_intent.succeeded` (state mirror), `payment_method.attached` (canonical `payment_methods` row writer — carries card data inline; this is the review-B1 fix), `payment_method.detached` (soft-delete + auto-promote next default; review N3).
+- **`AuthContext`** — exposes `adminActiveMode`, `setAdminActiveMode()` (RPC), derives `liveMode` + `compMode`.
+- **`AppHeader`** — global 3-mode admin toolbar to the left of the user menu (T1 decided by John inline). Replaces the `RecipientOnboarding.tsx`-local toolbar.
+- **`src/lib/stripeClient.ts`** — `getStripeForMode(liveMode)` shared helper. `StripePaymentForm.tsx` no longer hardcodes the test publishable key (review §2.f finding — was a tripwire for Phase C).
+- **`AddCardModal`** — Stripe Elements + SetupIntent flow with retry-N idempotency (review N4). Dashboard refetches `payment_methods` with 500ms/1s/2s backoff so the webhook-arrival window doesn't leave the user staring at an empty list.
+- **Dashboard wallet** — replaces "Coming Soon" placeholder. WISHLIST "Real wallet card on Dashboard" closes.
+
+**Phase C shipped (this commit):**
+- **`payments/index.ts`** — server now derives `isLive` from the caller's server-truthed `profile.admin_active_mode === 'live_charge'` (NOT `live_comp` — comp shouldn't charge), AND requires the caller's UID to be in `PAYMENTS_ALLOWED_USERS` (comma-separated env var). Empty allowlist = closed. Rejects with 403 + `payment.live_charge_blocked` event log. Client's `live_mode` param is now a hint, not the source of truth (Rule 14).
+
+**Watch out:**
+- **Migration 022 must be applied** before Phase B works (the `admin_active_mode` column + RPC). The recent `9755da1 ci(supabase): auto-deploy changed Edge Functions on push to main` covers Edge Functions but **not** migrations — apply via Supabase Studio SQL editor or `supabase db push` before testing on the deployed Vercel preview.
+- **`PAYMENTS_ALLOWED_USERS` must be set in Supabase Edge Function secrets** before Phase C dogfood. Format: comma-separated UUIDs (John's auth UID for initial dogfood). Empty allowlist rejects all live charges with 403 — by design.
+- **Local preview verification was blocked** by missing `.env.local` in the project root (no `VITE_SUPABASE_URL` in shell env). Vite dev server starts cleanly but the React app can't instantiate the Supabase client. **Per CLAUDE.md Rule 3 I cannot read `.env.local` to debug this.** Vercel preview deploy is the canonical verification path. Flagging because future Phase-B/C-class UI testing will hit the same wall — if local dev is desired, John needs to drop a `.env.local` in place (from 1Password values).
+- **First live event IS the signature-plumbing test.** Step 1.5 of the activation checklist was skipped (Stripe blocks `stripe trigger` in live mode + no past live events to resend). The first real `payment_method.attached` from a live SetupIntent will exercise `STRIPE_WEBHOOK_SECRET_LIVE` end-to-end. If the secret is wrong, `webhook.hmac_invalid` will land in `event_logs` and we rotate — no money is at risk because the failure mode is webhook-signature-only.
+
+**Acceptance criteria status:**
+- Phase B (master §6): "John saves his own card test+live; appears in dashboard; signature verification works in both modes." → code in place; awaits Vercel preview + migration 022 applied.
+- Phase C (master §6): "5 successful self-charges; reconciliation correct to the penny; drift cron clean for 48h; void→refund tested once." → first criterion is now possible (server gate in place); manual dogfood is John's bar.
+
+---
+
 ### [2026-05-13] Admin debug panel inline on /t/<code> (Ask 4)
 **Category:** Admin tooling | Debugging | Role-gated surface
 **Cross-link:** Follow-on to [proposals/2026-05-13_tracking-page-ia-polish_reviewed-2026-05-13_decided-2026-05-13.md](proposals/2026-05-13_tracking-page-ia-polish_reviewed-2026-05-13_decided-2026-05-13.md) "Ask 4 — separate PR" decision. No formal proposal — John waived (model already aligned via the mockup at `previews/tracking-page-states.html` and the polish proposal's admin-panel scoping section).
