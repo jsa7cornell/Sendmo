@@ -59,10 +59,10 @@ describe("ShipmentLabelSection", () => {
     expect(screen.getByText(/anyone with this link can see the recipient's address/i)).toBeInTheDocument();
   });
 
-  it("renders carrier-specific drop-off copy keyed to the selected carrier", () => {
-    render(<ShipmentLabelSection {...base} carrier="UPS" />);
-    expect(screen.getByText(/UPS Store/i)).toBeInTheDocument();
-  });
+  // 2026-05-13 evening — drop-off rendering moved to HowToShipStrip to fix
+  // visual duplication on /t/<code> (the old ShipmentLabelSection card +
+  // HowToShipStrip step 3 said the same thing in two shapes). Coverage for
+  // carrier-specific drop-off lives in HowToShipStrip.test.tsx.
 
   it("hides the print-count chip when printCount is 0 or unset", () => {
     render(<ShipmentLabelSection {...base} />);
@@ -87,8 +87,4 @@ describe("ShipmentLabelSection", () => {
     expect(onPrintClick).toHaveBeenCalled();
   });
 
-  it("falls back gracefully when the carrier is unknown", () => {
-    render(<ShipmentLabelSection {...base} carrier="WeirdCo" />);
-    expect(screen.getByText(/authorized WeirdCo location/i)).toBeInTheDocument();
-  });
 });

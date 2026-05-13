@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Printer, Download, ExternalLink, Package, XCircle, RotateCcw, Share2, Check } from "lucide-react";
-import { dropOffCopy } from "@/components/sender/senderState";
+import { Printer, Download, Package, XCircle, RotateCcw, Share2, Check } from "lucide-react";
 
 interface Props {
   /** Null for orphan/recovered shipments where we know the EasyPost id but
@@ -35,8 +34,10 @@ export default function ShipmentLabelSection({
   labelUrl, trackingNumber, carrier, shareUrl, canCancel, onCancelClick, onChangeClick,
   printCount = 0, onPrintClick,
 }: Props) {
-  const dropOff = dropOffCopy(carrier);
   const [shareCopied, setShareCopied] = useState(false);
+  // `carrier` retained in props for parity / future use; drop-off rendering
+  // moved to HowToShipStrip (Family 1 only) per the IA polish ordering fix.
+  void carrier;
 
   // Share: prefer the native share sheet on mobile; fall back to clipboard.
   // The /t/<code> URL is safe to share — it's the canonical tracking surface
@@ -205,24 +206,6 @@ export default function ShipmentLabelSection({
         </div>
       )}
 
-      {/* Drop-off — co-located with label since both apply only while not-yet-shipped */}
-      <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
-        <h3 className="text-sm font-semibold text-foreground mb-2">Drop off your package</h3>
-        <p className="text-sm text-muted-foreground">{dropOff.body}</p>
-        {dropOff.locationUrl && (
-          <a
-            href={dropOff.locationUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-xs text-primary hover:underline inline-flex items-center gap-1 mt-2"
-          >
-            Find a location <ExternalLink className="w-3 h-3" />
-          </a>
-        )}
-        <p className="text-xs text-muted-foreground mt-3 pt-3 border-t border-border">
-          Tape the label securely to the largest flat side of the package. Cover any old shipping labels.
-        </p>
-      </div>
     </div>
   );
 }

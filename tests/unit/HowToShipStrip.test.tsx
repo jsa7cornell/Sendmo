@@ -23,4 +23,21 @@ describe("HowToShipStrip", () => {
     render(<HowToShipStrip carrier={null} />);
     expect(screen.getByText(/tracking activates once the carrier/i)).toBeInTheDocument();
   });
+
+  it("renders carrier-specific drop-off copy (UPS → UPS Store)", () => {
+    render(<HowToShipStrip carrier="UPS" />);
+    expect(screen.getByText(/UPS Store/i)).toBeInTheDocument();
+  });
+
+  it("falls back gracefully when the carrier is unknown", () => {
+    render(<HowToShipStrip carrier="WeirdCo" />);
+    expect(screen.getByText(/authorized WeirdCo location/i)).toBeInTheDocument();
+  });
+
+  it("renders the 'Find a location' deep-link when dropOffCopy returns a URL (USPS)", () => {
+    render(<HowToShipStrip carrier="USPS" />);
+    const link = screen.getByRole("link", { name: /find a location/i });
+    expect(link).toBeInTheDocument();
+    expect(link.getAttribute("target")).toBe("_blank");
+  });
 });

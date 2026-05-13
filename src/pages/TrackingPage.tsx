@@ -378,27 +378,7 @@ export default function TrackingPage() {
               </div>
             )}
 
-            {/* F1 — Ready to Ship. Label section + HowToShipStrip + (later) DetailsCard.
-                The `label_url` gate is INSIDE ShipmentLabelSection (orphan-
-                recovered shipments without a PDF still surface Cancel + Share). */}
-            {data.status === "label_created" && (
-              <>
-                <ShipmentLabelSection
-                  labelUrl={data.label_url}
-                  trackingNumber={data.tracking_number}
-                  carrier={data.carrier}
-                  shareUrl={typeof window !== "undefined" ? `${window.location.origin}/t/${data.public_code}` : `/t/${data.public_code}`}
-                  canCancel={canCancel}
-                  onCancelClick={() => setConfirmMode("cancel")}
-                  onChangeClick={() => setConfirmMode("change")}
-                  printCount={(data.print_count ?? 0) + optimisticPrintBump}
-                  onPrintClick={handlePrintClick}
-                />
-                <HowToShipStrip carrier={data.carrier} />
-              </>
-            )}
-
-            {/* Cancel / Change confirmation dialog */}
+            {/* Cancel / Change confirmation dialog (modal — position-agnostic) */}
             <CancelLabelDialog
               open={confirmMode !== null}
               onOpenChange={(o) => !o && setConfirmMode(null)}
@@ -456,6 +436,28 @@ export default function TrackingPage() {
                   ) : null;
                 })()}
               </div>
+            )}
+
+            {/* F1 — Ready to Ship. Label section + HowToShipStrip rendered
+                after the status hero so users see state first, then action,
+                then instructions. The `label_url` gate is INSIDE
+                ShipmentLabelSection (orphan-recovered shipments without a
+                PDF still surface Cancel + Share). */}
+            {data.status === "label_created" && (
+              <>
+                <ShipmentLabelSection
+                  labelUrl={data.label_url}
+                  trackingNumber={data.tracking_number}
+                  carrier={data.carrier}
+                  shareUrl={typeof window !== "undefined" ? `${window.location.origin}/t/${data.public_code}` : `/t/${data.public_code}`}
+                  canCancel={canCancel}
+                  onCancelClick={() => setConfirmMode("cancel")}
+                  onChangeClick={() => setConfirmMode("change")}
+                  printCount={(data.print_count ?? 0) + optimisticPrintBump}
+                  onPrintClick={handlePrintClick}
+                />
+                <HowToShipStrip carrier={data.carrier} />
+              </>
             )}
 
             {/* Per-family Details card — uniform across F1/F2/F3 with field
