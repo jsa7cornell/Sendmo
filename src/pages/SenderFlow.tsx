@@ -56,6 +56,13 @@ export default function SenderFlow() {
     }
     fetchLink(shortCode)
       .then((data) => {
+        // Full-label links are viewer links — the label was already bought
+        // at link-creation time. Redirect to the tracking page instead of
+        // rendering the sender wizard (which expects a flex-link).
+        if (data.link_type === "full_label" && data.public_code) {
+          navigate(`/t/${data.public_code}`, { replace: true });
+          return;
+        }
         setLinkData(data);
         setStep("intro");
       })
@@ -63,7 +70,7 @@ export default function SenderFlow() {
         setLoadError(err.message || "We looked everywhere, but this link doesn't seem to exist. Double-check the URL?");
         setStep("error");
       });
-  }, [shortCode]);
+  }, [shortCode, navigate]);
 
   async function handleFetchRates(p: SenderParcel) {
     if (!linkData) return;

@@ -258,6 +258,9 @@ export interface LinkData {
   recipient_state: string | null;
   recipient_zip: string | null;
   recipient_name: string | null;
+  // Populated for full_label viewer links so the client can redirect to
+  // /t/<public_code>. Null for flex-links.
+  public_code?: string | null;
 }
 
 export interface UpdateLinkParams {

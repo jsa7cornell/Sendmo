@@ -58,7 +58,12 @@ serve(async (req: Request) => {
             );
         }
 
-        if (link.status === "used") {
+        // Full-label links are intentionally created with status='used' because
+        // the label was already bought server-side at link creation. The /s/<code>
+        // resolver treats these as viewer links — it looks up the shipment's
+        // public_code and the client redirects to /t/<public_code>. Only
+        // flex-links use the single-shot "used means done" semantics.
+        if (link.status === "used" && link.link_type !== "full_label") {
             return new Response(
                 JSON.stringify({ error: "This link has already been used", status: link.status }),
                 { status: 410, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -72,6 +77,20 @@ serve(async (req: Request) => {
                 JSON.stringify({ error: "This link has expired", status: "expired" }),
                 { status: 410, headers: { ...corsHeaders, "Content-Type": "application/json" } }
             );
+        }
+
+        // For full_label viewer links, look up the bound shipment's public_code
+        // so the client can redirect to /t/<public_code>.
+        let publicCode: string | null = null;
+        if (link.link_type === "full_label") {
+            const { data: ship } = await supabase
+                .from("shipments")
+                .select("public_code")
+                .eq("link_id", link.id)
+                .order("created_at", { ascending: false })
+                .limit(1)
+                .maybeSingle();
+            publicCode = ship?.public_code ?? null;
         }
 
         // Return link data — never expose full recipient address to sender
@@ -90,6 +109,7 @@ serve(async (req: Request) => {
                 recipient_state: link.recipient_address?.state ?? null,
                 recipient_zip: link.recipient_address?.zip ?? null,
                 recipient_name: link.recipient_address?.name ?? null,
+                public_code: publicCode,
             }),
             { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
