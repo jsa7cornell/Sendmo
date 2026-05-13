@@ -172,6 +172,7 @@ export default function RecipientStepFullShipping({
           error={tried && !state.originAddress.verified ? "Sender address is required" : undefined}
           nameLabel="Sender's name"
           nameHint=""
+          addressPlaceholder="Start typing the sender's address…"
         />
         {tried && !state.originAddress.name && (
           <p className="text-xs text-destructive mt-1">Sender name is required for the shipping label</p>

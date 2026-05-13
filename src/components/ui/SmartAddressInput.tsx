@@ -20,6 +20,7 @@ interface Props {
     error?: string;
     nameLabel?: string;
     nameHint?: string;
+    addressPlaceholder?: string;
 }
 
 // ─── Parse a formatted address string into components ────────
@@ -48,7 +49,7 @@ function parseDescriptionToComponents(description: string): Omit<AddressInput, "
 
 // ─── Component ───────────────────────────────────────────────
 
-export default function SmartAddressInput({ label, value, onChange, error, nameLabel, nameHint }: Props) {
+export default function SmartAddressInput({ label, value, onChange, error, nameLabel, nameHint, addressPlaceholder }: Props) {
     const [query, setQuery] = useState(
         value.verified ? `${value.street}, ${value.city}, ${value.state} ${value.zip}`.trim() : "",
     );
@@ -294,7 +295,7 @@ export default function SmartAddressInput({ label, value, onChange, error, nameL
                             onChange={handleQueryChange}
                             onKeyDown={handleKeyDown}
                             onFocus={() => predictions.length > 0 && setIsOpen(true)}
-                            placeholder="Start typing your address…"
+                            placeholder={addressPlaceholder || "Start typing your address…"}
                             autoComplete="off"
                             className={`
                                 w-full rounded-xl border px-3 py-2 pl-9 text-sm
