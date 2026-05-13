@@ -8,6 +8,61 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-13] Admin debug panel inline on /t/<code> (Ask 4)
+**Category:** Admin tooling | Debugging | Role-gated surface
+**Cross-link:** Follow-on to [proposals/2026-05-13_tracking-page-ia-polish_reviewed-2026-05-13_decided-2026-05-13.md](proposals/2026-05-13_tracking-page-ia-polish_reviewed-2026-05-13_decided-2026-05-13.md) "Ask 4 — separate PR" decision. No formal proposal — John waived (model already aligned via the mockup at `previews/tracking-page-states.html` and the polish proposal's admin-panel scoping section).
+
+**Context:** Admins were context-switching from `/t/<code>` to `/admin` or the Supabase SQL editor to debug shipments — looking up identifiers, refund state, ledger rows, audit events. The earlier polish PR stubbed an "Admin debug →" footer link that deep-linked to `/admin?shipment=<id>` (which doesn't read that param yet). Replacing that stub with an inline collapsible debug panel that fetches everything in one round-trip.
+
+**Decision/Finding:**
+
+**New role-gated edge function** [`tracking-admin/index.ts`](supabase/functions/tracking-admin/index.ts). `GET /functions/v1/tracking-admin?code=<public_code>` — guarded by `requireAdmin` from `_shared/auth.ts` (PLAYBOOK Rule 6 reuse). Returns a structured debug payload:
+- **Identifiers**: shipment_id, public_code, tracking_number, easypost_shipment_id, easypost_tracker_id, stripe_payment_intent_id, stripe_customer_id, carrier_refund_id. `cancel_token` is **defanged** to `••••• <last4>` — never returned in cleartext (full value retrievable via Supabase Studio if needed).
+- **Mode**: `is_test`, `is_live` (derived as `!is_test` so admins don't have to invert mentally), payment_method, carrier, service.
+- **State**: status, refund_status.
+- **Timeline**: created_at, updated_at, cancelled_at, refund_submitted_at, delivered_at, promised_delivery_date — each surfaced both as ISO + relative time on the client.
+- **Parcel + money**: weight_oz, dimensions, item_description, rate_cents, display_price_cents (carrier-cost vs charged-price).
+- **Addresses**: full sender + recipient including street1 (admin only — Rule 7 protects sender-UI surfaces; admin debug is not one).
+- **Parent link**: id, short_code, link_type, status, user_id (owner), created_at, updated_at.
+- **Transactions ledger**: all rows from migration 017's `transactions` table where `shipment_id` matches. Tiny table view in the UI with type, amount_cents, mode, idempotency_key, created_at.
+- **Event log**: last 10 `event_logs` rows where `entity_id` = shipment.id, sorted DESC. JSON properties expandable per row.
+- **Optional**: `?refetch=easypost` fires an additional live `GET /v2/shipments/<id>` against EasyPost (using the correct test vs. live key per `is_test`) and embeds the raw JSON in `easypost.shipment`. Useful for "did the carrier-side refund actually land yet" without leaving the page.
+- **_meta**: queried_by (admin user_id), queried_at (ISO), refetch (the param value or null).
+
+**Why a separate endpoint vs. extending `/tracking`** — the public tracking response stays slim and field-omission bugs can't accidentally leak privileged data. Same blind-spot argument the reviewer caught for `shipment_id` in the polish proposal (B4); this endpoint extends the same posture to the rest of the privileged fields in one shot.
+
+**New frontend client** [`fetchTrackingAdmin` in src/lib/api.ts](src/lib/api.ts) with full `AdminTrackingPayload` TypeScript surface. Bearer-auth via the user's JWT; throws on non-200 with the server's error message.
+
+**New inline panel component** [`AdminDebugPanel.tsx`](src/components/tracking/AdminDebugPanel.tsx). Collapsible (native `<details>`), purple-tinted to differentiate from user-facing surfaces, sectioned: Identifiers / Mode + state / Timeline / Parent link / Parcel + money / Transactions ledger / Event log / EasyPost refetch (when triggered). **Lazy-fetches on first expand** so non-admin viewers (and admins who don't open it) pay zero network cost. Refresh button + Refetch-from-EasyPost button next to the summary header. Footer carries "Open in /admin" deep-link to keep the seam for when the admin-report page surfaces a shipment filter (currently no-op on that side).
+
+**Replaced earlier `AdminAffordanceFooter` stub** — superseded by the inline panel. Deleted the file + its test; `TrackingPage.tsx` now imports `AdminDebugPanel` and renders it when `isAdmin` is true.
+
+**Watch out:**
+- **Edge function must redeploy for the panel to populate.** Falls open if not deployed — panel renders the "Couldn't load admin data" error block.
+- **`transactions.shipment_id` is the join key** (added in migration 017). All future shipments will have this populated; pre-migration shipments don't, so older test rows return empty ledger arrays. Not a bug — accurate reflection of the data.
+- **`refetch=easypost` makes a live API call** charged to your EasyPost account against the rate limit. Cheap (single shipment fetch) but worth knowing if you click it repeatedly.
+- **No rate limit on this endpoint today.** It's admin-gated so a malicious admin is the only attack vector, but if we ever federate admin access more widely a 10/min/admin limit would be sensible.
+- **The cancel_token defang strategy.** Showing `••••• <last4>` is informational — useful for confirming "this shipment has a token" vs "the token was already consumed" without exposing the value. If a debug session needs the full token, that's Supabase Studio territory.
+- **No new migration.** `transactions.shipment_id` (migration 017), `profiles.role` (migration 016), and `event_logs.entity_id` (migration 003) all already exist.
+
+**Tests:** 310 passing (was 305; +5 new — 3 AdminDebugPanel render/lazy-fetch tests, 5 fetchTrackingAdmin contract tests; old AdminAffordanceFooter tests removed alongside the deleted stub component). `npx tsc -b --noEmit` clean.
+
+**Files touched:**
+- [supabase/functions/tracking-admin/index.ts](supabase/functions/tracking-admin/index.ts) — NEW (role-gated admin debug endpoint).
+- [src/lib/api.ts](src/lib/api.ts) — `fetchTrackingAdmin` + `AdminTrackingPayload` type surface.
+- [src/components/tracking/AdminDebugPanel.tsx](src/components/tracking/AdminDebugPanel.tsx) — NEW (inline collapsible debug panel).
+- [src/components/tracking/AdminAffordanceFooter.tsx](src/components/tracking/AdminAffordanceFooter.tsx) — DELETED (superseded).
+- [src/pages/TrackingPage.tsx](src/pages/TrackingPage.tsx) — swap stub for inline panel.
+- [tests/unit/AdminDebugPanel.test.tsx](tests/unit/AdminDebugPanel.test.tsx) — NEW (collapsed-state + lazy-fetch contract).
+- [tests/unit/fetchTrackingAdmin.test.ts](tests/unit/fetchTrackingAdmin.test.ts) — NEW (client contract: auth header, refetch param, error paths).
+- [tests/unit/AdminAffordanceFooter.test.tsx](tests/unit/AdminAffordanceFooter.test.tsx) — DELETED.
+
+**Follow-ups (flagged, not bundled):**
+- Wire `?shipment=<id>` filter on `/admin` so the panel footer's deep-link actually scrolls/filters.
+- Optional: surface the panel state in URL (`?admin=open`) so admins can deep-link straight to an expanded debug view.
+
+---
+
 ### [2026-05-13] Dashboard tabs (Shipments | Links) + parent-link reference on cancelled state
 **Category:** UX | Dashboard | Data-model exposure
 **Cross-link:** Follow-on to [proposals/2026-05-13_tracking-page-ia-polish_reviewed-2026-05-13_decided-2026-05-13.md](proposals/2026-05-13_tracking-page-ia-polish_reviewed-2026-05-13_decided-2026-05-13.md). Lightweight session — John waived a formal proposal since the scope was small and the model was already aligned.

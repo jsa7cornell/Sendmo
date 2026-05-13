@@ -12,7 +12,7 @@ import CancelledShipmentBanner from "@/components/tracking/CancelledShipmentBann
 import DetailsCard from "@/components/tracking/DetailsCard";
 import HowToShipStrip from "@/components/tracking/HowToShipStrip";
 import PrintAnotherLabelCTA from "@/components/tracking/PrintAnotherLabelCTA";
-import AdminAffordanceFooter from "@/components/tracking/AdminAffordanceFooter";
+import AdminDebugPanel from "@/components/tracking/AdminDebugPanel";
 import { cancelShipment, logLabelPrint } from "@/lib/api";
 
 const BASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
@@ -613,11 +613,11 @@ export default function TrackingPage() {
               <ArrowLeft className="w-4 h-4" /> Back to SendMo
             </Link>
 
-            {/* Admin-only footer affordance. Deep-link target only present
-                when caller is admin (server-side gate per B4) → falls back
-                to /admin if shipment_id is absent. Full inline panel is
-                Ask 4 — separate proposal. */}
-            {isAdmin && <AdminAffordanceFooter shipmentId={data.shipment_id} />}
+            {/* Admin-only inline debug panel (Ask 4, decided 2026-05-13).
+                Replaces the earlier AdminAffordanceFooter stub. Collapsible,
+                lazy-fetches on first expand via the role-gated
+                tracking-admin edge function. */}
+            {isAdmin && <AdminDebugPanel publicCode={data.public_code} />}
           </div>
         )}
       </main>

@@ -195,6 +195,110 @@ export async function logLabelPrint(
   return res.json();
 }
 
+// ─── Admin debug surface for /t/<code> (decided 2026-05-13, Ask 4) ──
+// Returns the rich shipment debug payload for /t/<code>'s collapsible
+// Admin Debug card. Server-side gated by profiles.role='admin' via
+// requireAdmin in tracking-admin/index.ts.
+
+export interface AdminTrackingPayload {
+  identifiers: {
+    shipment_id: string;
+    public_code: string;
+    tracking_number: string | null;
+    easypost_shipment_id: string | null;
+    easypost_tracker_id: string | null;
+    stripe_payment_intent_id: string | null;
+    stripe_customer_id: string | null;
+    cancel_token: string | null;  // defanged ("••••• abcd") or null
+    carrier_refund_id: string | null;
+  };
+  mode: {
+    is_test: boolean;
+    is_live: boolean;
+    payment_method: string | null;
+    carrier: string | null;
+    service: string | null;
+  };
+  state: {
+    status: string;
+    refund_status: string;
+  };
+  timeline: {
+    created_at: string;
+    updated_at: string;
+    cancelled_at: string | null;
+    refund_submitted_at: string | null;
+    delivered_at: string | null;
+    promised_delivery_date: string | null;
+  };
+  parcel: {
+    weight_oz: number | null;
+    length_in: number | null;
+    width_in: number | null;
+    height_in: number | null;
+    item_description: string | null;
+  };
+  money: {
+    rate_cents: number | null;
+    display_price_cents: number | null;
+  };
+  addresses: {
+    sender: { name: string | null; street1: string | null; city: string | null; state: string | null; zip: string | null } | null;
+    recipient: { name: string | null; street1: string | null; city: string | null; state: string | null; zip: string | null } | null;
+  };
+  link: {
+    id: string;
+    short_code: string;
+    link_type: string;
+    status: string;
+    user_id: string;
+    created_at: string;
+    updated_at: string;
+  } | null;
+  label_url: string | null;
+  transactions: Array<{
+    id: string;
+    type: string;
+    amount_cents: number;
+    mode: string;
+    idempotency_key: string | null;
+    stripe_payment_intent_id: string | null;
+    stripe_charge_id: string | null;
+    stripe_refund_id: string | null;
+    created_at: string;
+  }>;
+  event_logs: Array<{
+    id: string;
+    event_type: string;
+    severity: string;
+    source: string;
+    duration_ms: number | null;
+    properties: Record<string, unknown>;
+    created_at: string;
+  }>;
+  easypost: { shipment: unknown } | null;
+  _meta: { queried_by: string; queried_at: string; refetch: string | null };
+}
+
+export async function fetchTrackingAdmin(
+  publicCode: string,
+  opts: { accessToken: string; refetch?: "easypost" }
+): Promise<AdminTrackingPayload> {
+  const params = new URLSearchParams({ code: publicCode });
+  if (opts.refetch) params.set("refetch", opts.refetch);
+  const res = await fetch(`${BASE_URL}/functions/v1/tracking-admin?${params}`, {
+    headers: {
+      apikey: ANON_KEY,
+      Authorization: `Bearer ${opts.accessToken}`,
+    },
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `Admin fetch failed (${res.status})`);
+  }
+  return res.json();
+}
+
 // ─── Label Purchase ─────────────────────────────────────────
 
 export async function buyLabel(
