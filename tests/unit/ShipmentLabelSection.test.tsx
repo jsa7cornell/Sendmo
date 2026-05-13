@@ -34,6 +34,17 @@ describe("ShipmentLabelSection", () => {
     expect(screen.getByRole("button", { name: /share/i })).toBeInTheDocument();
   });
 
+  it("hides Print + Download when labelUrl is null and offers an orphan-recovery note", () => {
+    // Orphan-recovery case (decided 2026-05-13): shipments where the
+    // EasyPost label was bought but the PDF URL wasn't captured.
+    render(<ShipmentLabelSection {...base} labelUrl={null} />);
+    expect(screen.queryByRole("link", { name: /^download$/i })).toBeNull();
+    expect(screen.queryByRole("link", { name: /print label/i })).toBeNull();
+    expect(screen.getByText(/Label PDF not available/i)).toBeInTheDocument();
+    // Share is still available (shares the /t/<code> URL, not the PDF).
+    expect(screen.getByRole("button", { name: /share/i })).toBeInTheDocument();
+  });
+
   it("displays the tracking number in the label preview header", () => {
     render(<ShipmentLabelSection {...base} />);
     expect(screen.getByText(base.trackingNumber)).toBeInTheDocument();

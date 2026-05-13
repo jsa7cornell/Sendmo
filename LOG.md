@@ -8,6 +8,42 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-13] Orphan-shipment recovery + Cancel works without `label_url`
+**Category:** Recovery | UX | Data integrity
+**Context:** Dogfood pass surfaced that 4 EasyPost LIVE labels John printed on 2026-05-12 (22:48 – 23:48 UTC) don't appear in his Dashboard. Cross-checked the EasyPost CSV export against `shipments` via MCP: **zero matches**. Pulled `event_logs` for the same window — each EasyPost `label.created` was followed by `label.db_persist_error`. Two distinct error shapes:
+- **22:48 / 23:22 / 23:24:** `Could not find the function public.admin_insert_shipment(... p_from_country, p_from_state, p_from_street2, ...)` — note `p_from_name` and `p_from_street1` MISSING from the labels-function call. The frontend was still sending the old address shape.
+- **23:48:** Same RPC-not-found error, but with full `p_from_name` + `p_from_street1` present — meaning the labels-function code had updated but the RPC schema cache hadn't picked up migration 018 yet.
+- **00:28 on 2026-05-13:** `column reference "public_code" is ambiguous` — migration 018 applied, migration 019 not yet.
+- **00:40 onward:** persists succeeded (`CG7FWV3`, then `Z7BCPTY` at 05:22).
+
+4 live shipments orphaned: EasyPost has them and was paid; our DB has zero record; they couldn't be cancelled through the UI because they didn't exist in `shipments`.
+
+**Decision/Finding:**
+
+**Code fix — Cancel renders without `label_url`** ([`ShipmentLabelSection.tsx`](src/components/tracking/ShipmentLabelSection.tsx)). The component's `labelUrl: string` became `string | null`. The label-preview + Print + Download row is now conditional inside the component — when `null`, an "Label PDF not available" notice renders along with the Share button (which shares the `/t/<code>` URL, not the PDF). Cancel + Cancel & start over still render based on `canCancel` regardless of label_url. [`TrackingPage.tsx`](src/pages/TrackingPage.tsx)'s `data.label_url` gate was dropped — the section is now mounted whenever `status === 'label_created'` and non-terminal. This unblocks the orphan recovery (where label_url=NULL) without requiring a label-URL backfill.
+
+**Recovery script** ([`scripts/recover-orphan-shipments-2026-05-12.sql`](scripts/recover-orphan-shipments-2026-05-12.sql)). 4 sequential `SELECT * FROM admin_insert_shipment(...)` calls — uses the canonical RPC so the resulting rows have proper public_codes, short_codes, addresses, sendmo_links (full_label, in_use), and is_live=true / is_test=false. `p_label_url := NULL` for all four. `p_easypost_tracker_id := NULL` (webhook lookup uses tracking_number anyway, so this is fine — when EasyPost scans the package the webhook will flip status to `in_transit` correctly).
+
+**Why John runs the SQL, not the agent.** Supabase MCP is read-only in this project — `execute_sql` errors with `cannot execute INSERT in a read-only transaction`. Even though Rule 0.5 strictly targets destructive ops (and INSERTs are additive), the MCP enforcement closes the path regardless. John pastes the script into the Supabase dashboard SQL editor (project `fkxykvzsqdjzhurntgah`). Post-run verification SQL is included at the bottom of the file (read-only — safe for MCP to run from agent after John completes the inserts).
+
+**Why label_url is NULL:** The EasyPost API has the URL on each shipment object, but the recovery doesn't fetch it because (a) it would require shipping out a one-shot Edge Function that uses the LIVE EasyPost key, and (b) John already has the printed labels locally. The orphans exist mostly so they can be **cancelled**, which only needs `easypost_shipment_id` (present). If a label_url backfill is wanted later, it's a small one-shot Edge Function (`recover-label-urls`) that calls `GET /v2/shipments/<id>` and UPDATEs.
+
+**Watch out:**
+- **The 5th orphan** (`shp_7adb9b1c33914f16bb239c26d1fa1509` at 00:28 UTC 2026-05-13) is in `event_logs` but NOT in John's EasyPost CSV export. Per John's call we're NOT recovering it; if it turns out to have been a real print, run a single follow-up `admin_insert_shipment` call.
+- **Re-running the recovery script is not idempotent.** Each call generates a fresh `public_code` and `short_code`. If a row succeeds and you re-run, Postgres will reject on `easypost_shipment_id UNIQUE` (no — wait: `easypost_shipment_id` is NOT unique in the schema; this could double-insert). Operationally: run the script once. If a single statement errors mid-way, comment out the completed ones before re-running. **TODO follow-up:** add a UNIQUE constraint on `shipments.easypost_shipment_id` to make recovery scripts idempotent. Today's behavior allows duplicate rows on retry, which is a latent data-integrity gap.
+- **Recovered shipments will reach `delivered` via the webhook** when EasyPost eventually scans the package. The `webhooks/index.ts` lookup is by `tracking_number` so the orphans will get status updates normally. The link revival → `completed` flip will also fire correctly.
+- **Recovery rows show in admin report as live margin.** Per Phase A: the `transactions` ledger only writes `charge` rows via stripe-webhook (which won't fire for these because the labels were comp-mode Live Comp, no Stripe PI). So the recovered shipments have no `transactions` row at all — they're invisible to margin reporting until a Phase E true-charge run lands. For these specific 4, that's correct (they were live-mode but uncharged by Stripe — equivalent to comp). Comp-grant entries weren't written either (the labels function's `transactions.insert` only fires when `dbShipmentId` is set, which it wasn't for the orphans). Net: the comp_grant ledger entries for these 4 are **lost forever** — small data hygiene gap, not actionable.
+
+**Tests:** 245 unit tests pass (was 244; +1 — `ShipmentLabelSection.test.tsx` gains a `labelUrl=null` case verifying Print/Download hide, the recovery-note shows, and Share still renders). `npx tsc -b --noEmit` clean.
+
+**Files touched:**
+- [src/components/tracking/ShipmentLabelSection.tsx](src/components/tracking/ShipmentLabelSection.tsx) (labelUrl nullable + conditional PDF row + recovery note + warning gated)
+- [src/pages/TrackingPage.tsx](src/pages/TrackingPage.tsx) (drop the data.label_url gate)
+- [tests/unit/ShipmentLabelSection.test.tsx](tests/unit/ShipmentLabelSection.test.tsx) (new labelUrl=null test)
+- [scripts/recover-orphan-shipments-2026-05-12.sql](scripts/recover-orphan-shipments-2026-05-12.sql) (NEW — one-shot recovery, John runs in dashboard)
+
+---
+
 ### [2026-05-13] Test-mode visibility on Dashboard + tracking page
 **Category:** UX | Dogfood | Test-mode hygiene
 **Context:** Dogfood pass surfaced a real confusion: `K6SX3ES` showed "Delivered" on `/t/<code>` but USPS had no record of the tracking number. Investigation via Supabase MCP: every shipment generated since the launch-blocker fix is `is_test=true` (EasyPost test API). Test-mode tracking numbers look like real USPS numbers (`9434600208303112218294`) and EasyPost's test trackers auto-advance through `label_created → in_transit → delivered` regardless of physical reality. The "View on USPS site" link goes to a 404 because USPS never saw the synthetic number. Two product calls came out of the dogfood:

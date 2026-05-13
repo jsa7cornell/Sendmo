@@ -326,8 +326,10 @@ export default function TrackingPage() {
               </div>
             )}
 
-            {/* Label section: only while not-yet-shipped, never in terminal states */}
-            {data.status === "label_created" && !TERMINAL_BANNERS[data.status] && data.label_url && (
+            {/* Label section: only while not-yet-shipped, never in terminal states.
+                The `label_url` gate is INSIDE the component now (so orphan-
+                recovered shipments without a PDF still surface Cancel + Share). */}
+            {data.status === "label_created" && !TERMINAL_BANNERS[data.status] && (
               <ShipmentLabelSection
                 labelUrl={data.label_url}
                 trackingNumber={data.tracking_number}

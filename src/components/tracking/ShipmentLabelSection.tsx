@@ -4,7 +4,10 @@ import { Printer, Download, ExternalLink, Package, XCircle, RotateCcw, Share2, C
 import { dropOffCopy } from "@/components/sender/senderState";
 
 interface Props {
-  labelUrl: string;
+  /** Null for orphan/recovered shipments where we know the EasyPost id but
+   *  not the PDF URL. The preview/Print/Download row is hidden when null;
+   *  the Cancel + Share + warning + drop-off rows still render. */
+  labelUrl: string | null;
   trackingNumber: string;
   carrier: string;
   /** Public_code-derived URL the Share button copies / shares — `/t/<code>`. */
@@ -53,65 +56,100 @@ export default function ShipmentLabelSection({
 
   return (
     <div className="space-y-4">
-      {/* Label preview */}
-      <div className="bg-card rounded-2xl border border-border shadow-sm overflow-hidden">
-        <div className="bg-foreground text-background px-4 py-2 flex items-center justify-between text-xs">
-          <span className="font-semibold">SendMo Label</span>
-          <span className="font-mono">{trackingNumber}</span>
-        </div>
-        <div className="p-5 flex items-center justify-center bg-muted/40 min-h-[160px]">
+      {/* PDF-dependent block: preview + Print + Download. Hidden when labelUrl
+          is null (orphan/recovered shipments — we know the EasyPost id and
+          can still Cancel, but the PDF link wasn't captured at buy time).
+          Share is rendered outside this block because it shares the /t/<code>
+          URL, not the PDF. */}
+      {labelUrl ? (
+        <>
+          {/* Label preview */}
+          <div className="bg-card rounded-2xl border border-border shadow-sm overflow-hidden">
+            <div className="bg-foreground text-background px-4 py-2 flex items-center justify-between text-xs">
+              <span className="font-semibold">SendMo Label</span>
+              <span className="font-mono">{trackingNumber}</span>
+            </div>
+            <div className="p-5 flex items-center justify-center bg-muted/40 min-h-[160px]">
+              <a
+                href={labelUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-center hover:opacity-80 transition-opacity"
+              >
+                <Package className="w-12 h-12 text-muted-foreground mx-auto mb-2" />
+                <p className="text-xs text-muted-foreground">Tap to preview label PDF</p>
+              </a>
+            </div>
+          </div>
+
+          {/* Print — primary, largest CTA */}
           <a
             href={labelUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-center hover:opacity-80 transition-opacity"
+            className="block"
           >
-            <Package className="w-12 h-12 text-muted-foreground mx-auto mb-2" />
-            <p className="text-xs text-muted-foreground">Tap to preview label PDF</p>
+            <Button className="w-full rounded-xl shadow-md text-lg py-7" size="lg">
+              <Printer className="w-5 h-5 mr-2" />
+              Print Label (PDF)
+            </Button>
           </a>
-        </div>
-      </div>
 
-      {/* Print — primary, largest CTA */}
-      <a
-        href={labelUrl}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="block"
-      >
-        <Button className="w-full rounded-xl shadow-md text-lg py-7" size="lg">
-          <Printer className="w-5 h-5 mr-2" />
-          Print Label (PDF)
-        </Button>
-      </a>
-
-      {/* Download + Share — secondary row */}
-      <div className="grid grid-cols-2 gap-2">
-        <a href={labelUrl} download className="block">
-          <Button variant="outline" className="w-full rounded-xl">
-            <Download className="w-4 h-4 mr-2" />
-            Download
+          {/* Download + Share — secondary row */}
+          <div className="grid grid-cols-2 gap-2">
+            <a href={labelUrl} download className="block">
+              <Button variant="outline" className="w-full rounded-xl">
+                <Download className="w-4 h-4 mr-2" />
+                Download
+              </Button>
+            </a>
+            <Button variant="outline" className="w-full rounded-xl" onClick={handleShare}>
+              {shareCopied ? (
+                <>
+                  <Check className="w-4 h-4 mr-2" />
+                  Copied
+                </>
+              ) : (
+                <>
+                  <Share2 className="w-4 h-4 mr-2" />
+                  Share
+                </>
+              )}
+            </Button>
+          </div>
+        </>
+      ) : (
+        <>
+          {/* Label is in this shipment but we don't have a PDF link — orphan
+              recovery rows. Surface a neutral note and offer Share so the
+              tracking URL can still be passed around. */}
+          <div className="bg-card rounded-2xl border border-border shadow-sm p-5 text-sm text-muted-foreground">
+            <p className="font-medium text-foreground mb-1">Label PDF not available</p>
+            <p>This label was generated but the PDF link wasn't captured. You can still cancel below if you don't need to ship.</p>
+          </div>
+          <Button variant="outline" className="w-full rounded-xl" onClick={handleShare}>
+            {shareCopied ? (
+              <>
+                <Check className="w-4 h-4 mr-2" />
+                Copied
+              </>
+            ) : (
+              <>
+                <Share2 className="w-4 h-4 mr-2" />
+                Share tracking link
+              </>
+            )}
           </Button>
-        </a>
-        <Button variant="outline" className="w-full rounded-xl" onClick={handleShare}>
-          {shareCopied ? (
-            <>
-              <Check className="w-4 h-4 mr-2" />
-              Copied
-            </>
-          ) : (
-            <>
-              <Share2 className="w-4 h-4 mr-2" />
-              Share
-            </>
-          )}
-        </Button>
-      </div>
+        </>
+      )}
 
-      {/* Single-use + share warning (per author-response B2 (a)) */}
-      <div className="rounded-xl bg-muted/40 border border-border px-4 py-3 text-xs text-muted-foreground">
-        This label is for a single shipment. Please don't reprint or share — duplicates can be rejected by the carrier or charged twice. Anyone with this link can see the recipient's address, so don't share it publicly.
-      </div>
+      {/* Single-use + share warning (per author-response B2 (a)) — only
+          relevant when there's actually a PDF to reprint. */}
+      {labelUrl && (
+        <div className="rounded-xl bg-muted/40 border border-border px-4 py-3 text-xs text-muted-foreground">
+          This label is for a single shipment. Please don't reprint or share — duplicates can be rejected by the carrier or charged twice. Anyone with this link can see the recipient's address, so don't share it publicly.
+        </div>
+      )}
 
       {/* Cancel + Change row — visible only when the viewer's auth signal
           qualifies. Deliberately de-emphasized so a user who just got the
