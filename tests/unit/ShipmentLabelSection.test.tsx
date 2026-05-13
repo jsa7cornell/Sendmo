@@ -7,6 +7,7 @@ describe("ShipmentLabelSection", () => {
     labelUrl: "https://easypost-files.example.com/labels/abc.pdf",
     trackingNumber: "9405500208303118781601",
     carrier: "USPS",
+    shareUrl: "https://sendmo.co/t/H7K2P9",
   };
 
   it("renders the Print Label CTA as a link pointing at the PDF", () => {
@@ -18,11 +19,19 @@ describe("ShipmentLabelSection", () => {
     expect(printLink.getAttribute("target")).toBe("_blank");
   });
 
-  it("renders the Download PDF secondary CTA with download attribute", () => {
+  it("renders the Download secondary CTA with download attribute", () => {
+    // Label was "Download PDF" pre-2026-05-13; shortened to "Download" when
+    // the Share button joined it as a sibling in a 2-col grid.
     render(<ShipmentLabelSection {...base} />);
-    const downloadLink = screen.getByRole("link", { name: /download pdf/i });
+    const downloadLink = screen.getByRole("link", { name: /^download$/i });
     expect(downloadLink.getAttribute("href")).toBe(base.labelUrl);
     expect(downloadLink.hasAttribute("download")).toBe(true);
+  });
+
+  it("renders the Share button alongside Download", () => {
+    render(<ShipmentLabelSection {...base} />);
+    // Share is a button, not a link — distinguishes it from the PDF anchors.
+    expect(screen.getByRole("button", { name: /share/i })).toBeInTheDocument();
   });
 
   it("displays the tracking number in the label preview header", () => {

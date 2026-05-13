@@ -8,6 +8,44 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-13] Cancel-flow Phase B slice 1 — `/t/<public_code>` is the single shipment-management surface
+**Category:** UX | Dashboard | Consolidation
+**Proposal:** [proposals/2026-05-11_label-cancel-and-change_reviewed-2026-05-12_decided-2026-05-12.md](proposals/2026-05-11_label-cancel-and-change_reviewed-2026-05-12_decided-2026-05-12.md) §2.7 Phase B items 2 (Dashboard-side cancel) + 3 (state messages).
+**Context:** Phase A landed two cancel UIs on Dashboard — the new `CancelLabelDialog` reachable via `/t/<code>` click-through, and the older `CancelLabelModal` reachable via the inline "Void Label" link in the Actions column. Dogfood feedback: redundant; the modal used SPEC §13.1's outdated "credited to your SendMo account" copy while the new dialog used the post-Stripe-§11-#1 "refund to your card" copy. Decided to consolidate around `/t/<public_code>` as the single management surface (Option A from the dogfood discussion). Plus three concurrent UX fixes: honest status copy for `label_created` rows, From/To both rendered (was Sender-only), and Tracking column renamed to "SendMo Label ID" for white-label consistency.
+
+**Decision/Finding:**
+- **Dashboard consolidation.** [`Dashboard.tsx`](src/pages/Dashboard.tsx):
+  - `Actions` column **removed**. `Cancel*` modal/state/handler/import all retired. Admin's `/admin` still uses `CancelLabelModal.tsx` — file kept.
+  - `Tracking` column renamed to **`SendMo Label ID`** (white-label rule — never surface carrier branding when SendMo's own identifier exists). The cell is still a Link to `/t/<public_code>`.
+  - Single new `From` column + new `To` column. Both pulled from the per-shipment `addresses` rows (PostgREST embedded resource via `sender_address:addresses!sender_address_id(name)` + `recipient_address:addresses!recipient_address_id(name)`), with fallback to `sendmo_links.sender_name` for older full-label rows.
+  - **Honest status copy:** `statusWithDate()` was unconditionally using `updated_at` and rendering `"Shipped on Mar 18"` for `label_created` rows. That was a lie when the package hadn't moved. Now branches: `label_created` uses `created_at` and reads `"Created on Mar 18 · awaiting carrier scan"`; transitional/terminal statuses still use `updated_at`.
+- **Share button** on [`ShipmentLabelSection.tsx`](src/components/tracking/ShipmentLabelSection.tsx). Print stays as the primary; Download and Share now share a 2-col secondary row. Share prefers `navigator.share()` on mobile (native share sheet), falls back to `navigator.clipboard.writeText()` with a 2s "Copied" confirmation. The shared URL is `${origin}/t/<public_code>` — safe to share publicly, same surface the label-confirmation email already advertises.
+- **Recipient + sender both already cancel on `/t/<code>`.** John's request to surface this — verified Phase A's `canCancel` derivation in TrackingPage.tsx already covers it: `label_created AND (isAdmin OR viewer_is_recipient OR sessionStorage cancel_token)`. The recipient is signed in as the link owner → `viewer_is_recipient=true` (server-derived from JWT vs `sendmo_links.user_id`). The sender holds the cancel_token (sessionStorage on Confirm, or `?cancel=<hex>` from the future email transport). No code change needed; the audit trail in `event_logs` already distinguishes the actor (`actor='admin'|'link_owner'|'session_token'|'email_token'`).
+
+**Why this shape:**
+- One canonical surface beats two. `/t/<public_code>` is the bookmark-friendly URL John already chose in Round 2 of the sender-flow proposal; everything related to a shipment belongs there.
+- The hashed Crockford-base32 `public_code` provides URL-as-capability auth for view-and-print (anyone with the URL can print). Cancel auth is layered on top via the per-shipment `cancel_token` so the print-share doesn't accidentally also grant cancel.
+- Renaming Tracking → "SendMo Label ID" reinforces the white-label rule in PLAYBOOK §"Label Cancellation / Void" — we never surface carrier branding when our own identifier exists, and "tracking" was confusable with the carrier's tracking number.
+- Honest `label_created` copy was free to fix. The "Shipped on" wording dated back to migration 001 era when status was directly tied to label-buy and there was no `label_created` vs in_transit distinction.
+
+**Watch out:**
+- **Address-name fallback chain matters.** Full-label rows minted before the address-shape fix (2026-05-12 Track 1+3 closeout) had a `addressToApi` boundary that silently dropped `street1` when undefined. The shipments that DID land in production for the Feb–Mar 2026 era should have `addresses` rows because the labels function inserts addresses *before* attempting the shipments insert. But if any rows landed without a populated address, `s.sender_address?.name` will fall through to `sendmo_links.sender_name` (the canonical full-label sender), then to `"Unknown"`. No null-pointer surface.
+- **Bare `null` recipient on a row reads as `—`.** Flex links pre-2026-05-11 (sender-flow wizard launch) may have shipments without populated `recipient_address` — defensive fallback renders an em-dash. Should be rare; surface only if dogfood shows it.
+- **CancelLabelModal still imported from `/admin`.** The file lives. If someone deletes it later, audit `/admin` first — that's the only remaining caller (Admin.tsx:5).
+- **Share button uses `navigator.share`'s typed cast.** `Navigator.share` isn't in Deno-deploy or some older browser type lib variants; the typed-cast pattern (`navigator as Navigator & { share: (...) => Promise<void> }`) bypasses without breaking older browsers — graceful fallback to clipboard.
+- **No accessToken in Dashboard.** Removed the unused `accessToken` state alongside the Modal retirement. AuthContext + Supabase client handle JWT for the user's own queries; nothing in Dashboard reaches the cancel-label function directly anymore.
+- **Phase B items still deferred** (proposal §2.7): cancel notification email template + dispatcher, `/s/<short_code>` friendly per-state messages for `in_use`/`completed`/`expired`/`cancelled`, and multi-billing-per-link admin report audit. The recipient-initiated cancel path is now end-to-end via the `/t/<code>` surface itself, which closes the larger of the deferred items.
+
+**Tests:** 244 passed / 0 failed (was 243; +1 — added a Share-button assertion to `tests/unit/ShipmentLabelSection.test.tsx` and updated the "Download PDF" label match to the shortened "Download"). `npx tsc -b --noEmit` clean.
+
+**Files touched:**
+- [src/pages/Dashboard.tsx](src/pages/Dashboard.tsx) (column rename, From/To, "Created on" copy, Actions column removed, CancelLabelModal/cancelTarget/handleCancelled/accessToken retired)
+- [src/components/tracking/ShipmentLabelSection.tsx](src/components/tracking/ShipmentLabelSection.tsx) (Share button + handleShare; Download label shortened)
+- [src/pages/TrackingPage.tsx](src/pages/TrackingPage.tsx) (passes `shareUrl` to ShipmentLabelSection)
+- [tests/unit/ShipmentLabelSection.test.tsx](tests/unit/ShipmentLabelSection.test.tsx) (Share button test + updated Download label match)
+
+---
+
 ### [2026-05-12] Cancel-flow Phase A — user-facing Cancel + Change on `/t/<public_code>`
 **Category:** Feature | Cancellation | UX | Auth | Schema | Stripe coordination
 **Proposal:** [proposals/2026-05-11_label-cancel-and-change_reviewed-2026-05-12_decided-2026-05-12.md](proposals/2026-05-11_label-cancel-and-change_reviewed-2026-05-12_decided-2026-05-12.md)

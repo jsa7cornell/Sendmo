@@ -1,11 +1,14 @@
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Printer, Download, ExternalLink, Package, XCircle, RotateCcw } from "lucide-react";
+import { Printer, Download, ExternalLink, Package, XCircle, RotateCcw, Share2, Check } from "lucide-react";
 import { dropOffCopy } from "@/components/sender/senderState";
 
 interface Props {
   labelUrl: string;
   trackingNumber: string;
   carrier: string;
+  /** Public_code-derived URL the Share button copies / shares — `/t/<code>`. */
+  shareUrl: string;
   /** When true, render the Cancel + Change row beneath the single-use warning.
    *  Auth-derive lives in TrackingPage (admin || link-owner || cancel-token). */
   canCancel?: boolean;
@@ -18,9 +21,35 @@ interface Props {
 // instructions, and the privacy-aware single-use note. Per proposal §11
 // + author response B2 (option a) — anyone with the URL can see this.
 export default function ShipmentLabelSection({
-  labelUrl, trackingNumber, carrier, canCancel, onCancelClick, onChangeClick,
+  labelUrl, trackingNumber, carrier, shareUrl, canCancel, onCancelClick, onChangeClick,
 }: Props) {
   const dropOff = dropOffCopy(carrier);
+  const [shareCopied, setShareCopied] = useState(false);
+
+  // Share: prefer the native share sheet on mobile; fall back to clipboard.
+  // The /t/<code> URL is safe to share — it's the canonical tracking surface
+  // and cancel-auth is gated separately by the cancel_token.
+  async function handleShare() {
+    try {
+      if (typeof navigator !== "undefined" && "share" in navigator) {
+        await (navigator as Navigator & { share: (data: ShareData) => Promise<void> }).share({
+          title: "SendMo Label",
+          text: "Track this shipment:",
+          url: shareUrl,
+        });
+        return;
+      }
+    } catch {
+      // User dismissed the share sheet or it's unavailable — fall through to copy.
+    }
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setShareCopied(true);
+      setTimeout(() => setShareCopied(false), 2000);
+    } catch {
+      // Clipboard blocked (rare). No-op; the URL is in the address bar regardless.
+    }
+  }
 
   return (
     <div className="space-y-4">
@@ -56,13 +85,28 @@ export default function ShipmentLabelSection({
         </Button>
       </a>
 
-      {/* Download — secondary */}
-      <a href={labelUrl} download className="block">
-        <Button variant="outline" className="w-full rounded-xl">
-          <Download className="w-4 h-4 mr-2" />
-          Download PDF
+      {/* Download + Share — secondary row */}
+      <div className="grid grid-cols-2 gap-2">
+        <a href={labelUrl} download className="block">
+          <Button variant="outline" className="w-full rounded-xl">
+            <Download className="w-4 h-4 mr-2" />
+            Download
+          </Button>
+        </a>
+        <Button variant="outline" className="w-full rounded-xl" onClick={handleShare}>
+          {shareCopied ? (
+            <>
+              <Check className="w-4 h-4 mr-2" />
+              Copied
+            </>
+          ) : (
+            <>
+              <Share2 className="w-4 h-4 mr-2" />
+              Share
+            </>
+          )}
         </Button>
-      </a>
+      </div>
 
       {/* Single-use + share warning (per author-response B2 (a)) */}
       <div className="rounded-xl bg-muted/40 border border-border px-4 py-3 text-xs text-muted-foreground">

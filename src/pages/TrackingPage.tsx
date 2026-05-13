@@ -309,6 +309,7 @@ export default function TrackingPage() {
                 labelUrl={data.label_url}
                 trackingNumber={data.tracking_number}
                 carrier={data.carrier}
+                shareUrl={typeof window !== "undefined" ? `${window.location.origin}/t/${data.public_code}` : `/t/${data.public_code}`}
                 canCancel={canCancel}
                 onCancelClick={() => setConfirmMode("cancel")}
                 onChangeClick={() => setConfirmMode("change")}

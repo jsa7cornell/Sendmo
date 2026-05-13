@@ -4,7 +4,7 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
   Copy, Link2, MapPin, Zap, Shield, CreditCard,
   Package, Truck, CheckCircle2, ChevronRight,
-  LogOut, User, AlertCircle, Ban, Pencil, X,
+  LogOut, User, AlertCircle, Pencil, X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -12,7 +12,6 @@ import { cn } from "@/lib/utils";
 import SendMoLogo from "@/components/SendMoLogo";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
-import CancelLabelModal from "@/components/CancelLabelModal";
 
 // ─── Types ──────────────────────────────────────────────────
 
@@ -33,6 +32,13 @@ interface DashboardShipment {
   sendmo_links: {
     sender_name: string | null;
   };
+  // PostgREST embeddings for sender + recipient on the shipment itself.
+  // Aliases `sender_address` / `recipient_address` disambiguate the two
+  // FKs to `addresses`. The shipment-level address is canonical — for flex
+  // links the link's sender_name is null and only shipments.sender_address.name
+  // tells us who actually shipped this particular parcel.
+  sender_address: { name: string | null } | null;
+  recipient_address: { name: string | null } | null;
 }
 
 interface DashboardLink {
@@ -69,28 +75,24 @@ const STATUS_CONFIG: Record<DisplayStatus, { label: string; color: string; icon:
   cancelled: { label: "Cancelled", color: "bg-red-100 text-red-700 border-red-200", icon: AlertCircle },
 };
 
-function statusWithDate(status: string, updatedAt: string): string {
-  const date = new Date(updatedAt).toLocaleDateString("en-US", {
+// For each shipment status, pick the right "as of" date:
+//   label_created → created_at (the label was made; nothing else has happened)
+//   anything else → updated_at (the most recent transition)
+// Pre-2026-05-13 this used updated_at uniformly and rendered "Shipped on …"
+// for label_created shipments — a lie when the package hadn't actually moved.
+function statusWithDate(status: string, createdAt: string, updatedAt: string): string {
+  const dateStr = (iso: string) => new Date(iso).toLocaleDateString("en-US", {
     month: "short", day: "numeric", year: "numeric",
   });
   switch (status) {
-    case "label_created": return `Shipped on ${date}`;
-    case "in_transit": return `In transit since ${date}`;
-    case "out_for_delivery": return `Out for delivery ${date}`;
-    case "delivered": return `Delivered on ${date}`;
-    case "return_to_sender": return `Returned on ${date}`;
-    case "cancelled": return `Cancelled on ${date}`;
-    default: return date;
+    case "label_created": return `Created on ${dateStr(createdAt)} · awaiting carrier scan`;
+    case "in_transit": return `In transit since ${dateStr(updatedAt)}`;
+    case "out_for_delivery": return `Out for delivery ${dateStr(updatedAt)}`;
+    case "delivered": return `Delivered on ${dateStr(updatedAt)}`;
+    case "return_to_sender": return `Returned on ${dateStr(updatedAt)}`;
+    case "cancelled": return `Cancelled on ${dateStr(updatedAt)}`;
+    default: return dateStr(updatedAt);
   }
-}
-
-function canVoidLabel(s: DashboardShipment): boolean {
-  return (
-    !s.is_test &&
-    s.easypost_shipment_id !== null &&
-    s.status === "label_created" &&
-    s.refund_status === "none"
-  );
 }
 
 function refundBadge(refundStatus: string) {
@@ -136,20 +138,20 @@ export default function Dashboard() {
   const [link, setLink] = useState<DashboardLink | null>(null);
   const [loadingLink, setLoadingLink] = useState(true);
   const [showUserMenu, setShowUserMenu] = useState(false);
-  const [cancelTarget, setCancelTarget] = useState<DashboardShipment | null>(null);
-  const [accessToken, setAccessToken] = useState<string>("");
+  // Cancel-target state retired 2026-05-13. All label management (Cancel,
+  // Cancel & start over, Print, Download, Share) now lives at /t/<public_code>.
+  // Click the SendMo Label ID column to manage a shipment.
+  // accessToken state removed alongside CancelLabelModal — Dashboard no
+  // longer authenticates any direct API calls beyond the existing supabase
+  // client (which is already JWT-aware via AuthContext).
 
   useEffect(() => {
     async function fetchData() {
       if (!user) return;
 
-      // Get access token for authenticated API calls
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session?.access_token) setAccessToken(session.access_token);
-
       const shipmentsPromise = supabase
         .from("shipments")
-        .select("id, tracking_number, public_code, carrier, service, status, refund_status, display_price_cents, rate_cents, is_test, easypost_shipment_id, created_at, updated_at, sendmo_links!inner(user_id, sender_name)")
+        .select("id, tracking_number, public_code, carrier, service, status, refund_status, display_price_cents, rate_cents, is_test, easypost_shipment_id, created_at, updated_at, sendmo_links!inner(user_id, sender_name), sender_address:addresses!sender_address_id(name), recipient_address:addresses!recipient_address_id(name)")
         .eq("sendmo_links.user_id", user.id)
         .order("created_at", { ascending: false })
         .limit(50);
@@ -181,13 +183,9 @@ export default function Dashboard() {
     fetchData();
   }, [user]);
 
-  function handleCancelled(shipmentId: string) {
-    setShipments((prev) =>
-      prev.map((s) =>
-        s.id === shipmentId ? { ...s, status: "cancelled", refund_status: "submitted" } : s,
-      ),
-    );
-  }
+  // handleCancelled() removed 2026-05-13. The /t/<public_code> page is the
+  // single source of truth for shipment state after a cancel; the Dashboard
+  // re-renders the latest status the next time it mounts or refetches.
 
   const shortUrl = link ? `sendmo.co/s/${link.short_code}` : null;
 
@@ -438,26 +436,36 @@ export default function Dashboard() {
           ) : (
             <>
               {/* Desktop table */}
+              {/* Single-surface model (decided 2026-05-13): the SendMo Label ID
+                  is the only inline action. Clicking it lands on /t/<code>
+                  where Print / Download / Share / Cancel / Cancel & start over
+                  live. No more inline Void button — the /t/ page is the canonical
+                  shipment-management surface. */}
               <div className="hidden md:block overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-border text-left text-muted-foreground">
-                      <th className="px-5 py-3 font-medium">Sender</th>
+                      <th className="px-5 py-3 font-medium">From</th>
+                      <th className="px-5 py-3 font-medium">To</th>
                       <th className="px-5 py-3 font-medium">Carrier</th>
                       <th className="px-5 py-3 font-medium">Status</th>
                       <th className="px-5 py-3 font-medium">Amount</th>
-                      <th className="px-5 py-3 font-medium">Tracking</th>
-                      <th className="px-5 py-3 font-medium">Actions</th>
+                      <th className="px-5 py-3 font-medium">SendMo Label ID</th>
                     </tr>
                   </thead>
                   <tbody>
                     {shipments.map((s) => {
                       const statusCfg = STATUS_CONFIG[s.status as DisplayStatus] ?? STATUS_CONFIG.label_created;
                       const StatusIcon = statusCfg.icon;
-                      const senderName = (s.sendmo_links as any)?.sender_name || "Unknown";
+                      // Prefer the per-shipment sender_address.name (set by labels
+                      // RPC for both link types). Fall back to sendmo_links.sender_name
+                      // (older full_label rows) then "Unknown".
+                      const fromName = s.sender_address?.name || s.sendmo_links?.sender_name || "Unknown";
+                      const toName = s.recipient_address?.name || "—";
                       return (
                         <tr key={s.id} className="border-b border-border/50 last:border-0 hover:bg-muted/30 transition-colors">
-                          <td className="px-5 py-3 font-medium text-foreground">{senderName}</td>
+                          <td className="px-5 py-3 font-medium text-foreground">{fromName}</td>
+                          <td className="px-5 py-3 text-foreground">{toName}</td>
                           <td className="px-5 py-3 text-muted-foreground">{s.carrier}</td>
                           <td className="px-5 py-3">
                             <div className="flex flex-col gap-0.5">
@@ -469,7 +477,7 @@ export default function Dashboard() {
                                 {statusCfg.label}
                               </span>
                               <span className="text-xs text-muted-foreground">
-                                {statusWithDate(s.status, s.updated_at)}
+                                {statusWithDate(s.status, s.created_at, s.updated_at)}
                               </span>
                               {refundBadge(s.refund_status)}
                             </div>
@@ -489,17 +497,6 @@ export default function Dashboard() {
                               <span className="text-muted-foreground text-xs">&mdash;</span>
                             )}
                           </td>
-                          <td className="px-5 py-3">
-                            {canVoidLabel(s) ? (
-                              <button
-                                onClick={() => setCancelTarget(s)}
-                                className="inline-flex items-center gap-1 text-xs text-destructive hover:underline"
-                              >
-                                <Ban className="w-3 h-3" />
-                                Void Label
-                              </button>
-                            ) : null}
-                          </td>
                         </tr>
                       );
                     })}
@@ -512,11 +509,16 @@ export default function Dashboard() {
                 {shipments.map((s) => {
                   const statusCfg = STATUS_CONFIG[s.status as DisplayStatus] ?? STATUS_CONFIG.label_created;
                   const StatusIcon = statusCfg.icon;
-                  const senderName = (s.sendmo_links as any)?.sender_name || "Unknown";
+                  const fromName = s.sender_address?.name || s.sendmo_links?.sender_name || "Unknown";
+                  const toName = s.recipient_address?.name || "—";
                   return (
                     <div key={s.id} className="p-4 space-y-2">
                       <div className="flex items-center justify-between">
-                        <span className="text-sm font-medium text-foreground">{senderName}</span>
+                        <div className="text-sm text-foreground">
+                          <span className="font-medium">{fromName}</span>
+                          <span className="text-muted-foreground"> → </span>
+                          <span className="font-medium">{toName}</span>
+                        </div>
                         <span className={cn(
                           "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium",
                           statusCfg.color,
@@ -525,32 +527,21 @@ export default function Dashboard() {
                           {statusCfg.label}
                         </span>
                       </div>
-                      <p className="text-xs text-muted-foreground">{statusWithDate(s.status, s.updated_at)}</p>
+                      <p className="text-xs text-muted-foreground">{statusWithDate(s.status, s.created_at, s.updated_at)}</p>
                       {refundBadge(s.refund_status)}
                       <div className="flex items-center justify-between text-xs">
                         <span className="text-muted-foreground">{s.carrier}</span>
                         <span className="font-medium text-foreground">{formatCents(s.display_price_cents)}</span>
                       </div>
-                      <div className="flex items-center justify-between">
-                        {s.public_code && s.tracking_number !== "TEST" ? (
-                          <Link
-                            to={`/t/${s.public_code}`}
-                            className="text-primary text-xs font-mono flex items-center gap-1 hover:underline"
-                          >
-                            Track: {s.public_code}
-                            <ChevronRight className="w-3 h-3" />
-                          </Link>
-                        ) : <span />}
-                        {canVoidLabel(s) && (
-                          <button
-                            onClick={() => setCancelTarget(s)}
-                            className="inline-flex items-center gap-1 text-xs text-destructive hover:underline"
-                          >
-                            <Ban className="w-3 h-3" />
-                            Void
-                          </button>
-                        )}
-                      </div>
+                      {s.public_code && s.tracking_number !== "TEST" ? (
+                        <Link
+                          to={`/t/${s.public_code}`}
+                          className="text-primary text-xs font-mono flex items-center gap-1 hover:underline"
+                        >
+                          SendMo Label ID: {s.public_code}
+                          <ChevronRight className="w-3 h-3" />
+                        </Link>
+                      ) : null}
                     </div>
                   );
                 })}
@@ -560,24 +551,6 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Cancel Label Modal */}
-      {cancelTarget && (
-        <CancelLabelModal
-          open={!!cancelTarget}
-          onClose={() => setCancelTarget(null)}
-          shipment={{
-            shipmentId: cancelTarget.id,
-            easypostShipmentId: cancelTarget.easypost_shipment_id || "",
-            carrier: cancelTarget.carrier,
-            trackingNumber: cancelTarget.tracking_number || "",
-            rateCents: cancelTarget.rate_cents,
-            createdAt: cancelTarget.created_at,
-            isTest: cancelTarget.is_test,
-          }}
-          onCancelled={handleCancelled}
-          accessToken={accessToken}
-        />
-      )}
     </motion.div>
   );
 }
