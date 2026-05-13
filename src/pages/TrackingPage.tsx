@@ -39,6 +39,10 @@ interface TrackingData {
   // Round 2 additions (proposal §11):
   label_url: string | null;
   link_short_code: string | null;
+  // Parent link status — added 2026-05-13 evening alongside dashboard tabs.
+  // Surfaced on F3 cancelled so users know whether the link is still reusable.
+  link_status?: string | null;
+  link_type?: string | null;
   viewer_is_recipient: boolean;
   // Cancel-flow Phase A additions (decided 2026-05-12):
   refund_status?: "none" | "submitted" | "refunded" | "rejected" | "not_applicable";
@@ -516,9 +520,12 @@ export default function TrackingPage() {
               }}
             />
 
-            {/* F3 cancelled — forward CTA so the user isn't stuck on a dead-end. */}
+            {/* F3 cancelled — parent link reference + forward CTA so the user
+                isn't stuck on a dead-end AND knows whether the link is still
+                reusable. */}
             <PrintAnotherLabelCTA
               linkShortCode={data.link_short_code}
+              linkStatus={data.link_status ?? null}
               status={data.status}
             />
 

@@ -8,6 +8,49 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-13] Dashboard tabs (Shipments | Links) + parent-link reference on cancelled state
+**Category:** UX | Dashboard | Data-model exposure
+**Cross-link:** Follow-on to [proposals/2026-05-13_tracking-page-ia-polish_reviewed-2026-05-13_decided-2026-05-13.md](proposals/2026-05-13_tracking-page-ia-polish_reviewed-2026-05-13_decided-2026-05-13.md). Lightweight session — John waived a formal proposal since the scope was small and the model was already aligned.
+
+**Context:** After today's IA polish ship, John dogfooded `/t/RA2W2NG` (cancelled) and observed that the Dashboard hides the `sendmo_links` ↔ `shipments` 1:many relationship — a link in `active` state can have cancelled child shipments and the Dashboard doesn't make that legible. He'd cancel a shipment, see the page return to its terminal state, and have no obvious way to know "the link is still reusable" without round-tripping to `/s/<short_code>`. Two complementary fixes:
+
+**Decision/Finding:**
+
+**Dashboard → two tabs.** Shipments tab default (high-volume use case is "where's my package?"), Links tab second (reusable-link inventory). Tab state syncs to `?tab=` so refresh persists. The "My Label Link" card at the top of Dashboard stays — that's the primary share affordance for the user's current flex link; the Links tab is the full inventory view. Each Link card shows: short_code, status badge (Active / In use / Used up), link type, recipient city+state, up to 5 child shipments (each clickable to `/t/<public_code>`), and a "View all N shipments" overflow link when total > 5. The overflow link routes to `?tab=shipments&link=<short_code>` — the destination filter isn't built yet but the seam is in place. Empty-state copy handled.
+
+**`/t/<code>` cancelled state → parent link reference + status.** [`PrintAnotherLabelCTA.tsx`](src/components/tracking/PrintAnotherLabelCTA.tsx) now renders a small "From link &lt;short_code&gt; · &lt;status&gt;" card above the CTA, only on `status === 'cancelled'` (F3). Status copy: `active` → "Active — you can reuse it" (green); `in_use` → "In use on another label" (amber); `completed` → "Used up — start a new shipment" (muted). The CTA button itself **only** routes back to `/s/<short_code>` when the link is `active` — for `in_use` and `completed` states it downgrades to "Start a new shipment" linking home, so users don't get bounced to an unhelpful sender wizard on a non-reusable link. F1 (Ready to Ship) and F2 (In Motion) still don't surface the parent — irrelevant at those stages per the IA principles from the polish proposal.
+
+**Tracking response addition:** `link_status` and `link_type` now ride alongside the existing `link_short_code`. Embedded via the existing `sendmo_links!inner(...)` join — no extra round-trip, no new query, just two extra columns in the PostgREST select. The tracking function file changed by one SELECT line and two response fields.
+
+**URL hierarchy clarified for the next agent:**
+- `/s/<short_code>` = parent SendMo **link** (sender's entry surface; the wizard funnel)
+- `/t/<public_code>` = child **shipment** (one label minted from a parent link; canonical management surface)
+- Relationship: 1 link → many shipments (`shipments.link_id` FK)
+- A cancelled shipment can leave the parent link in `active` (revivable) state — verified in production with `RA2W2NG` cancel today (parent link `YEHnczNeXz` flipped `in_use → active` on cancel).
+
+**Watch out:**
+- **The dashboard "View all N shipments" overflow link target page doesn't exist yet.** Today it routes to `?tab=shipments&link=<short_code>` and the Shipments tab does NOT filter on that param. Cosmetic for users with ≤5 shipments per link (the common case); only matters for power users. Follow-up to wire the filter.
+- **Tracking response shape changed** (added `link_status`, `link_type`). Additive — existing clients ignore unknown keys, no breaking change. Edge function must redeploy for the F3 banner to actually populate; UI gracefully degrades to "Unknown" or no badge when fields are absent.
+- **Link-type-display naming.** Today the UI shows "Full label" and "Flexible" as the link-type badges. SPEC and code call them `full_label` and `flexible` respectively. Keep the UI labels short; if we ever rename in the schema the badges update with them.
+- **No new migration.** Both `sendmo_links.status` and `sendmo_links.link_type` already exist on the schema; only the SELECT changed.
+
+**Tests:** 305 unit tests pass (was 301; +4 in `PrintAnotherLabelCTA` covering the active/in_use/completed status branches + short_code visibility; existing tests updated to pass the new `linkStatus` prop). `npx tsc -b --noEmit` clean.
+
+**Files touched:**
+- [supabase/functions/tracking/index.ts](supabase/functions/tracking/index.ts) — embed `status, link_type` on the sendmo_links join; surface as `link_status` + `link_type` in response.
+- [src/components/tracking/PrintAnotherLabelCTA.tsx](src/components/tracking/PrintAnotherLabelCTA.tsx) — parent-link reference card + status-driven CTA branching.
+- [src/pages/TrackingPage.tsx](src/pages/TrackingPage.tsx) — TrackingData gains `link_status` / `link_type`; passes through to PrintAnotherLabelCTA.
+- [src/pages/Dashboard.tsx](src/pages/Dashboard.tsx) — tabs UI + `?tab=` query-param sync; new `allLinks` fetch; grouping logic that nests shipments under links.
+- [src/components/dashboard/LinksTab.tsx](src/components/dashboard/LinksTab.tsx) — NEW (Links-tab content; pure rendering, gets data from Dashboard).
+- [tests/unit/PrintAnotherLabelCTA.test.tsx](tests/unit/PrintAnotherLabelCTA.test.tsx) — 4 new tests for status variants.
+
+**Follow-ups (flagged, not bundled):**
+- Wire `?tab=shipments&link=<short_code>` filter on the Shipments table.
+- Build the "all shipments for this link" page if/when a power user actually exceeds 5 shipments on a single link.
+- Cancelled-state-on-`return_to_sender`: still no parent-link reference (intentional — printing another label doesn't help a returning package; consistent with PP4 from the polish proposal).
+
+---
+
 ### [2026-05-13] Tracking page IA polish — family composition + Phase 2 print logging + admin affordance
 **Category:** UX | Tracking | Print audit | Schema
 **Cross-link:** [proposals/2026-05-13_tracking-page-ia-polish_reviewed-2026-05-13_decided-2026-05-13.md](proposals/2026-05-13_tracking-page-ia-polish_reviewed-2026-05-13_decided-2026-05-13.md). Decided 2026-05-13 — T1=(a) (item_description ships via migration 021), T2=(i) (anonymous-allowed item visibility).

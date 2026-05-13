@@ -67,7 +67,7 @@ serve(async (req: Request) => {
   // PostgREST FK relations (not denormalized columns — reviewer caught B2).
   // item_description added in migration 021. The from/to selects pull city +
   // state only, never street1 (PLAYBOOK Rule 7).
-  const selectFields = "id, tracking_number, public_code, carrier, service, status, refund_status, easypost_tracker_id, easypost_shipment_id, is_test, created_at, updated_at, promised_delivery_date, delivered_at, label_url, link_id, stripe_payment_intent_id, cancelled_at, item_description, sender_address:addresses!sender_address_id(city,state), recipient_address:addresses!recipient_address_id(city,state), sendmo_links!inner(short_code, user_id)";
+  const selectFields = "id, tracking_number, public_code, carrier, service, status, refund_status, easypost_tracker_id, easypost_shipment_id, is_test, created_at, updated_at, promised_delivery_date, delivered_at, label_url, link_id, stripe_payment_intent_id, cancelled_at, item_description, sender_address:addresses!sender_address_id(city,state), recipient_address:addresses!recipient_address_id(city,state), sendmo_links!inner(short_code, user_id, status, link_type)";
   const baseQuery = supabase.from("shipments").select(selectFields);
   const lookup = publicCode
     ? baseQuery.eq("public_code", publicCode).single()
@@ -342,7 +342,7 @@ serve(async (req: Request) => {
   // Ship-Again CTA. Admin derivation gates the shipment_id field per B4 —
   // shipment UUID is admin-only to keep the public response slim.
   // link.user_id is NEVER returned — only the boolean.
-  const linkJoin = shipment.sendmo_links as unknown as { short_code: string; user_id: string } | null;
+  const linkJoin = shipment.sendmo_links as unknown as { short_code: string; user_id: string; status: string; link_type: string } | null;
   let viewerIsRecipient = false;
   let isAdmin = false;
   const authHeader = req.headers.get("Authorization") || req.headers.get("authorization") || "";
@@ -380,6 +380,12 @@ serve(async (req: Request) => {
       delivered_at: shipment.delivered_at,
       label_url: shipment.label_url ?? null,
       link_short_code: linkJoin?.short_code ?? null,
+      // Parent link status — surfaced on F3 cancelled so the user knows whether
+      // the link is reusable (active), tied up in another label (in_use), or
+      // fully consumed (completed). Decided 2026-05-13 alongside dashboard
+      // links-tab work.
+      link_status: linkJoin?.status ?? null,
+      link_type: linkJoin?.link_type ?? null,
       viewer_is_recipient: viewerIsRecipient,
       refund_status: shipment.refund_status ?? "none",
       // `paid` is true when there's a Stripe PI on the shipment (Phase A

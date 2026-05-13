@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 import SendMoLogo from "@/components/SendMoLogo";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
+import LinksTab from "@/components/dashboard/LinksTab";
 
 // ─── Types ──────────────────────────────────────────────────
 
@@ -29,6 +30,11 @@ interface DashboardShipment {
   easypost_shipment_id: string | null;
   created_at: string;
   updated_at: string;
+  // link_id used to group shipments by parent link in the Links tab (decided
+  // 2026-05-13). The select grabs it directly off shipments rather than the
+  // embedded link object so the grouping can happen client-side without
+  // re-traversing the join.
+  link_id: string;
   sendmo_links: {
     sender_name: string | null;
   };
@@ -39,6 +45,22 @@ interface DashboardShipment {
   // tells us who actually shipped this particular parcel.
   sender_address: { name: string | null } | null;
   recipient_address: { name: string | null } | null;
+}
+
+// Links-tab row — one per `sendmo_links` row owned by the user, with up to
+// 5 child shipments rendered inline. Decided 2026-05-13.
+interface DashboardLinkRow {
+  id: string;
+  short_code: string;
+  link_type: "flexible" | "full_label";
+  status: "active" | "in_use" | "completed" | "used" | string;
+  created_at: string;
+  updated_at: string;
+  recipient_address: {
+    name: string | null;
+    city: string | null;
+    state: string | null;
+  } | null;
 }
 
 interface DashboardLink {
@@ -138,6 +160,22 @@ export default function Dashboard() {
   const [link, setLink] = useState<DashboardLink | null>(null);
   const [loadingLink, setLoadingLink] = useState(true);
   const [showUserMenu, setShowUserMenu] = useState(false);
+  // 2026-05-13: Dashboard splits into two tabs (Shipments | Links). Shipments
+  // is the default per John's call — high-volume use case is "where's my
+  // package?" not "what links do I own?". Tab state syncs to ?tab= so refresh
+  // preserves it.
+  const tabParam = searchParams.get("tab");
+  const initialTab: "shipments" | "links" = tabParam === "links" ? "links" : "shipments";
+  const [tab, setTab] = useState<"shipments" | "links">(initialTab);
+  const [allLinks, setAllLinks] = useState<DashboardLinkRow[]>([]);
+  const [loadingAllLinks, setLoadingAllLinks] = useState(true);
+  function switchTab(next: "shipments" | "links") {
+    setTab(next);
+    const params = new URLSearchParams(searchParams);
+    if (next === "shipments") params.delete("tab");
+    else params.set("tab", next);
+    setSearchParams(params, { replace: true });
+  }
   // Cancel-target state retired 2026-05-13. All label management (Cancel,
   // Cancel & start over, Print, Download, Share) now lives at /t/<public_code>.
   // Click the SendMo Label ID column to manage a shipment.
@@ -151,7 +189,7 @@ export default function Dashboard() {
 
       const shipmentsPromise = supabase
         .from("shipments")
-        .select("id, tracking_number, public_code, carrier, service, status, refund_status, display_price_cents, rate_cents, is_test, easypost_shipment_id, created_at, updated_at, sendmo_links!inner(user_id, sender_name), sender_address:addresses!sender_address_id(name), recipient_address:addresses!recipient_address_id(name)")
+        .select("id, link_id, tracking_number, public_code, carrier, service, status, refund_status, display_price_cents, rate_cents, is_test, easypost_shipment_id, created_at, updated_at, sendmo_links!inner(user_id, sender_name), sender_address:addresses!sender_address_id(name), recipient_address:addresses!recipient_address_id(name)")
         .eq("sendmo_links.user_id", user.id)
         .order("created_at", { ascending: false })
         .limit(50);
@@ -167,7 +205,17 @@ export default function Dashboard() {
         .limit(1)
         .maybeSingle();
 
-      const [shipmentsRes, linkRes] = await Promise.all([shipmentsPromise, linkPromise]);
+      // 2026-05-13: All user-owned links for the Links tab. No status/type
+      // filter here — we want active, in_use, completed, full_label, and
+      // flexible all represented so the user sees their full inventory.
+      const allLinksPromise = supabase
+        .from("sendmo_links")
+        .select("id, short_code, link_type, status, created_at, updated_at, recipient_address:addresses!recipient_address_id(name, city, state)")
+        .eq("user_id", user.id)
+        .order("updated_at", { ascending: false })
+        .limit(50);
+
+      const [shipmentsRes, linkRes, allLinksRes] = await Promise.all([shipmentsPromise, linkPromise, allLinksPromise]);
 
       if (!shipmentsRes.error && shipmentsRes.data) {
         setShipments(shipmentsRes.data as unknown as DashboardShipment[]);
@@ -178,6 +226,11 @@ export default function Dashboard() {
         setLink(linkRes.data as unknown as DashboardLink);
       }
       setLoadingLink(false);
+
+      if (!allLinksRes.error && allLinksRes.data) {
+        setAllLinks(allLinksRes.data as unknown as DashboardLinkRow[]);
+      }
+      setLoadingAllLinks(false);
     }
 
     fetchData();
@@ -199,6 +252,32 @@ export default function Dashboard() {
   function formatCents(cents: number): string {
     return `$${(cents / 100).toFixed(2)}`;
   }
+
+  // Group the user's recent shipments by parent link_id so the Links tab
+  // can render up to 5 children per link card. The shipments list is
+  // already ordered by created_at DESC, so the slice keeps the most recent.
+  // Total counts use the full grouped count so the "View all N" overflow
+  // affordance shows the true number.
+  const linksWithChildren = allLinks.map((l) => {
+    const children = shipments.filter((s) => s.link_id === l.id);
+    return {
+      id: l.id,
+      short_code: l.short_code,
+      link_type: l.link_type,
+      status: l.status,
+      created_at: l.created_at,
+      recipient_address: l.recipient_address,
+      shipments: children.slice(0, 5).map((s) => ({
+        id: s.id,
+        public_code: s.public_code,
+        tracking_number: s.tracking_number,
+        status: s.status,
+        is_test: s.is_test,
+        created_at: s.created_at,
+      })),
+      total_shipments: children.length,
+    };
+  });
 
   return (
     <motion.div
@@ -413,7 +492,52 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Shipments Table */}
+        {/* Tabs — Shipments default, Links second (decided 2026-05-13). High-
+            volume use case is "where's my package?"; Links is one click away. */}
+        <div className="flex items-center gap-1 mb-3 border-b border-border">
+          <button
+            type="button"
+            onClick={() => switchTab("shipments")}
+            className={cn(
+              "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors flex items-center gap-2",
+              tab === "shipments"
+                ? "border-primary text-foreground"
+                : "border-transparent text-muted-foreground hover:text-foreground",
+            )}
+            aria-pressed={tab === "shipments"}
+          >
+            <Package className="w-4 h-4" />
+            Shipments
+            {shipments.length > 0 && (
+              <span className="text-[10px] text-muted-foreground font-normal">({shipments.length})</span>
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={() => switchTab("links")}
+            className={cn(
+              "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors flex items-center gap-2",
+              tab === "links"
+                ? "border-primary text-foreground"
+                : "border-transparent text-muted-foreground hover:text-foreground",
+            )}
+            aria-pressed={tab === "links"}
+          >
+            <Link2 className="w-4 h-4" />
+            Links
+            {allLinks.length > 0 && (
+              <span className="text-[10px] text-muted-foreground font-normal">({allLinks.length})</span>
+            )}
+          </button>
+        </div>
+
+        {/* Links tab content — gated by tab state */}
+        {tab === "links" && (
+          <LinksTab links={linksWithChildren} loading={loadingAllLinks} />
+        )}
+
+        {/* Shipments Table — gated by tab state */}
+        {tab === "shipments" && (
         <div className="bg-card rounded-2xl border border-border shadow-sm">
           <div className="p-5 border-b border-border">
             <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
@@ -566,6 +690,7 @@ export default function Dashboard() {
             </>
           )}
         </div>
+        )}
       </div>
 
     </motion.div>
