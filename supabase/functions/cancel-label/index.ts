@@ -2,7 +2,10 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { log } from "../_shared/logger.ts";
-import { createRefund } from "../_shared/stripe.ts";
+// createRefund import retired 2026-05-13 — Stripe refund is now triggered
+// by tracking/index.ts's lazy poll once EasyPost confirms the carrier
+// refund (two-step refund safety). See the comment at the refund_status
+// assignment below.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // cancel-label — user-facing Cancel + Change endpoint
@@ -293,81 +296,46 @@ serve(async (req: Request) => {
             );
         }
 
-        // ── Stage 2: Stripe refund (only when there's a captured PI) ────
-        // shipments.stripe_payment_intent_id is the Phase A forward-compat slot.
-        // Today: NULL for every comp shipment; Phase E will populate it.
-        // cancel-label initiates the refund; stripe-webhook (sole ledger writer)
-        // lands charge.refunded and writes the −refund transaction row +
-        // advances shipments.refund_status from 'submitted' → 'refunded'.
-        let finalRefundStatus: string;
-        let refundOutcome: "submitted" | "not_applicable" | "rejected";
-
-        if (shipment.stripe_payment_intent_id) {
-            try {
-                await createRefund({
-                    payment_intent_id: shipment.stripe_payment_intent_id,
-                    reason: "requested_by_customer",
-                    metadata: {
-                        shipment_id: shipment.id,
-                        cancel_reason: cancelReason,
-                        public_code: shipment.public_code,
-                    },
-                    idempotency_key: `refund_${shipment.easypost_shipment_id}_user_cancel`,
-                    liveMode: !shipment.is_test,
-                });
-                finalRefundStatus = "submitted";
-                refundOutcome = "submitted";
-                log({
-                    event_type: "cancel.stripe_refund_initiated",
-                    session_id: sessionId,
-                    severity: "info",
-                    source: "cancel-label",
-                    entity_type: "shipment",
-                    entity_id: shipment.id,
-                    properties: {
-                        actor,
-                        payment_intent_id: shipment.stripe_payment_intent_id,
-                    },
-                });
-            } catch (refundErr) {
-                const msg = refundErr instanceof Error ? refundErr.message : String(refundErr);
-                console.error("Stripe refund failed after carrier void:", msg);
-                log({
-                    event_type: "cancel.stripe_refund_failed",
-                    session_id: sessionId,
-                    severity: "error",
-                    source: "cancel-label",
-                    entity_type: "shipment",
-                    entity_id: shipment.id,
-                    properties: {
-                        actor,
-                        error_message: msg,
-                        payment_intent_id: shipment.stripe_payment_intent_id,
-                    },
-                });
-                // The carrier void already succeeded — don't roll it back. Mark
-                // refund as rejected; admin can drive a manual refund.
-                finalRefundStatus = "rejected";
-                refundOutcome = "rejected";
-            }
+        // ── Stage 2: refund_status assignment (two-step refund) ─────────
+        //
+        // Two-step refund (decided 2026-05-13 in dogfood follow-up): we no
+        // longer fire Stripe createRefund here. EasyPost's "submitted" means
+        // the void was queued with the carrier — USPS/UPS take 1–2 weeks to
+        // actually verify the label wasn't scanned and credit the cost back
+        // to our EasyPost account. Issuing the customer refund BEFORE that
+        // confirmation means SendMo eats the loss if the carrier later
+        // rejects the void.
+        //
+        // New flow:
+        //   1. cancel-label (here): EasyPost void submitted, refund_status='submitted'
+        //   2. tracking/index.ts poll: when the user visits /t/<code>, GET the
+        //      EasyPost shipment and check refund_status. When EP flips to
+        //      'refunded' (carrier confirmed) AND we have a Stripe PI, that
+        //      function fires createRefund.
+        //   3. stripe-webhook on charge.refunded: writes the −refund ledger row
+        //      and advances refund_status='submitted' → 'refunded'.
+        //
+        // For comp shipments (no Stripe PI), step 2 just sets refund_status
+        // to 'not_applicable' once EP confirms — no money to move.
+        //
+        // The Stripe import is kept for completeness (createRefund still
+        // imported below) even though this function no longer calls it; the
+        // intent is to keep the dependency graph visible during the Phase E
+        // transition.
+        //
+        // Decision table after a successful (non-rejected) EasyPost void:
+        //   epRefundStatus='rejected'  → 'rejected'         (already-scanned label)
+        //   no Stripe PI              → 'not_applicable'   (comp; final state)
+        //   has Stripe PI             → 'submitted'        (Phase E happy path)
+        let refundStatusToWrite: string;
+        if (epRefundStatus === "rejected") {
+            refundStatusToWrite = "rejected";
+        } else if (!shipment.stripe_payment_intent_id) {
+            refundStatusToWrite = "not_applicable";
         } else {
-            // Comp shipment — no money to refund.
-            finalRefundStatus = "not_applicable";
-            refundOutcome = "not_applicable";
+            refundStatusToWrite = "submitted";
         }
-
-        // ── Stage 3: DB update on shipment ──────────────────────────
-        const now = new Date().toISOString();
-        // The EasyPost refund_status value is informational (used for carrier
-        // refund tracking). Our refund_status lifecycle is driven by the Stripe
-        // side: submitted → refunded (via webhook) | not_applicable | rejected.
-        // We persist epRefundStatus to refund_status only if there's no Stripe
-        // PI (because then EasyPost's lifecycle is the only one running).
-        const refundStatusToWrite =
-            shipment.stripe_payment_intent_id ? finalRefundStatus :
-            epRefundStatus === "refunded" ? "not_applicable" :  // comp + EP refunded → not_applicable (no money moved)
-            epRefundStatus === "submitted" ? "not_applicable" :
-            finalRefundStatus;
+        const refundOutcome = refundStatusToWrite as "submitted" | "not_applicable" | "rejected";
 
         const { error: updateError } = await supabase
             .from("shipments")
@@ -453,7 +421,7 @@ serve(async (req: Request) => {
 
         // ── User-facing message (no carrier branding) ───────────────
         const messages: Record<string, string> = {
-            submitted: "Cancellation in progress. Your refund will appear on your card within a few minutes to a few days.",
+            submitted: "Cancellation in progress. The carrier typically confirms within 1–2 weeks; once confirmed, your refund will be issued automatically to the original card.",
             refunded: "Label voided and refunded.",
             rejected: "The void was processed but the refund failed. We'll follow up — please contact support.",
             not_applicable: "Label voided. No charge was made, so no refund is needed.",

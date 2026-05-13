@@ -8,6 +8,54 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-13] Two-step refund + lazy EasyPost poll on `/t/<code>`
+**Category:** Cancellation | Stripe | Refund safety | EasyPost
+**Cross-link:** [proposals/2026-05-11_label-cancel-and-change_reviewed-2026-05-12_decided-2026-05-12.md](proposals/2026-05-11_label-cancel-and-change_reviewed-2026-05-12_decided-2026-05-12.md) + [proposals/2026-04-26_stripe-integration-plan_reviewed-2026-04-26_decided-2026-05-11.md](proposals/2026-04-26_stripe-integration-plan_reviewed-2026-04-26_decided-2026-05-11.md) §11 #1.
+
+**Context:** John surfaced a real failure mode during the 2026-05-13 dogfood after cancelling `NEC7J3E`: the cancel-label function fired Stripe `createRefund` the instant EasyPost accepted the void request. EasyPost's "submitted" only means *queued* with the carrier — USPS/UPS take 1–2 weeks to actually verify the label wasn't scanned and credit the cost back to SendMo's EasyPost account. If the customer's card is refunded immediately and USPS later rejects the void (label was scanned), SendMo eats the refund + the carrier cost. The current behavior would have bitten the first real-money cancel.
+
+Same dogfood: John asked whether we could proactively check EasyPost's refund status rather than only waiting for a (currently unwired) webhook.
+
+**Decision/Finding:**
+- **`cancel-label/index.ts` no longer calls Stripe `createRefund`.** The function still posts to EasyPost `/v2/shipments/<id>/refund` to submit the carrier void, but the Stripe block is gone. The `createRefund` import is replaced with a documenting comment so the next reader sees the deferral, not a missing dependency. The refund_status assignment becomes a clean three-way:
+  - `epRefundStatus === 'rejected'` → `'rejected'` (label was already scanned)
+  - no Stripe PI → `'not_applicable'` (comp; final state)
+  - has Stripe PI → `'submitted'` (Phase E happy path; tracking-poll will fire Stripe later)
+- **`tracking/index.ts` gained a lazy refund poll.** When a `/t/<code>` page view loads a shipment with `refund_status='submitted'` and an `easypost_shipment_id`, the function calls `GET /v2/shipments/<id>` and reads the latest `refund_status`. Three outcomes:
+  - EP says `refunded` AND shipment has `stripe_payment_intent_id` → call Stripe `createRefund` with the same idempotency key cancel-label would have used (`refund_${easypost_shipment_id}_user_cancel`). Stripe-webhook then advances `refund_status='submitted' → 'refunded'` on `charge.refunded` per the existing Phase A pattern.
+  - EP says `refunded` AND no Stripe PI (comp) → update DB `refund_status='not_applicable'` and we're done.
+  - EP says `rejected` → update DB `refund_status='rejected'`.
+  - EP says `submitted` (still pending) → no action.
+- **User-facing cancel message updated** in `cancel-label` to set realistic expectations: *"Cancellation in progress. The carrier typically confirms within 1–2 weeks; once confirmed, your refund will be issued automatically to the original card."* Old copy said "a few minutes to a few days" which was incorrect for the carrier-confirmation window.
+
+**Why this shape:**
+- **Idempotency via Stripe's own key dedup.** Multiple page loads during the window between EP-confirms and Stripe-webhook-fires could re-call `createRefund`. Stripe's idempotency_key handling makes repeat calls return the existing Refund object — no duplicate charges. No new DB column needed to dedup our side.
+- **Page-view-triggered poll is sufficient at MVP scale.** Today's universe: 4 active live shipments. Even when the active set grows, anyone who cares about a refund will visit `/t/<code>` at some point. For shipments nobody visits (a real edge), the WISHLIST has a cron-poll item — defer until volume justifies it.
+- **EasyPost refund webhook (push-based) is the proper end state**, lazy poll is the safety net. WISHLIST entry filed for the webhook verification + wiring; until EP's exact event names are confirmed (`refund.successful`? bundled into `tracker.updated`?), the lazy poll is the only mechanism that closes the carrier-confirmation loop without infrastructure work.
+
+**Watch out:**
+- **`cancel.stripe_refund_initiated` and `cancel.stripe_refund_failed` event_logs now come from `tracking/index.ts`** (source=`'tracking'`), not from cancel-label. The cancel-label function emits a single `shipment.cancelled` row at cancel time; the Stripe-initiation log appears later, separately, when the EP refund confirms via the poll. Grep queries that filtered by `source='cancel-label'` for refund-initiation events will miss the new path. Search by `event_type IN ('cancel.stripe_refund_initiated', 'cancel.stripe_refund_failed')` instead.
+- **No active dogfood path exists today** — zero Stripe-paid shipments exist in the database, so the Stripe-refund branch in the tracking poll is dormant. First exercise will be Phase E (real flex-link payments). The comp branch (mark `not_applicable` when EP confirms) is exercisable: visit `/t/NEC7J3E` once USPS confirms the void and the page will sync `refund_status='not_applicable'`. (Today USPS hasn't confirmed yet — refund_status will stay `not_applicable` from the original cancel.)
+- **Wait — actually NEC7J3E is already `not_applicable`** because the existing cancel-label set that immediately for comp shipments via the `!stripe_payment_intent_id` branch. The poll only changes state for shipments where EP's response differs from our DB. For comp shipments where we already marked `not_applicable`, the poll is a no-op. Confirmed safe.
+- **`shipment.refund_status` is mutated in-memory after the poll** so the response body reflects current state. This is a local-object mutation, not a refetch — if other functions on the read path rely on the original DB-loaded value, they'd see the new value. Today nothing else reads `shipment.refund_status` after the poll block, but if a future agent adds something, they should be aware.
+- **EasyPost API call is silent-fail.** Network errors, missing key, HTTP non-200 — all swallowed in the catch block, page renders from DB state. Acceptable for MVP; should be louder in production observability later.
+- **Stripe refund call is idempotent but logs every attempt.** If a shipment sits at `refund_status='submitted'` for days with the carrier-confirmed state, every page view fires `cancel.stripe_refund_initiated`. Stripe itself dedupes the Refund object; our log gets one row per page view in the window between EP-confirmed and Stripe-webhook-fired. Acceptable but worth knowing — if `event_logs` for this event type look noisy, that's why.
+
+**Tests:** 257 unit tests pass (was 245; +12 net since last commit — the polish agent landed component tests in parallel). `npx tsc -b --noEmit` clean. No new tests added for this change because the new logic lives in Edge Functions (Deno) which aren't covered by vitest; the existing `cancelLabel.test.ts` pure-helper tests still pass since I didn't touch the eligibility predicates.
+
+**Deploy:** `npx supabase functions deploy cancel-label --no-verify-jwt && npx supabase functions deploy tracking --no-verify-jwt`. Vercel auto-deploys the client on push (no client changes in this commit, so nothing client-side to verify post-deploy).
+
+**Verification after deploy:**
+1. New cancellation: `/t/<code>` shows updated "1–2 weeks" copy in the confirm dialog and post-cancel banner ✓ (UI-only test).
+2. For a shipment in `refund_status='submitted'`: a `/t/<code>` page view triggers a `GET /v2/shipments/<id>` against EasyPost. Verify in `event_logs` via `SELECT event_type, properties, created_at FROM event_logs WHERE event_type LIKE 'cancel.ep_%' OR event_type LIKE 'cancel.stripe_%' ORDER BY created_at DESC LIMIT 5`. Today: no rows expected because all current cancels are already at terminal `not_applicable`. First entries will appear when a Stripe-paid shipment cancels (Phase E).
+
+**Files touched:**
+- [supabase/functions/cancel-label/index.ts](supabase/functions/cancel-label/index.ts) — removed Stripe `createRefund` block, simplified `refundStatusToWrite` decision tree, updated user-facing message
+- [supabase/functions/tracking/index.ts](supabase/functions/tracking/index.ts) — added lazy refund poll block with three outcome branches
+- [WISHLIST.md](WISHLIST.md) — promoted "Stripe refund on label void" to [~] partial, filed two new follow-ups (EP webhook wiring; cron-poll for stale submitted shipments)
+
+---
+
 ### [2026-05-13] Tracking page UX polish — Ask 1 / 2 / 3 from John dogfood
 **Category:** UX | Tracking | Cancel-flow
 **Context:** Handoff [`proposals/2026-05-13_tracking-page-ux-polish-handoff.md`](proposals/2026-05-13_tracking-page-ux-polish-handoff.md) — three asks from the 2026-05-13 dogfood pass on `/t/<public_code>`, the canonical shipment-management surface. Cross-links the decided cancel-flow proposal [`proposals/2026-05-11_label-cancel-and-change_reviewed-2026-05-12_decided-2026-05-12.md`](proposals/2026-05-11_label-cancel-and-change_reviewed-2026-05-12_decided-2026-05-12.md).
