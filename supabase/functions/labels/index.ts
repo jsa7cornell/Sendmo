@@ -623,11 +623,12 @@ serve(async (req: Request) => {
                         }
                     });
                 } else {
-                    // admin_insert_shipment returns TABLE(id, public_code, short_code) — array of rows.
-                    const row = Array.isArray(data) ? data[0] : (data as { id: string; public_code: string; short_code: string } | null);
-                    const shipmentId: string | undefined = row?.id;
-                    const publicCode: string | undefined = row?.public_code;
-                    const shortCode: string | undefined = row?.short_code;
+                    // admin_insert_shipment returns TABLE(out_id, out_public_code, out_short_code) — array of rows.
+                    // Migration 019 renamed OUT params with out_ prefix to avoid shadowing column names inside the RPC body.
+                    const row = Array.isArray(data) ? data[0] : (data as { out_id: string; out_public_code: string; out_short_code: string } | null);
+                    const shipmentId: string | undefined = row?.out_id;
+                    const publicCode: string | undefined = row?.out_public_code;
+                    const shortCode: string | undefined = row?.out_short_code;
                     dbShipmentId = shipmentId ?? null;
                     dbPublicCode = publicCode ?? null;
                     dbShortCode = shortCode ?? null;
