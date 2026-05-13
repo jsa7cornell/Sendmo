@@ -1,7 +1,7 @@
 import { useParams, useSearchParams, Link, useNavigate } from "react-router-dom";
 import AppHeader from "@/components/AppHeader";
 import { useState, useEffect } from "react";
-import { Package, Truck, CheckCircle2, AlertCircle, Clock, ArrowLeft, MapPin, Calendar, ExternalLink, Sparkles } from "lucide-react";
+import { Package, Truck, CheckCircle2, AlertCircle, Clock, ArrowLeft, MapPin, Calendar, ExternalLink, Sparkles, FlaskConical } from "lucide-react";
 import { carrierTrackingUrl } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase as supabaseClient } from "@/lib/supabase";
@@ -39,6 +39,8 @@ interface TrackingData {
   refund_status?: "none" | "submitted" | "refunded" | "rejected" | "not_applicable";
   paid?: boolean;
   amount_paid_cents?: number | null;
+  // Test-mode flag — surface to UI so viewers know the tracking is synthetic.
+  is_test?: boolean;
 }
 
 // Persisted cancel-token storage. The token can arrive via two transports:
@@ -202,9 +204,13 @@ export default function TrackingPage() {
   //   - link owner (JWT + viewer_is_recipient) — always
   //   - anonymous with a cancel-token for this public_code in sessionStorage
   //     (set by SenderFlow on Confirm, or by ?cancel=<hex> from the email)
+  // Plus: test-mode shipments are guarded server-side (cancel-label rejects
+  // is_test=true). Hide the buttons rather than offering a click that 422s —
+  // the proper way to dogfood Cancel is via Live Comp, not test mode.
   const canCancel = Boolean(
     data &&
     data.status === "label_created" &&
+    !data.is_test &&
     (
       isAdmin ||
       data.viewer_is_recipient ||
@@ -271,6 +277,23 @@ export default function TrackingPage() {
 
         {data && config && (
           <div className="space-y-6">
+            {/* Test-mode banner — synthetic tracking number from the EasyPost
+                test API. Renders above everything else so viewers can't miss
+                it. Carrier-site link is hidden below in the status card. */}
+            {data.is_test && (
+              <div className="bg-amber-50 border border-amber-300 rounded-2xl p-4 flex items-start gap-3">
+                <FlaskConical className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <h2 className="text-sm font-semibold text-amber-900">Test label — not a real shipment</h2>
+                  <p className="text-xs text-amber-800 mt-0.5">
+                    This was generated against EasyPost's test API. The tracking number
+                    looks real but USPS has never seen it. Statuses on this page
+                    auto-advance and aren't tied to anything physical.
+                  </p>
+                </div>
+              </div>
+            )}
+
             {/* Celebration banner — first paint only when ?fresh=1 was in URL */}
             {showCelebration && (
               <div className="bg-success/10 border border-success/30 rounded-2xl p-5 flex items-start gap-3">
@@ -361,6 +384,10 @@ export default function TrackingPage() {
                     {data.carrier} #{data.tracking_number}
                   </p>
                   {(() => {
+                    // Hide carrier-site link for test shipments — the synthetic
+                    // tracking number won't resolve on USPS/UPS/etc. and a 404
+                    // there is more misleading than no link at all.
+                    if (data.is_test) return null;
                     const carrierUrl = carrierTrackingUrl(data.carrier, data.tracking_number);
                     return carrierUrl ? (
                       <a

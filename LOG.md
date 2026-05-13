@@ -8,6 +8,40 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-13] Test-mode visibility on Dashboard + tracking page
+**Category:** UX | Dogfood | Test-mode hygiene
+**Context:** Dogfood pass surfaced a real confusion: `K6SX3ES` showed "Delivered" on `/t/<code>` but USPS had no record of the tracking number. Investigation via Supabase MCP: every shipment generated since the launch-blocker fix is `is_test=true` (EasyPost test API). Test-mode tracking numbers look like real USPS numbers (`9434600208303112218294`) and EasyPost's test trackers auto-advance through `label_created → in_transit → delivered` regardless of physical reality. The "View on USPS site" link goes to a 404 because USPS never saw the synthetic number. Two product calls came out of the dogfood:
+- **Test-mode shipments should be visibly labeled** so users know not to trust the data.
+- **No "test-cancel" stub.** The proper way to dogfood Cancel/Change is Live Comp (real EasyPost label, no Stripe charge). Adding an `is_test` bypass to `cancel-label` would fork prod code for marginal iteration speed — Live Comp tests the actual EasyPost void path and costs nothing.
+
+**Decision/Finding:**
+- **Tracking response gains `is_test: boolean`** ([`tracking/index.ts`](supabase/functions/tracking/index.ts)). Existing `shipments.is_test` column; just surfaces it to the client.
+- **`/t/<public_code>` test banner** ([`TrackingPage.tsx`](src/pages/TrackingPage.tsx)). Amber `FlaskConical` banner at the top of the page: *"Test label — not a real shipment. This was generated against EasyPost's test API. The tracking number looks real but USPS has never seen it. Statuses on this page auto-advance and aren't tied to anything physical."*
+- **"View on USPS site" link hidden** for `is_test=true` shipments (was sending users to a guaranteed 404).
+- **Cancel/Change buttons hidden** for `is_test=true` shipments. The cancel-label function already rejects test shipments with a 422 (since Phase A); the new gate in `canCancel` derivation matches the server's behavior instead of offering a click that fails. Dogfooding Cancel/Change is **only** via Live Comp from now on.
+- **Dashboard TEST pill** ([`Dashboard.tsx`](src/pages/Dashboard.tsx)). Small amber pill next to the SendMo Label ID column (both desktop table + mobile cards). Hover tooltip: "Test-mode label — synthetic tracking number; not a real shipment."
+
+**Why no test-cancel stub:**
+- The cost of the fork: two cancel code paths (real EasyPost void + synthetic UI-only). State machines drift in subtle ways. `event_logs` and admin reports start needing mode filters everywhere. Stripe-webhook coordination only fires on real refunds; the test path lies about what happened.
+- The benefit: faster UI iteration. But the UI is already unit-testable (`tests/unit/cancelLabelDialog.test.tsx` + `cancelAuth` derivation), and Live Comp is a 30-second click-through from `/onboarding` → admin toolbar → Live Comp → walk through Full Prepaid Label.
+- The real EasyPost void endpoint, called by Live Comp cancels, is the integration we actually want to exercise. A stubbed test path skips that entirely.
+
+**Watch out:**
+- **EasyPost test-mode auto-advance is FAST.** Today's two test shipments hit `delivered` within hours. If you generate a test label and want to inspect the `label_created` state in the UI, you have a small window. The TEST banner shows up regardless, but the Cancel buttons are hidden anyway (because of the new gate), so the auto-advance behavior is less of a problem in practice now.
+- **One live shipment in the entire DB.** `71NF1E8` from 2026-03-18. Every other row is `is_test=true`. Phase E and beyond will start writing real `is_live=true` rows.
+- **Test pill is a `<span>`, not a link.** Don't add an `onClick` later that mutates the row — it's a label, not a control.
+
+**Tests:** Existing 244 unit tests still pass. No new tests; the test-mode gate is visual + one boolean check in `canCancel` (already covered indirectly).
+
+**Files touched:**
+- [supabase/functions/tracking/index.ts](supabase/functions/tracking/index.ts) (response: `is_test`)
+- [src/pages/TrackingPage.tsx](src/pages/TrackingPage.tsx) (TEST banner, hide carrier link, gate canCancel, FlaskConical import)
+- [src/pages/Dashboard.tsx](src/pages/Dashboard.tsx) (TEST pill in desktop table + mobile cards)
+
+**Deploy:** `npx supabase functions deploy tracking --no-verify-jwt`. Vercel auto-deploys the client on push.
+
+---
+
 ### [2026-05-13] Cancel-flow Phase B slice 1 — `/t/<public_code>` is the single shipment-management surface
 **Category:** UX | Dashboard | Consolidation
 **Proposal:** [proposals/2026-05-11_label-cancel-and-change_reviewed-2026-05-12_decided-2026-05-12.md](proposals/2026-05-11_label-cancel-and-change_reviewed-2026-05-12_decided-2026-05-12.md) §2.7 Phase B items 2 (Dashboard-side cancel) + 3 (state messages).

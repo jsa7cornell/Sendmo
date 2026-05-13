@@ -485,14 +485,24 @@ export default function Dashboard() {
                           <td className="px-5 py-3 font-medium">{formatCents(s.display_price_cents)}</td>
                           <td className="px-5 py-3">
                             {s.public_code && s.tracking_number !== "TEST" ? (
-                              <Link
-                                to={`/t/${s.public_code}`}
-                                className="text-primary text-xs font-mono flex items-center gap-1 hover:underline"
-                                title={s.tracking_number ? `${s.carrier} #${s.tracking_number}` : undefined}
-                              >
-                                {s.public_code}
-                                <ChevronRight className="w-3 h-3" />
-                              </Link>
+                              <div className="flex items-center gap-2">
+                                <Link
+                                  to={`/t/${s.public_code}`}
+                                  className="text-primary text-xs font-mono flex items-center gap-1 hover:underline"
+                                  title={s.tracking_number ? `${s.carrier} #${s.tracking_number}` : undefined}
+                                >
+                                  {s.public_code}
+                                  <ChevronRight className="w-3 h-3" />
+                                </Link>
+                                {s.is_test && (
+                                  <span
+                                    className="inline-flex items-center rounded-full border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 uppercase tracking-wide"
+                                    title="Test-mode label — synthetic tracking number; not a real shipment"
+                                  >
+                                    Test
+                                  </span>
+                                )}
+                              </div>
                             ) : (
                               <span className="text-muted-foreground text-xs">&mdash;</span>
                             )}
@@ -534,13 +544,20 @@ export default function Dashboard() {
                         <span className="font-medium text-foreground">{formatCents(s.display_price_cents)}</span>
                       </div>
                       {s.public_code && s.tracking_number !== "TEST" ? (
-                        <Link
-                          to={`/t/${s.public_code}`}
-                          className="text-primary text-xs font-mono flex items-center gap-1 hover:underline"
-                        >
-                          SendMo Label ID: {s.public_code}
-                          <ChevronRight className="w-3 h-3" />
-                        </Link>
+                        <div className="flex items-center gap-2">
+                          <Link
+                            to={`/t/${s.public_code}`}
+                            className="text-primary text-xs font-mono flex items-center gap-1 hover:underline"
+                          >
+                            SendMo Label ID: {s.public_code}
+                            <ChevronRight className="w-3 h-3" />
+                          </Link>
+                          {s.is_test && (
+                            <span className="inline-flex items-center rounded-full border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 uppercase tracking-wide">
+                              Test
+                            </span>
+                          )}
+                        </div>
                       ) : null}
                     </div>
                   );

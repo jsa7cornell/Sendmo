@@ -186,6 +186,11 @@ serve(async (req: Request) => {
       // gracefully degrades to "no charge was made".
       paid: shipment.stripe_payment_intent_id != null,
       amount_paid_cents: null as number | null,
+      // EasyPost test-mode shipments use synthetic tracking numbers that look
+      // real (USPS format) but never hit the actual carrier. Surfacing this
+      // flag lets the UI render a TEST banner and hide things that would
+      // mislead the viewer (e.g. "View on USPS site" link).
+      is_test: shipment.is_test === true,
     }),
     { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
   );
