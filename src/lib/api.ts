@@ -142,6 +142,38 @@ export async function createPaymentIntent(params: {
   );
 }
 
+// ─── Stripe Saved Cards (Phase B) ───────────────────────────
+
+export interface CreateSetupIntentResult {
+  client_secret: string;
+  setup_intent_id: string;
+}
+
+export async function createSetupIntent(
+  access_token: string,
+  retry_n = 0,
+): Promise<CreateSetupIntentResult> {
+  return post<CreateSetupIntentResult>(
+    "payment-methods",
+    { retry_n },
+    access_token,
+  );
+}
+
+export async function removePaymentMethod(
+  access_token: string,
+  pm_id: string,
+): Promise<void> {
+  const res = await fetch(`${BASE_URL}/functions/v1/payment-methods/${pm_id}`, {
+    method: "DELETE",
+    headers: headers(access_token),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data?.error || `Remove card failed (${res.status})`);
+  }
+}
+
 // ─── Magic Guestimator (AI) ─────────────────────────────────
 
 export interface GuestimateApiResult {

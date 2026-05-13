@@ -44,6 +44,15 @@ entrypoint = "./functions/admin-report/index.ts"
 # For example, if you want to serve static HTML pages in your function:
 # static_files = [ "./functions/admin-report/*.html" ]
 
+# Stripe Phase B — saved cards on file.
+# POST creates a SetupIntent (mode resolved server-side from profile.admin_active_mode);
+# DELETE /:pm_id detaches a saved card. Authenticated users only — verify_jwt = true.
+# Explicit listing per the 2026-05-11 LOG incident (the `links` function 401'd in
+# prod when its toml section was absent and Supabase defaulted to verify_jwt=true).
+[functions.payment-methods]
+enabled = true
+verify_jwt = true
+
 # ─── verify_jwt = false ─────────────────────────────────────
 #
 # Anon-callable functions. The client passes the publishable anon key

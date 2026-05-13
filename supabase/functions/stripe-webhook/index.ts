@@ -17,6 +17,17 @@ import { verifyAndParseWebhook } from "../_shared/stripe.ts";
 //   charge.refunded               → UPSERT refunds row
 //                                  INSERT transactions (-refund)
 //   charge.dispute.created        → INSERT transactions (-chargeback)
+//   setup_intent.succeeded        → UPSERT stripe_intents (succeeded). No
+//                                   payment_methods write — that happens on
+//                                   payment_method.attached which carries
+//                                   brand/last4/exp inline. (Phase B B1 fix.)
+//   payment_method.attached       → INSERT payment_methods row (canonical
+//                                   writer; reads card.brand/last4/exp from
+//                                   the event payload).
+//   payment_method.detached       → UPDATE payment_methods.deleted_at = now().
+//                                   Auto-promotes most-recent active card to
+//                                   default if the detached card was default
+//                                   (Phase B N3 fix).
 //
 // Idempotency layers:
 //   1. webhook_events.id UNIQUE → Stripe-side retry dedup
@@ -51,6 +62,47 @@ interface DisputeObj extends StripeObj {
     payment_intent?: string;
     charge?: string;
     reason?: string;
+}
+
+interface SetupIntentObj extends StripeObj {
+    id: string;
+    customer?: string | null;
+    payment_method?: string | null;
+    status?: string;
+    usage?: string;
+    metadata?: Record<string, string>;
+}
+
+interface PaymentMethodObj extends StripeObj {
+    id: string;
+    type?: string;
+    customer?: string | null;
+    card?: {
+        brand?: string;
+        last4?: string;
+        exp_month?: number;
+        exp_year?: number;
+    };
+    metadata?: Record<string, string>;
+}
+
+// Webhook lookup helper: given a Stripe Customer id and the resolved mode,
+// find the SendMo profile that owns it. Returns null if no match (which can
+// happen for events fired against a Customer we didn't create — e.g., test
+// events from the Stripe dashboard "Send test webhook" tooling).
+async function resolveUserByCustomer(
+    supabase: ReturnType<typeof createClient>,
+    customerId: string | null | undefined,
+    liveMode: boolean,
+): Promise<string | null> {
+    if (!customerId) return null;
+    const col = liveMode ? "stripe_customer_id_live" : "stripe_customer_id_test";
+    const { data } = await supabase
+        .from("profiles")
+        .select("id")
+        .eq(col, customerId)
+        .maybeSingle();
+    return (data as { id?: string } | null)?.id ?? null;
 }
 
 function resolveIdsFromMetadata(meta: Record<string, string> | undefined): {
@@ -345,6 +397,149 @@ serve(async (req: Request) => {
                         live_mode: liveMode,
                         shipment_id: shipmentId,
                     },
+                });
+                break;
+            }
+
+            case "setup_intent.succeeded": {
+                // Mirror SetupIntent state to stripe_intents. Card data
+                // (brand/last4/exp) is NOT on this event — see Phase B B1
+                // fix; that lives on payment_method.attached.
+                const seti = obj as SetupIntentObj;
+                const userId = await resolveUserByCustomer(supabase, seti.customer, liveMode);
+                if (userId) {
+                    await supabase.from("stripe_intents").upsert({
+                        user_id: userId,
+                        stripe_intent_id: seti.id,
+                        intent_kind: "setup",
+                        funding_source: "card",
+                        status: "succeeded",
+                        mode,
+                        idempotency_key: `seti.${seti.id}:create`,
+                        last_event_at: new Date().toISOString(),
+                        updated_at: new Date().toISOString(),
+                    }, { onConflict: "stripe_intent_id" });
+                }
+                log({
+                    event_type: "stripe.setup_intent_succeeded",
+                    severity: "info",
+                    entity_type: "setup_intent",
+                    entity_id: seti.id,
+                    properties: { live_mode: liveMode, user_id: userId, payment_method: seti.payment_method ?? null },
+                });
+                break;
+            }
+
+            case "payment_method.attached": {
+                // Canonical writer for payment_methods rows (Phase B B1).
+                // The event's data.object IS the full PaymentMethod with
+                // card.brand/last4/exp_month/exp_year inline.
+                const pm = obj as PaymentMethodObj;
+                const userId = await resolveUserByCustomer(supabase, pm.customer, liveMode);
+                if (!userId) {
+                    log({
+                        event_type: "stripe.payment_method_attached_orphan",
+                        severity: "warn",
+                        entity_type: "payment_method",
+                        entity_id: pm.id,
+                        properties: { customer: pm.customer, live_mode: liveMode },
+                    });
+                    break;
+                }
+
+                // Determine is_default: TRUE iff no other active card exists
+                // for (user, mode). Partial-unique index enforces at-most-one
+                // default per (user, mode).
+                const { count } = await supabase
+                    .from("payment_methods")
+                    .select("id", { count: "exact", head: true })
+                    .eq("user_id", userId)
+                    .eq("mode", mode)
+                    .is("deleted_at", null);
+                const setDefault = (count ?? 0) === 0;
+
+                const { error: pmErr } = await supabase.from("payment_methods").insert({
+                    user_id: userId,
+                    stripe_payment_method_id: pm.id,
+                    mode,
+                    funding_source: pm.type === "us_bank_account" ? "us_bank_account" : "card",
+                    brand: pm.card?.brand ?? null,
+                    last4: pm.card?.last4 ?? null,
+                    exp_month: pm.card?.exp_month ?? null,
+                    exp_year: pm.card?.exp_year ?? null,
+                    is_default: setDefault,
+                });
+                if (pmErr && !/duplicate key|unique constraint/i.test(pmErr.message)) {
+                    throw new Error(`payment_methods insert failed: ${pmErr.message}`);
+                }
+
+                log({
+                    event_type: "stripe.payment_method_attached",
+                    severity: "info",
+                    entity_type: "payment_method",
+                    entity_id: pm.id,
+                    properties: {
+                        live_mode: liveMode,
+                        user_id: userId,
+                        brand: pm.card?.brand,
+                        last4: pm.card?.last4,
+                        is_default: setDefault,
+                    },
+                });
+                break;
+            }
+
+            case "payment_method.detached": {
+                // Soft-delete + promote next default if needed.
+                // Note: the detach event's pm.customer is often null (the PM
+                // was just detached from the customer). Look up the row by
+                // pm.id directly.
+                const pm = obj as PaymentMethodObj;
+                const { data: row } = await supabase
+                    .from("payment_methods")
+                    .select("id, user_id, mode, is_default")
+                    .eq("stripe_payment_method_id", pm.id)
+                    .is("deleted_at", null)
+                    .maybeSingle();
+                if (!row) {
+                    // Already soft-deleted by the user-initiated DELETE path,
+                    // or the row never existed. Idempotent no-op.
+                    break;
+                }
+
+                await supabase
+                    .from("payment_methods")
+                    .update({ deleted_at: new Date().toISOString() })
+                    .eq("id", row.id);
+
+                // Auto-promote next default (Phase B N3): if the detached
+                // card was default, find most-recent remaining active card
+                // for the same (user, mode) and flip it to default.
+                if (row.is_default) {
+                    const { data: next } = await supabase
+                        .from("payment_methods")
+                        .select("id")
+                        .eq("user_id", row.user_id)
+                        .eq("mode", row.mode)
+                        .is("deleted_at", null)
+                        .neq("id", row.id)
+                        .order("created_at", { ascending: false })
+                        .limit(1)
+                        .maybeSingle();
+                    if (next?.id) {
+                        await supabase
+                            .from("payment_methods")
+                            .update({ is_default: true })
+                            .eq("id", next.id);
+                    }
+                }
+
+                log({
+                    event_type: "stripe.payment_method_detached",
+                    severity: "info",
+                    entity_type: "payment_method",
+                    entity_id: pm.id,
+                    properties: { live_mode: liveMode, user_id: row.user_id, was_default: row.is_default },
                 });
                 break;
             }

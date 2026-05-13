@@ -1,5 +1,4 @@
 import { useEffect, useState, useMemo } from "react";
-import { loadStripe, type Stripe } from "@stripe/stripe-js";
 import {
   Elements,
   PaymentElement,
@@ -10,22 +9,7 @@ import { CreditCard, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { formatCents, createPaymentIntent } from "@/lib/api";
-
-// Single Stripe.js promise for the whole app — loadStripe caches internally
-// but keeping the reference module-level avoids re-loading the SDK on remounts.
-let stripePromise: Promise<Stripe | null> | null = null;
-function getStripe(): Promise<Stripe | null> {
-  if (!stripePromise) {
-    const key = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY_TEST as string | undefined;
-    if (!key) {
-      console.error("VITE_STRIPE_PUBLISHABLE_KEY_TEST is not set");
-      stripePromise = Promise.resolve(null);
-    } else {
-      stripePromise = loadStripe(key);
-    }
-  }
-  return stripePromise;
-}
+import { getStripeForMode } from "@/lib/stripeClient";
 
 interface StripePaymentFormProps {
   totalCents: number;
@@ -110,7 +94,7 @@ export default function StripePaymentForm(props: StripePaymentFormProps) {
   }
 
   return (
-    <Elements stripe={getStripe()} options={elementsOptions}>
+    <Elements stripe={getStripeForMode(props.liveMode)} options={elementsOptions}>
       <InnerPaymentForm
         totalCents={props.totalCents}
         liveMode={props.liveMode}

@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { LogOut, User, ChevronDown, Settings } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { useAuth } from "@/contexts/AuthContext";
+import { useAuth, type AdminMode } from "@/contexts/AuthContext";
 import SendMoLogo from "@/components/SendMoLogo";
 
 interface Props {
@@ -11,7 +11,7 @@ interface Props {
 }
 
 export default function AppHeader({ actions }: Props) {
-  const { user, signOut } = useAuth();
+  const { user, signOut, isAdmin, adminActiveMode, setAdminActiveMode } = useAuth();
   const navigate = useNavigate();
 
   const defaultRight = user ? (
@@ -51,9 +51,71 @@ export default function AppHeader({ actions }: Props) {
           <SendMoLogo className="w-7 h-7" />
           <span className="text-lg font-bold text-foreground">SendMo</span>
         </Link>
-        <div>{actions !== undefined ? actions : defaultRight}</div>
+        <div className="flex items-center gap-3">
+          {isAdmin && (
+            <AdminModeToolbar mode={adminActiveMode} onModeChange={setAdminActiveMode} />
+          )}
+          <div>{actions !== undefined ? actions : defaultRight}</div>
+        </div>
       </div>
     </header>
+  );
+}
+
+// ─── Admin mode toolbar ─────────────────────────────────────
+//
+// Global admin toggle (Phase B B2 fix). Renders to the left of the user
+// menu in the app header. Backed by profiles.admin_active_mode + the
+// set_admin_active_mode() RPC — never trusts client state for mode.
+// Three modes: Test (default), Live Comp (real label, no charge),
+// Live Charge (real label, real charge — Phase C onward).
+
+function AdminModeToolbar({
+  mode,
+  onModeChange,
+}: {
+  mode: AdminMode;
+  onModeChange: (m: AdminMode) => Promise<{ error: string | null }>;
+}) {
+  const [pending, setPending] = useState<AdminMode | null>(null);
+  const labels: Record<AdminMode, string> = {
+    test: "Test",
+    live_comp: "Live Comp",
+    live_charge: "Live Charge",
+  };
+  const styles: Record<AdminMode, string> = {
+    test: "bg-primary/10 text-primary border border-primary/30",
+    live_comp: "bg-amber-100 text-amber-800 border border-amber-300",
+    live_charge: "bg-destructive/10 text-destructive border border-destructive/30",
+  };
+
+  async function handleClick(m: AdminMode) {
+    if (m === mode || pending) return;
+    setPending(m);
+    const { error } = await onModeChange(m);
+    setPending(null);
+    if (error) {
+      console.error("[AdminModeToolbar] set_admin_active_mode failed:", error);
+    }
+  }
+
+  return (
+    <div className="hidden sm:flex items-center gap-1 text-[11px]">
+      <span className="font-medium text-muted-foreground mr-1">Mode</span>
+      {(["test", "live_comp", "live_charge"] as const).map((m) => (
+        <button
+          key={m}
+          onClick={() => handleClick(m)}
+          disabled={pending !== null}
+          className={`px-2 py-0.5 rounded-md font-medium transition-colors ${
+            mode === m ? styles[m] : "text-muted-foreground hover:bg-muted"
+          } ${pending === m ? "opacity-50" : ""}`}
+          aria-pressed={mode === m}
+        >
+          {labels[m]}
+        </button>
+      ))}
+    </div>
   );
 }
 

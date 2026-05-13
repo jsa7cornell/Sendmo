@@ -13,6 +13,8 @@ import SendMoLogo from "@/components/SendMoLogo";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
 import LinksTab from "@/components/dashboard/LinksTab";
+import AddCardModal from "@/components/dashboard/AddCardModal";
+import { removePaymentMethod } from "@/lib/api";
 
 // ─── Types ──────────────────────────────────────────────────
 
@@ -45,6 +47,21 @@ interface DashboardShipment {
   // tells us who actually shipped this particular parcel.
   sender_address: { name: string | null } | null;
   recipient_address: { name: string | null } | null;
+}
+
+// Phase B saved card row — direct PostgREST read from payment_methods.
+// RLS filters by user_id; mode separation is enforced client-side at the
+// query level (per Phase B N7: RLS doesn't include a mode predicate).
+interface PaymentMethodRow {
+  id: string;
+  stripe_payment_method_id: string;
+  mode: "test" | "live";
+  brand: string | null;
+  last4: string | null;
+  exp_month: number | null;
+  exp_year: number | null;
+  is_default: boolean;
+  created_at: string;
 }
 
 // Links-tab row — one per `sendmo_links` row owned by the user, with up to
@@ -137,7 +154,7 @@ function refundBadge(refundStatus: string) {
 // ─── Component ──────────────────────────────────────────────
 
 export default function Dashboard() {
-  const { user, signOut } = useAuth();
+  const { user, session, signOut, isAdmin, liveMode } = useAuth();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const updatedLinkId = searchParams.get("updated_link");
@@ -169,6 +186,13 @@ export default function Dashboard() {
   const [tab, setTab] = useState<"shipments" | "links">(initialTab);
   const [allLinks, setAllLinks] = useState<DashboardLinkRow[]>([]);
   const [loadingAllLinks, setLoadingAllLinks] = useState(true);
+  // Phase B saved cards. Mode follows the auth-context liveMode (admin only;
+  // non-admins always see test-mode cards which is fine — they save nothing
+  // in live until Phase C/D opens the floodgates).
+  const [paymentMethods, setPaymentMethods] = useState<PaymentMethodRow[]>([]);
+  const [loadingPaymentMethods, setLoadingPaymentMethods] = useState(true);
+  const [showAddCard, setShowAddCard] = useState(false);
+  const [removingPmId, setRemovingPmId] = useState<string | null>(null);
   function switchTab(next: "shipments" | "links") {
     setTab(next);
     const params = new URLSearchParams(searchParams);
@@ -235,6 +259,56 @@ export default function Dashboard() {
 
     fetchData();
   }, [user]);
+
+  // Phase B saved cards — direct PostgREST read filtered by current mode.
+  // Refetched on liveMode flip (admin toggles in header). Optimistic refetch
+  // after Add Card success runs in handleCardAdded() below.
+  const fetchPaymentMethods = async () => {
+    if (!user) return;
+    const mode = liveMode ? "live" : "test";
+    setLoadingPaymentMethods(true);
+    const { data, error } = await supabase
+      .from("payment_methods")
+      .select("id, stripe_payment_method_id, mode, brand, last4, exp_month, exp_year, is_default, created_at")
+      .eq("user_id", user.id)
+      .eq("mode", mode)
+      .is("deleted_at", null)
+      .order("created_at", { ascending: false });
+    if (!error && data) setPaymentMethods(data as PaymentMethodRow[]);
+    setLoadingPaymentMethods(false);
+  };
+
+  useEffect(() => {
+    fetchPaymentMethods();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, liveMode]);
+
+  // After Add Card succeeds, the payment_methods row arrives via webhook —
+  // may not be present immediately. Refetch with 500ms/1s/2s backoff.
+  async function handleCardAdded() {
+    setShowAddCard(false);
+    const delays = [500, 1000, 2000];
+    for (const delay of delays) {
+      await new Promise((r) => setTimeout(r, delay));
+      await fetchPaymentMethods();
+      // We don't know exactly what row "just got added", but if the count
+      // increased we got it. Crude but works in practice.
+    }
+  }
+
+  async function handleRemoveCard(pm: PaymentMethodRow) {
+    if (!session?.access_token) return;
+    if (!window.confirm(`Remove ${pm.brand ?? "card"} ending in ${pm.last4 ?? "????"}?`)) return;
+    setRemovingPmId(pm.id);
+    try {
+      await removePaymentMethod(session.access_token, pm.stripe_payment_method_id);
+      await fetchPaymentMethods();
+    } catch (err) {
+      console.error("[Dashboard] removeCard failed:", err);
+    } finally {
+      setRemovingPmId(null);
+    }
+  }
 
   // handleCancelled() removed 2026-05-13. The /t/<public_code> page is the
   // single source of truth for shipment state after a cancel; the Dashboard
@@ -480,15 +554,87 @@ export default function Dashboard() {
                 <CreditCard className="w-4 h-4 text-primary" />
                 My Wallet
               </h2>
-              <Badge variant="outline" className="text-xs">Coming Soon</Badge>
+              {isAdmin && (
+                <Badge
+                  variant="outline"
+                  className={`text-[10px] ${
+                    liveMode
+                      ? "border-destructive/50 text-destructive bg-destructive/10"
+                      : "border-amber-300 text-amber-700 bg-amber-50"
+                  }`}
+                >
+                  {liveMode ? "LIVE" : "Test"}
+                </Badge>
+              )}
             </div>
-            <div className="bg-muted/30 rounded-xl px-4 py-5 text-center">
-              <CreditCard className="w-7 h-7 text-muted-foreground/40 mx-auto mb-2" />
-              <p className="text-sm text-foreground font-medium">Saved cards & balance</p>
-              <p className="text-xs text-muted-foreground mt-1">
-                We'll add your payment methods and SendMo balance here when payments launch.
-              </p>
-            </div>
+
+            {loadingPaymentMethods ? (
+              <div className="h-20 rounded-xl bg-muted/40 animate-pulse" />
+            ) : paymentMethods.length === 0 ? (
+              <div className="bg-muted/30 rounded-xl px-4 py-5 text-center">
+                <CreditCard className="w-7 h-7 text-muted-foreground/40 mx-auto mb-2" />
+                <p className="text-sm text-foreground font-medium">No saved cards yet</p>
+                <p className="text-xs text-muted-foreground mt-1 mb-3">
+                  Save a card to speed up checkout next time.
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="rounded-xl"
+                  onClick={() => setShowAddCard(true)}
+                >
+                  Add card
+                </Button>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {paymentMethods.map((pm) => (
+                  <div
+                    key={pm.id}
+                    className="flex items-center justify-between bg-muted/20 rounded-xl px-3 py-2.5"
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <CreditCard className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                      <div className="text-sm min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-medium text-foreground capitalize">
+                            {pm.brand ?? "Card"}
+                          </span>
+                          <span className="text-muted-foreground">•••• {pm.last4 ?? "????"}</span>
+                          {pm.is_default && (
+                            <Badge variant="outline" className="text-[10px] ml-1 border-primary/30 text-primary bg-primary/5">
+                              Default
+                            </Badge>
+                          )}
+                        </div>
+                        {pm.exp_month && pm.exp_year && (
+                          <div className="text-[11px] text-muted-foreground">
+                            Exp {String(pm.exp_month).padStart(2, "0")}/{String(pm.exp_year).slice(-2)}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveCard(pm)}
+                      disabled={removingPmId === pm.id}
+                      className="text-xs text-muted-foreground hover:text-destructive transition-colors p-1.5 rounded-md hover:bg-muted disabled:opacity-50"
+                      aria-label="Remove card"
+                    >
+                      {removingPmId === pm.id ? "…" : <X className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
+                ))}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full rounded-xl mt-2"
+                  onClick={() => setShowAddCard(true)}
+                >
+                  Add another card
+                </Button>
+              </div>
+            )}
           </div>
         </div>
 
@@ -693,6 +839,11 @@ export default function Dashboard() {
         )}
       </div>
 
+      <AddCardModal
+        open={showAddCard}
+        onClose={() => setShowAddCard(false)}
+        onSuccess={handleCardAdded}
+      />
     </motion.div>
   );
 }

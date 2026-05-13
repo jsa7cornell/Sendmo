@@ -158,6 +158,106 @@ export function cancelPaymentIntent(
     });
 }
 
+// ─── Customers ──────────────────────────────────────────────
+
+export interface Customer {
+    id: string;
+    object: "customer";
+    email?: string;
+    metadata?: Record<string, string>;
+}
+
+export function createCustomer(params: {
+    email?: string;
+    metadata?: Record<string, string>;
+    liveMode: boolean;
+}): Promise<Customer> {
+    return stripeRequest<Customer>("/customers", {
+        method: "POST",
+        body: {
+            email: params.email,
+            metadata: params.metadata,
+        },
+        liveMode: params.liveMode,
+    });
+}
+
+// ─── SetupIntents (Phase B saved cards) ─────────────────────
+
+export interface SetupIntent {
+    id: string;
+    object: "setup_intent";
+    client_secret: string;
+    customer: string | null;
+    payment_method?: string | null;
+    status:
+        | "requires_payment_method"
+        | "requires_confirmation"
+        | "requires_action"
+        | "processing"
+        | "canceled"
+        | "succeeded";
+    usage?: string;
+    metadata?: Record<string, string>;
+}
+
+export function createSetupIntent(params: {
+    customer: string;
+    metadata?: Record<string, string>;
+    idempotency_key: string;
+    liveMode: boolean;
+}): Promise<SetupIntent> {
+    return stripeRequest<SetupIntent>("/setup_intents", {
+        method: "POST",
+        body: {
+            customer: params.customer,
+            payment_method_types: ["card"],
+            usage: "off_session",
+            metadata: params.metadata,
+        },
+        idempotencyKey: params.idempotency_key,
+        liveMode: params.liveMode,
+    });
+}
+
+// ─── PaymentMethods ─────────────────────────────────────────
+
+export interface PaymentMethodCard {
+    brand?: string;
+    last4?: string;
+    exp_month?: number;
+    exp_year?: number;
+}
+
+export interface PaymentMethod {
+    id: string;
+    object: "payment_method";
+    type: string;
+    customer?: string | null;
+    card?: PaymentMethodCard;
+    metadata?: Record<string, string>;
+}
+
+export function detachPaymentMethod(
+    paymentMethodId: string,
+    liveMode: boolean,
+): Promise<PaymentMethod> {
+    return stripeRequest<PaymentMethod>(
+        `/payment_methods/${encodeURIComponent(paymentMethodId)}/detach`,
+        { method: "POST", liveMode },
+    );
+}
+
+export function retrievePaymentMethod(
+    paymentMethodId: string,
+    liveMode: boolean,
+): Promise<PaymentMethod> {
+    return stripeRequest<PaymentMethod>(
+        `/payment_methods/${encodeURIComponent(paymentMethodId)}`,
+        { method: "GET", liveMode },
+    );
+}
+
 // ─── Refunds ────────────────────────────────────────────────
 
 export interface Refund {
