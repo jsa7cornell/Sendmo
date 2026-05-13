@@ -160,6 +160,41 @@ export async function fetchGuestimate(description: string): Promise<GuestimateAp
   return post<GuestimateApiResult>("guestimate", { description });
 }
 
+// ─── Print logging (decided 2026-05-13) ────────────────────
+// POST /label-print writes a `label.printed` event_logs row + returns the
+// updated count. Same 3-path auth shape as cancel-label (JWT / X-Cancel-Token
+// / anonymous). Fire-and-forget from the Print button's onClick — the actual
+// PDF window.open happens in parallel via target="_blank".
+
+export interface LogPrintResult {
+  actor: string;
+  print_count: number;
+  skipped?: string;
+}
+
+export async function logLabelPrint(
+  publicCode: string,
+  opts: { accessToken?: string; cancelToken?: string } = {},
+): Promise<LogPrintResult> {
+  const hdrs: Record<string, string> = {
+    "Content-Type": "application/json",
+    apikey: ANON_KEY,
+  };
+  if (opts.accessToken) hdrs.Authorization = `Bearer ${opts.accessToken}`;
+  else hdrs.Authorization = `Bearer ${ANON_KEY}`;
+  if (opts.cancelToken) hdrs["X-Cancel-Token"] = opts.cancelToken;
+  const res = await fetch(`${BASE_URL}/functions/v1/label-print`, {
+    method: "POST",
+    headers: hdrs,
+    body: JSON.stringify({ public_code: publicCode }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `Print log failed (${res.status})`);
+  }
+  return res.json();
+}
+
 // ─── Label Purchase ─────────────────────────────────────────
 
 export async function buyLabel(
@@ -172,6 +207,7 @@ export async function buyLabel(
   link?: { short_code?: string },  // flex-link auth claim (sender flow)
   payment?: { payment_intent_id?: string; comp?: boolean; display_price_cents?: number },
   accessToken?: string,  // user JWT — labels fn stamps shipments.user_id off this (full-label)
+  parcel?: { description?: string },  // tracking-page-ia-polish (decided 2026-05-13): sender-declared package contents → shipments.item_description (migration 021)
 ): Promise<LabelResult> {
   const body = {
     easypost_shipment_id: easypostShipmentId,
@@ -185,6 +221,9 @@ export async function buyLabel(
     payment_intent_id: payment?.payment_intent_id,
     comp: payment?.comp,
     display_price_cents: payment?.display_price_cents,
+    // labels function reads parcel.description and writes it to
+    // shipments.item_description via a follow-up UPDATE (migration 021).
+    parcel: parcel?.description ? { description: parcel.description } : undefined,
   };
   return post<LabelResult>("labels", body, accessToken);
 }

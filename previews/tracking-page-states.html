@@ -1,0 +1,609 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Tracking page — state mockups</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  :root {
+    --background: 0 0% 96%;
+    --foreground: 210 11% 15%;
+    --card: 0 0% 100%;
+    --primary: 214 89% 52%;
+    --muted: 210 14% 95%;
+    --muted-foreground: 210 7% 46%;
+    --destructive: 0 72% 51%;
+    --success: 142 71% 45%;
+    --border: 210 14% 89%;
+  }
+  html, body { font-family: ui-sans-serif, system-ui, -apple-system, "Inter", "Segoe UI", Roboto, sans-serif; background: #f3f4f6; }
+  .card { background: hsl(var(--card)); border: 1px solid hsl(var(--border)); border-radius: 16px; box-shadow: 0 1px 2px rgba(0,0,0,0.04); }
+  .text-fg { color: hsl(var(--foreground)); }
+  .text-mf { color: hsl(var(--muted-foreground)); }
+  .bg-pri { background: hsl(var(--primary)); }
+  .text-pri { color: hsl(var(--primary)); }
+  .bg-mut { background: hsl(var(--muted)); }
+  .bg-dest { background: hsl(var(--destructive)); }
+  .text-dest { color: hsl(var(--destructive)); }
+  .text-suc { color: hsl(var(--success)); }
+  .border-pri { border-color: hsl(var(--primary)); }
+  .border-soft { border-color: hsl(var(--border)); }
+  .ring-pri { box-shadow: 0 0 0 3px hsl(var(--primary) / 0.15); }
+  .label-thumb {
+    background: repeating-linear-gradient(90deg, #fff 0 6px, #f4f4f5 6px 8px);
+    border: 1px dashed #d4d4d8;
+  }
+  .barcode {
+    height: 36px;
+    background-image: repeating-linear-gradient(90deg, #18181b 0 2px, transparent 2px 4px, #18181b 4px 5px, transparent 5px 9px, #18181b 9px 12px, transparent 12px 14px);
+  }
+  .step-dot-done { background: hsl(var(--primary)); color: #fff; }
+  .step-dot-todo { background: hsl(var(--muted)); color: hsl(var(--muted-foreground)); }
+  .annotation { color: #b45309; background: #fef3c7; border: 1px dashed #f59e0b; }
+</style>
+</head>
+<body class="min-h-screen p-6 md:p-10">
+
+<div class="max-w-[1320px] mx-auto">
+  <header class="mb-8">
+    <h1 class="text-2xl font-bold text-fg">Tracking page — 3 state families</h1>
+    <p class="text-sm text-mf mt-1">Each "phone" shows the proposed layout for one family. Common <em>chrome</em> (SendMo header + page background) but the body composition pivots per state.</p>
+    <p class="text-xs text-mf mt-2">Yellow callouts = author notes about deltas from today's page.</p>
+  </header>
+
+  <!-- ─── 3-column grid of state mockups ─── -->
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+
+    <!-- ───────────── FAMILY 1 — READY TO SHIP ───────────── -->
+    <section>
+      <div class="mb-3">
+        <span class="text-xs font-semibold uppercase tracking-wider text-pri">Family 1</span>
+        <h2 class="text-lg font-bold text-fg">Ready to ship</h2>
+        <p class="text-xs text-mf">label_created · not test · paid · viewer can cancel</p>
+      </div>
+
+      <div class="card overflow-hidden">
+        <!-- Header -->
+        <div class="border-b border-soft h-12 px-4 flex items-center justify-between bg-white">
+          <div class="flex items-center gap-2">
+            <div class="w-6 h-6 rounded bg-pri"></div>
+            <span class="font-bold text-fg text-sm">SendMo</span>
+          </div>
+          <button class="text-xs border border-soft rounded-lg px-3 py-1 text-fg">Sign In</button>
+        </div>
+
+        <div class="p-4 space-y-4" style="background: hsl(var(--background));">
+
+          <!-- HERO — what's happening + what to do, in one block -->
+          <div class="card p-4 border-l-4 border-pri">
+            <div class="flex items-start gap-2">
+              <div class="w-8 h-8 rounded-lg flex items-center justify-center text-pri" style="background: hsl(var(--primary) / 0.1);">
+                <!-- printer icon -->
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9V2h12v7M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2M6 14h12v8H6z"/></svg>
+              </div>
+              <div class="flex-1">
+                <h2 class="font-semibold text-fg text-base">Ready to ship</h2>
+                <p class="text-xs text-mf">Your label is paid for and printable now.</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- LABEL — primary action, with the action obvious -->
+          <div class="card p-4">
+            <div class="label-thumb rounded-lg p-3 mb-3">
+              <div class="flex items-center justify-between mb-2">
+                <div>
+                  <p class="text-[10px] uppercase text-mf">From</p>
+                  <p class="text-xs font-medium text-fg">388 Townsend St</p>
+                  <p class="text-xs text-mf">San Francisco, CA</p>
+                </div>
+                <div class="text-right">
+                  <p class="text-[10px] uppercase text-mf">USPS · Ground</p>
+                  <p class="text-xs font-bold text-fg">5 lb</p>
+                </div>
+              </div>
+              <div class="barcode mb-1"></div>
+              <p class="text-[10px] font-mono text-fg text-center">9405 5002 0830 3118 7816 01</p>
+            </div>
+            <div class="relative">
+              <a href="#" class="block w-full text-center bg-pri text-white font-semibold py-3 rounded-xl text-sm">
+                🖨️  Print Label (PDF)
+              </a>
+              <!-- Print-count chip — flips on after first click (localStorage per public_code).
+                   Industry pattern: Shippo "Printed" badge, Easyship "Printed 2 times". -->
+              <span class="absolute -top-2 -right-2 inline-flex items-center gap-1 bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-semibold px-2 py-0.5 rounded-full shadow-sm">
+                ✓ Printed 1 time
+              </span>
+            </div>
+            <div class="grid grid-cols-2 gap-2 mt-2">
+              <a href="#" class="text-center border border-soft rounded-xl py-2 text-xs font-medium text-fg">⬇ Download</a>
+              <a href="#" class="text-center border border-soft rounded-xl py-2 text-xs font-medium text-fg">↗ Share</a>
+            </div>
+            <p class="text-[11px] text-mf text-center mt-3 italic">
+              Safe to reprint — your card was charged once. The label locks when USPS scans it.
+            </p>
+          </div>
+
+          <!-- "HOW TO SHIP" — 3-step strip -->
+          <div class="card p-4">
+            <h3 class="text-xs uppercase tracking-wider text-mf font-semibold mb-3">How to ship</h3>
+            <ol class="space-y-2">
+              <li class="flex gap-2 text-xs text-fg">
+                <span class="step-dot-done w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0">1</span>
+                <span><b>Print</b> at home, your library, or any print shop.</span>
+              </li>
+              <li class="flex gap-2 text-xs text-fg">
+                <span class="step-dot-done w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0">2</span>
+                <span><b>Tape</b> securely to the largest flat side. Cover any old barcodes.</span>
+              </li>
+              <li class="flex gap-2 text-xs text-fg">
+                <span class="step-dot-done w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0">3</span>
+                <span><b>Drop off</b> at any USPS mailbox or post office. No line needed.</span>
+              </li>
+            </ol>
+            <p class="text-[11px] text-mf mt-3 italic">Tracking activates once USPS scans the package.</p>
+          </div>
+
+          <!-- DETAILS — single reference card -->
+          <div class="card p-4">
+            <h3 class="text-xs uppercase tracking-wider text-mf font-semibold mb-3">Details</h3>
+            <dl class="grid grid-cols-[100px,1fr] gap-y-2 text-xs">
+              <dt class="text-mf">SendMo ID</dt><dd class="font-mono font-bold text-pri">NEC7J3E</dd>
+              <dt class="text-mf">Item</dt><dd class="text-fg">A pair of running shoes</dd>
+              <dt class="text-mf">From</dt><dd class="text-fg">San Francisco, CA</dd>
+              <dt class="text-mf">To</dt><dd class="text-fg">Brooklyn, NY</dd>
+              <dt class="text-mf">Carrier</dt><dd class="text-fg">USPS · Ground Advantage</dd>
+              <dt class="text-mf">Weight</dt><dd class="text-fg">5 lb · 10×10×10 in</dd>
+              <dt class="text-mf">Paid</dt>
+              <dd class="text-fg font-semibold">
+                $11.47
+                <span class="block text-[11px] text-mf font-normal">+ $0.00 carrier adjustment</span>
+              </dd>
+              <dt class="text-mf">Created</dt><dd class="text-fg">Today at 3:07 PM</dd>
+            </dl>
+          </div>
+
+          <!-- CANCEL — quieter, at the bottom -->
+          <div>
+            <p class="text-xs text-mf mb-2">Changed your mind?</p>
+            <div class="grid grid-cols-2 gap-2">
+              <button class="text-xs border border-soft rounded-xl py-2 text-fg hover:bg-white">Cancel label</button>
+              <button class="text-xs border border-soft rounded-xl py-2 text-fg hover:bg-white">Cancel & start over</button>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <div class="annotation rounded-lg text-xs px-3 py-2 mt-3 leading-snug">
+        <b>Deltas from today:</b> One paid hero (not two banners). Print is the clear primary CTA, with a "How to ship" 3-step strip — today's page never tells users <em>how</em>. <b>Print-count chip</b> (green badge top-right of Print button) lights up after first click — soft signal, not a lockout. Industry pattern (Shippo / Easyship). Reassurance line below clarifies reprints don't double-charge. <b>Removed:</b> progress bar (nothing has progressed yet — misleading); carrier tracking # (USPS hasn't seen it). <b>Added:</b> "SendMo ID" (was just "Code"), Item, From, To, Paid + stubbed carrier-adjustment line, Weight in details. Cancel row is quieter, below the main task.
+      </div>
+    </section>
+
+
+    <!-- ───────────── FAMILY 2 — IN MOTION ───────────── -->
+    <section>
+      <div class="mb-3">
+        <span class="text-xs font-semibold uppercase tracking-wider text-pri">Family 2</span>
+        <h2 class="text-lg font-bold text-fg">In motion / Delivered</h2>
+        <p class="text-xs text-mf">in_transit · out_for_delivery · delivered</p>
+      </div>
+
+      <div class="card overflow-hidden">
+        <div class="border-b border-soft h-12 px-4 flex items-center justify-between bg-white">
+          <div class="flex items-center gap-2">
+            <div class="w-6 h-6 rounded bg-pri"></div>
+            <span class="font-bold text-fg text-sm">SendMo</span>
+          </div>
+          <div class="flex items-center gap-1.5 text-xs font-medium text-fg">
+            <span class="w-5 h-5 rounded-full bg-mut flex items-center justify-center">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>
+            </span>
+            John ▾
+          </div>
+        </div>
+
+        <div class="p-4 space-y-4" style="background: hsl(var(--background));">
+
+          <!-- HERO — current status + ETA -->
+          <div class="card p-4 border-l-4 border-pri">
+            <div class="flex items-start gap-3">
+              <div class="w-10 h-10 rounded-xl flex items-center justify-center text-pri" style="background: hsl(var(--primary) / 0.1);">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="3" width="15" height="13"/><path d="M16 8h4l3 3v5h-7zM5.5 21a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5zM18.5 21a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z"/></svg>
+              </div>
+              <div class="flex-1">
+                <h2 class="font-bold text-fg text-base leading-tight">Out for delivery</h2>
+                <p class="text-xs text-mf">Expected today · Monday, May 13</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- PROGRESS — meaningful here (real movement) -->
+          <div class="card p-4">
+            <div class="flex items-center justify-between mb-2 text-[10px] uppercase tracking-wider text-mf">
+              <span>Created</span><span>Picked up</span><span>Out for del.</span><span>Delivered</span>
+            </div>
+            <div class="flex items-center">
+              <div class="step-dot-done w-6 h-6 rounded-full flex items-center justify-center text-[10px]">✓</div>
+              <div class="flex-1 h-1 bg-pri"></div>
+              <div class="step-dot-done w-6 h-6 rounded-full flex items-center justify-center text-[10px]">✓</div>
+              <div class="flex-1 h-1 bg-pri"></div>
+              <div class="step-dot-done w-6 h-6 rounded-full flex items-center justify-center text-[10px] ring-pri">✓</div>
+              <div class="flex-1 h-1 bg-mut"></div>
+              <div class="step-dot-todo w-6 h-6 rounded-full flex items-center justify-center text-[10px]">·</div>
+            </div>
+          </div>
+
+          <!-- ACTIVITY — events + carrier link -->
+          <div class="card p-4">
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="text-xs uppercase tracking-wider text-mf font-semibold">Activity</h3>
+              <a href="#" class="text-[11px] text-pri">View on USPS ↗</a>
+            </div>
+            <ul class="space-y-3">
+              <li class="flex gap-2">
+                <span class="w-2 h-2 rounded-full bg-pri mt-1.5 flex-shrink-0"></span>
+                <div class="text-xs">
+                  <p class="font-medium text-fg">Out for delivery</p>
+                  <p class="text-mf text-[11px]">Today, 8:14 AM · San Francisco, CA</p>
+                </div>
+              </li>
+              <li class="flex gap-2">
+                <span class="w-2 h-2 rounded-full bg-soft border border-soft mt-1.5 flex-shrink-0" style="background:#d4d4d8"></span>
+                <div class="text-xs">
+                  <p class="text-fg">Arrived at delivery facility</p>
+                  <p class="text-mf text-[11px]">Today, 4:22 AM · San Francisco, CA</p>
+                </div>
+              </li>
+              <li class="flex gap-2">
+                <span class="w-2 h-2 rounded-full bg-soft mt-1.5 flex-shrink-0" style="background:#d4d4d8"></span>
+                <div class="text-xs">
+                  <p class="text-fg">Departed regional facility</p>
+                  <p class="text-mf text-[11px]">Sun, 9:18 PM · Oakland, CA</p>
+                </div>
+              </li>
+            </ul>
+            <button class="mt-3 text-[11px] text-mf hover:text-fg">Show 4 more events ▾</button>
+          </div>
+
+          <!-- DETAILS — with paid + upcharge if applicable -->
+          <div class="card p-4">
+            <h3 class="text-xs uppercase tracking-wider text-mf font-semibold mb-3">Details</h3>
+            <dl class="grid grid-cols-[110px,1fr] gap-y-2 text-xs">
+              <dt class="text-mf">SendMo ID</dt><dd class="font-mono font-bold text-pri">RA2W2NG</dd>
+              <dt class="text-mf">Item</dt><dd class="text-fg">A pair of running shoes</dd>
+              <dt class="text-mf">From</dt><dd class="text-fg">San Francisco, CA</dd>
+              <dt class="text-mf">To</dt><dd class="text-fg">Brooklyn, NY</dd>
+              <dt class="text-mf">Carrier</dt><dd class="text-fg">USPS · Ground Advantage</dd>
+              <dt class="text-mf">Tracking #</dt><dd class="text-fg font-mono text-[11px] break-all">9405500208303118781601</dd>
+              <dt class="text-mf">Paid</dt>
+              <dd class="text-fg">
+                $11.47
+                <span class="block text-[11px] text-amber-700">+ $0.43 carrier adjustment <span class="text-mf">(post-pickup)</span></span>
+              </dd>
+              <dt class="text-mf">Shipped</dt><dd class="text-fg">Sat, May 11 at 3:07 PM</dd>
+            </dl>
+          </div>
+
+          <p class="text-[11px] text-mf text-center">No label PDF here — the package is already moving. <a href="#" class="text-pri">Need a receipt?</a></p>
+        </div>
+      </div>
+
+      <div class="annotation rounded-lg text-xs px-3 py-2 mt-3 leading-snug">
+        <b>Deltas from today:</b> Compact horizontal progress (today is vertical and dominates the page). Activity collapses old events. <b>Added:</b> carrier-adjustment line under Paid for the rare upcharge case (Phase G recovery loop slot). <b>Removed:</b> the label preview + Print/Download (irrelevant — package is moving). A small "receipt" link covers the edge case of needing the PDF later.
+      </div>
+
+      <!-- Delivered variant inline -->
+      <div class="mt-6">
+        <div class="mb-2">
+          <span class="text-[11px] font-semibold uppercase tracking-wider text-mf">Variant — Delivered</span>
+        </div>
+        <div class="card overflow-hidden">
+          <div class="border-b border-soft h-10 px-4 flex items-center bg-white">
+            <div class="w-5 h-5 rounded bg-pri mr-2"></div><span class="font-bold text-fg text-sm">SendMo</span>
+          </div>
+          <div class="p-4 space-y-3" style="background: hsl(var(--background));">
+            <div class="card p-4" style="background: hsl(var(--success) / 0.08); border-color: hsl(var(--success) / 0.3);">
+              <div class="flex items-start gap-3">
+                <div class="w-10 h-10 rounded-xl flex items-center justify-center text-suc" style="background: hsl(var(--success) / 0.15);">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                </div>
+                <div class="flex-1">
+                  <h2 class="font-bold text-fg text-base leading-tight">Delivered</h2>
+                  <p class="text-xs text-mf">Today, 2:38 PM · Front porch</p>
+                  <span class="inline-flex items-center gap-1 mt-1.5 rounded-full border px-2 py-0.5 text-[10px] font-medium bg-blue-50 text-blue-700 border-blue-200">🎯 Right on time</span>
+                </div>
+              </div>
+            </div>
+            <div class="card p-3">
+              <dl class="grid grid-cols-[110px,1fr] gap-y-1 text-xs">
+                <dt class="text-mf">SendMo ID</dt><dd class="font-mono font-bold text-pri">71NF1E8</dd>
+                <dt class="text-mf">Item</dt><dd class="text-fg">A pair of running shoes</dd>
+                <dt class="text-mf">From → To</dt><dd class="text-fg">SF, CA → Brooklyn, NY</dd>
+                <dt class="text-mf">Carrier</dt><dd class="text-fg">USPS · Ground Advantage</dd>
+                <dt class="text-mf">Paid</dt>
+                <dd class="text-fg">$9.82 <span class="text-[11px] text-mf">+ $0.00 carrier adjustment</span></dd>
+                <dt class="text-mf">Shipped</dt><dd class="text-fg">May 11</dd>
+                <dt class="text-mf">Delivered</dt><dd class="text-fg">May 13 at 2:38 PM</dd>
+              </dl>
+            </div>
+            <a href="#" class="block text-center text-xs text-pri">View full activity (8 events) ▾</a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+
+    <!-- ───────────── FAMILY 3 — CANCELLED ───────────── -->
+    <section>
+      <div class="mb-3">
+        <span class="text-xs font-semibold uppercase tracking-wider text-dest">Family 3</span>
+        <h2 class="text-lg font-bold text-fg">Cancelled</h2>
+        <p class="text-xs text-mf">cancelled · refund_status varies</p>
+      </div>
+
+      <div class="card overflow-hidden">
+        <div class="border-b border-soft h-12 px-4 flex items-center justify-between bg-white">
+          <div class="flex items-center gap-2">
+            <div class="w-6 h-6 rounded bg-pri"></div>
+            <span class="font-bold text-fg text-sm">SendMo</span>
+          </div>
+          <button class="text-xs border border-soft rounded-lg px-3 py-1 text-fg">Sign In</button>
+        </div>
+
+        <div class="p-4 space-y-4" style="background: hsl(var(--background));">
+
+          <!-- HERO — single banner carrying all cancel metadata + refund -->
+          <div class="card p-4 border-l-4 border-dest" style="background: hsl(var(--destructive) / 0.05);">
+            <div class="flex items-start gap-3">
+              <div class="w-10 h-10 rounded-xl flex items-center justify-center text-dest" style="background: hsl(var(--destructive) / 0.12);">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>
+              </div>
+              <div class="flex-1">
+                <h2 class="font-bold text-fg text-base leading-tight">This label was voided</h2>
+                <p class="text-xs text-mf">The package will not ship.</p>
+              </div>
+            </div>
+            <div class="mt-3 pt-3 border-t border-soft grid grid-cols-1 gap-1.5 text-[11px] text-mf">
+              <span class="flex items-center gap-1.5">🕒 Cancelled 8 minutes ago · May 13, 2026 at 3:07 PM</span>
+              <span class="flex items-center gap-1.5">👤 Cancelled by you</span>
+            </div>
+            <div class="mt-3">
+              <span class="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-medium text-emerald-700">
+                ✓ Refund of $11.47 issued
+              </span>
+            </div>
+          </div>
+
+          <!-- DETAILS — pared-down, no "Shipped" line, no carrier # spam -->
+          <div class="card p-4">
+            <h3 class="text-xs uppercase tracking-wider text-mf font-semibold mb-3">Details</h3>
+            <dl class="grid grid-cols-[110px,1fr] gap-y-2 text-xs">
+              <dt class="text-mf">SendMo ID</dt><dd class="font-mono font-bold text-fg">NEC7J3E</dd>
+              <dt class="text-mf">Item</dt><dd class="text-fg">A pair of running shoes</dd>
+              <dt class="text-mf">From → To</dt><dd class="text-fg">San Francisco, CA → Brooklyn, NY</dd>
+              <dt class="text-mf">Carrier</dt><dd class="text-fg">USPS · Ground Advantage</dd>
+              <dt class="text-mf">Label created</dt><dd class="text-fg">May 13 at 2:54 PM</dd>
+            </dl>
+          </div>
+
+          <!-- ACTION — what's next -->
+          <a href="#" class="block w-full text-center bg-pri text-white font-semibold py-3 rounded-xl text-sm">
+            Print another label →
+          </a>
+          <p class="text-[11px] text-mf text-center">Uses your existing SendMo link.</p>
+        </div>
+      </div>
+
+      <div class="annotation rounded-lg text-xs px-3 py-2 mt-3 leading-snug">
+        <b>Deltas from today:</b> Single banner carries title + body + timestamp + actor + refund chip — no separate status card to feel disjointed. <b>Removed:</b> "Shipped" date (the package never shipped — misleading); carrier tracking number (the number is dead); progress bar; "View on USPS site"; tracking history. <b>Added:</b> "Print another label" CTA that re-uses the existing link → moves the user forward instead of leaving them on a dead-end page.
+      </div>
+
+      <!-- Refund-pending sub-variant -->
+      <div class="mt-6">
+        <div class="mb-2"><span class="text-[11px] font-semibold uppercase tracking-wider text-mf">Variant — refund pending</span></div>
+        <div class="card p-4 border-l-4 border-dest" style="background: hsl(var(--destructive) / 0.05);">
+          <div class="flex items-start gap-3">
+            <div class="w-10 h-10 rounded-xl flex items-center justify-center text-dest" style="background: hsl(var(--destructive) / 0.12);">⊘</div>
+            <div class="flex-1">
+              <h2 class="font-bold text-fg text-base leading-tight">This label was voided</h2>
+              <p class="text-xs text-mf">The package will not ship.</p>
+            </div>
+          </div>
+          <div class="mt-3 pt-3 border-t border-soft text-[11px] text-mf">
+            🕒 Cancelled just now &nbsp;·&nbsp; 👤 Cancelled by the sender
+          </div>
+          <div class="mt-3">
+            <span class="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-[11px] font-medium text-amber-800">
+              🕒 Cancellation in progress — refund pending
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Comp / no-charge sub-variant -->
+      <div class="mt-4">
+        <div class="mb-2"><span class="text-[11px] font-semibold uppercase tracking-wider text-mf">Variant — comp (no charge)</span></div>
+        <div class="card p-4 border-l-4 border-dest" style="background: hsl(var(--destructive) / 0.05);">
+          <div class="flex items-start gap-3">
+            <div class="w-10 h-10 rounded-xl flex items-center justify-center text-dest" style="background: hsl(var(--destructive) / 0.12);">⊘</div>
+            <div class="flex-1">
+              <h2 class="font-bold text-fg text-base leading-tight">This label was voided</h2>
+              <p class="text-xs text-mf">The package will not ship.</p>
+            </div>
+          </div>
+          <div class="mt-3 pt-3 border-t border-soft text-[11px] text-mf">
+            🕒 Cancelled May 11 at 9:48 AM &nbsp;·&nbsp; 👤 Cancelled by SendMo admin
+          </div>
+          <div class="mt-3">
+            <span class="inline-flex items-center gap-1.5 rounded-full border border-soft bg-mut px-3 py-1 text-[11px] font-medium text-mf">
+              No charge was made
+            </span>
+          </div>
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <!-- ─── Admin debug panel + test-mode banner mock ─── -->
+  <section class="mt-12 max-w-3xl mx-auto">
+    <div class="mb-3">
+      <span class="text-xs font-semibold uppercase tracking-wider text-mf">Cross-family additions</span>
+      <h2 class="text-lg font-bold text-fg">Test-mode banner + Admin debug panel</h2>
+      <p class="text-xs text-mf">Test banner persists per state (as today). Admin debug only renders when <code>isAdmin</code>.</p>
+    </div>
+
+    <!-- Test-mode persistent banner -->
+    <div class="card p-3 mb-4 flex items-start gap-2" style="background: #fef3c7; border-color: #fbbf24;">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#92400e" stroke-width="2" class="flex-shrink-0 mt-0.5"><path d="M10 2v7.31L5 14.5V21h14v-6.5l-5-5.19V2"/></svg>
+      <div class="text-xs">
+        <p class="font-semibold text-amber-900">Test label — not a real shipment</p>
+        <p class="text-amber-800 text-[11px]">Synthetic tracking number. Statuses on this page auto-advance and aren't tied to anything physical.</p>
+      </div>
+    </div>
+
+    <!-- ADMIN DEBUG — collapsible card -->
+    <details class="card p-0" open>
+      <summary class="cursor-pointer px-4 py-3 flex items-center justify-between border-b border-soft list-none">
+        <span class="flex items-center gap-2 text-sm font-semibold text-fg">
+          <span class="inline-flex items-center justify-center w-5 h-5 rounded bg-purple-100 text-purple-700 text-[10px] font-bold">A</span>
+          Admin debug
+          <span class="text-[10px] text-mf font-normal">(only visible to admins)</span>
+        </span>
+        <button class="text-xs border border-soft rounded-lg px-2 py-1 text-fg hover:bg-mut">⟳ Refetch from EasyPost</button>
+      </summary>
+
+      <div class="p-4 space-y-4 text-xs">
+
+        <!-- Identifiers -->
+        <div>
+          <h4 class="uppercase tracking-wider text-mf font-semibold mb-2 text-[10px]">Identifiers</h4>
+          <dl class="grid grid-cols-[160px,1fr] gap-y-1 font-mono">
+            <dt class="text-mf">shipment.id</dt><dd class="text-fg break-all">8d3f1c2a-7e9b-4d11-9d4e-1cbe1f6a9e21</dd>
+            <dt class="text-mf">easypost_shipment_id</dt><dd class="text-fg break-all">shp_d2b09c8a31a14e1f8b21c5a91ad9b78c</dd>
+            <dt class="text-mf">easypost_tracker_id</dt><dd class="text-fg break-all">trk_a91c5e3f8c4a4b8e9c12d456a1e8b3f2</dd>
+            <dt class="text-mf">stripe_payment_intent</dt><dd class="text-mf italic">null (comp shipment)</dd>
+            <dt class="text-mf">cancel_token</dt><dd class="text-fg">••••• 1f7a <span class="text-mf">(present)</span></dd>
+          </dl>
+        </div>
+
+        <!-- Mode flags -->
+        <div>
+          <h4 class="uppercase tracking-wider text-mf font-semibold mb-2 text-[10px]">Mode flags</h4>
+          <dl class="grid grid-cols-[160px,1fr] gap-y-1 font-mono">
+            <dt class="text-mf">is_test</dt><dd class="text-fg">false</dd>
+            <dt class="text-mf">payment_method</dt><dd class="text-fg">comp</dd>
+            <dt class="text-mf">link_id</dt><dd class="text-fg break-all">3c9d7b1a-...</dd>
+            <dt class="text-mf">link.status</dt><dd class="text-fg">in_use</dd>
+            <dt class="text-mf">link.short_code</dt><dd class="text-fg">mUgagu3HrS</dd>
+            <dt class="text-mf">link.type</dt><dd class="text-fg">flexible</dd>
+            <dt class="text-mf">link.user_id</dt><dd class="text-fg break-all">a12b34c5-...</dd>
+          </dl>
+        </div>
+
+        <!-- State -->
+        <div>
+          <h4 class="uppercase tracking-wider text-mf font-semibold mb-2 text-[10px]">State</h4>
+          <dl class="grid grid-cols-[160px,1fr] gap-y-1 font-mono">
+            <dt class="text-mf">status</dt><dd class="text-fg">label_created</dd>
+            <dt class="text-mf">refund_status</dt><dd class="text-fg">none</dd>
+            <dt class="text-mf">carrier_refund_id</dt><dd class="text-mf italic">null</dd>
+          </dl>
+        </div>
+
+        <!-- Timeline -->
+        <div>
+          <h4 class="uppercase tracking-wider text-mf font-semibold mb-2 text-[10px]">Timeline</h4>
+          <dl class="grid grid-cols-[160px,1fr] gap-y-1 font-mono">
+            <dt class="text-mf">created_at</dt><dd class="text-fg">2026-05-13T20:07:14Z <span class="text-mf">(8 min ago)</span></dd>
+            <dt class="text-mf">updated_at</dt><dd class="text-fg">2026-05-13T20:07:14Z</dd>
+            <dt class="text-mf">cancelled_at</dt><dd class="text-mf italic">null</dd>
+            <dt class="text-mf">refund_submitted_at</dt><dd class="text-mf italic">null</dd>
+            <dt class="text-mf">delivered_at</dt><dd class="text-mf italic">null</dd>
+          </dl>
+        </div>
+
+        <!-- Ledger -->
+        <div>
+          <h4 class="uppercase tracking-wider text-mf font-semibold mb-2 text-[10px]">Transactions ledger</h4>
+          <table class="w-full font-mono border border-soft rounded-lg overflow-hidden">
+            <thead class="bg-mut">
+              <tr class="text-mf text-[10px]">
+                <th class="text-left px-2 py-1.5">Type</th>
+                <th class="text-right px-2 py-1.5">Amount (cents)</th>
+                <th class="text-left px-2 py-1.5">Mode</th>
+                <th class="text-left px-2 py-1.5">Created</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="border-t border-soft">
+                <td class="px-2 py-1.5 text-fg">comp_grant</td>
+                <td class="px-2 py-1.5 text-right text-fg">−1147</td>
+                <td class="px-2 py-1.5 text-fg">live</td>
+                <td class="px-2 py-1.5 text-mf">20:07:14Z</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Audit -->
+        <div>
+          <h4 class="uppercase tracking-wider text-mf font-semibold mb-2 text-[10px]">Event log (last 5)</h4>
+          <ul class="space-y-1 font-mono text-[11px]">
+            <li class="flex justify-between border-b border-soft pb-1"><span class="text-fg">label.created</span><span class="text-mf">20:07:14Z</span></li>
+            <li class="flex justify-between border-b border-soft pb-1"><span class="text-fg">rate.fetched <span class="text-mf">(840ms)</span></span><span class="text-mf">20:07:11Z</span></li>
+            <li class="flex justify-between border-b border-soft pb-1"><span class="text-fg">address.verified</span><span class="text-mf">20:07:05Z</span></li>
+            <li class="flex justify-between"><span class="text-fg">address.verified</span><span class="text-mf">20:07:02Z</span></li>
+          </ul>
+        </div>
+
+      </div>
+    </details>
+
+    <p class="annotation rounded-lg text-xs px-3 py-2 mt-3 leading-snug">
+      <b>Implementation note (Ask 4):</b> Per the proposal-review framing, this should be a separate role-gated edge function
+      (<code>tracking-admin</code> or <code>/tracking?code=X&amp;admin=1</code> with admin JWT check) — not folded into the public
+      tracking response. Avoids accidentally surfacing privileged fields via field-omission bugs.
+    </p>
+  </section>
+
+
+  <!-- ─── Cross-family notes ─── -->
+  <section class="mt-12 card p-6 max-w-3xl mx-auto">
+    <h2 class="text-base font-bold text-fg mb-3">Cross-family IA rules</h2>
+    <ul class="text-sm text-fg space-y-2 list-disc pl-5">
+      <li><b>One identity anchor</b> — the SendMo public_code is always the bold/blue one. Carrier tracking number is demoted (Family 2 only) and never shown when it's dead (Family 3) or unscanned (Family 1).</li>
+      <li><b>One hero per state</b> — replaces today's "celebration banner + status card + tracking history" stack-of-three with a single state-tinted hero that owns "what's happening."</li>
+      <li><b>Money is part of the story</b> — every family surfaces "Paid: $X.XX". Family 2 carries the carrier-adjustment slot. Family 3 ties refund to the same number.</li>
+      <li><b>The page never lists the same fact twice</b> — Today: status appears in banner + status-card + progress bar. New: each fact has exactly one home.</li>
+      <li><b>"What to do" lives on Family 1 only</b> — print/tape/drop-off instruction is invisible in 2 and 3 because the work is done.</li>
+      <li><b>Cancel/Change row</b> only renders when actually offered (Family 1 + viewer is authorized). Today the section exists but mostly empty for unauthorized viewers — drop the empty container.</li>
+    </ul>
+
+    <h3 class="text-sm font-bold text-fg mt-5 mb-2">Resolved (round 2)</h3>
+    <ul class="text-xs text-mf space-y-1 list-disc pl-5">
+      <li>✓ Drop "Shipped" on cancelled — use "Label created".</li>
+      <li>✓ Item description + From/To added to <b>all three families</b>' Details.</li>
+      <li>✓ "How to ship" strip stays visible (renamed from "What to do next").</li>
+      <li>✓ Carrier-adjustment line always rendered, stubbed at $0.00 when no adjustment.</li>
+      <li>✓ Test-mode banner persists as today (separate amber strip).</li>
+      <li>✓ "Code" → <b>"SendMo ID"</b> across all families. "Tracking #" (carrier number) appears only in Family 2.</li>
+      <li>✓ Print-count chip + reprint-reassurance copy on Family 1.</li>
+      <li>✓ Admin debug card at bottom (gated on <code>isAdmin</code>) — Ask 4 follow-up.</li>
+    </ul>
+
+    <h3 class="text-sm font-bold text-fg mt-5 mb-2">Resolved (round 3 — implementation locked)</h3>
+    <ul class="text-xs text-mf space-y-1 list-disc pl-5">
+      <li>✓ <b>Print logging — Phase 2 now.</b> New <code>POST /label-print</code> edge function writes a <code>label.printed</code> row to <code>event_logs</code> per click. Captures: <code>actor</code> (admin/link_owner/session_token/email_token/anonymous), <code>user_id</code> (when JWT), <code>ip</code> (from <code>x-forwarded-for</code>), <code>user_agent</code>, <code>session_id</code>, <code>public_code</code>, <code>created_at</code>. Tracking GET returns <code>print_count</code> + <code>last_printed_at</code>. Rationale: two-viewer disambiguation — "you printed it" vs "no, you did" needs server-side ground truth, not localStorage.</li>
+      <li>✓ <b>Item description always shown.</b> Privacy concern is real (anonymous third-party can read it) but transparency wins. Flagged as a future-revisit if abuse pattern emerges.</li>
+      <li>✓ <b>Admin debug — separate PR.</b> This polish PR ships a collapsed affordance ("Admin debug →") at the bottom that's visible to admins only and links to <code>/admin?shipment=&lt;id&gt;</code> for now. Full inline admin panel + role-gated endpoint = its own session.</li>
+    </ul>
+  </section>
+
+</div>
+
+</body>
+</html>

@@ -17,6 +17,14 @@ interface Props {
   canCancel?: boolean;
   onCancelClick?: () => void;
   onChangeClick?: () => void;
+  /** Server-counted print events for this shipment (tracking-page-ia-polish
+   *  decided 2026-05-13). Chip lights up when > 0. Parent owns optimistic
+   *  increment + rollback. */
+  printCount?: number;
+  /** Fires on Print click. Parent uses it to POST to /label-print and bump
+   *  the local count optimistically. Fire-and-forget; the PDF opens in a
+   *  new tab in parallel. */
+  onPrintClick?: () => void;
 }
 
 // Rendered on /t/<public_code> while status === 'label_created'. Combines
@@ -25,6 +33,7 @@ interface Props {
 // + author response B2 (option a) — anyone with the URL can see this.
 export default function ShipmentLabelSection({
   labelUrl, trackingNumber, carrier, shareUrl, canCancel, onCancelClick, onChangeClick,
+  printCount = 0, onPrintClick,
 }: Props) {
   const dropOff = dropOffCopy(carrier);
   const [shareCopied, setShareCopied] = useState(false);
@@ -82,18 +91,32 @@ export default function ShipmentLabelSection({
             </div>
           </div>
 
-          {/* Print — primary, largest CTA */}
-          <a
-            href={labelUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="block"
-          >
-            <Button className="w-full rounded-xl shadow-md text-lg py-7" size="lg">
-              <Printer className="w-5 h-5 mr-2" />
-              Print Label (PDF)
-            </Button>
-          </a>
+          {/* Print — primary, largest CTA. Print-count chip overlays top-right
+              (decided 2026-05-13). Audit detail (actor + ip + user_agent +
+              session_id) lives in event_logs; the chip is a soft signal. */}
+          <div className="relative">
+            <a
+              href={labelUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block"
+              onClick={() => onPrintClick?.()}
+            >
+              <Button className="w-full rounded-xl shadow-md text-lg py-7" size="lg">
+                <Printer className="w-5 h-5 mr-2" />
+                Print Label (PDF)
+              </Button>
+            </a>
+            {printCount > 0 && (
+              <span
+                className="absolute -top-2 -right-2 inline-flex items-center gap-1 bg-emerald-50 text-emerald-700 border border-emerald-200 text-[11px] font-semibold px-2 py-0.5 rounded-full shadow-sm"
+                aria-label={`Printed ${printCount} ${printCount === 1 ? "time" : "times"}`}
+              >
+                <Check className="w-3 h-3" />
+                Printed {printCount} {printCount === 1 ? "time" : "times"}
+              </span>
+            )}
+          </div>
 
           {/* Download + Share — secondary row */}
           <div className="grid grid-cols-2 gap-2">
@@ -143,11 +166,13 @@ export default function ShipmentLabelSection({
         </>
       )}
 
-      {/* Single-use + share warning (per author-response B2 (a)) — only
-          relevant when there's actually a PDF to reprint. */}
+      {/* Reprint reassurance + shareable-URL caveat. Decided 2026-05-13:
+          industry pattern (Pirate Ship / Shippo / Easyship) is unlimited
+          reprints until carrier scan; we say so. Old "single-shipment, don't
+          reprint" copy was wrong on the carrier mechanics. */}
       {labelUrl && (
         <div className="rounded-xl bg-muted/40 border border-border px-4 py-3 text-xs text-muted-foreground">
-          This label is for a single shipment. Please don't reprint or share — duplicates can be rejected by the carrier or charged twice. Anyone with this link can see the recipient's address, so don't share it publicly.
+          Safe to reprint — your card was charged once. The label locks when {carrier || "USPS"} scans the package. Anyone with this link can see the recipient's address, so don't share it publicly.
         </div>
       )}
 

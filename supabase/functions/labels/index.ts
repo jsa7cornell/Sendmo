@@ -660,6 +660,24 @@ serve(async (req: Request) => {
                         }
                         dbCancelToken = mintedCancelToken;
 
+                        // ── Item description (migration 021) ───────────────
+                        // Sender-flow flows pass parcel.description from
+                        // SenderStepReview. Persisted as a follow-up UPDATE
+                        // (rather than RPC-param expansion) to avoid the
+                        // brittle RPC-signature pattern that bit the
+                        // 2026-05-13 orphan-shipment incident. Skipped when
+                        // description is absent / empty.
+                        if (shipmentId && parcel?.description && typeof parcel.description === 'string' && parcel.description.trim().length > 0) {
+                            const { error: descErr } = await supabase
+                                .from('shipments')
+                                .update({ item_description: parcel.description.trim().slice(0, 500) })
+                                .eq('id', shipmentId);
+                            if (descErr) {
+                                // Non-fatal — label still shipped, just no description stored.
+                                console.error('item_description write error:', descErr);
+                            }
+                        }
+
                         // For FLEX links, flip status active → in_use. Full-label
                         // links are already minted at in_use by the RPC (migration 020).
                         // Optimistic update — no-op if already in_use (e.g. multi-shipment).

@@ -397,6 +397,17 @@ serve(async (req: Request) => {
       is_test: shipment.is_test === true,
       cancelled_at: shipment.cancelled_at ?? null,
       cancelled_by_actor: cancelledByActor,
+      // tracking-page-ia-polish (decided 2026-05-13)
+      item_description: shipment.item_description ?? null,
+      from_city: senderAddr?.city ?? null,
+      from_state: senderAddr?.state ?? null,
+      to_city: recipientAddr?.city ?? null,
+      to_state: recipientAddr?.state ?? null,
+      print_count: printCount,
+      last_printed_at: lastPrintedAt,
+      // B4: shipment.id surfaced only to admin callers — keeps public
+      // response slim and prevents accidental UUID leakage.
+      shipment_id: isAdmin ? shipment.id : undefined,
     }),
     { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
   );

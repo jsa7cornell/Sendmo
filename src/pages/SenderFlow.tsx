@@ -140,6 +140,8 @@ export default function SenderFlow() {
         },
         { short_code: linkData.short_code },
         { comp: true, display_price_cents: selectedRate.display_price_cents },
+        undefined,  // accessToken — sender flow uses link_short_code auth, not JWT
+        { description: parcel.description ?? undefined },
       );
       // Per proposal §11/§13 B3: navigate to the shipment page with a fresh
       // celebration flag; the URL is the bookmark-friendly post-generation surface.

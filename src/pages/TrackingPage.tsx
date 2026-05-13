@@ -9,7 +9,11 @@ import ShipmentLabelSection from "@/components/tracking/ShipmentLabelSection";
 import ShipAgainCTA from "@/components/tracking/ShipAgainCTA";
 import CancelLabelDialog from "@/components/tracking/CancelLabelDialog";
 import CancelledShipmentBanner from "@/components/tracking/CancelledShipmentBanner";
-import { cancelShipment } from "@/lib/api";
+import DetailsCard from "@/components/tracking/DetailsCard";
+import HowToShipStrip from "@/components/tracking/HowToShipStrip";
+import PrintAnotherLabelCTA from "@/components/tracking/PrintAnotherLabelCTA";
+import AdminAffordanceFooter from "@/components/tracking/AdminAffordanceFooter";
+import { cancelShipment, logLabelPrint } from "@/lib/api";
 
 const BASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
 
@@ -45,6 +49,16 @@ interface TrackingData {
   // Cancelled-state metadata (populated server-side when status='cancelled')
   cancelled_at?: string | null;
   cancelled_by_actor?: "admin" | "link_owner" | "session_token" | "email_token" | null;
+  // tracking-page-ia-polish (decided 2026-05-13)
+  item_description?: string | null;
+  from_city?: string | null;
+  from_state?: string | null;
+  to_city?: string | null;
+  to_state?: string | null;
+  print_count?: number;
+  last_printed_at?: string | null;
+  /** Only populated when caller is admin (server-side gate per B4). */
+  shipment_id?: string;
 }
 
 // Persisted cancel-token storage. The token can arrive via two transports:
@@ -171,6 +185,10 @@ export default function TrackingPage() {
   const [data, setData] = useState<TrackingData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Optimistic bump for the print-count chip. The server count comes back on
+  // the next tracking refetch; in the meantime the chip says what the user
+  // expects. Rollback on POST failure (N3).
+  const [optimisticPrintBump, setOptimisticPrintBump] = useState(0);
   // Dialog state for Cancel + Change. Single state with a mode discriminator
   // so we don't render two dialogs.
   const [confirmMode, setConfirmMode] = useState<"cancel" | "change" | null>(null);
@@ -221,6 +239,26 @@ export default function TrackingPage() {
       (code ? readCancelToken(code) : null) !== null
     )
   );
+
+  // Fire the print-log POST on Print click + optimistically bump the chip.
+  // Rollback on failure (N3) — silent revert, no toast; the user's primary
+  // task (opening the PDF) succeeded in parallel via target="_blank".
+  async function handlePrintClick() {
+    if (!code) return;
+    setOptimisticPrintBump(b => b + 1);
+    try {
+      const { data: { session } } = await supabaseClient.auth.getSession();
+      const cancelToken = readCancelToken(code);
+      await logLabelPrint(code, {
+        accessToken: session?.access_token,
+        cancelToken: cancelToken ?? undefined,
+      });
+    } catch {
+      // Rollback the optimistic bump. Refetch isn't necessary — server state
+      // didn't move, so the next tracking GET will return the same count.
+      setOptimisticPrintBump(b => Math.max(0, b - 1));
+    }
+  }
 
   async function handleCancelConfirm() {
     if (!data || !code) return;
@@ -340,19 +378,24 @@ export default function TrackingPage() {
               </div>
             )}
 
-            {/* Label section: only while not-yet-shipped, never in terminal states.
-                The `label_url` gate is INSIDE the component now (so orphan-
+            {/* F1 — Ready to Ship. Label section + HowToShipStrip + (later) DetailsCard.
+                The `label_url` gate is INSIDE ShipmentLabelSection (orphan-
                 recovered shipments without a PDF still surface Cancel + Share). */}
-            {data.status === "label_created" && !TERMINAL_BANNERS[data.status] && (
-              <ShipmentLabelSection
-                labelUrl={data.label_url}
-                trackingNumber={data.tracking_number}
-                carrier={data.carrier}
-                shareUrl={typeof window !== "undefined" ? `${window.location.origin}/t/${data.public_code}` : `/t/${data.public_code}`}
-                canCancel={canCancel}
-                onCancelClick={() => setConfirmMode("cancel")}
-                onChangeClick={() => setConfirmMode("change")}
-              />
+            {data.status === "label_created" && (
+              <>
+                <ShipmentLabelSection
+                  labelUrl={data.label_url}
+                  trackingNumber={data.tracking_number}
+                  carrier={data.carrier}
+                  shareUrl={typeof window !== "undefined" ? `${window.location.origin}/t/${data.public_code}` : `/t/${data.public_code}`}
+                  canCancel={canCancel}
+                  onCancelClick={() => setConfirmMode("cancel")}
+                  onChangeClick={() => setConfirmMode("change")}
+                  printCount={(data.print_count ?? 0) + optimisticPrintBump}
+                  onPrintClick={handlePrintClick}
+                />
+                <HowToShipStrip carrier={data.carrier} />
+              </>
             )}
 
             {/* Cancel / Change confirmation dialog */}
@@ -365,78 +408,89 @@ export default function TrackingPage() {
               onConfirm={handleCancelConfirm}
             />
 
-            {/* Status card */}
-            <div className="bg-card rounded-2xl border border-border shadow-sm p-6">
-              <div className="flex items-center gap-4 mb-6">
-                <div className={`w-14 h-14 rounded-xl ${config.bgColor} flex items-center justify-center`}>
-                  <StatusIcon className={`w-7 h-7 ${config.color}`} />
+            {/* Status hero — F1 + F2 only. F3 is handled by CancelledShipmentBanner
+                above and doesn't need a status card (the banner carries
+                state + timestamp + actor + refund chip). Per the IA pivot:
+                each family has one hero, not two stacked. */}
+            {data.status !== "cancelled" && data.status !== "return_to_sender" && (
+              <div className="bg-card rounded-2xl border border-border shadow-sm p-6">
+                <div className="flex items-center gap-4">
+                  <div className={`w-14 h-14 rounded-xl ${config.bgColor} flex items-center justify-center`}>
+                    <StatusIcon className={`w-7 h-7 ${config.color}`} />
+                  </div>
+                  <div>
+                    <h1 className="text-xl font-bold text-foreground">{config.label}</h1>
+                    {data.estimated_delivery && data.status !== "delivered" && (
+                      <p className="text-sm text-muted-foreground flex items-center gap-1 mt-0.5">
+                        <Calendar className="w-3.5 h-3.5" />
+                        Expected {formatDeliveryDate(data.estimated_delivery)}
+                      </p>
+                    )}
+                    {data.status === "delivered" && (() => {
+                      const perf = deliveryPerformance(data.promised_delivery_date, data.delivered_at);
+                      return perf ? (
+                        <span className={`inline-flex items-center gap-1 mt-1 rounded-full border px-2 py-0.5 text-xs font-medium ${perf.color}`}>
+                          <span>{perf.emoji}</span>
+                          {perf.label}
+                        </span>
+                      ) : null;
+                    })()}
+                  </div>
                 </div>
-                <div>
-                  <h1 className="text-xl font-bold text-foreground">{config.label}</h1>
-                  {data.estimated_delivery && data.status !== "delivered" && (
-                    <p className="text-sm text-muted-foreground flex items-center gap-1 mt-0.5">
-                      <Calendar className="w-3.5 h-3.5" />
-                      Expected {formatDeliveryDate(data.estimated_delivery)}
-                    </p>
-                  )}
-                  {data.status === "delivered" && (() => {
-                    const perf = deliveryPerformance(data.promised_delivery_date, data.delivered_at);
-                    return perf ? (
-                      <span className={`inline-flex items-center gap-1 mt-1 rounded-full border px-2 py-0.5 text-xs font-medium ${perf.color}`}>
-                        <span>{perf.emoji}</span>
-                        {perf.label}
-                      </span>
-                    ) : null;
-                  })()}
-                </div>
-              </div>
 
-              {/* Details */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <span className="text-xs text-muted-foreground uppercase tracking-wider">SendMo Tracking</span>
-                  <p className="text-lg font-bold text-primary mt-1 tracking-wider">{data.public_code}</p>
-                  <p className="text-xs text-muted-foreground mt-0.5 break-all">
-                    {data.carrier} #{data.tracking_number}
-                  </p>
-                  {(() => {
-                    // Hide carrier-site link for test shipments — the synthetic
-                    // tracking number won't resolve on USPS/UPS/etc. and a 404
-                    // there is more misleading than no link at all.
-                    if (data.is_test) return null;
-                    const carrierUrl = carrierTrackingUrl(data.carrier, data.tracking_number);
-                    return carrierUrl ? (
-                      <a
-                        href={carrierUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-primary mt-1"
-                      >
-                        View on {data.carrier} site
-                        <ExternalLink className="w-3 h-3" />
-                      </a>
-                    ) : null;
-                  })()}
-                </div>
-                <div>
-                  <span className="text-xs text-muted-foreground uppercase tracking-wider">Carrier</span>
-                  <p className="text-sm font-medium text-foreground mt-1">{data.carrier}</p>
-                </div>
-                <div>
-                  <span className="text-xs text-muted-foreground uppercase tracking-wider">Service</span>
-                  <p className="text-sm font-medium text-foreground mt-1">{data.service}</p>
-                </div>
-                <div>
-                  <span className="text-xs text-muted-foreground uppercase tracking-wider">Shipped</span>
-                  <p className="text-sm font-medium text-foreground mt-1">
-                    {new Date(data.created_at).toLocaleDateString()}
-                  </p>
-                </div>
+                {/* F2 only: carrier-site deep-link. F1 hides it because USPS
+                    hasn't scanned the package yet (would 404). Test-mode
+                    hides it too — synthetic tracking number isn't real. */}
+                {(data.status === "in_transit" || data.status === "out_for_delivery" || data.status === "delivered") && !data.is_test && (() => {
+                  const carrierUrl = carrierTrackingUrl(data.carrier, data.tracking_number);
+                  return carrierUrl ? (
+                    <a
+                      href={carrierUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-primary mt-4"
+                    >
+                      View on {data.carrier} site
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                  ) : null;
+                })()}
               </div>
-            </div>
+            )}
 
-            {/* Progress bar — hidden in terminal states (cancelled, returning) */}
-            {!TERMINAL_BANNERS[data.status] && (
+            {/* Per-family Details card — uniform across F1/F2/F3 with field
+                set determined by family prop. Replaces the legacy 2x2 grid
+                that duplicated state across status-card + progress + events. */}
+            <DetailsCard
+              family={
+                data.status === "label_created" ? 1 :
+                (data.status === "cancelled" || data.status === "return_to_sender") ? 3 : 2
+              }
+              data={{
+                public_code: data.public_code,
+                tracking_number: data.tracking_number,
+                carrier: data.carrier,
+                service: data.service,
+                item_description: data.item_description ?? null,
+                from_city: data.from_city ?? null,
+                from_state: data.from_state ?? null,
+                to_city: data.to_city ?? null,
+                to_state: data.to_state ?? null,
+                created_at: data.created_at,
+                cancelled_at: data.cancelled_at,
+                is_test: data.is_test,
+              }}
+            />
+
+            {/* F3 cancelled — forward CTA so the user isn't stuck on a dead-end. */}
+            <PrintAnotherLabelCTA
+              linkShortCode={data.link_short_code}
+              status={data.status}
+            />
+
+            {/* Progress bar — F2 only. F1 has nothing to progress (label not
+                yet scanned); F3 is terminal. */}
+            {(data.status === "in_transit" || data.status === "out_for_delivery" || data.status === "delivered") && (
             <div className="bg-card rounded-2xl border border-border shadow-sm p-6">
               <h2 className="text-sm font-semibold text-foreground mb-4">Progress</h2>
               <div className="space-y-0">
@@ -517,6 +571,12 @@ export default function TrackingPage() {
             <Link to="/" className="inline-flex items-center gap-1 text-sm text-primary hover:underline">
               <ArrowLeft className="w-4 h-4" /> Back to SendMo
             </Link>
+
+            {/* Admin-only footer affordance. Deep-link target only present
+                when caller is admin (server-side gate per B4) → falls back
+                to /admin if shipment_id is absent. Full inline panel is
+                Ask 4 — separate proposal. */}
+            {isAdmin && <AdminAffordanceFooter shipmentId={data.shipment_id} />}
           </div>
         )}
       </main>

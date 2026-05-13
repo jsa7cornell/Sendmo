@@ -8,6 +8,76 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-13] Tracking page IA polish — family composition + Phase 2 print logging + admin affordance
+**Category:** UX | Tracking | Print audit | Schema
+**Cross-link:** [proposals/2026-05-13_tracking-page-ia-polish_reviewed-2026-05-13_decided-2026-05-13.md](proposals/2026-05-13_tracking-page-ia-polish_reviewed-2026-05-13_decided-2026-05-13.md). Decided 2026-05-13 — T1=(a) (item_description ships via migration 021), T2=(i) (anonymous-allowed item visibility).
+
+**Context:** After today's round-1 polish (commit `65192c6`, the CancelledShipmentBanner + AppHeader fix) John flagged that the page still felt disjointed — same fact shown 3 times (banner + status card + progress), "Shipped: May 13" on a label that never shipped, no instructions on what to do with a printed PDF. Wrote an implementation proposal, ran it through a fresh-eyes review session. Reviewer caught two real blockers (B1: `item_description` doesn't exist on `shipments`; B2: `from_city/state, to_city/state` live on the joined `addresses` table, not denormalized) plus a privacy blocker (B3: `item_description` exposure is a separate threat-model from the Round-2 PDF-PII Option (a)). T1+T2 escalated to John, decided 2026-05-13.
+
+**Decision/Finding:**
+
+**Family-based composition** — page now dispatches per state (F1 Ready-to-Ship / F2 In-Motion / F3 Cancelled) rather than a single skeleton with hidden blocks. Each family has one hero (no banner + status-card duplication), one details card with family-specific field config, and family-specific action surfaces. Status hero hides for F3 entirely (the rich CancelledShipmentBanner is the hero). The reviewer was right that this is the right architectural call — round-1 polish had hit the structural ceiling of the toggle-skeleton.
+
+**Print logging — Phase 2** ([`label-print/index.ts`](supabase/functions/label-print/index.ts)). New POST endpoint with the same 3-path auth shape as `cancel-label` (JWT / X-Cancel-Token / anonymous). Writes a `label.printed` row to `event_logs` with `properties.{actor, user_id, ip, user_agent, session_id, public_code}`. Anonymous viewers can log (intentional — over-indexing on who-printed-it per John's call). `is_test=true` shipments return early without writing (N1 — avoids polluting event_logs with synthetic prints). Rate limit 10/min per (ip + public_code). The user-facing chip is a simple "Printed N times" count; the rich actor data lives in the audit row for admin/support investigation. Phase 2.1 future enhancement: enrich the chip for authorized viewers with last-actor labels.
+
+**Schema** — Migration 021 adds `shipments.item_description TEXT NULL`. Labels function persists `parcel.description` via a follow-up UPDATE after the canonical RPC (deliberately not adding an `admin_insert_shipment` parameter — the 2026-05-13 orphan-shipment incident proved that RPC-signature changes are a brittle pattern). SenderFlow's buy call passes the description. Tracking response embeds addresses via PostgREST FK relations (`sender_address:addresses!sender_address_id(city,state)`) — never denormalized columns. Surfaces `from_city / from_state / to_city / to_state` (city+state only; never street1 per PLAYBOOK Rule 7).
+
+**Tracking response (B4 + N2 fixes):**
+- `shipment_id` returned only when caller is admin (server-side `profiles.role='admin'` JWT check) — keeps public response slim.
+- The three event_logs queries (cancelled-actor + print-count + last-printed) run via `Promise.all` after the shipment SELECT. Cancelled-state tracking GETs now 1 round-trip for the event_logs batch, not 3.
+
+**Shared auth helper** ([`_shared/actor.ts`](supabase/functions/_shared/actor.ts)). Extracted from cancel-label's inline 3-path logic into a typed `deriveActor()`. label-print uses it; cancel-label can migrate in a follow-up. Single source of truth for the auth shape that took three Q&A rounds to land on cancel-label.
+
+**UI polish (N4 + N5 + PP3 + PP4):**
+- **Dropped the carrier-adjustment $0.00 stub** entirely. Reviewer was right — Phase G's shape is a `carrier_adjustments` table with per-event rows, not a column read. When Phase G lands it adds the UI in its own PR with the correct SUM-from-table semantics.
+- `PrintAnotherLabelCTA` renders only for `status === 'cancelled'` (not `return_to_sender` — printing a new label doesn't fix a returning package). Does NOT set `sendmo_just_voided_for_change` — cold-landing on a cancelled page is a fresh start, not a continuation.
+- Carrier tracking number hidden on F1 (USPS hasn't scanned yet — would 404) and F3 (dead number post-void). Only F2 shows it, paired with "View on USPS site" deep-link.
+- F3 timestamp label says "Label created" (NEVER "Shipped" — the package never shipped).
+
+**Admin affordance** ([`AdminAffordanceFooter.tsx`](src/components/tracking/AdminAffordanceFooter.tsx)). Quiet "Admin debug →" link at the bottom, gated by `isAdmin`. Deep-links to `/admin?shipment=<id>` when the server returned `shipment_id` (admin caller); falls back to `/admin` otherwise. Full inline admin panel is **Ask 4 — separate proposal**.
+
+**Reprint reassurance copy** (industry-pattern correction). Old copy said "single shipment, don't reprint" — wrong on carrier mechanics. Pirate Ship / Shippo / Easyship all allow unlimited reprints until carrier scan. New copy: *"Safe to reprint — your card was charged once. The label locks when USPS scans the package."*
+
+**Watch out:**
+- **Migration 021 must apply before edge function deploys** — the labels function and tracking function both reference `item_description`. The GitHub Action deploys functions on push; the migration runs separately via the Supabase dashboard (per Rule 0.5 — agents don't write to prod DB). **Apply order:** (1) John runs migration 021 in Supabase dashboard; (2) GitHub Action picks up the edge-function deploys from the push. Same recurrence pattern as 2026-05-13 orphan-shipment — code references schema before schema applied → 500s. The labels function's UPDATE on `item_description` is in a try/catch (non-fatal) so this fails open, but the tracking function's SELECT will fail outright if the column isn't there.
+- **Address join coverage gap.** The PostgREST embed expects every shipment to have both `sender_address_id` + `recipient_address_id` populated. Orphan-recovered rows from 2026-05-13 used the canonical RPC, which populates them — so coverage should be 100%. If a future codepath skips the RPC, From/To rows will render as blank (graceful — the DetailsCard hides the rows on null).
+- **Item description privacy** — anonymous URL-holders see item_description per T2=(i). If a sender enters something sensitive ("PrEP medication", "engagement ring"), anyone with the forwarded URL learns it. Flagged for future-revisit if abuse pattern emerges; the round-2 Option (a) PDF-PII decision was specifically *not* extended to cover this.
+- **Print logging is anonymous-allowed**, rate-limited 10/min/IP. A bad actor with the share URL can dirty the log. Mitigated by rate limit; accepted that the log is advisory, not enforcement.
+- **No Ask 4 yet.** Admin affordance footer is a stub that deep-links to `/admin?shipment=<id>`. The `/admin` page does not yet read the `?shipment=` query param — wire-up TBD in the Ask 4 proposal.
+
+**Tests:** 300 unit tests pass (was 257; +43 — DetailsCard 11, PrintAnotherLabelCTA 6, AdminAffordanceFooter 3, HowToShipStrip 3, logLabelPrint 6, actor.test 4 contract + 7 deriveActor (gated `skipIf` on Deno-import resolution), ShipmentLabelSection +5). `npx tsc -b --noEmit` clean. Updated 1 existing test (ShipmentLabelSection's old "single shipment" copy → "Safe to reprint" + privacy caveat).
+
+**Files touched:**
+- [supabase/migrations/021_shipments_item_description.sql](supabase/migrations/021_shipments_item_description.sql) — NEW.
+- [supabase/functions/_shared/actor.ts](supabase/functions/_shared/actor.ts) — NEW (shared 3-path auth helper).
+- [supabase/functions/label-print/index.ts](supabase/functions/label-print/index.ts) — NEW (Phase 2 print logging endpoint).
+- [supabase/functions/labels/index.ts](supabase/functions/labels/index.ts) — persist `parcel.description` → `item_description` via follow-up UPDATE.
+- [supabase/functions/tracking/index.ts](supabase/functions/tracking/index.ts) — addresses via PostgREST embed; `item_description`, `from/to_city/state`, `print_count`, `last_printed_at`, admin-gated `shipment_id`; event_logs queries parallelized via `Promise.all`; `easypost_shipment_id` added to SELECT (latent bug fix — refund-poll block was reading a column that wasn't in the SELECT).
+- [src/lib/api.ts](src/lib/api.ts) — new `logLabelPrint()` client; `buyLabel()` gains optional `parcel.description` arg.
+- [src/pages/SenderFlow.tsx](src/pages/SenderFlow.tsx) — passes `parcel.description` to `buyLabel`.
+- [src/pages/TrackingPage.tsx](src/pages/TrackingPage.tsx) — family composition; print logging wired with optimistic increment + rollback (N3); admin affordance footer rendered for `isAdmin`.
+- [src/components/tracking/ShipmentLabelSection.tsx](src/components/tracking/ShipmentLabelSection.tsx) — print-count chip; reprint-reassurance copy.
+- [src/components/tracking/DetailsCard.tsx](src/components/tracking/DetailsCard.tsx) — NEW.
+- [src/components/tracking/HowToShipStrip.tsx](src/components/tracking/HowToShipStrip.tsx) — NEW.
+- [src/components/tracking/PrintAnotherLabelCTA.tsx](src/components/tracking/PrintAnotherLabelCTA.tsx) — NEW.
+- [src/components/tracking/AdminAffordanceFooter.tsx](src/components/tracking/AdminAffordanceFooter.tsx) — NEW.
+- [tests/unit/](tests/unit/) — 5 new test files + 1 updated.
+
+**Deploy order:**
+1. **John runs `supabase/migrations/021_shipments_item_description.sql` in the Supabase dashboard SQL editor** (Rule 0.5 — agents don't write to prod DB).
+2. Push to main → GitHub Action auto-deploys `tracking`, `labels`, `label-print` (changed). Verify via `gh run list --workflow="Deploy Supabase Edge Functions"`.
+3. Vercel auto-deploys frontend on the same push.
+4. Verify the dogfood URLs (`/t/NEC7J3E` cancelled, `/t/Z7BCPTY` test-delivered, `/t/71NF1E8` live-delivered, `/t/RA2W2NG` live-in-flight).
+
+**Follow-ups (flagged, not bundled):**
+- Ask 4 — full inline admin debug panel with role-gated endpoint.
+- Phase 2.1 — enrich print-count chip for authorized viewers with last-actor labels.
+- Phase G — populate carrier-adjustment line on F2 Paid row.
+- cancel-label refactor to use `_shared/actor.ts` (zero behavior change; just dedup).
+- `/admin?shipment=<id>` read-side wiring.
+
+---
+
 ### [2026-05-13] Two-step refund + lazy EasyPost poll on `/t/<code>`
 **Category:** Cancellation | Stripe | Refund safety | EasyPost
 **Cross-link:** [proposals/2026-05-11_label-cancel-and-change_reviewed-2026-05-12_decided-2026-05-12.md](proposals/2026-05-11_label-cancel-and-change_reviewed-2026-05-12_decided-2026-05-12.md) + [proposals/2026-04-26_stripe-integration-plan_reviewed-2026-04-26_decided-2026-05-11.md](proposals/2026-04-26_stripe-integration-plan_reviewed-2026-04-26_decided-2026-05-11.md) §11 #1.
