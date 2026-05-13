@@ -165,28 +165,17 @@ export default function RecipientStepFullShipping({
       {/* Ship From */}
       <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
         <h3 className="text-sm font-semibold text-foreground mb-3">Ship from (sender's address)</h3>
-        <div className="mb-4">
-          <label htmlFor="sender-name" className="text-sm font-medium text-foreground">
-            Sender's name
-          </label>
-          <Input
-            id="sender-name"
-            type="text"
-            value={state.originAddress.name || ""}
-            onChange={(e) => onUpdate({ originAddress: { ...state.originAddress, name: e.target.value } })}
-            placeholder="e.g. Pat Smith"
-            className={`mt-1.5 rounded-xl ${tried && !state.originAddress.name ? "border-destructive" : ""}`}
-          />
-          {tried && !state.originAddress.name && (
-            <p className="text-xs text-destructive mt-1">Sender name is required for the shipping label</p>
-          )}
-        </div>
         <SmartAddressInput
           label="origin"
           value={state.originAddress}
           onChange={(addr: AddressInput) => onUpdate({ originAddress: addr })}
           error={tried && !state.originAddress.verified ? "Sender address is required" : undefined}
+          nameLabel="Sender's name"
+          nameHint=""
         />
+        {tried && !state.originAddress.name && (
+          <p className="text-xs text-destructive mt-1">Sender name is required for the shipping label</p>
+        )}
         <div className="mt-4">
           <label htmlFor="sender-email" className="text-sm font-medium text-foreground">
             Sender's email <span className="text-muted-foreground font-normal">(optional — they'll get tracking updates)</span>
