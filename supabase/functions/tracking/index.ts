@@ -61,7 +61,7 @@ serve(async (req: Request) => {
   // Joins sendmo_links to derive link_short_code (for the Ship-Again CTA) and
   // user_id (server-side viewer_is_recipient determination — link.user_id is
   // never exposed in the response).
-  const selectFields = "id, tracking_number, public_code, carrier, service, status, easypost_tracker_id, is_test, created_at, updated_at, promised_delivery_date, delivered_at, label_pdf_url, link_id, sendmo_links!inner(short_code, user_id)";
+  const selectFields = "id, tracking_number, public_code, carrier, service, status, easypost_tracker_id, is_test, created_at, updated_at, promised_delivery_date, delivered_at, label_url, link_id, sendmo_links!inner(short_code, user_id)";
   const baseQuery = supabase.from("shipments").select(selectFields);
   const lookup = publicCode
     ? baseQuery.eq("public_code", publicCode).single()
@@ -174,7 +174,7 @@ serve(async (req: Request) => {
       updated_at: shipment.updated_at,
       promised_delivery_date: shipment.promised_delivery_date,
       delivered_at: shipment.delivered_at,
-      label_url: shipment.label_pdf_url ?? null,
+      label_url: shipment.label_url ?? null,
       link_short_code: linkJoin?.short_code ?? null,
       viewer_is_recipient: viewerIsRecipient,
     }),
