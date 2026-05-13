@@ -59,6 +59,7 @@ export default function SenderFlow() {
 
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [usedGuestimator, setUsedGuestimator] = useState(false);
 
   useEffect(() => {
     if (!shortCode) {
@@ -237,6 +238,7 @@ export default function SenderFlow() {
                     handleFetchRates(p);
                   }}
                   onBack={() => setStep("intro")}
+                  onGuestimatorUsed={() => setUsedGuestimator(true)}
                 />
               </motion.div>
             )}
@@ -253,6 +255,7 @@ export default function SenderFlow() {
                   onContinue={() => setStep("review")}
                   onBack={() => setStep("package")}
                   onRetry={() => parcel && handleFetchRates(parcel)}
+                  usedGuestimator={usedGuestimator}
                 />
               </motion.div>
             )}

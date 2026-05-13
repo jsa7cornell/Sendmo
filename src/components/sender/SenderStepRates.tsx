@@ -15,12 +15,13 @@ interface Props {
   onContinue: () => void;
   onBack: () => void;
   onRetry: () => void;
+  usedGuestimator?: boolean;
 }
 
 // SPEC §8 Step 2. NO prices visible — recipient pays. "Preferred by {name}"
 // badge marks rates whose service tier matches the link's preferred_speed.
 export default function SenderStepRates({
-  linkData, rates, loading, error, selectedRate, onSelectRate, onContinue, onBack, onRetry,
+  linkData, rates, loading, error, selectedRate, onSelectRate, onContinue, onBack, onRetry, usedGuestimator,
 }: Props) {
   if (loading) {
     return (
@@ -77,6 +78,13 @@ export default function SenderStepRates({
           Prepaid by {recipient}. Pick the speed that works best.
         </p>
       </div>
+
+      {usedGuestimator && (
+        <p className="text-[11px] text-muted-foreground leading-snug rounded-xl bg-muted/40 border border-border px-3 py-2">
+          Magic Guestimator is in beta. Shipping options shown are based on the AI's predicted package
+          dimensions and weight — the carrier may adjust if measurements differ at the warehouse.
+        </p>
+      )}
 
       <div className="space-y-3">
         {sortRatesForSender(rates, linkData).map((rate) => {

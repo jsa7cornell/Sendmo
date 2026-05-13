@@ -21,6 +21,7 @@ interface Props {
     nameLabel?: string;
     nameHint?: string;
     addressPlaceholder?: string;
+    addressLabel?: string;
 }
 
 // ─── Parse a formatted address string into components ────────
@@ -49,7 +50,7 @@ function parseDescriptionToComponents(description: string): Omit<AddressInput, "
 
 // ─── Component ───────────────────────────────────────────────
 
-export default function SmartAddressInput({ label, value, onChange, error, nameLabel, nameHint, addressPlaceholder }: Props) {
+export default function SmartAddressInput({ label, value, onChange, error, nameLabel, nameHint, addressPlaceholder, addressLabel }: Props) {
     const [query, setQuery] = useState(
         value.verified ? `${value.street}, ${value.city}, ${value.state} ${value.zip}`.trim() : "",
     );
@@ -256,7 +257,7 @@ export default function SmartAddressInput({ label, value, onChange, error, nameL
             {/* ── Address autocomplete ────────────────────────── */}
             <div>
                 <label htmlFor={`${label}-address`} className="text-sm font-medium text-foreground">
-                    Address
+                    {addressLabel || "Address"}
                 </label>
 
                 <div ref={containerRef} className="relative mt-1">

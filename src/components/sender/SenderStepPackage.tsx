@@ -14,6 +14,7 @@ interface Props {
   initialParcel: SenderParcel | null;
   onSubmit: (parcel: SenderParcel) => void;
   onBack: () => void;
+  onGuestimatorUsed?: () => void;
 }
 
 const PACKAGING_OPTIONS: { value: PackagingType; label: string; Icon: typeof Package }[] = [
@@ -26,7 +27,7 @@ const PACKAGING_OPTIONS: { value: PackagingType; label: string; Icon: typeof Pac
 // keeps "shipping to {recipient}" always visible. Packaging type is a 3-option
 // grid; height is hidden for envelopes.
 export default function SenderStepPackage({
-  linkData, senderAddress, onAddressChange, initialParcel, onSubmit, onBack,
+  linkData, senderAddress, onAddressChange, initialParcel, onSubmit, onBack, onGuestimatorUsed,
 }: Props) {
   const [tried, setTried] = useState(false);
   const [packaging, setPackaging] = useState<PackagingType>(initialParcel?.packaging ?? "box");
@@ -37,11 +38,13 @@ export default function SenderStepPackage({
   const [description, setDescription] = useState(initialParcel?.description ?? "");
 
   function handleGuestimate(result: GuestimatorResult) {
+    setPackaging(result.packaging);
     setLength(String(result.length));
     setWidth(String(result.width));
-    if (packaging !== "envelope") setHeight(String(result.height));
+    if (result.packaging !== "envelope") setHeight(String(result.height));
     setWeightLbs(String(result.weightLbs));
     setDescription(result.itemName);
+    onGuestimatorUsed?.();
   }
 
   function handleContinue() {
@@ -83,8 +86,11 @@ export default function SenderStepPackage({
       </div>
 
       <div className="text-center">
-        <h1 className="text-2xl font-bold text-foreground">Package details</h1>
-        <p className="text-muted-foreground mt-1 text-sm">Origin address and what you're shipping</p>
+        <h1 className="text-3xl font-bold text-foreground leading-tight">
+          Package
+          <br />
+          Details
+        </h1>
       </div>
 
       {/* Origin address */}
@@ -94,6 +100,7 @@ export default function SenderStepPackage({
           label="Sender address"
           nameLabel="Your name"
           nameHint="your name"
+          addressLabel="Ship from address"
           value={senderAddress}
           onChange={onAddressChange}
           error={addrIncomplete ? "Please enter a complete address" : undefined}
