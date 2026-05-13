@@ -431,3 +431,41 @@ export function pickRecommendedRate<T extends { display_price_cents: number; est
   const pool = fast.length > 0 ? fast : rates;
   return [...pool].sort((a, b) => a.display_price_cents - b.display_price_cents)[0];
 }
+
+// ─── Cancel / Change ────────────────────────────────────────
+// Decided proposal: 2026-05-11_label-cancel-and-change_decided-2026-05-12.
+// Three auth paths server-side; the client surfaces whichever signal it has:
+//   - Bearer access_token (admin or link owner)
+//   - X-Cancel-Token header (just-shipped session OR email-token captured to sessionStorage)
+
+export interface CancelShipmentResult {
+  success: boolean;
+  refund_status: "submitted" | "refunded" | "rejected" | "not_applicable" | "none";
+  link_revived: boolean;
+  link_short_code: string | null;
+  message: string;
+  shipment_id: string;
+  public_code: string;
+}
+
+export async function cancelShipment(
+  publicCode: string,
+  reason: "user_cancel" | "user_change",
+  opts?: { cancelToken?: string; accessToken?: string },
+): Promise<CancelShipmentResult> {
+  const hdrs: Record<string, string> = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${opts?.accessToken || ANON_KEY}`,
+  };
+  if (opts?.cancelToken) hdrs["X-Cancel-Token"] = opts.cancelToken;
+  const res = await fetch(`${BASE_URL}/functions/v1/cancel-label`, {
+    method: "POST",
+    headers: hdrs,
+    body: JSON.stringify({ public_code: publicCode, reason }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || data.message || `Cancel failed (${res.status})`);
+  }
+  return data as CancelShipmentResult;
+}

@@ -8,6 +8,81 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-12] Cancel-flow Phase A — user-facing Cancel + Change on `/t/<public_code>`
+**Category:** Feature | Cancellation | UX | Auth | Schema | Stripe coordination
+**Proposal:** [proposals/2026-05-11_label-cancel-and-change_reviewed-2026-05-12_decided-2026-05-12.md](proposals/2026-05-11_label-cancel-and-change_reviewed-2026-05-12_decided-2026-05-12.md)
+**Context:** `/t/<public_code>` had Print + Download but no way for a sender or recipient to back out of a label they just generated. SPEC §13.1 had user-facing void as "Post-MVP" but the user need surfaces every dogfood. The proposal went through three rounds of in-session Q&A which materially reshaped it from the original draft — email-token auth replaces the originally-proposed cross-origin cookie (`SameSite=Lax` doesn't survive `*.supabase.co` → `sendmo.co`), `refund_status='submitted'` becomes the legitimate "cancellation in progress" state (no partial-cancels rule from John), the `sendmo_links` lifecycle is rebuilt from scratch (used→in_use rename, new `completed` state, revival semantics), and the Stripe Phase A migration that landed earlier the same day forces cancel-label to defer ledger writes to `stripe-webhook` (sole-writer rule, proposal §3.4 round-1 B4). Cross-link: builds on Stripe Phase A entry below and the launch-blocker closeout above it.
+
+**Decision/Finding:**
+- **Three-path auth** in [`cancel-label/index.ts`](supabase/functions/cancel-label/index.ts) (full rewrite):
+  - (1) JWT — admin OR link-owner (existing).
+  - (2) `X-Cancel-Token` header — for just-shipped sender (sessionStorage) AND returning sender (email-token captured via `?cancel=<hex>`).
+  - (3) Body `cancel_token` field — same primitive, fallback in case of header stripping.
+  Constant-time hex compare; per-IP+public_code rate limit (5 req / 60s in-memory).
+- **Async refund state machine.** Cancel-label calls Stripe's `createRefund` when `shipments.stripe_payment_intent_id` is present and writes `refund_status='submitted'`. The `stripe-webhook` handler (sole ledger writer per Phase A) already writes the `-refund` transaction row on `charge.refunded`; this PR adds the corresponding `UPDATE shipments SET refund_status='refunded' WHERE refund_status='submitted'` so the state machine closes. Comp shipments (no PI) land in `not_applicable` immediately. UI surfaces "Cancellation in progress" copy during the gap.
+- **Link lifecycle implemented for the first time.** Migration [`020_cancel_token_and_link_lifecycle.sql`](supabase/migrations/020_cancel_token_and_link_lifecycle.sql) renames the `sendmo_links.status` enum's `'used'` → `'in_use'` and adds `'completed'`. The `admin_insert_shipment` RPC body is updated in-place to write `'in_use'` (was `'used'`). Pre-migration the DB had 20 rows at `used`; the migration UPDATEs them all to `in_use` before adding the new CHECK constraint. Three writers actually exist in the codebase now:
+  - `labels/index.ts` flips flex links `active → in_use` after a successful buy (full-label links are minted at `in_use` by the RPC).
+  - `cancel-label/index.ts` flips `in_use → active` after a successful carrier void, **only when no other non-terminal shipment exists on the link** (multi-billing per link is structurally supported; revival respects in-flight shipments).
+  - `webhooks/index.ts` (EasyPost) flips `in_use → completed` on a terminal carrier status (`delivered` / `return_to_sender`), same "no other non-terminal" guard.
+- **`shipments.cancel_token TEXT`** new column, hex random set at label-buy time, nulled on consumption. Indexed (partial, `WHERE cancel_token IS NOT NULL`). Returned in the labels response body and stashed in `sessionStorage[\`sendmo:cancel_token:${publicCode}\`]` by `SenderFlow.handleConfirm`. The same key is populated by `TrackingPage` when `?cancel=<hex>` lands in the URL (email-token transport) — one source of truth for both transports.
+- **UI on `/t/<code>`:** new [`CancelLabelDialog.tsx`](src/components/tracking/CancelLabelDialog.tsx) (pure presenter, shadcn AlertDialog pattern) + Cancel/Change row inside [`ShipmentLabelSection.tsx`](src/components/tracking/ShipmentLabelSection.tsx) (de-emphasized below the single-use warning; only renders when `canCancel` is true). [`TrackingPage.tsx`](src/pages/TrackingPage.tsx) derives `canCancel = label_created AND (isAdmin OR viewer_is_recipient OR sessionStorage cancel_token present)` and holds the dialog state. After successful Cancel → bump `refetchTick` to refresh into the existing terminal banner. After successful Change → set `sendmo_just_voided_for_change` flag in sessionStorage and `navigate('/s/<short>', { replace: true })`. SenderFlow reads the flag on mount and shows "Previous label voided. Let's try again." as a banner once.
+- **Required email** at [`SenderStepReview.tsx`](src/components/sender/SenderStepReview.tsx) (was optional). Copy under the field: *"It's important to have a reachable email in case you want to change your shipment."* Email is now load-bearing for cancel auth in the "came back later" case, which justifies the friction.
+- **Tracking response** ([`tracking/index.ts`](supabase/functions/tracking/index.ts)) gains `refund_status`, `paid: boolean` (derived from `stripe_payment_intent_id != null`), and `amount_paid_cents: number | null` (today `null`; populated in Phase E when real charges flow). The cancel dialog uses these for refund-amount copy.
+- **Webhook diagnostic block reverted.** [`webhooks/index.ts`](supabase/functions/webhooks/index.ts) — the TEMP DIAGNOSTIC block from commit `0968a60` is removed. Prefix-strip fix (commit `71919f1`) was verified-by-design 2026-05-12; this revert is the cleanup pass that closes the Track 2 follow-up. If a `webhook.easypost_status_updated` event hasn't landed yet, the diagnostic data we already captured is enough.
+
+**Why this shape:**
+- Email-token over cookie — `SameSite=Lax` is not same-site across `*.supabase.co` and `sendmo.co` (different registrable domains); `SameSite=None; Secure` invites Safari/Brave third-party blocking. The header-based token path works uniformly across browsers and gives us a durable "came back to it tomorrow" path via email which the cookie window wouldn't have.
+- Async state machine over synchronous — John's "no partial cancels, in-process is fine" rule. The Phase A sole-ledger-writer rule lined up with this naturally: cancel-label initiates, webhook advances, UI shows pending state in between.
+- Single state-machine for both link types — the difference between full-label and flex is just *who clicks what when*, not the underlying lifecycle. Full-label links are minted at `in_use` (RPC); flex links go `active → in_use` on buy. Both revive to `active` on cancel and end at `completed` on delivery.
+- Optimistic link revival — option (iii) per the proposal. If carrier later rejects the void after we revived, worst case is two real labels exist (recipient charged twice). John accepted that tradeoff over "freeze the link for 2-4 weeks pending carrier confirmation."
+
+**Watch out:**
+- **Migration 020 is John's run.** Per Rule 0.5 the agent doesn't `DROP FUNCTION` / `UPDATE` / constraint changes against prod. Migration file is in `supabase/migrations/020_*.sql`. Apply via Supabase dashboard SQL editor (project `fkxykvzsqdjzhurntgah`). The Edge Function deploys are gated on this — if the functions deploy before the migration runs, anything that writes `'in_use'` (labels, cancel-label) will violate the OLD `CHECK` constraint and reject the insert/update.
+- **Edge Function deploy order matters:** migration first, then `labels`, `cancel-label`, `stripe-webhook`, `webhooks`, `tracking` (each with `--no-verify-jwt`, per the long-standing gotcha — `config.toml` pins them but the deploy CLI doesn't read it for the flag).
+- **EasyPost-only fallback for the refund_status write.** Inside cancel-label, when there's no Stripe PI, the EP refund_status value (`submitted` / `refunded` / `rejected` / `not_applicable`) is informational only — we always write `refund_status='not_applicable'` for the comp case because no money moved. This is deliberate to keep the comp UX honest ("no refund is needed") and avoid the SPEC §13.1 admin-report optics of a comp showing as "refunded."
+- **Stripe refund failure after carrier void.** If `createRefund` throws after EasyPost already voided, we DO NOT roll back the carrier void (you can't un-void). We set `refund_status='rejected'` and let admin recovery drive the manual refund. Surfaced loud in `event_logs` as `cancel.stripe_refund_failed` (severity=error). This is the only partial-cancel state the system can land in, and it's deliberate — the carrier outcome is the irreversible side.
+- **Phase B follow-ups deferred** (out of scope for this PR per proposal §2.7):
+  (1) Cancel notification email (`labelCancelledEmail` template + `dispatchCancelNotifications` shared helper) — today the recipient learns about cancel by visiting `/t/<code>` or Dashboard.
+  (2) Dashboard-side "Cancel" button — backend already supports the link-owner JWT path; UI add is its own beat.
+  (3) `/s/<short_code>` friendly per-state messages — distinguishing `in_use` ("track at /t/<code>") from `completed`/`expired`/`cancelled`. Today the `links` function rejects `in_use` for flex with "this link has already been used" (good enough; needs polish).
+  (4) Multi-billing-per-link audit of admin report + Dashboard summaries.
+- **`refundService.ts` shape unchanged.** This proposal's refund path is server-side inside `cancel-label`, not the future `processRefund` client wrapper. The stub there is still for an admin-initiated refund endpoint that doesn't exist yet (Phase F).
+- **Rate limit is in-memory, per-function-instance.** Edge Functions scale out, so the 5-req/60s limit is per-instance, not global. Real abuse mitigation needs a Postgres-backed limiter (future). For now, the limiter primarily protects against an unintended retry loop, not a distributed attacker.
+- **Cookie-attack vector closed.** The original draft proposed a `sendmo_just_shipped_<public_code>` cookie. The header/sessionStorage replacement means no cookies at all in the cancel flow — nothing to fingerprint, nothing to leak via cross-domain redirects.
+
+**Tests:** 7 new in [`tests/unit/cancelLabelDialog.test.tsx`](tests/unit/cancelLabelDialog.test.tsx) — mode-switching, dynamic refund copy ("$5.87" vs "no charge was made" vs "refund the charge"), onConfirm-once, Keep-label doesn't fire onConfirm. Full unit suite: **243 passed / 0 failed** (was 236 pre-PR). `npx tsc -b --noEmit` clean.
+
+**Deploy order (John's steps):**
+1. Apply migration 020 in the Supabase dashboard SQL editor. Verify with the SELECTs at the bottom of the file (cancel_token column exists; zero `'used'` rows in sendmo_links; CHECK constraint includes `in_use`/`completed`).
+2. Deploy Edge Functions one at a time, each with `--no-verify-jwt`:
+   - `npx supabase functions deploy labels --no-verify-jwt`
+   - `npx supabase functions deploy cancel-label --no-verify-jwt`
+   - `npx supabase functions deploy stripe-webhook --no-verify-jwt`
+   - `npx supabase functions deploy webhooks --no-verify-jwt`
+   - `npx supabase functions deploy tracking --no-verify-jwt`
+3. Vercel auto-deploys the client on push to `main`.
+4. Smoke test: Live Comp flex label → land on `/t/<code>?fresh=1` → click Cancel & start over → confirm → `/s/<short>` shows banner + address pre-filled.
+
+**Files touched:**
+- [supabase/migrations/020_cancel_token_and_link_lifecycle.sql](supabase/migrations/020_cancel_token_and_link_lifecycle.sql) (new — agent deliverable, John runs it)
+- [supabase/functions/cancel-label/index.ts](supabase/functions/cancel-label/index.ts) (full rewrite — three-path auth, Stripe refund, link revival, audit log, rate limit)
+- [supabase/functions/labels/index.ts](supabase/functions/labels/index.ts) (mint cancel_token + flex link `active→in_use` flip + return cancel_token in response)
+- [supabase/functions/stripe-webhook/index.ts](supabase/functions/stripe-webhook/index.ts) (`charge.refunded` also flips `shipments.refund_status`)
+- [supabase/functions/webhooks/index.ts](supabase/functions/webhooks/index.ts) (diagnostic block reverted; terminal-status `in_use → completed` flip added)
+- [supabase/functions/tracking/index.ts](supabase/functions/tracking/index.ts) (response adds `refund_status`, `paid`, `amount_paid_cents`)
+- [src/components/tracking/CancelLabelDialog.tsx](src/components/tracking/CancelLabelDialog.tsx) (new — pure presenter)
+- [src/components/tracking/ShipmentLabelSection.tsx](src/components/tracking/ShipmentLabelSection.tsx) (Cancel/Change row + onClick props)
+- [src/pages/TrackingPage.tsx](src/pages/TrackingPage.tsx) (cancel-token sessionStorage helpers, `?cancel=` URL capture, dialog state, derivation)
+- [src/pages/SenderFlow.tsx](src/pages/SenderFlow.tsx) (stash cancel_token on success + "Previous label voided" banner)
+- [src/components/sender/SenderStepReview.tsx](src/components/sender/SenderStepReview.tsx) (email required + new copy)
+- [src/lib/api.ts](src/lib/api.ts) (`cancelShipment` helper)
+- [src/lib/types.ts](src/lib/types.ts) (`LabelResult.cancel_token`)
+- [tests/unit/cancelLabelDialog.test.tsx](tests/unit/cancelLabelDialog.test.tsx) (new — 7 tests)
+- [proposals/2026-05-11_label-cancel-and-change_reviewed-2026-05-12_decided-2026-05-12.md](proposals/2026-05-11_label-cancel-and-change_reviewed-2026-05-12_decided-2026-05-12.md) (revised + decided in-session)
+- [proposals/README.md](proposals/README.md) (active-proposals entry updated)
+
+---
+
 ### [2026-05-12] Launch-blocker session closeout — Tracks 1, 3 fully verified; Track 2 deployed pending EasyPost natural-retry confirmation
 **Category:** Launch blocker | Closeout | RPC | Webhooks | Infra
 **Cross-link:** Builds on the same-day Stripe Phase A entry below and the Track 1 + 3 entry below it. Closes [WISHLIST.md](WISHLIST.md) blockers #1 and #3; Track 2 marked closed pending one real EasyPost POST hitting the deployed prefix-strip fix.

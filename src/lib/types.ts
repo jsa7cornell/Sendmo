@@ -205,6 +205,8 @@ export interface LabelResult {
     public_code?: string | null;
     short_code?: string | null;
     shipment_id?: string | null;
+    /** Per-shipment hex token (migration 020) for anonymous user-facing cancel. */
+    cancel_token?: string | null;
 }
 
 // API request/response types are defined inline in api.ts to match

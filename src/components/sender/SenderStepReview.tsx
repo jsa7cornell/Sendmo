@@ -36,7 +36,12 @@ export default function SenderStepReview({
   onEditPackage, onEditRate, onConfirm, submitting, submitError,
 }: Props) {
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const emailInvalid = senderEmail.length > 0 && !isValidEmail(senderEmail);
+  // Email is required (decided 2026-05-12 — cancel-flow proposal). The cancel
+  // mechanism uses the email as the durable auth surface; without an address
+  // the just-shipped sender can't recover the cancel link if they close the tab.
+  const emailMissing = senderEmail.trim().length === 0;
+  const emailFormatBad = senderEmail.length > 0 && !isValidEmail(senderEmail);
+  const emailInvalid = emailMissing || emailFormatBad;
 
   const recipient = linkData.recipient_name?.trim() || "the recipient";
   const cityState = linkData.recipient_city && linkData.recipient_state
@@ -117,17 +122,21 @@ export default function SenderStepReview({
       <div className="bg-card rounded-2xl border border-border shadow-sm p-5 space-y-4">
         <div>
           <label htmlFor="sender-email" className="text-sm font-medium text-foreground mb-1.5 block">
-            Your email <span className="font-normal text-muted-foreground">(for tracking updates)</span>
+            Your email <span className="text-destructive">*</span>
           </label>
           <input
             id="sender-email"
             type="email"
+            required
             placeholder="you@example.com"
             value={senderEmail}
             onChange={(e) => onSenderEmailChange(e.target.value)}
-            className={`w-full rounded-xl border ${emailInvalid ? "border-destructive" : "border-border"} bg-background px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary`}
+            className={`w-full rounded-xl border ${emailFormatBad ? "border-destructive" : "border-border"} bg-background px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary`}
           />
-          {emailInvalid && <p className="text-xs text-destructive mt-1">Please enter a valid email.</p>}
+          <p className="text-xs text-muted-foreground mt-1">
+            It's important to have a reachable email in case you want to change your shipment.
+          </p>
+          {emailFormatBad && <p className="text-xs text-destructive mt-1">Please enter a valid email.</p>}
         </div>
 
         <label className="flex items-start gap-3 cursor-pointer">

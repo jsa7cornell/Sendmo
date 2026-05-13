@@ -1,18 +1,25 @@
 import { Button } from "@/components/ui/button";
-import { Printer, Download, ExternalLink, Package } from "lucide-react";
+import { Printer, Download, ExternalLink, Package, XCircle, RotateCcw } from "lucide-react";
 import { dropOffCopy } from "@/components/sender/senderState";
 
 interface Props {
   labelUrl: string;
   trackingNumber: string;
   carrier: string;
+  /** When true, render the Cancel + Change row beneath the single-use warning.
+   *  Auth-derive lives in TrackingPage (admin || link-owner || cancel-token). */
+  canCancel?: boolean;
+  onCancelClick?: () => void;
+  onChangeClick?: () => void;
 }
 
 // Rendered on /t/<public_code> while status === 'label_created'. Combines
 // label preview, primary Print CTA, secondary Download, drop-off
 // instructions, and the privacy-aware single-use note. Per proposal §11
 // + author response B2 (option a) — anyone with the URL can see this.
-export default function ShipmentLabelSection({ labelUrl, trackingNumber, carrier }: Props) {
+export default function ShipmentLabelSection({
+  labelUrl, trackingNumber, carrier, canCancel, onCancelClick, onChangeClick,
+}: Props) {
   const dropOff = dropOffCopy(carrier);
 
   return (
@@ -61,6 +68,35 @@ export default function ShipmentLabelSection({ labelUrl, trackingNumber, carrier
       <div className="rounded-xl bg-muted/40 border border-border px-4 py-3 text-xs text-muted-foreground">
         This label is for a single shipment. Please don't reprint or share — duplicates can be rejected by the carrier or charged twice. Anyone with this link can see the recipient's address, so don't share it publicly.
       </div>
+
+      {/* Cancel + Change row — visible only when the viewer's auth signal
+          qualifies. Deliberately de-emphasized so a user who just got the
+          label doesn't fat-finger them. */}
+      {canCancel && (
+        <div className="border-t border-border pt-4">
+          <p className="text-xs text-muted-foreground mb-2">Made a mistake?</p>
+          <div className="flex gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onCancelClick}
+              className="text-xs text-muted-foreground hover:text-destructive"
+            >
+              <XCircle className="w-3.5 h-3.5 mr-1" />
+              Cancel label
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onChangeClick}
+              className="text-xs text-muted-foreground hover:text-foreground"
+            >
+              <RotateCcw className="w-3.5 h-3.5 mr-1" />
+              Cancel &amp; start over
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* Drop-off — co-located with label since both apply only while not-yet-shipped */}
       <div className="bg-card rounded-2xl border border-border shadow-sm p-5">

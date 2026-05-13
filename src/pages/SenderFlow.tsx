@@ -31,6 +31,18 @@ export default function SenderFlow() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [step, setStep] = useState<SenderStep | "loading" | "error">("loading");
 
+  // "Cancel & start over" banner — set by TrackingPage when a Change action
+  // redirects back to /s/<short_code>. Read once, then cleared.
+  const [showChangeBanner] = useState(() => {
+    try {
+      if (sessionStorage.getItem("sendmo_just_voided_for_change") === "1") {
+        sessionStorage.removeItem("sendmo_just_voided_for_change");
+        return true;
+      }
+    } catch { /* noop */ }
+    return false;
+  });
+
   // Pre-fill from localStorage when available (non-blocking nit).
   const saved = useMemo(() => loadSavedSender(), []);
   const [senderAddress, setSenderAddress] = useState<AddressInput>(saved?.senderAddress ?? emptyAddress());
@@ -136,6 +148,19 @@ export default function SenderFlow() {
       // is awaited and public_code is in the response — but defends against a
       // partial regression).
       if (labelResult.public_code) {
+        // Stash the cancel_token in sessionStorage keyed by public_code so the
+        // TrackingPage Cancel/Change row renders. Migration 020 + cancel-flow
+        // proposal decided 2026-05-12. Both reads + writes happen via
+        // sessionStorage so the inline (just-shipped) and email transport
+        // (?cancel=<hex> from "Label ready" email) converge on one source.
+        if (labelResult.cancel_token) {
+          try {
+            sessionStorage.setItem(
+              `sendmo:cancel_token:${labelResult.public_code}`,
+              labelResult.cancel_token,
+            );
+          } catch { /* sessionStorage unavailable — graceful no-op */ }
+        }
         navigate(`/t/${labelResult.public_code}?fresh=1`, { replace: true });
       } else {
         setSubmitError(
@@ -160,6 +185,12 @@ export default function SenderFlow() {
 
       <div className="flex-1 py-8 px-4">
         <div className="container max-w-md mx-auto">
+          {showChangeBanner && (
+            <div className="bg-primary/5 border border-primary/20 rounded-xl px-4 py-3 mb-4 text-sm text-foreground">
+              Previous label voided. Let's try again.
+            </div>
+          )}
+
           {step !== "loading" && step !== "error" && (
             <SenderProgressBar step={step} />
           )}

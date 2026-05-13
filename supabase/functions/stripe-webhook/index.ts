@@ -272,6 +272,21 @@ serve(async (req: Request) => {
                     throw new Error(`transactions insert failed: ${txErr.message}`);
                 }
 
+                // Advance shipments.refund_status from 'submitted' → 'refunded'.
+                // Set by cancel-label after a successful Stripe createRefund;
+                // this is the async hand-off that closes the cancel state machine.
+                // Per decided proposal label-cancel-and-change (2026-05-12).
+                if (shipmentId) {
+                    const { error: shipErr } = await supabase
+                        .from("shipments")
+                        .update({ refund_status: "refunded" })
+                        .eq("id", shipmentId)
+                        .eq("refund_status", "submitted");  // idempotent
+                    if (shipErr) {
+                        console.error("[stripe-webhook] shipments.refund_status update failed:", shipErr);
+                    }
+                }
+
                 log({
                     event_type: "stripe.charge_refunded",
                     severity: "info",

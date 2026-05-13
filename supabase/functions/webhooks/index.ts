@@ -129,36 +129,6 @@ serve(async (req: Request) => {
     req.headers.get("x-hmac-signature");
   const hmacResult = await verifyEasypostHmac(rawBody, sigHeader);
   if (!hmacResult.ok) {
-    // TEMP DIAGNOSTIC: capture enough to diagnose HMAC mismatch without
-    // logging the secret. The signature header is itself a digest — safe
-    // to log. Body preview is bounded; only carrier tracking metadata, no PII.
-    const secret = Deno.env.get("EASYPOST_WEBHOOK_HMAC_SECRET");
-    let computedHex: string | null = null;
-    let computedB64: string | null = null;
-    if (secret && sigHeader) {
-      try {
-        const enc = new TextEncoder();
-        const key = await crypto.subtle.importKey(
-          "raw",
-          enc.encode(secret),
-          { name: "HMAC", hash: "SHA-256" },
-          false,
-          ["sign"],
-        );
-        const sigBytes = await crypto.subtle.sign("HMAC", key, enc.encode(rawBody));
-        const arr = new Uint8Array(sigBytes);
-        let hex = "";
-        for (let i = 0; i < arr.length; i++) hex += arr[i].toString(16).padStart(2, "0");
-        computedHex = hex;
-        computedB64 = btoa(String.fromCharCode(...arr));
-      } catch {
-        // already logged via primary path
-      }
-    }
-    // List all incoming headers (names only, no values that could be secrets)
-    const headerNames: string[] = [];
-    for (const [name] of req.headers) headerNames.push(name);
-
     log({
       event_type: "webhook.hmac_invalid",
       severity: "error",
@@ -167,15 +137,6 @@ serve(async (req: Request) => {
         reason: hmacResult.reason,
         has_header: !!sigHeader,
         body_len: rawBody.length,
-        // Diagnostics
-        secret_configured: !!secret,
-        secret_len: secret ? secret.length : 0,
-        provided_sig: sigHeader ?? null,
-        provided_sig_len: sigHeader?.length ?? 0,
-        computed_hex: computedHex,
-        computed_b64: computedB64,
-        header_names: headerNames,
-        body_preview: rawBody.slice(0, 200),
       },
     });
     return new Response(
@@ -296,6 +257,34 @@ serve(async (req: Request) => {
     }
 
     await supabase.from("shipments").update(updateFields).eq("id", shipment.id);
+
+    // Link lifecycle: when this shipment hits a terminal carrier status
+    // (delivered / returned) AND no other non-terminal shipment exists on
+    // the same link, flip sendmo_links.status from 'in_use' → 'completed'.
+    // Per decided proposal label-cancel-and-change (migration 020).
+    if (shipmentStatus === "delivered" || shipmentStatus === "returned") {
+      const { data: shipLink } = await supabase
+        .from("shipments")
+        .select("link_id")
+        .eq("id", shipment.id)
+        .single();
+      const linkId = shipLink?.link_id;
+      if (linkId) {
+        const { data: others } = await supabase
+          .from("shipments")
+          .select("id")
+          .eq("link_id", linkId)
+          .neq("id", shipment.id)
+          .in("status", ["label_created", "in_transit", "out_for_delivery"]);
+        if (!others || others.length === 0) {
+          await supabase
+            .from("sendmo_links")
+            .update({ status: "completed" })
+            .eq("id", linkId)
+            .eq("status", "in_use");  // idempotent
+        }
+      }
+    }
 
     log({
       event_type: "webhook.easypost_status_updated",

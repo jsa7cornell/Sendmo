@@ -565,6 +565,7 @@ serve(async (req: Request) => {
         let dbShipmentId: string | null = null;
         let dbPublicCode: string | null = null;
         let dbShortCode: string | null = null;
+        let dbCancelToken: string | null = null;
         if (from_address && to_address && supabase) {
             try {
                 const { data, error } = await supabase.rpc('admin_insert_shipment', {
@@ -632,6 +633,47 @@ serve(async (req: Request) => {
                     dbShipmentId = shipmentId ?? null;
                     dbPublicCode = publicCode ?? null;
                     dbShortCode = shortCode ?? null;
+
+                        // ── Cancel-flow Phase A (migration 020) ────────────
+                        // Mint a per-shipment cancel_token used by /t/<code>?cancel=<hex>
+                        // and the X-Cancel-Token header path in cancel-label.
+                        // Decided proposal: 2026-05-11_label-cancel-and-change_decided-2026-05-12.
+                        let mintedCancelToken: string | null = null;
+                        if (shipmentId) {
+                            try {
+                                const tokenBytes = new Uint8Array(32);
+                                crypto.getRandomValues(tokenBytes);
+                                mintedCancelToken = Array.from(tokenBytes)
+                                    .map(b => b.toString(16).padStart(2, '0')).join('');
+                                const { error: tokErr } = await supabase
+                                    .from('shipments')
+                                    .update({ cancel_token: mintedCancelToken })
+                                    .eq('id', shipmentId);
+                                if (tokErr) {
+                                    console.error('cancel_token write error:', tokErr);
+                                    mintedCancelToken = null;
+                                }
+                            } catch (e) {
+                                console.error('cancel_token mint error:', e);
+                                mintedCancelToken = null;
+                            }
+                        }
+                        dbCancelToken = mintedCancelToken;
+
+                        // For FLEX links, flip status active → in_use. Full-label
+                        // links are already minted at in_use by the RPC (migration 020).
+                        // Optimistic update — no-op if already in_use (e.g. multi-shipment).
+                        if (resolvedLink && resolvedLink.link_type === 'flexible') {
+                            const { error: linkErr } = await supabase
+                                .from('sendmo_links')
+                                .update({ status: 'in_use' })
+                                .eq('id', resolvedLink.id)
+                                .eq('status', 'active');
+                            if (linkErr) {
+                                console.error('flex-link in_use flip error:', linkErr);
+                            }
+                        }
+
                         log({
                             event_type: "label.db_persisted",
                             session_id: sessionId,
@@ -812,6 +854,7 @@ serve(async (req: Request) => {
                 public_code: dbPublicCode,
                 short_code: dbShortCode,
                 shipment_id: dbShipmentId,
+                cancel_token: dbCancelToken,
             }),
             { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );

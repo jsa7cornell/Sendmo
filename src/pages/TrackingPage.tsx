@@ -1,4 +1,4 @@
-import { useParams, useSearchParams, Link } from "react-router-dom";
+import { useParams, useSearchParams, Link, useNavigate } from "react-router-dom";
 import AppHeader from "@/components/AppHeader";
 import { useState, useEffect } from "react";
 import { Package, Truck, CheckCircle2, AlertCircle, Clock, ArrowLeft, MapPin, Calendar, ExternalLink, Sparkles } from "lucide-react";
@@ -7,6 +7,8 @@ import { useAuth } from "@/contexts/AuthContext";
 import { supabase as supabaseClient } from "@/lib/supabase";
 import ShipmentLabelSection from "@/components/tracking/ShipmentLabelSection";
 import ShipAgainCTA from "@/components/tracking/ShipAgainCTA";
+import CancelLabelDialog from "@/components/tracking/CancelLabelDialog";
+import { cancelShipment } from "@/lib/api";
 
 const BASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
 
@@ -33,6 +35,34 @@ interface TrackingData {
   label_url: string | null;
   link_short_code: string | null;
   viewer_is_recipient: boolean;
+  // Cancel-flow Phase A additions (decided 2026-05-12):
+  refund_status?: "none" | "submitted" | "refunded" | "rejected" | "not_applicable";
+  paid?: boolean;
+  amount_paid_cents?: number | null;
+}
+
+// Persisted cancel-token storage. The token can arrive via two transports:
+//   (a) inline from SenderFlow on label-buy success (Sender pushes it after Confirm).
+//   (b) query-param ?cancel=<hex> from the sender's "Label ready" email.
+// Both land in sessionStorage keyed by public_code so the cancel-button
+// derivation and the cancel call both read the same place.
+function cancelTokenKey(publicCode: string) {
+  return `sendmo:cancel_token:${publicCode}`;
+}
+function readCancelToken(publicCode: string): string | null {
+  try {
+    return sessionStorage.getItem(cancelTokenKey(publicCode));
+  } catch { return null; }
+}
+function writeCancelToken(publicCode: string, token: string): void {
+  try {
+    sessionStorage.setItem(cancelTokenKey(publicCode), token);
+  } catch { /* sessionStorage unavailable — graceful no-op */ }
+}
+function clearCancelToken(publicCode: string): void {
+  try {
+    sessionStorage.removeItem(cancelTokenKey(publicCode));
+  } catch { /* noop */ }
 }
 
 // Terminal statuses get a banner instead of the lifecycle card (per B5).
@@ -111,15 +141,22 @@ function formatDeliveryDate(iso: string): string {
 export default function TrackingPage() {
   const { code } = useParams<{ code: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { user } = useAuth();
+  const { user, isAdmin } = useAuth();
+  const navigate = useNavigate();
 
-  // ?fresh=1 → just landed here from the sender flow's Confirm. Show the
-  // celebration banner on first paint, strip the param after first render
-  // (per author-response B3 — React Router primitives, not history.replaceState).
+  // ?fresh=1 → just landed here from the sender flow's Confirm.
+  // ?cancel=<hex> → tokenized cancel link from the sender's "Label ready"
+  //   email. Captured to sessionStorage on mount, then stripped from the
+  //   URL. Per author-response B3 — React Router primitives only.
   const [showCelebration, setShowCelebration] = useState(() => searchParams.get("fresh") === "1");
   useEffect(() => {
-    if (searchParams.get("fresh") === "1") {
+    const cancelParam = searchParams.get("cancel");
+    if (cancelParam && code) {
+      writeCancelToken(code, cancelParam);
+    }
+    if (searchParams.get("fresh") === "1" || cancelParam) {
       searchParams.delete("fresh");
+      searchParams.delete("cancel");
       setSearchParams(searchParams, { replace: true });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -128,6 +165,13 @@ export default function TrackingPage() {
   const [data, setData] = useState<TrackingData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Dialog state for Cancel + Change. Single state with a mode discriminator
+  // so we don't render two dialogs.
+  const [confirmMode, setConfirmMode] = useState<"cancel" | "change" | null>(null);
+
+  // Refetch cadence: bump after a successful cancel so the page re-reads the
+  // (now-cancelled) shipment + flips into the terminal-banner branch.
+  const [refetchTick, setRefetchTick] = useState(0);
 
   useEffect(() => {
     if (!code) return;
@@ -151,7 +195,49 @@ export default function TrackingPage() {
       .then(setData)
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
-  }, [code]);
+  }, [code, refetchTick]);
+
+  // Auth-derive: who can see the Cancel/Change buttons?
+  //   - admin (JWT) — always
+  //   - link owner (JWT + viewer_is_recipient) — always
+  //   - anonymous with a cancel-token for this public_code in sessionStorage
+  //     (set by SenderFlow on Confirm, or by ?cancel=<hex> from the email)
+  const canCancel = Boolean(
+    data &&
+    data.status === "label_created" &&
+    (
+      isAdmin ||
+      data.viewer_is_recipient ||
+      (code ? readCancelToken(code) : null) !== null
+    )
+  );
+
+  async function handleCancelConfirm() {
+    if (!data || !code) return;
+    const reason: "user_cancel" | "user_change" = confirmMode === "change" ? "user_change" : "user_cancel";
+    try {
+      const { data: { session } } = await supabaseClient.auth.getSession();
+      const cancelToken = readCancelToken(code);
+      const result = await cancelShipment(code, reason, {
+        cancelToken: cancelToken ?? undefined,
+        accessToken: session?.access_token,
+      });
+      clearCancelToken(code);
+      setConfirmMode(null);
+      if (reason === "user_change" && result.link_short_code) {
+        // Flag for SenderFlow to show "Previous label voided. Let's try again."
+        try { sessionStorage.setItem("sendmo_just_voided_for_change", "1"); } catch { /* noop */ }
+        navigate(`/s/${result.link_short_code}`, { replace: true });
+      } else {
+        // Re-fetch the (now-cancelled) shipment; terminal banner renders.
+        setRefetchTick(t => t + 1);
+      }
+    } catch (err) {
+      // Surface inline; keep dialog open so the user sees the message.
+      setError(err instanceof Error ? err.message : "Cancel failed");
+      setConfirmMode(null);
+    }
+  }
 
   const config = data ? STATUS_CONFIG[data.status] || STATUS_CONFIG.label_created : null;
   const StatusIcon = config?.icon || Package;
@@ -223,8 +309,21 @@ export default function TrackingPage() {
                 labelUrl={data.label_url}
                 trackingNumber={data.tracking_number}
                 carrier={data.carrier}
+                canCancel={canCancel}
+                onCancelClick={() => setConfirmMode("cancel")}
+                onChangeClick={() => setConfirmMode("change")}
               />
             )}
+
+            {/* Cancel / Change confirmation dialog */}
+            <CancelLabelDialog
+              open={confirmMode !== null}
+              onOpenChange={(o) => !o && setConfirmMode(null)}
+              mode={confirmMode ?? "cancel"}
+              paid={data.paid ?? false}
+              amountPaidCents={data.amount_paid_cents ?? null}
+              onConfirm={handleCancelConfirm}
+            />
 
             {/* Status card */}
             <div className="bg-card rounded-2xl border border-border shadow-sm p-6">
