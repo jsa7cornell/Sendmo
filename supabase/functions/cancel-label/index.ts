@@ -337,6 +337,12 @@ serve(async (req: Request) => {
         }
         const refundOutcome = refundStatusToWrite as "submitted" | "not_applicable" | "rejected";
 
+        // 2026-05-13 evening regression fix — the two-step refund refactor
+        // removed the `const now` declaration above this block while leaving
+        // the references intact. Every cancel was hitting ReferenceError →
+        // 500 → tracking page rendered "now is not defined". Restored.
+        const now = new Date().toISOString();
+
         const { error: updateError } = await supabase
             .from("shipments")
             .update({

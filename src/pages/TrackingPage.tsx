@@ -185,6 +185,11 @@ export default function TrackingPage() {
   const [data, setData] = useState<TrackingData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Cancel-failure surface kept separate from the page-level `error` (which
+  // means "the tracking GET itself failed"). Conflating them caused a
+  // ReferenceError in cancel-label to wipe out the whole tracking page with
+  // a "Tracking not found" block — fixed 2026-05-13 evening.
+  const [cancelError, setCancelError] = useState<string | null>(null);
   // Optimistic bump for the print-count chip. The server count comes back on
   // the next tracking refetch; in the meantime the chip says what the user
   // expects. Rollback on POST failure (N3).
@@ -281,8 +286,12 @@ export default function TrackingPage() {
         setRefetchTick(t => t + 1);
       }
     } catch (err) {
-      // Surface inline; keep dialog open so the user sees the message.
-      setError(err instanceof Error ? err.message : "Cancel failed");
+      // Surface as a cancel-specific banner above the label section. Do NOT
+      // touch the page-level `error` — that's reserved for "tracking GET
+      // itself failed" and rendering that here wipes out the whole page
+      // (the cancel succeeded server-side or didn't — either way, the
+      // tracking data is still valid to show).
+      setCancelError(err instanceof Error ? err.message : "Cancel failed");
       setConfirmMode(null);
     }
   }
@@ -318,6 +327,29 @@ export default function TrackingPage() {
 
         {data && config && (
           <div className="space-y-6">
+            {/* Cancel-failure banner — surfaces when handleCancelConfirm
+                threw. Dismissible. The rest of the page stays intact. */}
+            {cancelError && (
+              <div className="bg-destructive/5 border border-destructive/30 rounded-2xl p-4 flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 text-destructive flex-shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <h2 className="text-sm font-semibold text-foreground">Couldn't cancel this label</h2>
+                  <p className="text-xs text-muted-foreground mt-0.5">{cancelError}</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    The label itself is unchanged — try again, or contact support if it keeps failing.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setCancelError(null)}
+                  className="text-xs text-muted-foreground hover:text-foreground"
+                  aria-label="Dismiss"
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
+
             {/* Test-mode banner — synthetic tracking number from the EasyPost
                 test API. Renders above everything else so viewers can't miss
                 it. Carrier-site link is hidden below in the status card. */}
