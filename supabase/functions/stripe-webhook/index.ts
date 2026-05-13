@@ -450,6 +450,21 @@ serve(async (req: Request) => {
                 // Determine is_default: TRUE iff no other active card exists
                 // for (user, mode). Partial-unique index enforces at-most-one
                 // default per (user, mode).
+                //
+                // KNOWN RACE (review I2, 2026-05-13): COUNT and INSERT are
+                // not in a transaction. Two simultaneous payment_method.attached
+                // events for the same (user_id, mode) could both observe
+                // count=0 and both try INSERT with is_default=true. The
+                // partial-unique-index `uniq_default_pm_per_user_mode` would
+                // fail the second INSERT, the swallow below would catch it
+                // as duplicate-key, and the SECOND CARD WOULD SILENTLY NOT
+                // BE RECORDED. Functionally unreachable from the SendMo UI
+                // (Stripe Elements forces sequential card-save flows; a user
+                // can't double-confirm two SetupIntents in parallel), so we
+                // accept the trade rather than wrapping in a stored proc.
+                // If the race ever surfaces, fix path is: SELECT FOR UPDATE
+                // on the count, or move the whole INSERT into a Postgres
+                // function with an advisory lock keyed on user_id.
                 const { count } = await supabase
                     .from("payment_methods")
                     .select("id", { count: "exact", head: true })
@@ -472,6 +487,12 @@ serve(async (req: Request) => {
                 if (pmErr && !/duplicate key|unique constraint/i.test(pmErr.message)) {
                     throw new Error(`payment_methods insert failed: ${pmErr.message}`);
                 }
+                // The `duplicate key` swallow above covers two legitimate
+                // cases — (a) Stripe webhook retry replays the same event,
+                // (b) user-initiated DELETE already wrote a soft-delete row
+                // that collides on (user_id, stripe_payment_method_id). It
+                // ALSO masks the I2 race described above; that's a known
+                // trade, not a bug to fix here.
 
                 log({
                     event_type: "stripe.payment_method_attached",

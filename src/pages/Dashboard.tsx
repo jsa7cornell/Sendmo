@@ -263,8 +263,9 @@ export default function Dashboard() {
   // Phase B saved cards — direct PostgREST read filtered by current mode.
   // Refetched on liveMode flip (admin toggles in header). Optimistic refetch
   // after Add Card success runs in handleCardAdded() below.
-  const fetchPaymentMethods = async () => {
-    if (!user) return;
+  // Returns the fetched rows so callers can decide whether to keep polling.
+  const fetchPaymentMethods = async (): Promise<PaymentMethodRow[]> => {
+    if (!user) return [];
     const mode = liveMode ? "live" : "test";
     setLoadingPaymentMethods(true);
     const { data, error } = await supabase
@@ -274,8 +275,11 @@ export default function Dashboard() {
       .eq("mode", mode)
       .is("deleted_at", null)
       .order("created_at", { ascending: false });
-    if (!error && data) setPaymentMethods(data as PaymentMethodRow[]);
     setLoadingPaymentMethods(false);
+    if (error || !data) return [];
+    const rows = data as PaymentMethodRow[];
+    setPaymentMethods(rows);
+    return rows;
   };
 
   useEffect(() => {
@@ -284,16 +288,21 @@ export default function Dashboard() {
   }, [user, liveMode]);
 
   // After Add Card succeeds, the payment_methods row arrives via webhook —
-  // may not be present immediately. Refetch with 500ms/1s/2s backoff.
+  // may not be present immediately. Poll with 500ms/1s/2s backoff, exiting
+  // early as soon as the row count exceeds the pre-add baseline (review
+  // I1 fix, 2026-05-13: prior version walked all three delays even on the
+  // happy path, costing ~3.5s of latency every time).
   async function handleCardAdded() {
     setShowAddCard(false);
+    const baseline = paymentMethods.length;
     const delays = [500, 1000, 2000];
     for (const delay of delays) {
       await new Promise((r) => setTimeout(r, delay));
-      await fetchPaymentMethods();
-      // We don't know exactly what row "just got added", but if the count
-      // increased we got it. Crude but works in practice.
+      const rows = await fetchPaymentMethods();
+      if (rows.length > baseline) return;
     }
+    // Three retries exhausted; webhook is unusually delayed. The next
+    // Dashboard mount or mode-flip will refetch and surface the card.
   }
 
   async function handleRemoveCard(pm: PaymentMethodRow) {
