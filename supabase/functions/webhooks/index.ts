@@ -90,8 +90,13 @@ async function verifyEasypostHmac(
     );
     const sigBytes = await crypto.subtle.sign("HMAC", key, enc.encode(rawBody));
     const computedHex = bytesToHex(sigBytes);
-    // EasyPost sends lower-case hex; we lower the header just in case.
-    const provided = signatureHeader.trim().toLowerCase();
+    // EasyPost sends the V1 header value as `hmac-sha256-hex=<hex>`; strip
+    // the algorithm prefix before comparing. Lowercase normalization in case
+    // a future EasyPost change uppercases the hex.
+    const provided = signatureHeader
+      .trim()
+      .replace(/^hmac-sha256-hex=/i, "")
+      .toLowerCase();
     if (timingSafeEqual(computedHex, provided)) return { ok: true };
     return { ok: false, reason: "signature_mismatch" };
   } catch (err) {
