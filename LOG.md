@@ -8,6 +8,49 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-12] Launch-blocker session closeout — Tracks 1, 3 fully verified; Track 2 deployed pending EasyPost natural-retry confirmation
+**Category:** Launch blocker | Closeout | RPC | Webhooks | Infra
+**Cross-link:** Builds on the same-day Stripe Phase A entry below and the Track 1 + 3 entry below it. Closes [WISHLIST.md](WISHLIST.md) blockers #1 and #3; Track 2 marked closed pending one real EasyPost POST hitting the deployed prefix-strip fix.
+
+**Full bug chain surfaced during the test-mode end-to-end verification of Track 1 + 3.** What started as "two pre-existing bugs" surfaced six additional latent issues, each of which had to be cleared before the Label-and-Link → Share Link → /t/<public_code> path worked end-to-end:
+
+1. **Migration 019 — OUT-param shadowing.** Migration 018's `RETURNS TABLE(id, public_code, short_code)` had OUT params with the same names as `shipments.public_code` and `sendmo_links.short_code`. Inside the function body, `WHERE public_code = v_public_code` was ambiguous between OUT and column. Latent in 014 — only surfaced now that the function was actually reachable. Fix: [019_fix_admin_insert_shipment_ambiguity.sql](supabase/migrations/019_fix_admin_insert_shipment_ambiguity.sql) renames OUT params with `out_` prefix; labels function reads `out_id` / `out_public_code` / `out_short_code`.
+2. **Missing sender name on Full Label.** The Ship From step never collected a sender name — `originAddress.name` was always undefined, so the RPC saw 28 params instead of 29 (missing `p_from_name`). Fix: use `SmartAddressInput`'s `nameLabel` / `nameHint` props to override the default "Recipient Name (probably your name!)" copy with "Sender's name" (cleaner than the bespoke field that snuck in at first). `useRecipientFlow.ts` step-10 validation now requires `originAddress.name`. Validation test fixture grew a `name` field.
+3. **Stripe publishable keys missing from Vercel.** `VITE_STRIPE_PUBLISHABLE_KEY_TEST` and `VITE_STRIPE_PUBLISHABLE_KEY_LIVE` weren't set in Vercel env vars, so `StripePaymentForm` silently rendered no card-input element (Stripe.js `getStripe()` returned `Promise.resolve(null)`). Set both in Vercel for Production/Preview/Development. **Publishable keys are designed to be public — they're NOT Rule-0 secrets** (still set via the Vercel UI, not chat, for the audit trail).
+4. **Resend SMTP — sendmo.co domain newly verified.** Supabase Auth's OTP send failed with `550 The sendmo.co domain is not verified` at 10:50 AM PDT; verification completed 7 minutes later at 10:57 AM PDT. Not actually a code bug — just timing — but verifying took most of the morning of 2026-05-12 (separate domain-verification thread, not this session). Recorded here so future agents debugging Auth email don't re-explore the same path.
+5. **`/s/<code>` full-label viewer-link redirect.** The `/s/:shortCode` resolver (`SenderFlow.tsx` + `links` Edge Function) was hard-coded to reject `status='used'` as "this link has already been used." Correct semantics for flex-links (single-shot redemption); wrong for full-label links, which are minted with `status='used'` because the label was already bought at link-creation time. Fix: `links` function now skips the `used` rejection when `link_type='full_label'` and looks up the bound shipment's `public_code` to return. `SenderFlow.tsx` redirects to `/t/<public_code>` (the tracking page) before mounting the flex-link wizard.
+6. **`tracking` Edge Function column drift.** `selectFields` referenced a non-existent `shipments.label_pdf_url` column — actual column is `label_url`. Whole SELECT errored → 404 "Tracking code not found" for *every* shipment. Fix: rename to `label_url` in both `selectFields` and the response payload assignment.
+7. **Track 2 (HMAC) root cause identified.** Diagnostic logging on the webhook handler captured the actual `X-Hmac-Signature` header value from a real EasyPost POST: `hmac-sha256-hex=<64-char hex>`. Our verifier compared the raw header value (with prefix intact) against our computed hex digest, producing `signature_mismatch` on every event even with the correct secret. Fix: strip the `hmac-sha256-hex=` algorithm prefix before timing-safe compare. **Deployed but not yet verified end-to-end** — synthetic curl replay fails because EasyPost's exact body bytes (compact, 570 chars) can't be reproduced from the dashboard's pretty-printed display. Validation deferred to the next natural EasyPost retry (~hours).
+
+**End-to-end verification (Track 1 + 3) — test-mode shipment `9400100208303112184245`:**
+- `shipments` row: `id=319f671d-…`, `public_code=CG7FWV3` ✓
+- `sendmo_links` row: `short_code=4rk8h4o3w8`, `link_type=full_label`, `status=used` ✓
+- `event_logs`: `label.db_persisted` ✓ (first one since 2026-03-18 — 57 days)
+- `sendmo.co/s/4rk8h4o3w8` → redirects to `/t/CG7FWV3` → tracking page renders ✓
+
+**Webhook diagnostic logging left in place.** The expanded `webhook.hmac_invalid` logging (computed hex/b64, provided signature, body preview, header names) is still deployed and should be reverted once a real EasyPost retry confirms the prefix-strip fix. Revert TODO: remove the diagnostic block in `supabase/functions/webhooks/index.ts` and redeploy.
+
+**Commits (in order):**
+- [3d7973c](https://github.com/jsa7cornell/Sendmo/commit/3d7973c) — migration 018 + initial Track 1 + 3 fixes
+- [b59886b](https://github.com/jsa7cornell/Sendmo/commit/b59886b) — sender-name field (bespoke input)
+- [ddc9625](https://github.com/jsa7cornell/Sendmo/commit/ddc9625) — use SmartAddressInput.nameLabel instead
+- [d4d102a](https://github.com/jsa7cornell/Sendmo/commit/d4d102a) — placeholder copy fix
+- [0e8411a](https://github.com/jsa7cornell/Sendmo/commit/0e8411a) — migration 019 (ambiguity)
+- [20330b1](https://github.com/jsa7cornell/Sendmo/commit/20330b1) — full-label viewer-link redirect
+- [4ea9ff8](https://github.com/jsa7cornell/Sendmo/commit/4ea9ff8) — tracking fn label_pdf_url → label_url
+- [0968a60](https://github.com/jsa7cornell/Sendmo/commit/0968a60) — webhook diagnostic logging (TEMP, revert post-verification)
+- [71919f1](https://github.com/jsa7cornell/Sendmo/commit/71919f1) — webhook HMAC prefix strip
+
+**Edge Function deploy reality:** these don't auto-deploy on `git push` like Vercel does — each `supabase/functions/<name>/**` change needs a separate `npx supabase functions deploy <name> --project-ref fkxykvzsqdjzhurntgah`. Today we deployed `labels` (twice), `links`, `tracking`, and `webhooks` (twice). Worth adding a GitHub Action that does this automatically on push — would have saved ~6 context switches today. Flagged for follow-up (not yet filed in WISHLIST).
+
+**Notes for future agents:**
+- **PostgreSQL OUT param shadowing is a real gotcha.** When `RETURNS TABLE(<name> <type>, ...)` declares an OUT param with the same name as a table column you reference inside the function body, PL/pgSQL raises ambiguity at runtime — not at function-creation time. Prefer `out_<name>` prefixes on RETURNS TABLE for any function that touches a table with same-named columns.
+- **Don't fail-loud on the rates path.** I almost wrote `addressToApi` to throw on missing `name`, then realized `fetchRates` also calls it. Throwing there would block the rates step before the payment step where name is actually required. Resolution: keep `name` optional at the boundary, enforce via step-10 validation in `useRecipientFlow.getValidationErrors`. Lesson: a boundary that's used by multiple call sites should validate the *intersection* of their requirements, not the union.
+- **EasyPost webhook signature format:** V1 (`X-Hmac-Signature`) is `hmac-sha256-hex=<64-char hex>` of the raw body bytes. V2 (`X-Hmac-Signature-V2`) incorporates `X-Timestamp` + `X-Path` + body to prevent replay attacks. V1 is what we verify today; V2 support is worth a follow-up for replay protection.
+- **Supabase MCP read-only mode** suffices for diagnostic work — every query we ran today was a SELECT. Migration runs still go through John per Rule 0.5.
+
+---
+
 ### [2026-05-12] Launch blockers Track 1 + 3 — `admin_insert_shipment` overload collision + real Share Link
 **Category:** Database | Launch blocker | RPC | Address handling
 **Cross-link:** [WISHLIST.md](WISHLIST.md) launch blockers #1 and #3 (filed in commit [3a0371d](https://github.com/jsa7cornell/Sendmo/commit/3a0371d)); follows [2026-05-12 Stripe Phase A](#2026-05-12-stripe-phase-a--transactions-ledger-replaces-payments-comp-labels-now-book-negative-margin) which surfaced both bugs during smoke test.
