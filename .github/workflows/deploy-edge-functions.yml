@@ -1,0 +1,114 @@
+name: Deploy Supabase Edge Functions
+
+# Deploys changed Supabase Edge Functions to the SendMo project on push to
+# main. Vercel handles the frontend (dist/) — this handles the Deno functions
+# in supabase/functions/. Pairs with Rule 17 in PLAYBOOK.md (every push to
+# main is a production deploy).
+#
+# Per the long-standing gotcha in PLAYBOOK.md, all functions deploy with
+# --no-verify-jwt so the gateway lets anonymous calls through; auth is
+# enforced inside each function via requireAdmin / cancel_token / etc.
+#
+# Required repo secrets:
+#   SUPABASE_ACCESS_TOKEN — personal access token from
+#     https://supabase.com/dashboard/account/tokens
+#   SUPABASE_PROJECT_REF — project ref (fkxykvzsqdjzhurntgah for prod)
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "supabase/functions/**"
+      - ".github/workflows/deploy-edge-functions.yml"
+  workflow_dispatch:
+    inputs:
+      function:
+        description: "Function name to deploy (leave blank to deploy all)"
+        required: false
+        type: string
+
+jobs:
+  deploy:
+    name: Deploy changed Edge Functions
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # Need previous commit to diff against for change detection.
+          fetch-depth: 2
+
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Compute functions to deploy
+        id: changed
+        run: |
+          set -euo pipefail
+
+          # Manual-dispatch override: deploy just the named function, or all
+          # when blank.
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            INPUT="${{ github.event.inputs.function }}"
+            if [ -n "$INPUT" ]; then
+              echo "fns=$INPUT" >> "$GITHUB_OUTPUT"
+              echo "Manual dispatch: deploying '$INPUT'"
+              exit 0
+            fi
+            echo "Manual dispatch: deploying ALL functions"
+            FNS=$(ls -1 supabase/functions/ | grep -v '^_' | tr '\n' ' ')
+            echo "fns=$FNS" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Push: diff against the previous commit on main.
+          CHANGED=$(git diff --name-only HEAD^ HEAD -- 'supabase/functions/**' || true)
+          echo "Raw changed files:"
+          echo "$CHANGED"
+
+          # If _shared changed, redeploy everything (every fn imports from it).
+          if echo "$CHANGED" | grep -q '^supabase/functions/_shared/'; then
+            echo "_shared changed — redeploying ALL functions"
+            FNS=$(ls -1 supabase/functions/ | grep -v '^_' | tr '\n' ' ')
+            echo "fns=$FNS" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Otherwise: union of top-level function folders touched.
+          FNS=$(echo "$CHANGED" \
+            | awk -F/ '/^supabase\/functions\/[^_]/ {print $3}' \
+            | sort -u \
+            | tr '\n' ' ')
+
+          if [ -z "$(echo "$FNS" | tr -d ' ')" ]; then
+            echo "No function folders changed — nothing to deploy."
+          else
+            echo "Deploying: $FNS"
+          fi
+          echo "fns=$FNS" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy
+        if: steps.changed.outputs.fns != ''
+        run: |
+          set -euo pipefail
+          for fn in ${{ steps.changed.outputs.fns }}; do
+            echo "::group::Deploying $fn"
+            supabase functions deploy "$fn" \
+              --project-ref "$SUPABASE_PROJECT_REF" \
+              --no-verify-jwt
+            echo "::endgroup::"
+          done
+
+      - name: Summary
+        if: always()
+        run: |
+          if [ -z "${{ steps.changed.outputs.fns }}" ]; then
+            echo "✅ No edge function changes to deploy."
+          else
+            echo "✅ Deployed: ${{ steps.changed.outputs.fns }}"
+          fi
