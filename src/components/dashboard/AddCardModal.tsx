@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Elements, PaymentElement, useStripe, useElements } from "@stripe/react-stripe-js";
 import { Loader2, X, CreditCard } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -27,20 +27,28 @@ interface Props {
 
 export default function AddCardModal({ open, onClose, onSuccess }: Props) {
   const { session, liveMode } = useAuth();
-  const [retryN, setRetryN] = useState(0);
+  const [retryTrigger, setRetryTrigger] = useState(0);
+  const idempotencyNonceRef = useRef<number>(0);
   const [clientSecret, setClientSecret] = useState<string | null>(null);
   const [setupIntentId, setSetupIntentId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Fetch SetupIntent client_secret when the modal opens (or retry_n bumps).
+  // Fetch SetupIntent client_secret each time the modal opens. The idempotency
+  // nonce is regenerated per fetch so reopening the modal never collides with
+  // a SetupIntent from a previous attempt now in a terminal state (2026-05-14
+  // BUG A: prior implementation seeded retry_n=0 at mount and persisted across
+  // opens, so Stripe replayed yesterday's `succeeded` SI and Elements 400'd).
+  // retryTrigger bumps on confirmError to force a fresh SI within an open.
   useEffect(() => {
     if (!open || !session?.access_token) return;
     let cancelled = false;
+    idempotencyNonceRef.current = Date.now();
+    const nonce = idempotencyNonceRef.current;
     setClientSecret(null);
     setError(null);
     (async () => {
       try {
-        const result = await createSetupIntent(session.access_token, retryN);
+        const result = await createSetupIntent(session.access_token, nonce);
         if (cancelled) return;
         setClientSecret(result.client_secret);
         setSetupIntentId(result.setup_intent_id);
@@ -52,7 +60,7 @@ export default function AddCardModal({ open, onClose, onSuccess }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [open, session?.access_token, retryN]);
+  }, [open, session?.access_token, retryTrigger]);
 
   const elementsOptions = useMemo(
     () =>
@@ -109,7 +117,7 @@ export default function AddCardModal({ open, onClose, onSuccess }: Props) {
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => setRetryN((n) => n + 1)}
+                onClick={() => setRetryTrigger((n) => n + 1)}
               >
                 Try again
               </Button>
@@ -120,7 +128,7 @@ export default function AddCardModal({ open, onClose, onSuccess }: Props) {
             <Elements stripe={getStripeForMode(liveMode)} options={elementsOptions}>
               <SetupForm
                 onSuccess={onSuccess}
-                onRetry={() => setRetryN((n) => n + 1)}
+                onRetry={() => setRetryTrigger((n) => n + 1)}
               />
             </Elements>
           )}

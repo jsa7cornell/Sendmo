@@ -6,6 +6,14 @@
 
 const STRIPE_API = "https://api.stripe.com/v1";
 
+// Pin all outgoing Stripe API calls to a known version. The test + live
+// webhook event destinations are also configured to 2026-04-22.dahlia, so
+// request and event payload shapes stay aligned. Without this header the
+// server silently follows the account default and can drift if Stripe
+// rolls out a new default. See 2026-05-14 LOG entry "Phase B webhook
+// rebuild + Stripe-Version pin".
+const STRIPE_API_VERSION = "2026-04-22.dahlia";
+
 function getSecretKey(liveMode: boolean): string {
     const key = liveMode
         ? Deno.env.get("STRIPE_SECRET_KEY_LIVE") || Deno.env.get("STRIPE_SECRET_KEY")
@@ -71,6 +79,7 @@ async function stripeRequest<T = Record<string, unknown>>(
     const headers: Record<string, string> = {
         Authorization: `Bearer ${secret}`,
         "Content-Type": "application/x-www-form-urlencoded",
+        "Stripe-Version": STRIPE_API_VERSION,
     };
     if (opts.idempotencyKey) {
         headers["Idempotency-Key"] = opts.idempotencyKey;

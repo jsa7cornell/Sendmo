@@ -4,9 +4,79 @@ This file combines two critical logs: **Decisions & Gotchas** (why decisions wer
 
 Agents should read this alongside PLAYBOOK.md. Before ending any session, propose additions here if you discovered anything new.
 
+> **Entry conventions:** `Category:` + `Cross-link:` headers as shown in entries below. For `fix`/`ship` Categories touching product surface (`src/components/`, `src/pages/`, `supabase/functions/`, or any rendered surface), a structured **`Browser-verified:`** block is required per PLAYBOOK Rule 19. Three valid shapes (exactly one): `spec:` + `variants-covered:`, `mcp-session:` + `variants-covered:`, or `n/a-category:` (closed enum) + `n/a-reason:`. "I'm confident" is not a typable value. See PLAYBOOK §19 for the full definition.
+
 ---
 
 ## Decisions & Gotchas
+
+### [2026-05-14] Phase B verification — webhook endpoint rebuild + AddCard idempotency fix + Stripe-Version pin
+**Category:** fix | Stripe | Webhook configuration | Phase B unblock
+**Cross-link:** Follow-on to [LOG 2026-05-13 Stripe Phase B + Phase C](#2026-05-13-stripe-phase-b-saved-cards--phase-c-live-charge-dogfood-gate) (verification deferred to "first real live event" — uncovered two bugs before the live test could run) + master [proposals/2026-04-26_stripe-integration-plan](proposals/2026-04-26_stripe-integration-plan_reviewed-2026-04-26_decided-2026-05-11.md).
+
+**Context:** First attempt to dogfood Phase B test-mode Add Card failed at modal open with `400 from /v1/elements/sessions: "This SetupIntent is in a terminal state"`. Investigation uncovered two distinct bugs that the proposal review missed, plus surfaced the long-deferred Stripe-Version pin.
+
+**BUG A — Stale-idempotency loop in `AddCardModal.tsx`.** `retryN` was `useState(0)` and only bumped on `confirmError`. Across separate modal opens it stayed at `0`, so the server's idempotency key `seti_create:{uid}:{mode}:retry-0` collided with Stripe's 24h cache and returned yesterday's SetupIntent, which had since reached `succeeded` — terminal for Elements. The modal could never get fresh card fields to render, *and* `onRetry` couldn't fire because the user never got to click Save. **Fix:** replaced `retryN` state with `retryTrigger` state + `idempotencyNonceRef` ref. The fetch effect stamps a fresh `Date.now()` into the ref on every run; `retryTrigger` bumps on error to force a re-fire. Single fetch per open; nonce uniqueness guaranteed across opens; intra-open retry semantics preserved.
+
+**BUG B — Test webhook endpoint pinned to API version 2012-09-24.** The `elegant-spark` test endpoint (v2 event destination `we_0TVlzcxS6gsndgF3RS0sJg9j`) was created at API version `2012-09-24`. SetupIntent didn't exist as a Stripe primitive until 2018; `payment_method.attached` is a modern-shape event. So Phase B events couldn't even be *subscribed to* at that API version. The Stripe Dashboard didn't surface this as a blocker — it just silently didn't list those event types in the picker. `api_version` is **immutable** on existing endpoints in both v1 and v2 namespaces. **Fix:** created a new event destination at `2026-04-22.dahlia` pointing at the same Supabase URL, with ~26 events subscribed (Tier A handler-explicit 7 + Tier B Phase D/E/F prep + Tier C telemetry/defense). Rotated `STRIPE_WEBHOOK_SECRET_TEST` in Supabase Edge Function secrets. Deleted old `elegant-spark`.
+
+**Stripe-Version pin (follow-up that landed in same session).** `supabase/functions/_shared/stripe.ts` had no `Stripe-Version` header on its raw-fetch client, so outgoing API calls silently followed the account default. Added `STRIPE_API_VERSION = "2026-04-22.dahlia"` constant + header. Now request and event payload shapes are aligned at the same version both directions.
+
+**Field-format gotcha (worth flagging for future agents):** Both `pk_test_*` and `pk_live_*` keys in this account are the older 30-31 char format (`pk_ubEH3eeJrviRXBR9HA9ukifeBcCZB` shape, no `_test_`/`_live_` segment). They are **valid** — Stripe still authenticates them. I initially misdiagnosed them as malformed because I expected the ~107 char newer format. Confirmed via `curl` against `/v1/payment_methods` → Stripe responds `401 secret_key_required` (key recognized, just wrong type for that endpoint) rather than `invalid_api_key`. Don't repeat the diagnosis error.
+
+**Dashboard typography gotcha:** The dashboard renders the destination ID `we_0TVlzcxS6gsndgF3RS0sJg9j` (lowercase `l`) in a font where `l` and capital `I` are visually identical. Both v1 and v2 `retrieve` calls failed with `not_found` until we got the ID from the JSON output of `list`. Always copy IDs from API output, never retype from the dashboard.
+
+**Browser-verified:**
+  mcp-session: 2026-05-14T16:35:46Z — new test event destination + signing-secret rotation verified end-to-end via `stripe trigger setup_intent.succeeded`. New row in `webhook_events` (`evt_0TX2EexS6gsndgF3xUJWNqf1`, `processed=true`, `livemode=false`), no `webhook.hmac_invalid` in `event_logs`, handler's `case "setup_intent.succeeded"` ran (logged `stripe.setup_intent_succeeded` with `payment_method=pm_0TX2EcxS6gsndgF3ks5CsKpg`), defensive `customer=null` path correctly skipped `stripe_intents` UPSERT for the orphan synthetic SI. The `AddCardModal.tsx` code change itself is NOT browser-verified yet — Vercel deploy + click-through is captured as Task #9 (follow-up next session).
+  variants-covered: {webhook-rebuild → setup_intent.succeeded synthetic} ✓; pending after deploy: {Add Card open → fresh card fields render, save 4242 → setup_intent.succeeded + payment_method.attached land, retry-after-error, reopen-after-close}
+
+**Watch out:**
+- **The pre-existing stale `stripe_intents` row** for `seti_0TWnpcxS6gsndgF3pEcCzr4m` (created 2026-05-14 01:12, status `requires_payment_method` in our DB, status `succeeded` per Stripe). Harmless — distinct from any future SI — but the row inaccuracy is a tripwire if someone debugs by trusting our mirror. Skip cleanup; will get overwritten if Stripe ever replays an event for that ID.
+- **EasyPost `hmac_invalid` entries from 2026-05-13** in `event_logs` (5 entries between 04:05–05:24). Unrelated to Stripe — wrong EasyPost signing secret. Separate thread; flagged for separate session.
+- **Vestigial `User`/`Account`/`Session`/`Address`/`Request`/`Event`/`Notification` tables** with RLS disabled (`_archive/backend` NextAuth/Prisma remnants). Either drop or enable RLS. Separate item.
+
+**Files touched (this commit):**
+- `src/components/dashboard/AddCardModal.tsx` (BUG A fix — retryN → retryTrigger + idempotencyNonceRef)
+- `supabase/functions/_shared/stripe.ts` (+Stripe-Version pin to 2026-04-22.dahlia)
+
+**Followups still open (Task #9 for browser verify; future session for v9 npm bump):** `@stripe/stripe-js ^8.11 → ^9` + `@stripe/react-stripe-js ^5.6 → ^6` is a major-version bump that pairs with the dahlia API version we're now on. Plan a separate session.
+
+---
+
+### [2026-05-13] Production-verification infrastructure — Layer 1 SendMo port
+**Category:** Infra | Testing | Cross-project parity (AgentEnvoy sibling)
+**Cross-link:** [agentenvoy/proposals/2026-05-13_claude-production-verification-infra_reviewed-2026-05-13_decided-2026-05-13.md](../agentenvoy/proposals/2026-05-13_claude-production-verification-infra_reviewed-2026-05-13_decided-2026-05-13.md)
+
+**Context:** Cross-project proposal decided earlier 2026-05-13 in AgentEnvoy. Layer 1 shipped on AgentEnvoy same day (Playwright + Playwright MCP + smoke spec + skeleton regression spec + Rule 29 + Stop hook + slash commands). This entry ports the SendMo-side conventions so the cross-project parity asked for in the proposal actually exists.
+
+**What shipped:**
+- **PLAYBOOK Rule 19** — "ALWAYS browser-verify product-surface fixes." Sibling to AgentEnvoy Rule 29. Defines the structured `Browser-verified:` block (three valid shapes: `spec:` / `mcp-session:` / `n/a-category:`), variant-axis discipline (SendMo examples: `{full-prepaid, flexible-link} × {test-mode, live_comp, live_charge}`; `{label_created, in_use, cancelled, completed, expired}`), and the `agent-internal` guidance note (must name the tighter alternative before claiming exemption).
+- **LOG.md header** — added "Entry conventions" pointer to Rule 19 so the Browser-verified field is visible at the top of the LOG without scrolling.
+- **`package.json`** — added `test:e2e:browser` (alias to `test:e2e`) + `test:e2e:browser:ui` (alias to `test:e2e:ui`) for cross-project convention parity. Existing `test:e2e` preserved.
+- **Stop hook** at `scripts/claude-hooks/check-browser-verified.sh` + registered in new `.claude/settings.json`. Scans modified paths at session close; if `src/components/`, `src/pages/`, `src/hooks/`, `supabase/functions/`, or `src/contexts/` files were touched and no `Browser-verified:` structured sub-keys (`spec:` / `mcp-session:` / `n/a-category:`) appear in the LOG.md diff, prints an advisory. Verified silent on no-surface diffs, fires structured advisory on surface diffs.
+- **Slash commands** at `.claude/commands/`: `/runtest` (quick pass/fail), `/verifyfix <commit>` (daily-use, forces variant-axis naming + tighter-rigor-or-defend), `/buildtest <bug>` (author new spec with regression-proof validation).
+- **Audit findings** (not run, documented): 10 e2e specs exist in `tests/e2e/`. Per existing WISHLIST "Test / CI debt" entry, ~14 fail due to missing `VITE_GOOGLE_MAPS_API_KEY` in CI. Suite was not exercised in this pass to avoid burning EasyPost test credits + because the failure mode is already tracked.
+
+**Tooling note — Stop hook regex correctness.** Initial implementation checked for the literal `Browser-verified:` string in the LOG diff, which caused false-negatives because the prose reference in this LOG.md header (`` `Browser-verified:` `` in backticks) also matched. Fixed in both projects (this SendMo hook + AgentEnvoy's sibling at `agentenvoy/app/scripts/claude-hooks/check-browser-verified.sh`) to look for the structured sub-keys instead: `spec:`, `mcp-session:`, `n/a-category:`. Verified with a synthetic surface-file touch.
+
+**Why:** AgentEnvoy's 2026-05-13 5-bug cluster surfaced "agent confidence was the failure mode in 4 of 4 catchable bugs." SendMo has the same architectural exposure — Edge Function response shapes consumed by UI components, server-trusted mode resolution that flows through to rendered surfaces, payment-path variants that test-mode coverage alone doesn't exercise. Same rule shape, adapted to SendMo's surface globs and variant-axis vocabulary.
+
+**Browser-verified:**
+  n/a-category: infra
+  n/a-reason: Pure infra ship — new rule + hook + slash commands + script aliases. No SendMo runtime behavior changed; no UI, Edge Function, or schema touched. The hook itself was verified by synthetic surface-file touch (see "Tooling note" above), which is the right rigor level for a Stop-hook script that has no production code path.
+
+**Files touched (this commit):**
+- `PLAYBOOK.md` (+Rule 19)
+- `LOG.md` (header conventions + this entry)
+- `WISHLIST.md` (Layer 1 marked complete)
+- `package.json` (`test:e2e:browser` alias)
+- `.claude/settings.json` (new, Stop hook registered)
+- `.claude/commands/runtest.md`, `verifyfix.md`, `buildtest.md` (new)
+- `scripts/claude-hooks/check-browser-verified.sh` (new)
+
+**Action for John (one-time):** Playwright MCP is already at user scope from the AgentEnvoy session — it'll work in SendMo sessions automatically, no re-registration. To use `/runtest`, `/verifyfix`, `/buildtest` in a SendMo session, restart Claude Code so the project-scoped slash commands load.
+
+---
 
 ### [2026-05-13] Stripe Phase B (saved cards) + Phase C (live-charge dogfood gate)
 **Category:** Stripe | Phase rollout | Mode resolution | Edge Functions | Auth context
