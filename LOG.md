@@ -10,6 +10,73 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-14] Phase B/C/D pre-prod sweep — live verification, key rotation, Customer Sessions (incomplete)
+**Category:** fix | Stripe | Phase B/C/D | Key rotation | Account hygiene | Saved-card display (incomplete)
+**Cross-link:** Continuation of the same-day entry below ("Phase B verification — webhook endpoint rebuild..."). Companion handoff: [proposals/2026-05-14_saved-card-display-handoff.md](proposals/2026-05-14_saved-card-display-handoff.md). Wall-of-shame additions: [wallofshame.md](wallofshame.md). Master proposal: [proposals/2026-04-26_stripe-integration-plan](proposals/2026-04-26_stripe-integration-plan_reviewed-2026-04-26_decided-2026-05-11.md).
+
+**Context:** Continued pre-production sweep of Stripe paths after the morning's BUG A/B fixes. Goal: prove live-mode end-to-end + harden anything still legacy-shaped + ship saved-card display on sender flow. Got the first two; the third remains incomplete pending a parameter-path fix flagged for the next session.
+
+**What landed (in order):**
+
+**1. Live webhook endpoint audit + rebuild.** `creative-oasis` (live event destination, set up via Dashboard wizard 2026-05-13) was *also* pinned to API version `2012-09-24` — the SendMo Stripe account default is 2012-09-24 (account created Oct 10, 2012), and the wizard silently inherited it. Same shape as the morning's `elegant-spark` bug, but discovered only after the first live Add Card succeeded on Stripe but `payment_method.attached` was silently dropped (didn't exist in 2012's shape). Rebuilt via Stripe Dashboard wizard at `2026-04-22.dahlia` as `Sendmo-live-2026` (`we_0TVloqxS6gsndgF30yU88aow`). Rotated `STRIPE_WEBHOOK_SECRET_LIVE` in Supabase Edge Function secrets. Deleted old `creative-oasis`.
+
+**2. The wizard *silently dropped `payment_method.attached`* from the enabled events list on first save.** Even though John explicitly intended it to be subscribed, the saved subscription was missing it. Second live Add Card after rebuild still failed end-to-end for the same reason — only `setup_intent.*` events arrived. Verified via dashboard "Show events" panel: `payment_method.attached` wasn't in the 26-event list. Added it manually → next Add Card landed properly (visa 3138 → `pm_0TX6jmxS6gsndgF3qBXrYxG2`, brand/last4/exp_month/exp_year populated, `is_default=true`). **TRAP:** the Stripe "Add destination" wizard cannot be trusted to persist event subscriptions exactly as ticked. Always verify via the endpoint's Overview → "Show events" before declaring success.
+
+**3. Stripe keys rotated to modern format.** Initial diagnosis of a separate Add Card failure surfaced this console warning from Stripe.js: *"It looks like you're using an older Stripe key. Some features in the Payment Element are disabled unless you're using a modern API key, which is prefixed with 'pk_live_' or 'pk_test_'."* The SendMo account had been on 30-character legacy publishable+secret keys (`pk_ubEH3…` / `pk_LP0gQ…` / matching `sk_T7Vtb…`). Found a "Roll" affordance in the Stripe Dashboard's standard-keys row (not visible at first scan; required hover/click discovery). Rotated all four publishable + secret keys to modern 107-char `pk_test_*` / `pk_live_*` / `sk_test_*` / `sk_live_*` format. Updated Vercel env vars + Supabase Edge Function secrets + 1Password items. Also unintentionally surfaced a separate Vercel-side bug where the LIVE publishable env var had been set to the TEST value (Vite minifier collapsed the ternary because both env vars resolved to the same string at build time) — verified fixed by inspecting the bundle's minified `Y1` function for a proper conditional. **Side rename:** John renamed the live secret 1Password item to `STRIPE_SECRET_KEY_LIVE` (was `STRIPE_SECRET_KEY`). Edge Function code already prefers the `_LIVE` suffix with legacy fallback (`getSecretKey` in `_shared/stripe.ts`), so the rename was a no-op.
+
+**4. Phase B live verification — end-to-end SUCCEEDED.** After all the above, a fresh live Add Card with a real card landed cleanly: `setup_intent.succeeded` + `payment_method.attached` both delivered to `Sendmo-live-2026`, both `processed=true` in `webhook_events`, canonical row written to `payment_methods` with full card metadata. Phase B is now real in live mode.
+
+**5. Saved-card path on sender-flow checkout — server side LANDED, client display INCOMPLETE.** Goal: when an authenticated user has a saved card and reaches `/onboarding/full-label/payment`, render the saved card as the top option in PaymentElement (instead of the bare 1234-1234-1234-1234 form). Server-side changes shipped (commits `d47667f`, `397079c`):
+- `payments/index.ts` pulls `profiles.stripe_customer_id_{mode}` and passes `customer` to the PI
+- `payments/index.ts` creates a Customer Session via new `_shared/stripe.ts createCustomerSession` helper, returns its `client_secret` alongside the PI's
+- `StripePaymentForm.tsx` threads the customer session client secret to `<Elements options={{ clientSecret, customerSessionClientSecret, ... }}>`
+- Confirmed via `event_logs`: `payment.intent_created` now logs `has_customer_session: true`
+
+**But saved cards still don't display.** Root cause: PaymentMethods saved via `/payment-methods` have `allow_redisplay='unspecified'` (Stripe's default), which Stripe's Customer Session filters OUT of the saved-PM picker. Setting `allow_redisplay='always'` is required. Tried two parameter paths today (both rejected by Stripe):
+- `payment_method_options[card][allow_redisplay]` on SetupIntent — `"Received unknown parameter"`
+- top-level `allow_redisplay` on SetupIntent — `"Received unknown parameter"`
+
+Reverted to leave SetupIntent unchanged (commit `31cc8e5`). Open question: where DOES `allow_redisplay` belong? Three remaining candidate paths to research:
+- Client-side `payment_method_data.allow_redisplay` on `stripe.confirmSetup`
+- A follow-up `POST /v1/payment_methods/{pm}` update from the webhook handler after `payment_method.attached` fires
+- Customer Session `allow_redisplay_filters` array to opt-in `'unspecified'` as eligible
+
+Full handoff: [proposals/2026-05-14_saved-card-display-handoff.md](proposals/2026-05-14_saved-card-display-handoff.md).
+
+**6. Account default API version.** Open follow-up. The SendMo Stripe account's default API version is `2012-09-24`. Every new webhook endpoint inherits it at creation. Dashboard's `Developers → Settings` page exposes Workbench appearance/SDK language but not API-version upgrade — likely requires Stripe support. Tracked separately; non-blocking since outgoing API calls are pinned via `Stripe-Version` header and the two production webhook endpoints are now at dahlia.
+
+**Field-format gotchas worth flagging for the next agent:**
+- **Stripe Dashboard font** renders lowercase `l` and capital `I` identically in webhook endpoint IDs. The endpoint ID we worked with was `we_0TVlzcxS6gsndgF3RS0sJg9j` (lowercase `l`), not `we_0TVIzcxS6gsndgF3RS0sJg9j` (capital `I`). Both `stripe webhook_endpoints retrieve` and `stripe v2 core event_destinations retrieve` returned `not_found` until we copied the ID from the JSON output of `list`. **Always copy IDs from API output, never retype from the dashboard.**
+- **The Stripe Workbench shell is test-mode-only** (per its own banner: "Stripe Shell is a browser-based shell with the Stripe CLI pre-installed. You can use it to manage your Stripe resources in sandboxes or test mode"). To inspect/update live event destinations, you must use the Dashboard UI or local `stripe` CLI with live keys. The MCP `stripe_api_execute` route requires per-call human confirmation for mutations.
+- **Customer Sessions are required for PaymentElement to display saved PMs on `2026-04-22.dahlia`.** Just setting `customer` on the PaymentIntent is *not* sufficient. The server must also create a CustomerSession with `components.payment_element.features.payment_method_redisplay: 'enabled'` and return its `client_secret` for the frontend to pass to the `<Elements>` provider.
+
+**Browser-verified:**
+  mcp-session: 2026-05-14T21:24:13Z — live mode Add Card path fully verified via Supabase MCP. Fresh SetupIntent (`seti_…`) created, distinct from prior orphans; card entered (visa 3138 real card); both `setup_intent.succeeded` (`evt_0TX6joxS6gsndgF3XKtwlpR6`) + `payment_method.attached` (`evt_0TX6joxS6gsndgF32rIoEG1j`) delivered to `Sendmo-live-2026` at dahlia with `processed=true`; `stripe_intents` UPSERTed; `payment_methods` (live) row written with `brand=visa`, `last4=3138`, `exp_month=11`, `exp_year=2030`, `is_default=true`; handler logged `stripe.payment_method_attached` with full fields. No `webhook.hmac_invalid`.
+  variants-covered: {webhook rebuild → synthetic + real `setup_intent.succeeded`} ✓, {live mode Add Card → real `payment_method.attached` → canonical row} ✓, {Vercel bundle modern-key swap} ✓. Still uncovered: {live full-prepaid checkout end-to-end using a saved card} ❌ (blocked on saved-card display gap above), {orphan PM cleanup}.
+
+**Watch out:**
+- **Three orphan live PaymentMethods on John's Customer `cus_UW55KG9mu1CNMB`**: `pm_0TX3aRxS6gsndgF3fuOuPoXg` (visa 3138, attached pre-Sendmo-live-2026), `pm_0TX3okxS6gsndgF3e4biE3Ct` (amex 5001, attached after Sendmo-live-2026 created but before `payment_method.attached` was added to its subscription), `pm_0TX6jmxS6gsndgF3qBXrYxG2` (visa 3138, the canonical post-fix one with a DB row). The first two are attached on Stripe but absent from our `payment_methods` table. Only the third has a row. Stripe-side cleanup is harmless to defer — they don't appear on the Dashboard wallet because the DB row doesn't exist, and none of them have `allow_redisplay='always'` so even with the future saved-card-display fix none would show in the sender-flow picker. Cleanup path: Stripe Dashboard → Customers → `cus_UW55KG9mu1CNMB` → detach each.
+- **Test-mode orphan PM**: `pm_0TX2XTxS6gsndgF3SHgTtgaW` (visa 4242, the test card we saved at 16:55) IS in our DB and lists in the test-mode wallet. Same `allow_redisplay='unspecified'` constraint applies to test-mode saved-card display.
+- **AddCardModal post-save navigation (Task #13)**: still untouched. Real cards trigger 3DS via `stripe.confirmSetup`, and we don't pass `confirmParams.return_url` — Stripe redirects via a default path that bounces the whole page. The modal's React state is lost on the round-trip; user lands on Dashboard with a fresh mount but no success toast. Functional, ugly. Code-only fix.
+- **The Stripe MCP doesn't expose webhook endpoints, events, or PaymentMethod writes** as first-class operations. For those, the Dashboard or Workbench shell (test-only) is the path. The MCP's curated subset covers customers, payment intents, charges, products, prices, subscriptions, refunds, payment links, coupons.
+
+**Files touched (commits this entry, in order):**
+- `d47667f feat(stripe-phase-d): pass Stripe Customer to sender-flow PI for saved-card quick-pay` — first attempt, customer-only. Insufficient on dahlia.
+- `397079c feat(stripe-phase-d): add Customer Session for saved-PM display in PaymentElement` — Customer Session integration. Server-correct; client wiring done.
+- `4e1946f fix(stripe-phase-d): set allow_redisplay='always' on saved cards` — first wrong allow_redisplay path (nested under payment_method_options.card). Stripe rejected: "unknown parameter."
+- `3b1f603 fix(stripe-phase-d): allow_redisplay is top-level on SetupIntent, not nested` — second wrong path. Stripe rejected: "unknown parameter."
+- `31cc8e5 revert(stripe-phase-d): remove allow_redisplay from SetupIntent — Add Card was broken` — full revert of the field. Add Card works again; saved-card display still incomplete.
+
+**Followups still open:**
+- **Task #12** — bump account default API version (likely needs Stripe support ticket).
+- **Task #13** — AddCardModal 3DS `return_url`.
+- **Task #14** — saved-card display on sender-flow PaymentElement (see handoff doc).
+- Orphan PM cleanup on Stripe-side (harmless, can be done anytime).
+- EasyPost `webhook.hmac_invalid` x5 entries from 2026-05-13 (separate signing-secret issue, unrelated to Stripe).
+- Vestigial `User`/`Account`/`Session`/`Address`/`Request`/`Event`/`Notification` NextAuth/Prisma tables with RLS disabled.
+
+---
+
 ### [2026-05-14] Phase B verification — webhook endpoint rebuild + AddCard idempotency fix + Stripe-Version pin
 **Category:** fix | Stripe | Webhook configuration | Phase B unblock
 **Cross-link:** Follow-on to [LOG 2026-05-13 Stripe Phase B + Phase C](#2026-05-13-stripe-phase-b-saved-cards--phase-c-live-charge-dogfood-gate) (verification deferred to "first real live event" — uncovered two bugs before the live test could run) + master [proposals/2026-04-26_stripe-integration-plan](proposals/2026-04-26_stripe-integration-plan_reviewed-2026-04-26_decided-2026-05-11.md).
