@@ -10,6 +10,32 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-14] Task #14 + #13 — saved-card display fix + 3DS return_url
+**Category:** fix | Stripe | Phase D | Saved-card display
+**Cross-link:** Closes the open item from [proposals/2026-05-14_saved-card-display-handoff.md](proposals/2026-05-14_saved-card-display-handoff.md). Commit: `220b3e2`.
+
+**What changed:**
+
+1. **`src/components/dashboard/AddCardModal.tsx`** — `stripe.confirmSetup` now passes `confirmParams.payment_method_data.allow_redisplay: 'always'`. This is the correct parameter path (Stripe docs: `stripe.com/docs/payments/save-customer-payment-methods`). Previous agent tried top-level and `payment_method_options[card]` on the server-side SetupIntent body — both wrong. The field belongs on the *client-side confirm call*, not the server-side intent creation. All cards saved from this point forward will have `allow_redisplay='always'` and surface in the PaymentElement saved-card picker.
+
+2. **`src/components/dashboard/AddCardModal.tsx`** (same commit) — added `confirmParams.return_url: window.location.href` to `confirmSetup` (Task #13). Fixes 3DS redirect round-trip; Stripe now bounces back to the dashboard page instead of its own default URL, preserving modal context.
+
+3. **`supabase/functions/_shared/stripe.ts`** — `createCustomerSession` now passes `payment_method_allow_redisplay_filters: ['always', 'unspecified']` in the `payment_element.features` block. Default is `['always']` only — adding `'unspecified'` means cards saved before this fix (all existing PMs on John's Stripe account) also show up in checkout without any backfill. Both edge functions (`payments`, `stripe-webhook`) redeployed.
+
+**Why Option A + Option C together:** Option A covers all future cards; Option C covers all existing cards. No backfill, no Stripe API write, no production risk.
+
+**Browser-verified:**
+  n/a-category: agent-internal
+  n/a-reason: Dashboard requires Supabase auth; Playwright can't log in (no `.env.local` in sandboxed context). The two code paths exercised are: (1) `confirmSetup` call shape (statically verifiable — correct param path confirmed against Stripe docs before touching code); (2) `createCustomerSession` body (deployed and live — verifiable by adding a test card and checking the checkout step shows it). John should verify the golden path manually: Dashboard → Add Card → test card 4242 → Save → New shipment → payment step should show "Visa •••• 4242" as the top option. If live mode: same with a real card.
+
+**Followups still open:**
+- Task #12 — account default API version (Stripe support ticket)
+- Orphan PM cleanup on Stripe-side (`cus_UW55KG9mu1CNMB`)
+- Flex-link payment flow (manual-capture PI + capture on delivery) — unverified whether built
+- Cancel + refund end-to-end test with a real charged shipment
+
+---
+
 ### [2026-05-14] Phase B/C/D pre-prod sweep — live verification, key rotation, Customer Sessions (incomplete)
 **Category:** fix | Stripe | Phase B/C/D | Key rotation | Account hygiene | Saved-card display (incomplete)
 **Cross-link:** Continuation of the same-day entry below ("Phase B verification — webhook endpoint rebuild..."). Companion handoff: [proposals/2026-05-14_saved-card-display-handoff.md](proposals/2026-05-14_saved-card-display-handoff.md). Wall-of-shame additions: [wallofshame.md](wallofshame.md). Master proposal: [proposals/2026-04-26_stripe-integration-plan](proposals/2026-04-26_stripe-integration-plan_reviewed-2026-04-26_decided-2026-05-11.md).
