@@ -242,6 +242,10 @@ export function createCustomerSession(params: {
                     enabled: true,
                     features: {
                         payment_method_redisplay: "enabled",
+                        // Include cards saved before allow_redisplay='always'
+                        // was set (they default to 'unspecified'). Without this,
+                        // Customer Session filters them out of the picker.
+                        payment_method_allow_redisplay_filters: ["always", "unspecified"],
                         payment_method_save: "disabled",
                         payment_method_remove: "disabled",
                     },

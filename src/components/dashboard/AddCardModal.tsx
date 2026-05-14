@@ -171,6 +171,16 @@ function SetupForm({
     const { error: confirmError, setupIntent } = await stripe.confirmSetup({
       elements,
       redirect: "if_required",
+      confirmParams: {
+        // Task #13: return_url so 3DS redirect bounces back to this page
+        // instead of Stripe's default, preserving modal state.
+        return_url: window.location.href,
+        // Task #14: mark this card as always-redisplayable so it surfaces
+        // in the PaymentElement saved-card picker on the checkout flow.
+        payment_method_data: {
+          allow_redisplay: "always",
+        },
+      },
     });
 
     if (confirmError) {
