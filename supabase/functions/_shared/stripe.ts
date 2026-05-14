@@ -31,7 +31,23 @@ function formEncode(params: Record<string, unknown>, prefix = ""): string {
     for (const [key, value] of Object.entries(params)) {
         if (value === undefined || value === null) continue;
         const name = prefix ? `${prefix}[${key}]` : key;
-        if (typeof value === "object" && !Array.isArray(value)) {
+        if (Array.isArray(value)) {
+            // Stripe's form-encoding for arrays is `key[0]=v0&key[1]=v1`.
+            // Critical for SetupIntent.payment_method_types and any other
+            // array-shaped Stripe parameter. Bug fix 2026-05-13: prior code
+            // String()'d arrays, producing scalar 'card' instead of the
+            // 1-element array, which Stripe rejected with "Invalid array".
+            value.forEach((item, i) => {
+                const itemKey = `${name}[${i}]`;
+                if (item !== undefined && item !== null) {
+                    if (typeof item === "object") {
+                        parts.push(formEncode(item as Record<string, unknown>, itemKey));
+                    } else {
+                        parts.push(`${encodeURIComponent(itemKey)}=${encodeURIComponent(String(item))}`);
+                    }
+                }
+            });
+        } else if (typeof value === "object") {
             parts.push(formEncode(value as Record<string, unknown>, name));
         } else {
             parts.push(`${encodeURIComponent(name)}=${encodeURIComponent(String(value))}`);
