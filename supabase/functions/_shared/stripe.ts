@@ -283,13 +283,16 @@ export function createSetupIntent(params: {
             customer: params.customer,
             payment_method_types: ["card"],
             usage: "off_session",
-            // Top-level allow_redisplay on SetupIntent — propagates to the
-            // resulting PaymentMethod. Required so the PM is eligible for
-            // redisplay in PaymentElement via Customer Session. Default
-            // "unspecified" silently excludes the PM from the saved-PM
-            // picker. Verified path: payment_method_options.card.allow_redisplay
-            // was rejected by Stripe ("unknown parameter") 2026-05-14.
-            allow_redisplay: "always",
+            // Saved-PM redisplay (allow_redisplay='always') needs to be set
+            // somewhere other than SetupIntent — both top-level and nested
+            // under payment_method_options[card] were rejected by Stripe
+            // 2026-05-14. Likely belongs on payment_method_data via the
+            // client-side confirmSetup call, or via a follow-up
+            // PaymentMethod update in the webhook handler. TODO: research
+            // + implement separately. For now, PMs save with default
+            // allow_redisplay='unspecified' and won't surface in the
+            // sender-flow PaymentElement saved-card picker — but Add Card
+            // itself works.
             metadata: params.metadata,
         },
         idempotencyKey: params.idempotency_key,
