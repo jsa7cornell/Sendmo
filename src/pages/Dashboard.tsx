@@ -14,6 +14,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
 import LinksTab from "@/components/dashboard/LinksTab";
 import AddCardModal from "@/components/dashboard/AddCardModal";
+import AdminModeToolbar from "@/components/AdminModeToolbar";
 import { removePaymentMethod } from "@/lib/api";
 
 // ─── Types ──────────────────────────────────────────────────
@@ -383,7 +384,8 @@ export default function Dashboard() {
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
+            <AdminModeToolbar />
             <Button className="rounded-xl gap-2 text-sm" onClick={() => navigate("/onboarding")}>
               <SendMoLogo className="w-4 h-4" />
               Create a new shipment
