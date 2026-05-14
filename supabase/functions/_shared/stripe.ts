@@ -212,6 +212,46 @@ export function createCustomer(params: {
     });
 }
 
+// ─── Customer Sessions (Dahlia required for saved-PM display) ─
+
+export interface CustomerSession {
+    object: "customer_session";
+    client_secret: string;
+    customer: string;
+    expires_at: number;
+}
+
+// Required by PaymentElement to render saved PMs on the sender-flow
+// checkout (2026-04-22.dahlia onward). Just setting `customer` on the
+// PaymentIntent isn't enough — you also need a Customer Session client
+// secret on the Elements provider.
+//
+// payment_method_save/remove are intentionally 'disabled': saving still
+// happens through the dedicated /payment-methods Add Card flow, and we
+// don't want users deleting cards from inside the checkout sheet.
+export function createCustomerSession(params: {
+    customer: string;
+    liveMode: boolean;
+}): Promise<CustomerSession> {
+    return stripeRequest<CustomerSession>("/customer_sessions", {
+        method: "POST",
+        body: {
+            customer: params.customer,
+            components: {
+                payment_element: {
+                    enabled: true,
+                    features: {
+                        payment_method_redisplay: "enabled",
+                        payment_method_save: "disabled",
+                        payment_method_remove: "disabled",
+                    },
+                },
+            },
+        },
+        liveMode: params.liveMode,
+    });
+}
+
 // ─── SetupIntents (Phase B saved cards) ─────────────────────
 
 export interface SetupIntent {

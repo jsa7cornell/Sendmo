@@ -2,7 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { log } from "../_shared/logger.ts";
-import { createPaymentIntent, retrievePaymentIntent } from "../_shared/stripe.ts";
+import { createPaymentIntent, createCustomerSession, retrievePaymentIntent } from "../_shared/stripe.ts";
 
 // POST /payments
 //
@@ -160,6 +160,32 @@ serve(async (req: Request) => {
             liveMode: isLive,
         });
 
+        // Customer Session for saved-PM display in PaymentElement (dahlia
+        // requirement). Only attempt when we have a customer; failure is
+        // non-fatal — the form just falls back to bare new-card entry.
+        let customerSessionClientSecret: string | null = null;
+        if (customerForPi) {
+            try {
+                const cs = await createCustomerSession({
+                    customer: customerForPi,
+                    liveMode: isLive,
+                });
+                customerSessionClientSecret = cs.client_secret;
+            } catch (csErr) {
+                log({
+                    event_type: "payment.customer_session_failed",
+                    session_id: sessionId,
+                    severity: "warn",
+                    entity_type: "customer_session",
+                    properties: {
+                        error_message: csErr instanceof Error ? csErr.message : "unknown",
+                        customer_id: customerForPi,
+                        live_mode: isLive,
+                    },
+                });
+            }
+        }
+
         const elapsed = Date.now() - start;
         log({
             event_type: "payment.intent_created",
@@ -174,6 +200,7 @@ serve(async (req: Request) => {
                 status: pi.status,
                 easypost_shipment_id,
                 live_mode: isLive,
+                has_customer_session: customerSessionClientSecret !== null,
             },
         });
 
@@ -182,6 +209,7 @@ serve(async (req: Request) => {
                 client_secret: pi.client_secret,
                 payment_intent_id: pi.id,
                 status: pi.status,
+                customer_session_client_secret: customerSessionClientSecret,
             }),
             { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );

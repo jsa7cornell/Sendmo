@@ -25,6 +25,7 @@ interface StripePaymentFormProps {
 // Outer component creates the PaymentIntent + mounts Stripe Elements.
 export default function StripePaymentForm(props: StripePaymentFormProps) {
   const [clientSecret, setClientSecret] = useState<string | null>(null);
+  const [customerSessionClientSecret, setCustomerSessionClientSecret] = useState<string | null>(null);
   const [paymentIntentId, setPaymentIntentId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -46,6 +47,7 @@ export default function StripePaymentForm(props: StripePaymentFormProps) {
         if (cancelled) return;
         setClientSecret(result.client_secret);
         setPaymentIntentId(result.payment_intent_id);
+        setCustomerSessionClientSecret(result.customer_session_client_secret ?? null);
       } catch (err) {
         if (cancelled) return;
         setError(err instanceof Error ? err.message : "Failed to initialize payment");
@@ -57,6 +59,9 @@ export default function StripePaymentForm(props: StripePaymentFormProps) {
   const elementsOptions = useMemo(
     () => clientSecret ? {
       clientSecret,
+      // Required by dahlia for PaymentElement to render saved PMs; falls
+      // back to bare new-card form when the server didn't issue one.
+      ...(customerSessionClientSecret ? { customerSessionClientSecret } : {}),
       appearance: {
         theme: "flat" as const,
         variables: {
@@ -66,7 +71,7 @@ export default function StripePaymentForm(props: StripePaymentFormProps) {
         },
       },
     } : undefined,
-    [clientSecret],
+    [clientSecret, customerSessionClientSecret],
   );
 
   if (error) {

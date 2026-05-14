@@ -119,6 +119,11 @@ export interface CreatePaymentIntentResult {
   client_secret: string;
   payment_intent_id: string;
   status: string;
+  // Customer Session enables saved-PM display in PaymentElement (dahlia
+  // requirement). Null when the caller has no Stripe Customer in the
+  // resolved mode, OR when the customer_sessions API call failed —
+  // either way, frontend falls back to bare PaymentElement.
+  customer_session_client_secret?: string | null;
 }
 
 export async function createPaymentIntent(params: {
