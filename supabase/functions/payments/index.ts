@@ -66,6 +66,8 @@ serve(async (req: Request) => {
         let resolvedUserId: string | null = null;
         let callerRole: string | null = null;
         let callerAdminMode: string = "test";
+        let customerIdTest: string | null = null;
+        let customerIdLive: string | null = null;
         const authHeader = req.headers.get("Authorization") || req.headers.get("authorization") || "";
         const token = authHeader.replace(/^Bearer\s+/i, "");
         const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || Deno.env.get("VITE_SUPABASE_ANON_KEY") || "";
@@ -79,11 +81,13 @@ serve(async (req: Request) => {
                     resolvedUserId = userResp.user.id;
                     const { data: profile } = await sb
                         .from("profiles")
-                        .select("role, admin_active_mode")
+                        .select("role, admin_active_mode, stripe_customer_id_test, stripe_customer_id_live")
                         .eq("id", resolvedUserId)
                         .maybeSingle();
                     callerRole = (profile?.role as string) ?? null;
                     callerAdminMode = (profile?.admin_active_mode as string) ?? "test";
+                    customerIdTest = (profile?.stripe_customer_id_test as string) ?? null;
+                    customerIdLive = (profile?.stripe_customer_id_live as string) ?? null;
                 }
             }
         }
@@ -132,10 +136,18 @@ serve(async (req: Request) => {
         // we hit this endpoint again with the same key.
         const idempotencyKey = `pi_create_${easypost_shipment_id}`;
 
+        // Mode-matched Customer (when the user has saved cards). Passing
+        // customer to the PI lets PaymentElement render saved PMs as the
+        // top option on the sender-flow payment step. Mode mismatch (test
+        // PI with live Customer or vice versa) would 400 at Stripe, so we
+        // only pass when isLive lines up with the stored Customer ID.
+        const customerForPi = (isLive ? customerIdLive : customerIdTest) ?? undefined;
+
         const pi = await createPaymentIntent({
             amount_cents,
             currency: "usd",
             capture_method: "automatic", // full-label flow charges immediately
+            customer: customerForPi,
             metadata: {
                 easypost_shipment_id,
                 session_id: sessionId,

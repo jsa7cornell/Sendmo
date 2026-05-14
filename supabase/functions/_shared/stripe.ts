@@ -132,6 +132,7 @@ export function createPaymentIntent(params: {
     capture_method?: "automatic" | "manual";
     metadata?: Record<string, string>;
     receipt_email?: string;
+    customer?: string;
     idempotency_key: string;
     liveMode: boolean;
 }): Promise<PaymentIntent> {
@@ -145,6 +146,10 @@ export function createPaymentIntent(params: {
             automatic_payment_methods: { enabled: true, allow_redirects: "never" },
             metadata: params.metadata,
             receipt_email: params.receipt_email,
+            // When set, PaymentElement renders saved PMs for this Customer as
+            // the top option (with an inline "use a different card" fallback).
+            // Omitted → bare new-card form, current behavior.
+            ...(params.customer ? { customer: params.customer } : {}),
         },
         idempotencyKey: params.idempotency_key,
         liveMode: params.liveMode,
