@@ -283,14 +283,13 @@ export function createSetupIntent(params: {
             customer: params.customer,
             payment_method_types: ["card"],
             usage: "off_session",
-            // Required for the resulting PaymentMethod to be eligible for
-            // redisplay in PaymentElement via a Customer Session. Defaults
-            // to "unspecified" which silently excludes the PM from the
-            // saved-PM picker, even when Customer Session has
-            // payment_method_redisplay=enabled.
-            payment_method_options: {
-                card: { allow_redisplay: "always" },
-            },
+            // Top-level allow_redisplay on SetupIntent — propagates to the
+            // resulting PaymentMethod. Required so the PM is eligible for
+            // redisplay in PaymentElement via Customer Session. Default
+            // "unspecified" silently excludes the PM from the saved-PM
+            // picker. Verified path: payment_method_options.card.allow_redisplay
+            // was rejected by Stripe ("unknown parameter") 2026-05-14.
+            allow_redisplay: "always",
             metadata: params.metadata,
         },
         idempotencyKey: params.idempotency_key,
