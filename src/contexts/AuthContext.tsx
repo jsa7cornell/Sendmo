@@ -77,16 +77,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    // Get initial session
-    supabase.auth.getSession().then(({ data: { session: s } }) => {
-      setSession(s);
-      setUser(s?.user ?? null);
-      if (s?.user) ensureProfile(s.user);
-      else setIsAdmin(false);
-      setLoading(false);
-    });
-
-    // Listen for auth changes
+    // In Supabase JS v2, onAuthStateChange fires INITIAL_SESSION on subscription
+    // setup, so getSession() is redundant. Calling both simultaneously causes a
+    // race: when the JWT is expired, both try to exchange the same refresh token.
+    // With "Detect and revoke potentially compromised refresh tokens" ON, the
+    // second exchange is treated as a replay attack and the session is revoked,
+    // silently signing the user out. Single listener eliminates the race.
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, s) => {

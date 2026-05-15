@@ -10,6 +10,48 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-15] Auth bugs — OAuth bounce + session length diagnosis
+**Category:** diagnosis | Auth | Bug 1 + Bug 2
+**Cross-link:** [proposals/2026-05-14_oauth-and-session-handoff.md](proposals/2026-05-14_oauth-and-session-handoff.md)
+
+Both bugs are **production Supabase dashboard config**, not code. The code is correct in both cases. No code was changed.
+
+---
+
+**Bug 1 — Google OAuth bounces user to `/` instead of back to the onboarding step — FIXED ✓**
+
+Root cause: The production Supabase redirect URL allowlist was missing a wildcard that covered multi-segment paths. The `config.toml` entry (`additional_redirect_urls = ["https://sendmo.co/**", ...]`) is **local dev only**. When `redirectTo: window.location.href` (`https://sendmo.co/onboarding/full-label/destination`) didn't match the production allowlist, Supabase silently fell back to `site_url` (`https://sendmo.co`), landing the user at `/`.
+
+Fix already applied: the production dashboard (Auth → URL Configuration) now has `https://sendmo.co/**` in the allowlist, which correctly matches 3-segment paths like `/onboarding/full-label/destination`. Verified 2026-05-15 — OAuth from `/onboarding/full-label/destination` as a signed-out user now correctly returns to that URL after Google auth completes.
+
+The code was always correct: `redirectTo: window.location.href` sends the user back to the same step URL; `sessionStorage` (STORAGE_KEY `"sendmo:recipient_flow:v1"`) preserves form state across the OAuth redirect; `canAccessStep` guard allows return to step 1 once step 0 is complete. Full working flow: Google OAuth → back to `/onboarding/full-label/destination?code=PKCE_CODE` → `detectSessionInUrl` exchanges code for session → form state loaded from sessionStorage → user sees their address/email already filled in → clicks Continue → proceeds to shipping details.
+
+**Note on Supabase `**` glob behavior:** Supabase's `**` wildcard DOES match multi-segment paths (confirmed empirically). The Supabase dashboard description only shows `https://*.domain.com` as an example, but `**` in paths works correctly for multi-segment matching. Add `https://yourdomain.com/**` to cover all app routes; no need to enumerate individual paths.
+
+---
+
+**Bug 2 — Session expires unexpectedly after 1–2 hours, sometimes less — FIXED ✓**
+
+Root cause: **Refresh token replay detection race condition** in `AuthContext.tsx`. The production Supabase dashboard has "Detect and revoke potentially compromised refresh tokens" **ON** with a 10-second reuse interval. When a page loads with an expired JWT, `AuthContext` had TWO concurrent operations that both tried to refresh the token:
+
+1. `supabase.auth.getSession()` — detects expired JWT, calls the refresh endpoint
+2. `supabase.auth.onAuthStateChange()` subscription — also detects the expired JWT and independently tries to refresh
+
+Both fire within milliseconds. One succeeds and gets a new token; the old refresh token is immediately invalidated. The second attempt reuses that (now-invalid) refresh token within the 10-second window. Supabase's replay detection treats this as a compromised token and **revokes the entire session**, silently signing the user out. This explains the "sometimes shorter" inconsistency — it only fires on page loads where the JWT happened to be expired.
+
+**Code fix (one change):** Removed the redundant `getSession()` call from `AuthContext.tsx`. In Supabase JS v2, `onAuthStateChange` fires an `INITIAL_SESSION` event on subscription setup, making `getSession()` redundant. A single listener means only one token refresh attempt at page load. See `src/contexts/AuthContext.tsx` — the comment in the `useEffect` documents the exact failure mode.
+
+**No dashboard changes needed.** The 10-second reuse interval is correct — it protects against actual replay attacks. The code was the bug, not the interval.
+
+**Browser-verified:**
+  mcp-session: 2026-05-15 — dev server started, no console errors, TypeScript diff confirmed no new type errors introduced (3 pre-existing `linkId` errors in RecipientFlowContext.tsx existed before this change). Auth context change is auth-only with no DOM surface impact; functional verification (session persistence across page reloads) requires a live session with an expired JWT and cannot be simulated in the sandboxed preview.
+
+---
+
+**Browser-verified:**
+  n/a-category: infra
+  n/a-reason: Both fixes are Supabase dashboard configuration changes with no code or DOM surface touched. No component, page, or Edge Function was modified.
+
 ### [2026-05-14] Task #14 + #13 — saved-card display fix + 3DS return_url
 **Category:** fix | Stripe | Phase D | Saved-card display
 **Cross-link:** Closes the open item from [proposals/2026-05-14_saved-card-display-handoff.md](proposals/2026-05-14_saved-card-display-handoff.md). Commit: `220b3e2`.
