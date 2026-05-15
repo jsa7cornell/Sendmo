@@ -138,7 +138,14 @@ serve(async (req: Request) => {
             size_hint,
             distance_hint,
             notes,
+            // Optional: 'draft' for onboarding flex flow (link awaits a hold
+            // before becoming visible to senders). Defaults to 'active' for
+            // backward compat with LinksEditor and tests. Only 'draft' or
+            // 'active' are accepted from the client; webhooks own all other
+            // transitions.
+            initial_status,
         } = body;
+        const startStatus = initial_status === "draft" ? "draft" : "active";
 
         // Validate required fields
         if (!recipient_address?.street1 || !recipient_address?.city || !recipient_address?.state || !recipient_address?.zip) {
@@ -207,7 +214,7 @@ serve(async (req: Request) => {
                 user_id: user.id,
                 short_code: shortCode,
                 link_type: "flexible",
-                status: "active",
+                status: startStatus,
                 recipient_address_id: address.id,
                 max_price_cents: Math.round(priceCap * 100),
                 preferred_speed: speed_preference || null,

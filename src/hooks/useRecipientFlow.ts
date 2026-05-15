@@ -49,6 +49,9 @@ export interface RecipientFlowState {
   verification_email: string;
   email_verified: boolean;
   short_code: string;
+  // Phase E: link is created at step 22 (with status='draft') so the hold can
+  // attach to it. linkId + short_code populate together when the link lands.
+  linkId: string;
 
   // Validation
   tried: Record<number, boolean>;
@@ -85,6 +88,7 @@ const INITIAL_STATE: RecipientFlowState = {
   verification_email: "",
   email_verified: false,
   short_code: "",
+  linkId: "",
 
   tried: {},
 };

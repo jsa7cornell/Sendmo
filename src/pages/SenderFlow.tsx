@@ -140,7 +140,11 @@ export default function SenderFlow() {
           sender_email: shareContact && senderEmail ? senderEmail : (senderEmail || undefined),
         },
         { short_code: linkData.short_code },
-        { comp: true, display_price_cents: selectedRate.display_price_cents },
+        // Phase E: drop comp:true. The labels function now captures the
+        // recipient's authorized hold (from the holds row) for the chosen
+        // rate. display_price_cents is audit-only — server re-derives the
+        // canonical value from the EasyPost rate.
+        { comp: false, display_price_cents: selectedRate.display_price_cents },
         undefined,  // accessToken — sender flow uses link_short_code auth, not JWT
         { description: parcel.description ?? undefined },
       );

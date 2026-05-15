@@ -397,12 +397,52 @@ export interface CreateLinkParams {
   size_hint?: string | null;
   distance_hint?: string;
   notes?: string;
+  // 'draft' for flows that authorize a hold before activation (Phase E flex
+  // onboarding). Defaults to 'active' on the server when omitted.
+  initial_status?: "draft" | "active";
 }
 
 export interface CreateLinkResult {
   id: string;
   short_code: string;
   url: string;
+}
+
+// Request a flex_hold PaymentIntent against an existing draft link.
+// Returns the client_secret + customer session for Stripe Elements.
+export interface CreateFlexHoldParams {
+  link_id: string;
+  amount_cents: number;
+  live_mode?: boolean;
+  access_token: string;
+}
+export interface CreateFlexHoldResult {
+  client_secret: string;
+  payment_intent_id: string;
+  status: string;
+  customer_session_client_secret: string | null;
+}
+export async function createFlexHold(
+  params: CreateFlexHoldParams,
+): Promise<CreateFlexHoldResult> {
+  const res = await fetch(`${BASE_URL}/functions/v1/payments`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${params.access_token}`,
+    },
+    body: JSON.stringify({
+      intent_role: "flex_hold",
+      link_id: params.link_id,
+      amount_cents: params.amount_cents,
+      live_mode: params.live_mode ?? false,
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || `Failed to create flex hold (${res.status})`);
+  }
+  return data as CreateFlexHoldResult;
 }
 
 export async function createFlexLink(

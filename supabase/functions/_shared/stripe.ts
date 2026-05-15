@@ -133,6 +133,10 @@ export function createPaymentIntent(params: {
     metadata?: Record<string, string>;
     receipt_email?: string;
     customer?: string;
+    // 'off_session' attaches the PM to the customer for later off-session
+    // charges. Used by flex_hold so we can charge overage carrier adjustments
+    // (master proposal §3.7) without a re-prompt.
+    setup_future_usage?: "off_session" | "on_session";
     idempotency_key: string;
     liveMode: boolean;
 }): Promise<PaymentIntent> {
@@ -150,6 +154,9 @@ export function createPaymentIntent(params: {
             // the top option (with an inline "use a different card" fallback).
             // Omitted → bare new-card form, current behavior.
             ...(params.customer ? { customer: params.customer } : {}),
+            ...(params.setup_future_usage
+                ? { setup_future_usage: params.setup_future_usage }
+                : {}),
         },
         idempotencyKey: params.idempotency_key,
         liveMode: params.liveMode,

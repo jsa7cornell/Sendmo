@@ -223,12 +223,156 @@ serve(async (req: Request) => {
                     throw new Error(`transactions insert failed: ${txErr.message}`);
                 }
 
+                // (3) Flex-hold capture side-effects: holds row + link status.
+                // For full-label PIs the link transition is handled at link
+                // creation time (links function); here we only act on flex_hold.
+                if (intent_role === "flex_hold" && link_id) {
+                    await supabase.from("holds")
+                        .update({
+                            status: "captured",
+                            captured_at: new Date().toISOString(),
+                            capture_target_cents: amountCents,
+                        })
+                        .eq("stripe_intent_id", piId);
+                    // Move the link from 'active' (hold authorized) to 'in_use'
+                    // (label being shipped). Idempotent: only flip if currently
+                    // 'active' so we don't clobber later transitions.
+                    await supabase.from("sendmo_links")
+                        .update({ status: "in_use" })
+                        .eq("id", link_id)
+                        .eq("status", "active");
+                }
+
                 log({
                     event_type: "stripe.payment_succeeded",
                     severity: "info",
                     entity_type: "payment_intent",
                     entity_id: piId,
-                    properties: { amount_cents: amountCents, live_mode: liveMode, shipment_id, link_id },
+                    properties: { amount_cents: amountCents, live_mode: liveMode, shipment_id, link_id, intent_role },
+                });
+                break;
+            }
+
+            case "payment_intent.amount_capturable_updated": {
+                // Fires when a manual-capture PI is confirmed by the user and
+                // moves to 'requires_capture' state. For flex_hold PIs this is
+                // the "hold authorized" moment — create the holds row and flip
+                // the link to 'active' so senders can use it.
+                const pi = obj as PaymentIntentObj;
+                const piId = pi.id;
+                const meta = pi.metadata || {};
+                const { user_id, link_id, intent_role } = resolveIdsFromMetadata(meta);
+                const capturableCents = (pi as { amount_capturable?: number }).amount_capturable ?? pi.amount;
+
+                if (user_id) {
+                    await supabase.from("stripe_intents").upsert({
+                        user_id,
+                        link_id,
+                        stripe_intent_id: piId,
+                        intent_kind: "payment",
+                        intent_role: intent_role ?? "shipment",
+                        capture_method: pi.capture_method ?? "manual",
+                        funding_source: "card",
+                        amount_cents: pi.amount,
+                        status: "requires_capture",
+                        mode,
+                        idempotency_key: `pi.${piId}:create`,
+                        last_event_at: new Date().toISOString(),
+                        updated_at: new Date().toISOString(),
+                    }, { onConflict: "stripe_intent_id" });
+                }
+
+                if (intent_role === "flex_hold" && link_id) {
+                    // 7-day Stripe card-hold expiration window.
+                    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+                    await supabase.from("holds").upsert({
+                        link_id,
+                        stripe_intent_id: piId,
+                        amount_cents: capturableCents,
+                        status: "authorized",
+                        expires_at: expiresAt,
+                        mode,
+                    }, { onConflict: "stripe_intent_id" });
+
+                    // Flip the link 'draft' → 'active' so senders can use it.
+                    await supabase.from("sendmo_links")
+                        .update({ status: "active" })
+                        .eq("id", link_id)
+                        .eq("status", "draft");
+                }
+
+                log({
+                    event_type: "stripe.flex_hold_authorized",
+                    severity: "info",
+                    entity_type: "payment_intent",
+                    entity_id: piId,
+                    properties: {
+                        amount_cents: capturableCents,
+                        live_mode: liveMode,
+                        link_id,
+                        intent_role,
+                    },
+                });
+                break;
+            }
+
+            case "payment_intent.canceled": {
+                // Manual void or auto-expiration of an authorized hold.
+                const pi = obj as PaymentIntentObj;
+                const piId = pi.id;
+                const meta = pi.metadata || {};
+                const { user_id, link_id, intent_role } = resolveIdsFromMetadata(meta);
+                const cancellationReason = (pi as { cancellation_reason?: string }).cancellation_reason ?? null;
+
+                if (user_id) {
+                    await supabase.from("stripe_intents").upsert({
+                        user_id,
+                        link_id,
+                        stripe_intent_id: piId,
+                        intent_kind: "payment",
+                        intent_role: intent_role ?? "shipment",
+                        capture_method: pi.capture_method ?? "manual",
+                        funding_source: "card",
+                        amount_cents: pi.amount,
+                        status: "canceled",
+                        mode,
+                        idempotency_key: `pi.${piId}:create`,
+                        last_event_at: new Date().toISOString(),
+                        updated_at: new Date().toISOString(),
+                    }, { onConflict: "stripe_intent_id" });
+                }
+
+                if (intent_role === "flex_hold" && link_id) {
+                    // 'abandoned' = Stripe auto-expired an unconfirmed PI;
+                    // anything else is a manual void.
+                    const holdStatus = cancellationReason === "abandoned" ? "expired" : "voided";
+                    await supabase.from("holds")
+                        .update({
+                            status: holdStatus,
+                            voided_at: new Date().toISOString(),
+                        })
+                        .eq("stripe_intent_id", piId);
+
+                    // Flip the link to 'expired' so the recipient knows it
+                    // needs re-authorization. Idempotent: only from active or
+                    // draft (don't clobber 'in_use'/'completed').
+                    await supabase.from("sendmo_links")
+                        .update({ status: "expired" })
+                        .eq("id", link_id)
+                        .in("status", ["draft", "active"]);
+                }
+
+                log({
+                    event_type: "stripe.payment_canceled",
+                    severity: "warn",
+                    entity_type: "payment_intent",
+                    entity_id: piId,
+                    properties: {
+                        cancellation_reason: cancellationReason,
+                        live_mode: liveMode,
+                        link_id,
+                        intent_role,
+                    },
                 });
                 break;
             }

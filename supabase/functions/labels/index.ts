@@ -4,7 +4,7 @@ import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { log } from "../_shared/logger.ts";
 import { sendEmail } from "../_shared/resend.ts";
 import { labelConfirmationEmail } from "../_shared/email-templates.ts";
-import { retrievePaymentIntent, createRefund } from "../_shared/stripe.ts";
+import { retrievePaymentIntent, createRefund, capturePaymentIntent } from "../_shared/stripe.ts";
 
 // Pricing markup MUST stay in sync with supabase/functions/rates/index.ts.
 // Server-derives display_price_cents from EasyPost rate for the flex-link
@@ -323,11 +323,137 @@ serve(async (req: Request) => {
         }
 
         // ─── Payment authorization gate ─────────────────────────
-        // Every label purchase must reference a captured Stripe PaymentIntent
-        // bound to the same easypost_shipment_id. The lone exception is `comp`
-        // (admin/internal flow) which records a comp payment after the fact.
+        // Three branches:
+        //   1. comp=true (admin/internal) — bypass payment entirely; record
+        //      as comp_grant in the post-buy ledger flow.
+        //   2. resolvedLink && !comp (FLEX) — capture the holds-row PI for
+        //      display_price_cents; Stripe auto-releases the excess hold.
+        //   3. else (FULL-LABEL) — verify the caller-supplied payment_intent_id
+        //      is succeeded and metadata matches easypost_shipment_id.
         let verifiedPaymentIntent: { id: string; amount: number; status: string } | null = null;
-        if (!isComp) {
+
+        if (!isComp && resolvedLink) {
+            // ── Flex capture path (Phase E) ─────────────────────
+            if (!supabase) {
+                return new Response(
+                    JSON.stringify({ error: "Server configuration error" }),
+                    { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+            const { data: hold } = await supabase
+                .from("holds")
+                .select("stripe_intent_id, amount_cents, status, expires_at, mode")
+                .eq("link_id", resolvedLink.id)
+                .eq("status", "authorized")
+                .order("authorized_at", { ascending: false })
+                .limit(1)
+                .maybeSingle();
+            if (!hold) {
+                log({
+                    event_type: "label.flex_no_active_hold",
+                    session_id: sessionId,
+                    severity: "warn",
+                    entity_type: "label",
+                    entity_id: easypost_shipment_id,
+                    properties: { link_short_code, link_id: resolvedLink.id },
+                });
+                return new Response(
+                    JSON.stringify({ error: "No active payment authorization for this link. The recipient needs to re-authorize." }),
+                    { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+            // Hold expiration check (defense in depth — webhook flips status
+            // on Stripe canceled, but this is a belt to the suspenders).
+            if (hold.expires_at && new Date(hold.expires_at) < new Date()) {
+                return new Response(
+                    JSON.stringify({ error: "Payment authorization expired. The recipient needs to re-authorize." }),
+                    { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+            // Mode mismatch defense: hold mode must match the labels-fn isLive.
+            const holdIsLive = hold.mode === "live";
+            if (holdIsLive !== isLive) {
+                return new Response(
+                    JSON.stringify({ error: `Mode mismatch: hold is ${hold.mode}, request is ${isLive ? "live" : "test"}` }),
+                    { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+            // Capture amount must not exceed hold amount. The cap-exceeded
+            // check above (link.max_price_cents) already guards this in the
+            // common case but the hold amount could be smaller than max_price
+            // (recipient downgraded mid-flow). Fail fast with a clear message.
+            if (typeof display_price_cents !== "number" || display_price_cents <= 0) {
+                return new Response(
+                    JSON.stringify({ error: "Could not derive display price for capture" }),
+                    { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+            if (display_price_cents > hold.amount_cents) {
+                log({
+                    event_type: "label.flex_capture_exceeds_hold",
+                    session_id: sessionId,
+                    severity: "warn",
+                    entity_type: "label",
+                    entity_id: easypost_shipment_id,
+                    properties: {
+                        link_short_code,
+                        capture_cents: display_price_cents,
+                        hold_cents: hold.amount_cents,
+                    },
+                });
+                return new Response(
+                    JSON.stringify({ error: "Selected rate exceeds the recipient's authorized hold" }),
+                    { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+            // Capture the held PI for the actual rate. Stripe auto-releases
+            // the excess hold; we don't need to call cancel.
+            try {
+                const captured = await capturePaymentIntent(
+                    hold.stripe_intent_id, isLive, display_price_cents,
+                );
+                if (captured.status !== "succeeded") {
+                    return new Response(
+                        JSON.stringify({ error: `Capture not succeeded (status=${captured.status})` }),
+                        { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                    );
+                }
+                verifiedPaymentIntent = {
+                    id: captured.id,
+                    amount: (captured as { amount_received?: number }).amount_received ?? captured.amount,
+                    status: captured.status,
+                };
+                log({
+                    event_type: "label.flex_capture_succeeded",
+                    session_id: sessionId,
+                    severity: "info",
+                    entity_type: "payment_intent",
+                    entity_id: captured.id,
+                    properties: {
+                        link_short_code,
+                        captured_cents: verifiedPaymentIntent.amount,
+                        hold_cents: hold.amount_cents,
+                        live_mode: isLive,
+                    },
+                });
+            } catch (err) {
+                const msg = err instanceof Error ? err.message : "Capture failed";
+                console.error(`[Session ${sessionId}] [labels] flex capture error:`, msg);
+                log({
+                    event_type: "label.flex_capture_error",
+                    session_id: sessionId,
+                    severity: "error",
+                    entity_type: "payment_intent",
+                    entity_id: hold.stripe_intent_id,
+                    properties: { error_message: msg, link_short_code },
+                });
+                return new Response(
+                    JSON.stringify({ error: `Payment capture failed: ${msg}` }),
+                    { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+        } else if (!isComp) {
+            // ── Full-label path (existing) ──────────────────────
             if (!payment_intent_id || typeof payment_intent_id !== "string") {
                 return new Response(
                     JSON.stringify({ error: "Missing required field: payment_intent_id" }),
