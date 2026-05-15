@@ -93,6 +93,23 @@ serve(async (req: Request) => {
             publicCode = ship?.public_code ?? null;
         }
 
+        // Phase E: for flex links, check whether there's an active payment hold.
+        // A flex link without an active hold is unusable — the labels function
+        // will refuse to capture. Surfaces this early so the sender can be told
+        // to check back with the recipient before going through the whole flow.
+        let hasActiveHold = false;
+        if (link.link_type === "flexible") {
+            const { data: hold } = await supabase
+                .from("holds")
+                .select("expires_at")
+                .eq("link_id", link.id)
+                .eq("status", "authorized")
+                .order("authorized_at", { ascending: false })
+                .limit(1)
+                .maybeSingle();
+            hasActiveHold = !!hold && (!hold.expires_at || new Date(hold.expires_at) > new Date());
+        }
+
         // Return link data — never expose full recipient address to sender
         return new Response(
             JSON.stringify({
@@ -112,6 +129,9 @@ serve(async (req: Request) => {
                 // Tells the sender flow whether the full address is on file.
                 // False → show an error immediately rather than failing at label creation.
                 recipient_address_complete: !!(link.recipient_address as unknown as { street1?: string } | null)?.street1,
+                // Phase E: false → sender flow should show "this link isn't funded"
+                // up-front rather than letting them get to Review & Confirm.
+                has_active_hold: hasActiveHold,
                 public_code: publicCode,
             }),
             { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }

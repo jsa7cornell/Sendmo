@@ -84,6 +84,15 @@ export default function SenderFlow() {
           setStep("error");
           return;
         }
+        // Phase E: flex link without an active hold can't be used — the
+        // labels function will refuse to capture. Show a recipient-named
+        // message up-front so the sender doesn't waste time filling the form.
+        if (data.link_type === "flexible" && data.has_active_hold === false) {
+          const name = data.recipient_name || "the recipient";
+          setLoadError(`This link isn't funded yet. Please check back with ${name} once they've authorized payment.`);
+          setStep("error");
+          return;
+        }
         setLinkData(data);
         setStep("intro");
       })

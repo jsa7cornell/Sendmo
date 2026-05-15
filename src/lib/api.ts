@@ -474,6 +474,10 @@ export interface LinkData {
   // False when the stored destination address has no street1 — sender flow
   // should surface an error immediately rather than failing at label creation.
   recipient_address_complete: boolean;
+  // Phase E: false → flex link has no active payment authorization. Sender flow
+  // should refuse up-front instead of letting the user reach Review & Confirm.
+  // Always true for full_label links (their PI was already captured at creation).
+  has_active_hold?: boolean;
   // Populated for full_label viewer links so the client can redirect to
   // /t/<public_code>. Null for flex-links.
   public_code?: string | null;

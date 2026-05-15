@@ -94,6 +94,10 @@ interface DashboardLink {
     state: string;
     zip: string;
   } | null;
+  // Phase E: latest payment hold for this link. Null if no hold ever
+  // authorized (legacy link or new flex link still in draft). Used to
+  // render "Needs payment" badge instead of "Active".
+  holds?: Array<{ status: string; expires_at: string | null }> | null;
 }
 
 const SPEED_LABEL: Record<string, string> = {
@@ -219,10 +223,12 @@ export default function Dashboard() {
         .order("created_at", { ascending: false })
         .limit(50);
 
-      // Most recent active flexible link (the user's reusable shareable link)
+      // Most recent active flexible link (the user's reusable shareable link).
+      // Phase E: also join holds so we can show "Needs payment" when there's
+      // no active authorization (legacy link or expired hold).
       const linkPromise = supabase
         .from("sendmo_links")
-        .select("id, short_code, max_price_cents, preferred_speed, recipient_address:addresses!recipient_address_id(name, street1, street2, city, state, zip)")
+        .select("id, short_code, max_price_cents, preferred_speed, recipient_address:addresses!recipient_address_id(name, street1, street2, city, state, zip), holds(status, expires_at)")
         .eq("user_id", user.id)
         .eq("link_type", "flexible")
         .eq("status", "active")
@@ -484,9 +490,20 @@ export default function Dashboard() {
                 My Label Link
               </h2>
               <div className="flex items-center gap-2">
-                {link && (
-                  <Badge variant="outline" className="text-xs border-success/50 text-success bg-success/10">Active</Badge>
-                )}
+                {link && (() => {
+                  // Phase E: link is only truly Active if there's an authorized,
+                  // unexpired hold. Legacy active links (no hold) and links
+                  // whose hold expired show "Needs payment" instead.
+                  const activeHold = link.holds?.find(
+                    (h) => h.status === "authorized" &&
+                      (!h.expires_at || new Date(h.expires_at) > new Date()),
+                  );
+                  return activeHold ? (
+                    <Badge variant="outline" className="text-xs border-success/50 text-success bg-success/10">Active</Badge>
+                  ) : (
+                    <Badge variant="outline" className="text-xs border-amber-300 text-amber-700 bg-amber-50">Needs payment</Badge>
+                  );
+                })()}
                 {link && (
                   <button
                     type="button"
