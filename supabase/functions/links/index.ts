@@ -37,7 +37,7 @@ serve(async (req: Request) => {
                 size_hint, weight_hint_oz, notes, expires_at,
                 created_at,
                 recipient_address:addresses!recipient_address_id (
-                    name, city, state, zip
+                    name, street1, city, state, zip
                 )
             `)
             .eq("short_code", code)
