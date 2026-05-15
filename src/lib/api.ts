@@ -354,7 +354,10 @@ export async function buyLabel(
     easypost_shipment_id: easypostShipmentId,
     easypost_rate_id: easypostRateId,
     from_address: addressToApi(from),
-    to_address: addressToApi(to),
+    // When link_short_code is set the server resolves to_address from the DB
+    // and ignores any client-supplied value. Skip addressToApi validation so
+    // a city-only stub doesn't throw before we even reach the network call.
+    to_address: link?.short_code ? undefined : addressToApi(to),
     live_mode: liveMode,
     recipient_email: contacts?.recipient_email,
     sender_email: contacts?.sender_email,
