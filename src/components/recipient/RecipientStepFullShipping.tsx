@@ -162,17 +162,17 @@ export default function RecipientStepFullShipping({
         estimatedDays={state.selectedRate?.estimated_days ?? null}
       />
 
-      {/* Ship From */}
+      {/* Origin Address */}
       <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
-        <h3 className="text-sm font-semibold text-foreground mb-3">Ship from (sender's address)</h3>
+        <h3 className="text-sm font-semibold text-foreground mb-3">Origin address</h3>
         <SmartAddressInput
           label="origin"
           value={state.originAddress}
           onChange={(addr: AddressInput) => onUpdate({ originAddress: addr })}
-          error={tried && !state.originAddress.verified ? "Sender address is required" : undefined}
+          error={tried && !state.originAddress.verified ? "Origin address is required" : undefined}
           nameLabel="Sender's name"
           nameHint=""
-          addressPlaceholder="Start typing the sender's address…"
+          addressPlaceholder="Start typing the origin address…"
         />
         {tried && !state.originAddress.name && (
           <p className="text-xs text-destructive mt-1">Sender name is required for the shipping label</p>

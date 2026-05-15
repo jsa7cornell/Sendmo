@@ -100,7 +100,7 @@ export default function SenderStepPackage({
           label="Sender address"
           nameLabel="Your name"
           nameHint="your name"
-          addressLabel="Ship from address"
+          addressLabel="Origin address"
           value={senderAddress}
           onChange={onAddressChange}
           error={addrIncomplete ? "Please enter a complete address" : undefined}
