@@ -116,13 +116,14 @@ export default function SenderFlow() {
           short_code: linkData.short_code,
         },
       );
-      setRates(r);
       setEasypostShipmentId(easypost_shipment_id);
       // One best-value option per carrier, ranked best first.
       // sortRatesForSender then re-orders within that set so the
       // recipient's preferred speed tier floats to the top.
+      // Store only the filtered list so the UI shows one option per carrier.
       const perCarrier = pickBestPerCarrier(r);
       const sorted = sortRatesForSender(perCarrier, linkData);
+      setRates(sorted);
       if (sorted.length > 0) setSelectedRate(sorted[0]);
     } catch (err) {
       setRatesError(err instanceof Error ? err.message : "Failed to fetch rates");
