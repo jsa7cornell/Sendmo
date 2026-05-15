@@ -28,6 +28,7 @@ const MOCK_LINK: LinkData = {
   recipient_state: "CA",
   recipient_zip: "94107",
   recipient_name: "John",
+  recipient_address_complete: true,
 };
 
 const MOCK_LINK_CARRIER: LinkData = {

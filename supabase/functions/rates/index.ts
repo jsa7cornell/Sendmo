@@ -58,7 +58,16 @@ serve(async (req: Request) => {
                     name: string; street1: string; street2: string | null;
                     city: string; state: string; zip: string; country: string | null;
                 } | null;
-                if (link && link.status === "active" && link.link_type === "flexible" && addr?.street1) {
+                if (link && link.status === "active" && link.link_type === "flexible") {
+                    if (!addr?.street1) {
+                        // The link was created with an incomplete address (no street).
+                        // Return a clear error so the sender sees it immediately rather
+                        // than getting a cryptic EasyPost/FedEx rejection.
+                        return new Response(
+                            JSON.stringify({ error: "This link's delivery address is incomplete — it's missing a street. The person who set up this link needs to update their delivery address before you can ship." }),
+                            { status: 422, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                        );
+                    }
                     to_address = {
                         name: addr.name,
                         street1: addr.street1,

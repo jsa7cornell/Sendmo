@@ -76,6 +76,14 @@ export default function SenderFlow() {
           navigate(`/t/${data.public_code}`, { replace: true });
           return;
         }
+        // Fail fast if the destination address is incomplete — better to show
+        // a clear error here than to let the sender fill in package details
+        // only to fail at rate-fetching with a cryptic EasyPost/FedEx error.
+        if (data.recipient_address_complete === false) {
+          setLoadError("This link's delivery address is incomplete — it's missing a street address. The person who set up this link needs to update their delivery address before you can ship.");
+          setStep("error");
+          return;
+        }
         setLinkData(data);
         setStep("intro");
       })

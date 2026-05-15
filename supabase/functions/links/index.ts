@@ -109,6 +109,9 @@ serve(async (req: Request) => {
                 recipient_state: link.recipient_address?.state ?? null,
                 recipient_zip: link.recipient_address?.zip ?? null,
                 recipient_name: link.recipient_address?.name ?? null,
+                // Tells the sender flow whether the full address is on file.
+                // False → show an error immediately rather than failing at label creation.
+                recipient_address_complete: !!(link.recipient_address as unknown as { street1?: string } | null)?.street1,
                 public_code: publicCode,
             }),
             { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
