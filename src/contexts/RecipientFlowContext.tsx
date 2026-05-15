@@ -59,6 +59,8 @@ export interface RecipientFlowData {
   verification_email: string;
   email_verified: boolean;
   short_code: string;
+  // Phase E: populated together with short_code when the flex link is created at step 22
+  linkId: string;
 
   // Validation
   tried: Record<number, boolean>;
@@ -94,6 +96,7 @@ const INITIAL_DATA: RecipientFlowData = {
   verification_email: "",
   email_verified: false,
   short_code: "",
+  linkId: "",
 
   tried: {},
 };
