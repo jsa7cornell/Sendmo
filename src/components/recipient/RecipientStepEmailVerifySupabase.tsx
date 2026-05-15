@@ -26,9 +26,7 @@ import type { RecipientFlowState } from "@/hooks/useRecipientFlow";
 // picked Google there, they never reach this screen because step-11's
 // validation passes via the auto-skip in RecipientFlowContext.
 //
-// Companion to the bespoke `email_verifications`-table flow used by the
-// flex path at step 21 (intentionally NOT touched per proposal
-// 2026-05-11_account-creation-timing B1).
+// Companion to RecipientStepEmailVerifyFlex (flex path, step 21).
 
 interface Props {
   state: RecipientFlowState;

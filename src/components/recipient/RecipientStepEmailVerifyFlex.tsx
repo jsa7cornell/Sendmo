@@ -11,9 +11,7 @@ import type { RecipientFlowState } from "@/hooks/useRecipientFlow";
 // "Confirm your email" step for the Flexible Link flow (step 21).
 //
 // Mirrors RecipientStepEmailVerifySupabase (full-label step 11) but targets
-// the flex verify URL for email-link redirects. The bespoke email_verifications
-// table OTP was retired per proposal 2026-05-11_account-creation-timing — this
-// component replaces RecipientStepEmailVerify.tsx for the flex path.
+// the flex verify URL for email-link redirects.
 //
 // A Supabase session is required at step 22 (createFlexLink + createFlexHold
 // both need a JWT). The session is created here via verifyOtp / signInWithOtp.

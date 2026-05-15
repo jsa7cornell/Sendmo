@@ -10,6 +10,27 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-15] Drop email_verifications table + email Edge Function
+**Category:** ship | Cleanup | Flex onboarding
+**Cross-link:** [proposals/2026-05-15_flex-otp-supabase-migration-handoff.md](proposals/2026-05-15_flex-otp-supabase-migration-handoff.md)
+
+**What changed:**
+- `supabase/migrations/023_drop_email_verifications.sql` — `DROP TABLE IF EXISTS public.email_verifications`
+- `supabase/functions/email/` — deleted entirely (only served `send` + `confirm` actions for the bespoke OTP table)
+- `src/lib/api.ts` — removed `sendOTP` + `confirmOTP` helpers (callers: `RecipientStepEmailVerify.tsx`, also deleted)
+- `src/components/recipient/RecipientStepEmailVerify.tsx` — deleted (replaced by `RecipientStepEmailVerifyFlex.tsx` in prior commit)
+- Stale comments in `RecipientStepEmailVerifySupabase.tsx`, `RecipientStepEmailVerifyFlex.tsx`, `stepRouting.ts` updated
+
+**Why now (not deferred):** Product is not yet in live production. No rollback risk requiring an overlap release. Kill it while it's clean.
+
+**Migration note:** `023_drop_email_verifications.sql` must be applied via the Supabase dashboard SQL editor (MCP token expired at time of commit; CLI requires `SUPABASE_DB_PASSWORD`).
+
+**Browser-verified:**
+  n/a-category: infra
+  n/a-reason: Table drop + dead-code deletion with no frontend surface change. TypeScript confirmed no new errors.
+
+---
+
 ### [2026-05-15] Auth section redesign (Option A) + flex OTP migration to Supabase Auth
 **Category:** ship | UX | Auth | Flex onboarding | Phase E blocker
 **Cross-link:** [proposals/2026-05-15_flex-otp-supabase-migration-handoff.md](proposals/2026-05-15_flex-otp-supabase-migration-handoff.md) | [proposals/2026-05-14_oauth-and-session-handoff.md](proposals/2026-05-14_oauth-and-session-handoff.md)

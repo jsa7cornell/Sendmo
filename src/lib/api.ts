@@ -369,16 +369,6 @@ export async function buyLabel(
   return post<LabelResult>("labels", body, accessToken);
 }
 
-// ─── Email Verification ────────────────────────────────────
-
-export async function sendOTP(email: string): Promise<{ ok: boolean }> {
-  return post<{ ok: boolean }>("email", { action: "send", email });
-}
-
-export async function confirmOTP(email: string, code: string): Promise<{ ok: boolean; verified: boolean }> {
-  return post<{ ok: boolean; verified: boolean }>("email", { action: "confirm", email, code });
-}
-
 // ─── Flexible Link CRUD ────────────────────────────────────
 
 export interface CreateLinkParams {

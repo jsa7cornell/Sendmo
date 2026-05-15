@@ -30,9 +30,9 @@ export type StepSlug =
   | "authorize"
   | "share";
 
-// Verify slug is shared between full-label (step 11, Supabase OTP) and flex
-// (step 21, bespoke email_verifications table). The bespoke flex path is
-// intentionally untouched per proposal 2026-05-11_account-creation-timing B1.
+// Verify slug is shared between full-label (step 11) and flex (step 21) —
+// both now use Supabase Auth OTP (RecipientStepEmailVerifySupabase /
+// RecipientStepEmailVerifyFlex respectively).
 
 export function pathSlugToPath(slug: string): RecipientPath | null {
   if (slug === "full-label") return "full_label";
