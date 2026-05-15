@@ -135,6 +135,7 @@ export function getValidationErrors(state: RecipientFlowState, step: number): st
 
   if (step === 1) {
     if (!state.destinationAddress.verified) errors.push("Destination address is required");
+    else if (!state.destinationAddress.street) errors.push("Destination address is missing a street — please re-select it from the dropdown");
     if (!state.email.trim()) errors.push("Email is required");
     else if (!/^.+@.+\..+$/.test(state.email.trim())) errors.push("Enter a valid email address");
   }
@@ -157,6 +158,7 @@ export function getValidationErrors(state: RecipientFlowState, step: number): st
   if (step === 10) {
     if (!state.originAddress.name) errors.push("Sender name is required");
     if (!state.originAddress.verified) errors.push("Ship from address is required");
+    else if (!state.originAddress.street) errors.push("Ship from address is missing a street — please re-select it from the dropdown");
 
     const l = parseFloat(state.dimensions.length);
     const w = parseFloat(state.dimensions.width);
@@ -191,7 +193,8 @@ export function getTotalPriceCents(state: RecipientFlowState): number {
 }
 
 export function canFetchRates(state: RecipientFlowState): boolean {
-  if (!state.originAddress.verified || !state.destinationAddress.verified) return false;
+  if (!state.originAddress.verified || !state.originAddress.street) return false;
+  if (!state.destinationAddress.verified || !state.destinationAddress.street) return false;
   const l = parseFloat(state.dimensions.length);
   const w = parseFloat(state.dimensions.width);
   const h = parseFloat(state.dimensions.height);
