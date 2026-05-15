@@ -131,17 +131,21 @@ serve(async (req: Request) => {
             }
         }
 
-        // Idempotency key: shipment_id ensures the same shipment never
-        // gets two PaymentIntents. Stripe will return the existing PI if
-        // we hit this endpoint again with the same key.
-        const idempotencyKey = `pi_create_${easypost_shipment_id}`;
-
         // Mode-matched Customer (when the user has saved cards). Passing
         // customer to the PI lets PaymentElement render saved PMs as the
         // top option on the sender-flow payment step. Mode mismatch (test
         // PI with live Customer or vice versa) would 400 at Stripe, so we
         // only pass when isLive lines up with the stored Customer ID.
         const customerForPi = (isLive ? customerIdLive : customerIdTest) ?? undefined;
+
+        // Idempotency key: include customer ID so that if the same EasyPost
+        // shipment is re-used after a customer is added (e.g. code change
+        // mid-session), we create a fresh PI instead of hitting Stripe's
+        // "used with different parameters" rejection. The anonymous PI is
+        // abandoned in requires_payment_method state and expires harmlessly.
+        const idempotencyKey = customerForPi
+            ? `pi_create_${easypost_shipment_id}_${customerForPi}`
+            : `pi_create_${easypost_shipment_id}`;
 
         const pi = await createPaymentIntent({
             amount_cents,
@@ -227,7 +231,7 @@ serve(async (req: Request) => {
         });
         return new Response(
             JSON.stringify({ error: msg }),
-            { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
     }
 });
