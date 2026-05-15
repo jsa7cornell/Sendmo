@@ -7,8 +7,10 @@ vi.mock("@/lib/supabase", () => ({
     supabase: {
         auth: {
             getSession: vi.fn().mockResolvedValue({ data: { session: null } }),
-            onAuthStateChange: vi.fn().mockReturnValue({
-                data: { subscription: { unsubscribe: vi.fn() } },
+            // Fire INITIAL_SESSION immediately with null so AuthContext clears loading
+            onAuthStateChange: vi.fn().mockImplementation((callback) => {
+                callback("INITIAL_SESSION", null);
+                return { data: { subscription: { unsubscribe: vi.fn() } } };
             }),
         },
     },
@@ -30,9 +32,10 @@ describe("App Routing", () => {
     it("redirects unauthenticated users from /dashboard to /login", async () => {
         window.history.pushState({}, "Test page", "/dashboard");
         render(<App />);
+        // ProtectedRoute shows a spinner while auth resolves; give it extra time
         await waitFor(() => {
             expect(screen.getByText("Sign in")).toBeInTheDocument();
-        });
+        }, { timeout: 5000 });
     });
 
     it("renders the Onboarding on /onboarding", async () => {

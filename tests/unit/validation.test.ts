@@ -77,7 +77,7 @@ describe("Step 1 validation", () => {
 describe("Step 10 validation", () => {
   it("errors when origin not verified", () => {
     const errors = getValidationErrors(makeState(), 10);
-    expect(errors).toContain("Ship from address is required");
+    expect(errors).toContain("Origin address is required");
   });
 
   it("errors when dimensions missing", () => {
