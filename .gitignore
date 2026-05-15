@@ -37,3 +37,9 @@ supabase/.temp/
 # Per-developer agent/tool state
 .agents/
 .claude/
+.playwright-mcp/
+
+# Business documents
+*.docx
+*.xlsx
+*.pptx

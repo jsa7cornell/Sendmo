@@ -297,6 +297,35 @@ When working as a Claude Code agent, you may be assigned one of these roles:
 16. **NEVER** use simple `UPDATE` statements for modifying financial balances. **ALWAYS** utilize immutable, append-only ledger tables (e.g., `transactions`) for tracking money movement (funding, holds, disputes, fees, releases) due to strict money transmission regulations and required audit trails.
 17. **ALWAYS** add a `LOG.md` entry when merging to `main`. Every push to `main` is a production deploy. Follow the template in `LOG.md`. Include: what shipped, files changed, test counts, breaking changes, and notes for future agents.
 18. **ALWAYS** run `npx tsc -b --noEmit` before pushing to `main`. Vitest/esbuild strips types without checking them — only `tsc` catches unused imports, type errors, etc. A passing test suite does NOT mean the Vercel build will succeed.
+19. **ALWAYS** browser-verify product-surface fixes — agent confidence is not a substitute. Every `Category` involving a fix or ship that touches `src/components/**`, `src/pages/**`, `supabase/functions/**` (Edge Function response shapes consumed by UI), or any rendered surface must include a structured `Browser-verified:` block in the LOG entry. Three valid shapes, **exactly one** per entry — no free-text "I'm confident" path exists:
+
+    ```
+    Browser-verified:
+      spec: tests/e2e/<path>.spec.ts
+      variants-covered: [<list of variants exercised>]
+    ```
+
+    ```
+    Browser-verified:
+      mcp-session: <snapshot/screenshot artifact path or transcript excerpt>
+      variants-covered: [<list of variants exercised>]
+    ```
+
+    ```
+    Browser-verified:
+      n/a-category: pure-logic | agent-internal | infra | copy-only | migration
+      n/a-reason: <one line — why no DOM/wire-shape consumer is affected>
+    ```
+
+    **Variant axis discipline:** verify *the variants of the changed code path*, not just the one named in the bug report. For SendMo this typically looks like `{full-prepaid, flexible-link} × {test-mode, live-comp, live-charge}` for payment paths, or `{label_created, in_use, cancelled, completed}` for shipment-lifecycle paths. If you can't name the variant axis, the fix is broader than you've modeled — stop and trace.
+
+    **`agent-internal` is the most-abused enum slot.** Before claiming it, ask: can a stream-fixture, integration test, or non-browser-but-deterministic test verify the contract? If yes, wire it (Browser-verified becomes `spec:`, not `n/a-category:`). Agents proposing `agent-internal` MUST name the tighter alternative considered and explain why it's infeasible or not worth the cost. Ducking the alternative is the rationalization shape the rule exists to catch.
+
+    **Mechanical enforcement:** the `Stop` hook in `.claude/settings.json` (`scripts/claude-hooks/check-browser-verified.sh`) scans modified paths at session close and prints a reminder if product-surface globs were touched but no `Browser-verified:` block is detected. Advisory — exits 0 — but the LOG entry needs the field to satisfy Rule 19.
+
+    **Slash commands** in `.claude/commands/`: `/runtest` (quick pass/fail), `/verifyfix <commit-or-path>` (daily-use, forces variant-axis naming + tighter-rigor-or-defend discipline), `/buildtest <bug>` (author a new spec with regression-proof validation).
+
+    **Sibling on AgentEnvoy:** PLAYBOOK Rule 29. Same empirical basis: agent confidence was the failure mode in 4 of 4 catchable bugs from the 2026-05-13 AgentEnvoy cluster. Cross-project proposal: [`agentenvoy/proposals/2026-05-13_claude-production-verification-infra_reviewed-2026-05-13_decided-2026-05-13.md`](../agentenvoy/proposals/2026-05-13_claude-production-verification-infra_reviewed-2026-05-13_decided-2026-05-13.md).
 
 ## Vercel Deployment
 
