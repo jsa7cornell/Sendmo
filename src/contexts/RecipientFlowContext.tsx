@@ -264,13 +264,14 @@ export function RecipientFlowProvider({ children }: { children: React.ReactNode 
     }
 
     let next = nextStep(step, data.path);
-    // Skip the verify step (11) when the email is already verified — either
-    // the user picked Google at step 1, or they had a live session whose
-    // email matched. Without this jump the verify screen flashes for ~1s
-    // before its own auto-advance fires; jumping straight to payment is
-    // the same outcome with no flicker.
+    // Skip verify steps when email is already confirmed (Google OAuth session).
+    // Without these jumps the verify screen flashes for ~1s before its own
+    // auto-advance fires; skipping is the same outcome with no flicker.
     if (next === 11 && data.email_verified && data.path === "full_label") {
       next = nextStep(11, data.path);
+    }
+    if (next === 21 && data.email_verified && data.path === "flexible") {
+      next = nextStep(21, data.path);
     }
     if (next !== null) {
       setData((prev) => ({
@@ -278,10 +279,14 @@ export function RecipientFlowProvider({ children }: { children: React.ReactNode 
         completedSteps: prev.completedSteps.includes(step)
           ? (next === 12 && !prev.completedSteps.includes(11)
               ? [...prev.completedSteps, 11]
-              : prev.completedSteps)
+              : next === 22 && !prev.completedSteps.includes(21)
+                ? [...prev.completedSteps, 21]
+                : prev.completedSteps)
           : (next === 12
               ? [...prev.completedSteps, step, 11]
-              : [...prev.completedSteps, step]),
+              : next === 22
+                ? [...prev.completedSteps, step, 21]
+                : [...prev.completedSteps, step]),
       }));
       directionRef.current = "forward";
       navigate(stepUrl(data.path, next));

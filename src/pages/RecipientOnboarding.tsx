@@ -17,7 +17,7 @@ import RecipientStepAddress from "@/components/recipient/RecipientStepAddress";
 import RecipientStepFullShipping from "@/components/recipient/RecipientStepFullShipping";
 import RecipientStepPayment from "@/components/recipient/RecipientStepPayment";
 import RecipientStepFlexPreferences from "@/components/recipient/RecipientStepFlexPreferences";
-import RecipientStepEmailVerify from "@/components/recipient/RecipientStepEmailVerify";
+import RecipientStepEmailVerifyFlex from "@/components/recipient/RecipientStepEmailVerifyFlex";
 import RecipientStepEmailVerifySupabase from "@/components/recipient/RecipientStepEmailVerifySupabase";
 import RecipientStepFlexPayment from "@/components/recipient/RecipientStepFlexPayment";
 import RecipientStepLinkReady from "@/components/recipient/RecipientStepLinkReady";
@@ -195,9 +195,9 @@ export default function RecipientOnboarding() {
               />
             )}
 
-            {/* Step 21: Flex — Email Verification */}
+            {/* Step 21: Flex — Email Verification (Supabase Auth — proposal 2026-05-11_account-creation-timing) */}
             {currentStep === 21 && (
-              <RecipientStepEmailVerify
+              <RecipientStepEmailVerifyFlex
                 state={state}
                 onUpdate={updateData}
                 onContinue={() => tryAdvance(21)}

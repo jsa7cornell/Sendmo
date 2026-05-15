@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { AlertCircle, Loader2 } from "lucide-react";
+import { AlertCircle, CheckCircle2, Loader2 } from "lucide-react";
 import AddressForm from "@/components/forms/AddressForm";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -27,28 +27,29 @@ export default function RecipientStepAddress({
   const showErrors = tried && errors.length > 0;
   const { user } = useAuth();
   const prefillAttempted = useRef(false);
-  // Track the last email we primed an OTP for, so on-blur is idempotent and
-  // we don't burn through Supabase's 60s OTP rate limit. Only fires for the
-  // full-label flow (proposal 2026-05-11_account-creation-timing T2 — code
-  // is in the inbox by the time the user reaches the verify step).
+  // Track the last email we primed an OTP for — keeps on-blur idempotent and
+  // avoids burning through Supabase's 60s OTP rate limit.
   const lastPrimedEmail = useRef<string | null>(null);
   const lastPrimedAt = useRef<number>(0);
+  // Detect the null→non-null user transition so we only auto-advance for a
+  // fresh OAuth return, not for users who were already signed in on mount.
+  const wasNullOnMount = useRef(!user);
+  const autoAdvanceFiredRef = useRef(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [autoAdvancing, setAutoAdvancing] = useState(false);
 
   const maybePrimeOtp = useCallback((candidate: string) => {
-    if (path !== "full_label") return;
     const cleaned = candidate.trim().toLowerCase();
     if (!cleaned || !/^.+@.+\..+$/.test(cleaned)) return;
     if (user?.email && user.email.toLowerCase() === cleaned) return;
     if (lastPrimedEmail.current === cleaned && Date.now() - lastPrimedAt.current < 60_000) return;
     lastPrimedEmail.current = cleaned;
     lastPrimedAt.current = Date.now();
-    // Send both a 6-digit code (Token) and a confirmation link
-    // (ConfirmationURL) — the Supabase email template emits both so the user
-    // picks whichever is faster. The link redirects back to the verify step
-    // with ?confirmed=1 so the same-device click path stays in this funnel.
-    const redirectTo = `${window.location.origin}/onboarding/full-label/verify?confirmed=1`;
+    // Flex uses its own verify URL so the email link lands on the right step.
+    const redirectTo = path === "flexible"
+      ? `${window.location.origin}/onboarding/flexible/verify?confirmed=1`
+      : `${window.location.origin}/onboarding/full-label/verify?confirmed=1`;
     supabase.auth
       .signInWithOtp({ email: cleaned, options: { emailRedirectTo: redirectTo } })
       .catch(() => {});
@@ -57,9 +58,8 @@ export default function RecipientStepAddress({
   async function handleGoogle() {
     setAuthError(null);
     setGoogleLoading(true);
-    // After OAuth, land back on step 1 so the rest of the flow proceeds with
-    // a session in scope. The sessionStorage-backed flow data preserves the
-    // user's typed destination / picked rates across the redirect.
+    // Redirect back to this exact step so flow state (stored in sessionStorage)
+    // is restored automatically and the rest of the flow proceeds with a session.
     const { error: oauthErr } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: { redirectTo: window.location.href },
@@ -70,16 +70,16 @@ export default function RecipientStepAddress({
     }
   }
 
-  // When OAuth returns, lock the email field to the Google identity. The
-  // verify step is skipped because the session itself is the verification.
+  // Lock email to the Google identity when OAuth returns. The verify step is
+  // skipped for Google users because the session itself is the verification.
   useEffect(() => {
     if (!user?.email) return;
     if (email && email.toLowerCase() === user.email.toLowerCase()) return;
     onEmailChange(user.email);
   }, [user?.email, email, onEmailChange]);
 
-  // Silent prefill: when signed-in user lands here with empty fields, populate
-  // from their most recent address + profile email. User can edit freely.
+  // Silent prefill: returning signed-in user with empty fields gets their most
+  // recent address and profile email pre-populated. User can still edit freely.
   useEffect(() => {
     if (!user || prefillAttempted.current) return;
     if (address.verified || address.street || email) return;
@@ -113,6 +113,22 @@ export default function RecipientStepAddress({
     })();
   }, [user, address.verified, address.street, email, onAddressChange, onEmailChange]);
 
+  // Auto-advance after OAuth return when the address is already filled.
+  // Fires only for fresh OAuth returns (wasNullOnMount=true), not for users
+  // who were already signed in when this step mounted.
+  useEffect(() => {
+    if (!user || !wasNullOnMount.current || autoAdvanceFiredRef.current) return;
+    const { street, city, state, zip } = address;
+    if (!street || !city || !state || !zip) return;
+    autoAdvanceFiredRef.current = true;
+    setAutoAdvancing(true);
+    const timer = setTimeout(onContinue, 2000);
+    return () => clearTimeout(timer);
+  }, [user, address, onContinue]);
+
+  const displayName = user?.user_metadata?.full_name as string | undefined;
+  const avatarInitial = (displayName || user?.email || "?")[0].toUpperCase();
+
   return (
     <div className="space-y-6">
       <div>
@@ -125,22 +141,40 @@ export default function RecipientStepAddress({
       {/* Destination address */}
       <AddressForm value={address} tried={tried} onChange={onAddressChange} />
 
-      {/* Email + identity card. Google CTA is on top so the user notices the
-          shortcut before they reach for the keyboard. If they pick Google,
-          email auto-fills from the OAuth identity and the confirm-your-email
-          step is skipped entirely (session is the verification). */}
+      {/* Identity / auth card. Google leads — if the user picks it, email
+          auto-fills from OAuth and the verify step is skipped entirely. */}
       <div className="bg-card rounded-2xl border border-border shadow-sm p-5 space-y-4">
-        <div>
-          <label htmlFor="recipient-email" className="text-sm font-medium text-foreground">
-            Your email
-          </label>
-          <p className="text-xs text-muted-foreground mt-1">
-            We use this to send your label and shipping updates. Pick the
-            fastest way to confirm it's yours.
-          </p>
-        </div>
-
-        {path === "full_label" && !user && (
+        {user ? (
+          /* ── Signed-in identity pill ── */
+          <div className="flex items-start gap-3">
+            <div
+              className="w-9 h-9 rounded-full bg-primary/10 text-primary font-semibold text-sm flex items-center justify-center shrink-0"
+              aria-hidden="true"
+            >
+              {avatarInitial}
+            </div>
+            <div className="flex-1 min-w-0">
+              {displayName && (
+                <p className="text-sm font-medium text-foreground truncate">{displayName}</p>
+              )}
+              <p className={`text-sm truncate ${displayName ? "text-muted-foreground" : "font-medium text-foreground"}`}>
+                {user.email}
+              </p>
+              {autoAdvancing ? (
+                <p className="text-[11px] text-muted-foreground mt-0.5 flex items-center gap-1">
+                  <Loader2 className="w-3 h-3 animate-spin" aria-hidden="true" />
+                  Continuing…
+                </p>
+              ) : (
+                <p className="text-[11px] text-muted-foreground mt-0.5">
+                  We'll send shipping updates to this address.
+                </p>
+              )}
+            </div>
+            <CheckCircle2 className="w-5 h-5 text-success shrink-0 mt-0.5" aria-label="Verified" />
+          </div>
+        ) : (
+          /* ── Auth options: Google-first, email secondary ── */
           <>
             <Button
               type="button"
@@ -150,7 +184,7 @@ export default function RecipientStepAddress({
               className="w-full rounded-xl shadow-sm gap-2"
             >
               {googleLoading ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
+                <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
               ) : (
                 <svg className="w-4 h-4" viewBox="0 0 18 18" aria-hidden="true">
                   <path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844a4.14 4.14 0 0 1-1.796 2.716v2.258h2.908c1.702-1.567 2.684-3.874 2.684-6.615z"/>
@@ -170,42 +204,42 @@ export default function RecipientStepAddress({
                 <div className="w-full border-t border-border" />
               </div>
               <div className="relative flex justify-center">
-                <span className="bg-card px-2 text-xs text-muted-foreground">or type your email</span>
+                <span className="bg-card px-2 text-xs text-muted-foreground">or use your email</span>
               </div>
             </div>
+
+            <div>
+              <Input
+                id="recipient-email"
+                type="email"
+                value={email}
+                onChange={(e) => onEmailChange(e.target.value)}
+                onBlur={() => maybePrimeOtp(email)}
+                placeholder="Email address"
+                aria-label="Email address"
+                className={`rounded-xl ${
+                  tried && (!email.trim() || !/^.+@.+\..+$/.test(email.trim()))
+                    ? "border-destructive"
+                    : ""
+                }`}
+              />
+              {path === "full_label" ? (
+                <p className="text-[11px] text-muted-foreground mt-1.5">
+                  We'll send a confirmation link and a 6-digit code. Use either one.
+                </p>
+              ) : (
+                <p className="text-[11px] text-muted-foreground mt-1.5">
+                  We'll send shipping updates and a confirmation code to this address.
+                </p>
+              )}
+            </div>
+
+            {authError && (
+              <div className="rounded-xl border border-destructive/50 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+                {authError}
+              </div>
+            )}
           </>
-        )}
-
-        <div>
-          <Input
-            id="recipient-email"
-            type="email"
-            value={email}
-            onChange={(e) => onEmailChange(e.target.value)}
-            onBlur={() => maybePrimeOtp(email)}
-            placeholder="you@example.com"
-            disabled={!!user}
-            className={`rounded-xl ${
-              tried && (!email.trim() || !/^.+@.+\..+$/.test(email.trim()))
-                ? "border-destructive"
-                : ""
-            }`}
-          />
-          {user ? (
-            <p className="text-[11px] text-muted-foreground mt-1.5">
-              Signed in as {user.email}. We'll use this email for the shipment.
-            </p>
-          ) : path === "full_label" ? (
-            <p className="text-[11px] text-muted-foreground mt-1.5">
-              We'll send a confirmation link and a 6-digit code. Use either one.
-            </p>
-          ) : null}
-        </div>
-
-        {authError && (
-          <div className="rounded-xl border border-destructive/50 bg-destructive/5 px-3 py-2 text-xs text-destructive">
-            {authError}
-          </div>
         )}
       </div>
 
@@ -236,7 +270,7 @@ export default function RecipientStepAddress({
         <Button variant="outline" onClick={onBack} className="rounded-xl">
           Back
         </Button>
-        <Button onClick={onContinue} className="flex-1 rounded-xl shadow-sm">
+        <Button onClick={onContinue} disabled={autoAdvancing} className="flex-1 rounded-xl shadow-sm">
           {path === "full_label" ? "Continue to shipment details" : "Continue to shipping preferences"}
         </Button>
       </div>

@@ -10,6 +10,36 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-15] Auth section redesign (Option A) + flex OTP migration to Supabase Auth
+**Category:** ship | UX | Auth | Flex onboarding | Phase E blocker
+**Cross-link:** [proposals/2026-05-15_flex-otp-supabase-migration-handoff.md](proposals/2026-05-15_flex-otp-supabase-migration-handoff.md) | [proposals/2026-05-14_oauth-and-session-handoff.md](proposals/2026-05-14_oauth-and-session-handoff.md)
+
+**What changed:**
+
+**1. Option A auth section redesign — `RecipientStepAddress.tsx`**
+- Removed "Your email" heading and description. Auth card now opens directly with "Continue with Google" as the primary CTA.
+- Google OAuth now offered for **both** `full_label` and `flexible` paths (was `full_label`-only).
+- `maybePrimeOtp` now fires for `flexible` path too (previously gated to `full_label`). Redirect URL is path-aware: `/onboarding/full-label/verify?confirmed=1` vs `/onboarding/flexible/verify?confirmed=1`.
+- Post-login state: auth card replaced by identity pill showing avatar initial, display name, email, and green ✓ checkmark.
+- Auto-advance (2s): when a user returns from Google OAuth and the address is already filled (all of street/city/state/zip present), a 2s countdown fires `onContinue()` automatically. Only fires for fresh OAuth returns — tracked via `wasNullOnMount` ref so returning users (already signed in on mount) see no auto-advance.
+- Returning user (signed in on mount): sees identity pill immediately, manual "Continue" button.
+
+**2. Flex step 21 — migrated from bespoke OTP to Supabase Auth**
+- Created `RecipientStepEmailVerifyFlex.tsx` — mirrors `RecipientStepEmailVerifySupabase.tsx` (full-label step 11) but redirects to `/onboarding/flexible/verify?confirmed=1`.
+- `RecipientOnboarding.tsx` step 21 now renders `RecipientStepEmailVerifyFlex` instead of `RecipientStepEmailVerify` (bespoke).
+- `RecipientFlowContext.tryAdvance` now skips step 21 for flex (analogous to the existing step 11 skip for full_label) when `data.email_verified` is true. `completedSteps` update logic extended to mark step 21 complete when skipping to step 22.
+- Creates a Supabase session at step 21, satisfying the JWT requirement for `createFlexLink` + `createFlexHold` at step 22 (Phase E blocker).
+
+**Why this was a Phase E blocker:** Phase E (commit `ab92b3d`, 2026-05-15) added real Stripe holds at step 22. Both Edge Functions that handle it require a bearer JWT. The bespoke `email_verifications` OTP at step 21 never created a Supabase session, so every flex onboarding attempt errored with "You must be signed in to create a link."
+
+**Not in this PR (deferred per proposal):** dropping the `email_verifications` table and the `/email` Edge Function action that writes to it. One release of overlap is intentional — gives a rollback path. Kill in the next session.
+
+**Browser-verified:**
+  spec: tests/e2e/auth-section-and-flex-otp.spec.ts
+  variants-covered: [unauthenticated-full-label, unauthenticated-flex, returning-user-signed-in, post-oauth-with-address, post-oauth-without-address, flex-step-21-supabase-verify, flex-step-21-google-skip]
+
+---
+
 ### [2026-05-15] Auth bugs — OAuth bounce + session length diagnosis
 **Category:** diagnosis | Auth | Bug 1 + Bug 2
 **Cross-link:** [proposals/2026-05-14_oauth-and-session-handoff.md](proposals/2026-05-14_oauth-and-session-handoff.md)

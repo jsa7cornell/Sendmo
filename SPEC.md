@@ -200,7 +200,7 @@ src/components/recipient/
   RecipientStepFullShipping.tsx             # Full path: shipment details (Step 10)
   RecipientStepEmailVerifySupabase.tsx      # Full path: Supabase OTP confirm email (Step 11)
   RecipientStepFlexPreferences.tsx          # Link path: shipping prefs (Step 20)
-  RecipientStepEmailVerify.tsx              # Link path: bespoke email_verifications OTP (Step 21)
+  RecipientStepEmailVerifyFlex.tsx          # Link path: Supabase OTP confirm email (Step 21)
   RecipientStepPayment.tsx                  # Payment + activated state (Steps 12/13/22/23)
 ```
 
@@ -298,7 +298,7 @@ final = base x carrier_multiplier (1.0-1.8) + insurance ($2.50 if selected)
 - Code/link are sent silently at step 1 (email blur) so they're in the inbox by the time the user reaches this screen
 - **Auto-skipped** when the user is already authenticated (Google CTA picked at step 1, or returning user with a live session whose email matches the typed email)
 - Validation: requires `state.email_verified === true` (mirrors the flex flow's step 21 contract)
-- Companion to the flex flow's bespoke `email_verifications`-table OTP at step 21 (intentionally untouched)
+- Companion to the flex flow's Supabase OTP at step 21 (`RecipientStepEmailVerifyFlex`)
 
 #### Step 12: Payment (Full Label)
 **Component**: `RecipientStepPayment.tsx` -- Step ID: `12` (was `11` pre-2026-05-11)
@@ -370,14 +370,18 @@ interface ShippingConfig {
 }
 ```
 
-#### Step 21: Email Verification (Flexible Link only)
-**Component**: `RecipientStepVerify.tsx` -- Step ID: `21`
+#### Step 21: Confirm Your Email (Flexible Link only)
+**Component**: `RecipientStepEmailVerifyFlex.tsx` -- Step ID: `21` (migrated to Supabase Auth 2026-05-15)
 
-- Current email in muted box with "Use different email" button
-- 5-digit OTP input (auto-verifies; mock: any 5 digits succeeds)
-- "Resend code" button with loading state
-- Green verified badge on success
-- Continue button disabled until verified
+- Headline: "Confirm your email"
+- Body: "Just making sure {email} is yours."
+- Two ways to confirm:
+  - **6-digit code input** (paste or type) — calls `supabase.auth.verifyOtp({ type: "email" })`
+  - **Tap link in email** — Supabase processes token, redirects to `/onboarding/flexible/verify?confirmed=1`; session-detection effect auto-advances
+- Code/link sent silently at step 1 (email blur via `maybePrimeOtp`) so they're in the inbox before the user reaches this screen
+- **Auto-skipped** when user is already authenticated (Google CTA picked at step 1, or returning user with matching live session)
+- Creates a Supabase session — required by step 22 (`createFlexLink` + `createFlexHold` need a JWT)
+- Validation: requires `state.email_verified === true`
 
 #### Step 22: Payment & Activation (Flexible Link)
 **Component**: `RecipientStepPayment.tsx` -- Step ID: `22`
@@ -1149,7 +1153,35 @@ SendMo uses a 3-tier testing pyramid to ensure code quality and prevent shipping
 - `npm run test:unit` — Runs all Vitest unit and component tests.
 - `npm run test:coverage` — Runs Vitest with v8 coverage reporting.
 - `npm run test:e2e` — Runs Playwright E2E tests (requires `npm run dev` to be active).
+- `npm run test:e2e:browser` — Alias for `test:e2e`, added 2026-05-13 for cross-project convention parity with AgentEnvoy (Playwright == `:browser` everywhere across John's projects). Either name works; new tooling references `:browser`.
 - You can use the agent workflow `/run-tests` to execute the full validation pipeline locally.
+
+### Browser-Verification Discipline (PLAYBOOK Rule 19)
+
+Added 2026-05-13. Sibling rule to AgentEnvoy's Rule 29. Empirical basis: an AgentEnvoy bug cluster on 2026-05-13 found that **agent confidence was the failure mode in 4 of 4 catchable bugs** — every agent was sure their fix worked and shipped without browser-verifying.
+
+For any `fix`/`ship` LOG entry touching product surface (`src/components/`, `src/pages/`, `src/hooks/`, `src/contexts/`, `supabase/functions/`), the entry MUST include a structured `Browser-verified:` block. Three valid shapes (exactly one):
+
+- `spec:` + `variants-covered:` — a Playwright spec exercised the relevant variants
+- `mcp-session:` + `variants-covered:` — a live Playwright MCP session asserted the relevant variants
+- `n/a-category:` (closed enum: `pure-logic | agent-internal | infra | copy-only | migration`) + `n/a-reason:` — categorical exemption
+
+There is **no free-text "I'm confident" path** in the format. Full rule body, the `agent-internal` guidance note ("name the tighter alternative before claiming the exemption"), and reviewer duty live in [`PLAYBOOK.md` §19](./PLAYBOOK.md). Cross-project canonical proposal: [`agentenvoy/proposals/2026-05-13_claude-production-verification-infra_reviewed-2026-05-13_decided-2026-05-13.md`](../agentenvoy/proposals/2026-05-13_claude-production-verification-infra_reviewed-2026-05-13_decided-2026-05-13.md).
+
+**Agent-side tooling:**
+- **Playwright MCP** (registered at user scope; works in every SendMo session) — drives a real Chromium against the dev server and returns DOM snapshots into the conversation. Use for in-session verification, ARIA audits, exploratory checks.
+- **Slash commands** in `.claude/commands/`:
+  - `/runtest` — quick pass/fail on the e2e suite
+  - `/verifyfix <commit-or-path>` — daily-use; forces variant-axis naming and tighter-rigor-or-defend discipline before any `n/a-category` claim
+  - `/buildtest <bug>` — author a new spec with regression-proof validation (revert fix → spec must fail → restore → must pass)
+- **Stop hook** at `scripts/claude-hooks/check-browser-verified.sh` — fires at session close if product-surface files were modified but no `Browser-verified:` structured sub-keys appear in the LOG.md diff. Advisory only (exits 0); blocking gate is reviewer duty per Rule 19.
+
+**Variant-axis discipline.** Verify *the variants of the changed code path*, not just the one named in the bug report. SendMo's common axes:
+- Payment paths → `{full-prepaid, flexible-link} × {test-mode, live_comp, live_charge}`
+- Shipment lifecycle → `{label_created, in_use, cancelled, completed, expired}`
+- Cancel/change auth → `{authed, anonymous-with-cancel-token, anonymous}`
+
+If you can't name the variant axis, the fix is broader than you've modeled — stop and trace.
 
 ### Known Anti-Patterns to Avoid
 
