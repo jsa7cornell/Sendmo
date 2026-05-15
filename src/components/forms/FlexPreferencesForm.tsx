@@ -18,7 +18,8 @@ const SPEEDS = [
     bg: "bg-emerald-50",
     border: "border-emerald-200",
     activeBg: "bg-emerald-600",
-    exampleCost: "$5.50",
+    // Typical range for a medium package (~5 lbs) shipped regionally in California
+    exampleRange: "$13–$18",
     tagline: "Cheapest option",
   },
   {
@@ -30,7 +31,7 @@ const SPEEDS = [
     bg: "bg-blue-50",
     border: "border-blue-200",
     activeBg: "bg-primary",
-    exampleCost: "$9.25",
+    exampleRange: "$21–$28",
     tagline: "Best balance of speed & cost",
   },
   {
@@ -42,7 +43,7 @@ const SPEEDS = [
     bg: "bg-orange-50",
     border: "border-orange-200",
     activeBg: "bg-orange-600",
-    exampleCost: "$18.75",
+    exampleRange: "$50–$70",
     tagline: "Fastest delivery",
   },
 ];
@@ -61,10 +62,26 @@ const CARRIERS = [
   { id: "fedex", label: "FedEx" },
 ];
 
-const PRICE_DATA: Record<SpeedTier, { small: number[]; medium: number[]; large: number[] }> = {
-  economy:  { small: [3.50, 4.75, 6.25],  medium: [5.50, 7.50, 10.00],  large: [8.75, 12.50, 16.75] },
-  standard: { small: [5.25, 7.00, 9.50],  medium: [9.25, 12.00, 15.50], large: [14.50, 19.00, 25.00] },
-  express:  { small: [12.00, 15.50, 19.00], medium: [18.75, 24.00, 30.00], large: [28.00, 36.00, 45.00] },
+// Price ranges [min, max] per speed × size × distance (nearby / regional / cross-country).
+// Based on 2025 carrier rates (USPS Ground Advantage / Priority Mail / FedEx Express)
+// with SendMo's ~15% service fee included. Updated 2026-05-15.
+type PriceRange = [number, number];
+const PRICE_DATA: Record<SpeedTier, { small: PriceRange[]; medium: PriceRange[]; large: PriceRange[] }> = {
+  economy:  {
+    small:  [[6, 9],   [8, 12],  [10, 15]],
+    medium: [[10, 14], [13, 18], [16, 24]],
+    large:  [[18, 25], [22, 32], [28, 42]],
+  },
+  standard: {
+    small:  [[10, 14], [13, 18], [17, 24]],
+    medium: [[16, 22], [21, 28], [26, 36]],
+    large:  [[28, 38], [36, 50], [48, 68]],
+  },
+  express: {
+    small:  [[24, 34],  [32, 46],   [42, 60]],
+    medium: [[38, 55],  [50, 70],   [65, 90]],
+    large:  [[65, 90],  [85, 120],  [110, 160]],
+  },
 };
 
 const DISTANCES = ["Nearby", "Regional", "Cross-country"];
@@ -157,16 +174,13 @@ function PriceGridModal({ onClose }: { onClose: () => void }) {
                 <span className="text-[10px] text-muted-foreground">({size.desc})</span>
               </div>
               <div className="grid grid-cols-3 gap-3">
-                {data[size.key].map((price, ci) => (
+                {data[size.key].map(([lo, hi], ci) => (
                   <div
                     key={ci}
                     className={`rounded-xl ${speedInfo.bg} border ${speedInfo.border} py-3 text-center`}
                   >
-                    <span className={`text-lg font-bold ${speedInfo.color}`}>
-                      ${price.toFixed(0)}
-                    </span>
-                    <span className={`text-xs ${speedInfo.color} opacity-70`}>
-                      .{price.toFixed(2).split(".")[1]}
+                    <span className={`text-sm font-bold ${speedInfo.color}`}>
+                      ${lo}–${hi}
                     </span>
                   </div>
                 ))}
@@ -242,8 +256,8 @@ export default function FlexPreferencesForm({ value, onChange }: Props) {
           <SelectedIcon className={`w-5 h-5 ${selected.color}`} />
           <span className={`text-sm font-semibold ${selected.color}`}>{selected.label}</span>
         </div>
-        <p className={`text-4xl font-bold ${selected.color} mb-1`}>{selected.exampleCost}</p>
-        <p className="text-sm text-muted-foreground">typical cost for a medium package within California</p>
+        <p className={`text-4xl font-bold ${selected.color} mb-1`}>{selected.exampleRange}</p>
+        <p className="text-sm text-muted-foreground">typical range for a medium package within California</p>
         <p className="text-xs text-muted-foreground mt-2">Actual price depends on weight, size, and distance</p>
       </div>
 
