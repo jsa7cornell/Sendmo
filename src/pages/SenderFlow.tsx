@@ -18,7 +18,7 @@ import SenderStepRates from "@/components/sender/SenderStepRates";
 import SenderStepReview from "@/components/sender/SenderStepReview";
 import {
   type SenderStep, type SenderParcel,
-  loadSavedSender, saveSender, sortRatesForSender,
+  loadSavedSender, saveSender, sortRatesForSender, pickBestPerCarrier,
 } from "@/components/sender/senderState";
 
 // 5-step sender wizard for flex shipping links. See SPEC §8 and
@@ -118,10 +118,11 @@ export default function SenderFlow() {
       );
       setRates(r);
       setEasypostShipmentId(easypost_shipment_id);
-      // Default-select the top of the sender-sorted list (preferred-by-recipient
-      // first, then cheapest). Matches what the user visually sees as the
-      // first option.
-      const sorted = sortRatesForSender(r, linkData);
+      // One best-value option per carrier, ranked best first.
+      // sortRatesForSender then re-orders within that set so the
+      // recipient's preferred speed tier floats to the top.
+      const perCarrier = pickBestPerCarrier(r);
+      const sorted = sortRatesForSender(perCarrier, linkData);
       if (sorted.length > 0) setSelectedRate(sorted[0]);
     } catch (err) {
       setRatesError(err instanceof Error ? err.message : "Failed to fetch rates");

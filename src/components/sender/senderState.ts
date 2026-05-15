@@ -86,6 +86,49 @@ export function sortRatesForSender<T extends ShippingRate>(rates: T[], linkData:
   });
 }
 
+// Normalize carrier names to a canonical key so service-level variants
+// (e.g. "USPS", "USPSReturn", "FedEx", "FedExSmartPost") collapse correctly.
+function normalizeCarrier(carrier: string): string {
+  const c = carrier.toUpperCase();
+  if (c.includes("USPS")) return "USPS";
+  if (c.includes("FEDEX") || c.includes("FED_EX")) return "FedEx";
+  if (c.includes("UPS")) return "UPS";
+  if (c.includes("DHL")) return "DHL";
+  return carrier;
+}
+
+// Best-value score: lower = better. Penalises slow delivery so a slightly
+// cheaper but much slower option doesn't blindly win. Each day beyond 3
+// adds 5% to the effective cost. Unknown delivery times are treated as 7 days.
+//
+// Examples:
+//   $10 / 3 days → score 10.00
+//   $8  / 7 days → score  9.60  (still beats $10/3-day)
+//   $8  / 10 days → score 10.80 (worse than $10/3-day)
+function valueScore(rate: ShippingRate): number {
+  const days = rate.estimated_days ?? 7;
+  const dayPenalty = Math.max(0, days - 3) * 0.05;
+  return rate.display_price_cents * (1 + dayPenalty);
+}
+
+// Returns one rate per carrier (best-value within each), ranked best first.
+// This trims the full EasyPost rate list down to a clean 2–3 card UI
+// rather than an undifferentiated wall of options.
+export function pickBestPerCarrier<T extends ShippingRate>(rates: T[]): T[] {
+  const byCarrier = new Map<string, T[]>();
+  for (const rate of rates) {
+    const key = normalizeCarrier(rate.carrier);
+    if (!byCarrier.has(key)) byCarrier.set(key, []);
+    byCarrier.get(key)!.push(rate);
+  }
+  const winners: T[] = [];
+  for (const carrierRates of byCarrier.values()) {
+    const best = carrierRates.reduce((a, b) => valueScore(a) < valueScore(b) ? a : b);
+    winners.push(best);
+  }
+  return winners.sort((a, b) => valueScore(a) - valueScore(b));
+}
+
 // Rough cost indicator for the sender — they don't see the exact price but
 // $-symbols give an order-of-magnitude signal so they can pick mindfully.
 // Bucket boundaries chosen against the SPEC §7.1 rate tables so a "cheap

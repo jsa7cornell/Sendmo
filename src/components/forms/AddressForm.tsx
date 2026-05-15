@@ -14,6 +14,7 @@ export default function AddressForm({ value, tried, onChange }: Props) {
         label="destination"
         value={value}
         onChange={onChange}
+        addressLabel="Destination address"
         error={tried && !value.verified ? "Select an address from the dropdown" : undefined}
       />
     </div>
