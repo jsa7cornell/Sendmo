@@ -10,6 +10,109 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-15] Sender flow — four bugs found and fixed in one session
+
+**Category:** fix | Sender flow | Deployment | Testing
+**Commits:** `41b3e3c`, `4ddb07a`, `44e9c13`, `a6df403`, `7faedeb`, `7aaec91`, `69c87c2`, `9db0768`
+
+---
+
+#### Bug 1 — `addressToApi` crash when generating label on a flex link
+
+**Root cause:** `buyLabel()` in `src/lib/api.ts` called `addressToApi(to)` unconditionally, even when `link_short_code` was present. The sender flow passes a city-only stub `{ street: "", city: ..., state: ..., zip: ... }` as `to` because the server resolves the real address from the DB. `addressToApi` validates `!!addr.street` and throws before the network call ever fires.
+
+**Fix:** `to_address: link?.short_code ? undefined : addressToApi(to)` — skip client-side validation and omit `to_address` when the server will resolve it anyway. The labels Edge Function already does `let to_address = bodyToAddress` then overwrites it from the DB when `link_short_code` is present.
+
+**Error message seen:** `Couldn't generate the label — addressToApi: incomplete address (street=false, city=true, state=true, zip=true)`
+
+---
+
+#### Bug 2 — Rates list showed all EasyPost options instead of one per carrier
+
+**Root cause:** `pickBestPerCarrier(r)` was called and returned the filtered list into `sorted`, but `setRates(r)` stored the **full** unfiltered list. The rates step rendered `rates={rates}` (full list), so all options appeared even though the auto-selected rate was correct.
+
+**Fix:** `setRates(sorted)` — store only the carrier-deduplicated, best-value-sorted list so the UI shows one option per carrier (USPS, FedEx, UPS) ranked best-first.
+
+---
+
+#### Bug 3 — `recipient_address_complete` always `false`, blocking all sender links
+
+**Root cause:** `supabase/functions/links/index.ts` GET handler selected `name, city, state, zip` from the `addresses` join but omitted `street1`. The server-side check `!!(addr?.street1)` was always `undefined → false`. Every sender flow showed "This link's delivery address is incomplete" regardless of actual DB data.
+
+**Fix:** Added `street1` to the Supabase SELECT. `street1` is used server-side for the completeness check but is **not** exposed in the JSON response (privacy: senders see city/state only).
+
+**Deploy:** `npx supabase functions deploy links` — only the Edge Function needed updating (no frontend change). Test with `curl -A "facebookexternalhit/1.1" https://sendmo.co/s/<code>` or the integration test.
+
+---
+
+#### Bug 4 — OG meta tags not personalizing (`/s/:shortCode` link previews)
+
+**Root cause (architecture):** `api/s/[shortCode].ts` serverless function was deployed but **never invoked**. Vercel's CDN caches the SPA catch-all `/(.*) → /index.html` at the edge level. Any path not matching a static file in `dist/` is served as `index.html` with `x-vercel-cache: HIT` — including `/api/s/:shortCode`. The function existed but requests never reached it.
+
+**Proof:** `curl -sv "https://sendmo.co/api/s/test_$(date +%s)"` returned `x-vercel-cache: HIT` with `index.html` content even for a brand-new path never before requested. CDN had pre-cached the catch-all pattern.
+
+**Fix:** Replaced the serverless function with **Vercel Edge Middleware** (`middleware.ts` at project root). Edge Middleware runs **before** CDN cache lookup, so it can intercept `/s/:shortCode` and inject personalized OG tags before the CDN ever gets involved.
+
+**Key architecture note for future agents:** For Vite SPAs on Vercel with a `/(.*) → /index.html` SPA rewrite, serverless functions in `api/` are silently bypassed by CDN caching. Use Edge Middleware (`middleware.ts` with `export const config = { matcher: ... }`) for any path-level interception. Serverless functions work fine for paths the SPA rewrite doesn't cover (e.g., dedicated API endpoints called by fetch, not navigated to).
+
+**iMessage cache:** iMessage caches link previews aggressively. After deploying the middleware, verify with `curl -A "facebookexternalhit/1.1" https://sendmo.co/s/<code> | grep og:title` rather than iMessage (which won't refresh for 30–60 min). Slack's `/slackbot unfurl` or LinkedIn's post inspector force a fresh fetch.
+
+---
+
+**Browser-verified:**
+  spec: tests/e2e/sender-flow.spec.ts
+  variants-covered: [invalid-link-error-state, valid-link-intro-renders]
+
+---
+
+### [2026-05-15] Vercel deployment cache / bundle hash mystery
+
+**Category:** gotcha | Deployment
+
+**Observation:** Multiple Vercel deployments all showed status `Ready` in `Production`, but `sendmo.co` served a stale JS bundle hash (`index-DXg6grZJ.js`) for many pushes. Manually running `npx vercel --prod --force` produced a new deployment, but the bundle hash didn't change either.
+
+**Root cause:** Vite content-hashes are based on **source file content after template substitution**. Vercel's production build embeds `VITE_*` env vars (from the Vercel dashboard) into the bundle at build time. The local build uses `.env.local` values, producing a **different hash** from the Vercel build. Both bundles contain the same code — the different hashes reflect different embedded env var strings.
+
+**Takeaway:** You cannot compare local bundle hashes to production bundle hashes to determine if code is deployed. Instead, grep for **string literals that appear in the source** (price ranges `$13–$18`, specific error messages, etc.). Code that's been minified (`pickBestPerCarrier` → short identifier) won't be greppable; use unique string constants instead.
+
+**Deployment verification pattern:**
+```bash
+curl -s "https://sendmo.co/index.html" | grep -o '/assets/index-[^"]*\.js'   # get current bundle filename
+curl -s "https://sendmo.co/assets/<hash>.js" | grep -o '\$[0-9]*–\$[0-9]*'   # grep for known strings
+```
+
+---
+
+### [2026-05-15] CI test suite hygiene — three categories of test debt fixed
+
+**Category:** fix | Testing | CI
+
+**Fixes shipped:**
+
+1. **Vitest picking up `.claude/worktrees/**` node_modules** — Claude's internal worktrees live under `.claude/worktrees/`. Each has its own `node_modules` with their own test suites (including zod's internal tests). Vitest's glob was scanning them, producing 114 spurious failures. Fixed by adding `.claude/**` to the `exclude` array in `vitest.config.ts`.
+
+2. **`validation.test.ts` label drift** — Test expected "Ship from address is required" but the code was updated to "Origin address is required" (rename from commit `73a7fd5`). Tests weren't updated alongside the rename. **Pattern to avoid:** when renaming user-visible strings, `grep` for the old string in `tests/` before committing.
+
+3. **`App.test.tsx` auth timeout** — `ProtectedRoute` shows a spinner while `AuthContext.loading === true`. `loading` starts `true` and is cleared by `onAuthStateChange`. The Supabase mock returned a subscription object but never fired the callback, so `loading` stayed `true` and the login page never rendered. `waitFor` timed out after 1s. Fix: mock `onAuthStateChange` as `vi.fn().mockImplementation((callback) => { callback("INITIAL_SESSION", null); return { data: { subscription: { unsubscribe: vi.fn() } } }; })`. Always fire the auth state change callback in auth mocks, otherwise any component that branches on `loading` will hang.
+
+---
+
+### [2026-05-15] Cache busting — Vercel headers for SPA
+
+**Category:** ship | Deployment | Performance
+
+Added `headers` to `vercel.json`:
+- `index.html`: `Cache-Control: public, max-age=0, must-revalidate` — browsers always revalidate on next load. Prevents users from running stale JS after a new deploy. Previously browsers could cache `index.html` indefinitely and never see new bundle references.
+- `/assets/*`: `Cache-Control: public, max-age=31536000, immutable` — content-hashed filenames guarantee same URL = same content, so aggressive caching is safe.
+
+**Why this matters:** Without `must-revalidate` on `index.html`, a browser that cached `index.html` pointing at `index-DXg6grZJ.js` would keep serving that old bundle even after new deployments. The `addressToApi` crash fix and rate-list reduction were live on Vercel but invisible to users who had the old `index.html` cached.
+
+**Browser-verified:**
+  n/a-category: infra
+  n/a-reason: Header config change with no frontend surface change.
+
+---
+
 ### [2026-05-15] Drop email_verifications table + email Edge Function
 **Category:** ship | Cleanup | Flex onboarding
 **Cross-link:** [proposals/2026-05-15_flex-otp-supabase-migration-handoff.md](proposals/2026-05-15_flex-otp-supabase-migration-handoff.md)
