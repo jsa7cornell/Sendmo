@@ -18,7 +18,7 @@ This proposal **operationalizes** [`2026-05-15_payment-authorization-strategy.md
 
 | Strategy v1 (yesterday) | Strategy v2 (this proposal, post-review-and-John's-decision) |
 |---|---|
-| Validate-once at onboarding with PI+cancel for `$cap` | **Kept**: cap-validation at onboarding + Reactivate. PI+cancel at `$max_price_cents`. |
+| Validate-once at onboarding with PI+cancel for `$cap` | **Kept conceptually, but PR1 ≠ PR2 semantics**. PR1: cap-auth at `$max_price_cents` stays live as a real hold for 7 days; sender captures from it. PR2: cap-auth created + voided immediately; per-shipment off_session charges against saved PM. (Correction added 2026-05-16 PM — earlier draft conflated the two; void-on-validate only works alongside the PR2 per-shipment off_session model.) |
 | Link states: `draft/active/in_use/completed/expired/cancelled` | Link states externally: **Active / Inactive** (sub-statuses still in DB for diagnostics) |
 | Trust front gate ("does PM exist?") between sender visits | **Lightweight front gate** (per John 2026-05-16): expiry check + link status only, no Stripe call. Source-of-truth is the per-shipment off_session charge. |
 | Recovery: dashboard banner + email | Same + explicit "Reactivate" button on dashboard + recipient email with deep-link reactivation flow (John's copy) |
@@ -77,16 +77,29 @@ async function validatePaymentMethodForCap(params: {
 }): Promise<{ ok: true; stripeIntentId: string } | { ok: false; error: string; declineCode?: string }>
 ```
 
-Internal flow:
+Internal flow (PR1):
 1. Create PI with `amount: params.amount_cents`, `capture_method: 'manual'`, `customer`, `payment_method`, `off_session: true`, `confirm: true`, metadata `{ intent_role: 'flex_hold', link_id, sendmo_user_id, source: 'cap_validation' }`.
    - Bypasses the public `payments` endpoint's `amount_cents >= 50` floor (the helper is internal).
-2. If PI status is `requires_capture` (the success case for manual-capture off_session): immediately call `cancelPaymentIntent` to release the hold.
-3. If PI status is anything else (`requires_action`, `requires_payment_method`, etc.): treat as decline, no cancel needed (PI didn't authorize). Capture decline_code for audit.
-4. Write a `payment_validations` row with `result='succeeded'` or `result='failed'` (both outcomes audited — needed for fraud-counter use cases in the WISHLIST).
-5. **Also write a `holds` row in PR1** using the legacy schema so existing read sites (`Dashboard.tsx`, `links/index.ts`, `labels/index.ts`) Just Work. The `holds` row has `status='authorized'`, `expires_at = now() + 7 days`, `amount_cents = params.amount_cents`. The webhook's `payment_intent.canceled` handler (from our own cancel call) flips the hold to `voided`... but that's a problem — we *want* it to look authorized to the read sites. **Fix:** the helper writes the `holds` row AFTER the cancel call, with `status='authorized'`, marking it as "cap-validated, treat as funded." The webhook's `payment_intent.canceled` handler is updated to skip the holds.status update when the cancellation originated from our cap-validation flow (detected via PI metadata `source='cap_validation'`).
-6. Return `{ ok: true, stripeIntentId }` on success or `{ ok: false, error, declineCode }` on failure.
+2. If PI status is `requires_capture` (the success case for manual-capture off_session):
+   - Write `payment_validations` row with `result='succeeded'`
+   - Write `holds` row with `status='authorized'`, `expires_at = now() + 7 days`, `amount_cents = params.amount_cents`, `stripe_intent_id = pi.id` (UPSERT keyed on `stripe_intent_id`; if the existing `amount_capturable_updated` webhook beats us to it, it's a no-op)
+   - **Leave the PI live** — do NOT cancel. The hold is a real card authorization for $cap, valid up to 7 days
+3. If PI status indicates decline (`requires_action`, `requires_payment_method`, etc.):
+   - Write `payment_validations` row with `result='failed'` and `decline_code`
+   - No `holds` row written
+4. Return `{ ok: true, stripeIntentId }` on success or `{ ok: false, error, declineCode }` on failure.
 
-**Note on the side effect:** the cap-validation creates a brief card hold ($cap) that's released within seconds. Some issuers show the pending charge for 1-3 business days before clearing despite Stripe's immediate cancel. This is the same UX as today's Phase E onboarding hold; users are accustomed to it.
+**Lifecycle of the cap auth in PR1:**
+- Created live on Stripe; $cap authorized on the recipient's card (real hold)
+- If a sender uses the link within 7 days → existing `labels/index.ts` flex-capture branch captures from this PI for the actual rate; Stripe auto-releases the excess
+- If no sender uses the link within 7 days → Stripe auto-cancels the PI; existing webhook handler flips `holds.status='expired'` + link → Inactive; recipient must Reactivate
+- If recipient triggers Reactivate while one is already authorized: helper detects existing live `stripe_intents` row with `intent_role='flex_hold', status='requires_capture'` and short-circuits (returns success without creating a duplicate)
+
+**Why we don't void the PI in PR1 (correction from an earlier draft of this section):** an earlier draft said the helper cancels the PI immediately after authorization (the validate-and-void pattern). That would break the labels function: today's flex-capture branch captures from the held PI, and capturing a canceled PI fails with `payment_intent_unexpected_state`. The validate-and-void pattern only works alongside the PR2 pivot, where per-shipment charges are fresh off_session PIs against the saved PM (the held PI is no longer the source of value). PR1 keeps the auth live; PR2 ships the void + per-shipment off_session model together as a coherent change.
+
+**PR2 will change this lifecycle:** the helper will cancel the PI immediately after authorization. The saved PM persists on the Stripe Customer. Per-shipment charges become fresh off_session PIs. The 7-day expiry concern disappears.
+
+**Note on the side effect:** in PR1, the cap-validation creates a real card hold for $cap that the recipient sees as pending on their statement. It either becomes a real charge (when a sender uses the link, with the actual-rate captured + excess released) or auto-expires after 7 days. This is the same UX as today's Phase E onboarding hold.
 
 **Why one helper, not two:** the fresh-eyes review suggested splitting into cap-validation + lightweight. John's decision (Option A) removes the need for a lightweight helper — there's no per-visit Stripe call. If we later add the periodic-health-check wishlist item, we can add a lightweight helper at that time.
 
@@ -173,16 +186,16 @@ These all move to WISHLIST as "front-gate aggression v2" — future work if scal
 | File | Change | LOC |
 |---|---|---|
 | `supabase/migrations/<NN>_payment_validations.sql` | NEW — create `payment_validations` table with full schema from §9 Author response (UNIQUE on stripe_intent_id; success+failure rows; result + decline_code + reason columns; partial indexes; RLS policies inline) | ~50 |
-| `supabase/functions/_shared/stripe.ts` | Add `validatePaymentMethodForCap` helper (§2.1 logic): manual-capture PI at `$cap` → cancel → write `payment_validations` row → write `holds` row with `status='authorized'` for legacy-read compatibility | ~140 |
-| `supabase/functions/payments/index.ts` | Add `reactivate-link` route (route discrimination via URL path). Reuses existing auth/mode/Customer resolution boilerplate from `flex_hold` branch | ~70 |
-| `supabase/functions/stripe-webhook/index.ts` | Tiny: when `payment_intent.canceled` fires with `pi.metadata.source === 'cap_validation'`, skip the `holds.status` update (helper already wrote it as 'authorized') | ~15 |
+| `supabase/functions/_shared/stripe.ts` | Add `validatePaymentMethodForCap` helper (§2.1 logic): manual-capture PI at `$cap`, off_session, confirm; if `requires_capture` write `payment_validations` (success) + `holds` row (`status='authorized'`, `expires_at=now()+7d`); if decline write `payment_validations` (failure). **PI stays live** (do NOT cancel — labels-fn captures from it on sender use) | ~120 |
+| `supabase/functions/payments/index.ts` | Add `reactivate-link` route (route discrimination via URL path). Reuses existing auth/mode/Customer resolution boilerplate from `flex_hold` branch. Short-circuits when a live `flex_hold` PI already exists for the link (returns success without creating duplicate) | ~80 |
+| ~~`supabase/functions/stripe-webhook/index.ts`~~ | **No PR1 changes** (earlier draft said this; corrected — PR1's helper doesn't cancel the PI, so the existing `payment_intent.canceled` handler doesn't need a skip-guard) | 0 |
 | `src/lib/api.ts` | Add `reactivateLink({ link_id, accessToken })` client function | ~25 |
 | `src/pages/Dashboard.tsx` | (a) rename "Default" badge to "Primary" + sort primary PM to top of wallet list; (b) add Reactivate button next to "Needs payment" badge with states: idle / loading / success-toast / error-toast; if 400 `add_card_required`, open AddCardModal then auto-reactivate on its onSuccess; on success the existing badge re-renders Active via the holds-row check (no logic change to the badge query) | ~90 |
 | `tests/unit/Dashboard.test.tsx` | Update test: "Default" → "Primary" assertion. Add tests for Reactivate button states + add-card-then-reactivate path | ~60 |
 | `tests/integration/reactivate-link.test.mjs` | NEW — POST endpoint contract test: 401 missing JWT, 403 wrong owner, 400 missing PM, 200 success (writes both payment_validations + holds rows), 402 decline (writes payment_validations failure row, no holds row) | ~80 |
 | `LOG.md` | Entry for PR1 with `Browser-verified:` block per Rule 19 (mcp-session shape) | ~30 |
 
-**Total PR1: ~560 LOC** (revised upward from the pre-review ~405; includes the helper rigor from review finding #5 and the holds-row dual-write from finding #2).
+**Total PR1: ~545 LOC** (revised: -15 LOC from dropping the unnecessary stripe-webhook patch after the 2026-05-16 PM clarification on auth lifecycle; helper rigor from review #5 and holds-row dual-write from #2 kept).
 
 ### 3.2 PR2 files
 
