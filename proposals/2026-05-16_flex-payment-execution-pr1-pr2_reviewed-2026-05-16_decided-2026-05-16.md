@@ -2,29 +2,32 @@
 title: Flex payment execution — PR1 (Reactivate) + PR2 (Active/Inactive pivot)
 slug: flex-payment-execution-pr1-pr2
 project: sendmo
-status: revised
+status: decided
 created: 2026-05-16
 last_updated: 2026-05-16
 reviewed: 2026-05-16
-decided: null
-author: Claude (Sonnet 4.6) session — author of yesterday's strategy proposal; this execution plan folds in John's 2026-05-15 reframing (Active/Inactive binary, front-gate $0 auth)
+decided: 2026-05-16
+author: Claude (Sonnet 4.6) session — author of yesterday's strategy proposal; this execution plan folds in John's 2026-05-15 reframing (Active/Inactive binary) and 2026-05-16 Tradeoff 1 = Option A (lightweight front gate)
 reviewer: Claude (Opus 4.7) fresh-eyes session — read cold against strategy proposal, master Stripe plan, PLAYBOOK rules 14/16/19, and the touched code in payments/labels/stripe-webhook/links/Dashboard
-outcome: null
+outcome: approved
 ---
 
 ## Reconciliation with prior decided proposals
 
 This proposal **operationalizes** [`2026-05-15_payment-authorization-strategy.md`](2026-05-15_payment-authorization-strategy.md) (status: draft, but the strategy direction is settled following John's 2026-05-15 reframing). Key differences from the original strategy proposal, all triggered by John's reframing:
 
-| Strategy v1 (yesterday) | Strategy v2 (this proposal) |
+| Strategy v1 (yesterday) | Strategy v2 (this proposal, post-review-and-John's-decision) |
 |---|---|
-| Validate-once at onboarding with PI+cancel for `$cap` | Validate at onboarding with $0 auth (fallback $1) — no big pre-auth |
+| Validate-once at onboarding with PI+cancel for `$cap` | **Kept**: cap-validation at onboarding + Reactivate. PI+cancel at `$max_price_cents`. |
 | Link states: `draft/active/in_use/completed/expired/cancelled` | Link states externally: **Active / Inactive** (sub-statuses still in DB for diagnostics) |
-| Trust front gate ("does PM exist?") between sender visits | **Front-gate $0 auth on every sender link-open** (with rate limiting) |
-| Recovery: dashboard banner + email | Same + explicit "Reactivate" button + sender fallback to self-paid label |
-| Cap pre-auth checked credit availability | Skipped — $0 auth doesn't, but per-shipment off_session at confirm catches it |
+| Trust front gate ("does PM exist?") between sender visits | **Lightweight front gate** (per John 2026-05-16): expiry check + link status only, no Stripe call. Source-of-truth is the per-shipment off_session charge. |
+| Recovery: dashboard banner + email | Same + explicit "Reactivate" button on dashboard + recipient email with deep-link reactivation flow (John's copy) |
+| Per-shipment charge | Off_session PI at actual rate at confirm step. Graceful decline → link → Inactive + recipient email. |
+| `holds` table role | Strategy v1 said "reserved for Phase 3 escrow." PR1 keeps writing to it (legacy schema = source of truth in PR1 to make Reactivate actually unblock John). PR2 swaps source-of-truth to `payment_validations`; `holds` then reserved for Phase 3 escrow. |
+| Card-add (Add Card modal) | Existing SetupIntent (does $0 ZDA via Stripe automatically). No extra $1 auth — modern industry standard. |
+| Periodic background validation | Wishlist (nightly cron over active links). Defer until scale / fraud demands. |
 
-Also supersedes the Phase E flex-capture work shipped 2026-05-15 (commits `ab92b3d` flex-capture; `b73dd7c` partial UX) — see §6 for what we revert.
+Also supersedes the Phase E flex-capture work shipped 2026-05-15 (commits `ab92b3d` flex-capture; `b73dd7c` partial UX) — see §6 for what we revert in PR2.
 
 Master Stripe plan ([`2026-04-26_stripe-integration-plan_...`](2026-04-26_stripe-integration-plan_reviewed-2026-04-26_decided-2026-05-11.md)) is unchanged at the architectural level (§3.4 PI lifecycle, §3.7 carrier adjustments, §3.8 escrow). This proposal only changes the flex-link branch.
 
@@ -55,30 +58,37 @@ Splitting also means John can dogfood PR1 immediately (Reactivate button works a
 
 ## 2. Architecture
 
-### 2.1 The shared primitive: `validate-payment-method` server logic
+### 2.1 The shared primitive: cap-validation server logic
 
-Both PRs rely on the same server-side action: "given a customer + payment method, prove the card is usable, write an audit row, return success/failure." This is implemented as a helper in PR1 and reused in PR2.
+Both PRs rely on the same server-side action for funding a link: "given a customer + payment method + link cap, prove the card has capacity for the cap, write an audit row, return success/failure."
+
+Per the fresh-eyes review (Blocking #1) and John's 2026-05-16 decision, **we don't need a separate lightweight $1 helper for the front gate** — the front gate is lightweight (expiry + link.status only, no Stripe call) per Tradeoff 1 Option A. The one helper that ships is:
 
 ```ts
 // supabase/functions/_shared/stripe.ts (new helper)
-async function validatePaymentMethod(params: {
+async function validatePaymentMethodForCap(params: {
   customer: string;
   payment_method: string;
-  link_id?: string;
+  link_id: string;
   user_id: string;
+  amount_cents: number;        // = link.max_price_cents
   liveMode: boolean;
-  reason: 'reactivate' | 'front_gate' | 'pm_added';  // for audit
-}): Promise<{ ok: true } | { ok: false; error: string; declineCode?: string }>
+  reason: 'onboarding' | 'reactivate' | 'pm_added';   // for audit
+}): Promise<{ ok: true; stripeIntentId: string } | { ok: false; error: string; declineCode?: string }>
 ```
 
 Internal flow:
-1. Try `createPaymentIntent({ amount: 0, confirm: true, off_session: true, customer, payment_method })`.
-2. If Stripe returns an "amount_too_small" / "amount_too_low" error → retry with `amount: 100` ($1).
-3. If PI status is `succeeded`: cancel/refund immediately (the auth is released within seconds; $1 fallback case shows a brief pending charge).
-4. Insert `payment_validations` row with `link_id, user_id, customer_id, validated_amount_cents, stripe_intent_id, validated_at, reason, mode`.
-5. Return `{ ok: true }` or `{ ok: false, error, declineCode }`.
+1. Create PI with `amount: params.amount_cents`, `capture_method: 'manual'`, `customer`, `payment_method`, `off_session: true`, `confirm: true`, metadata `{ intent_role: 'flex_hold', link_id, sendmo_user_id, source: 'cap_validation' }`.
+   - Bypasses the public `payments` endpoint's `amount_cents >= 50` floor (the helper is internal).
+2. If PI status is `requires_capture` (the success case for manual-capture off_session): immediately call `cancelPaymentIntent` to release the hold.
+3. If PI status is anything else (`requires_action`, `requires_payment_method`, etc.): treat as decline, no cancel needed (PI didn't authorize). Capture decline_code for audit.
+4. Write a `payment_validations` row with `result='succeeded'` or `result='failed'` (both outcomes audited — needed for fraud-counter use cases in the WISHLIST).
+5. **Also write a `holds` row in PR1** using the legacy schema so existing read sites (`Dashboard.tsx`, `links/index.ts`, `labels/index.ts`) Just Work. The `holds` row has `status='authorized'`, `expires_at = now() + 7 days`, `amount_cents = params.amount_cents`. The webhook's `payment_intent.canceled` handler (from our own cancel call) flips the hold to `voided`... but that's a problem — we *want* it to look authorized to the read sites. **Fix:** the helper writes the `holds` row AFTER the cancel call, with `status='authorized'`, marking it as "cap-validated, treat as funded." The webhook's `payment_intent.canceled` handler is updated to skip the holds.status update when the cancellation originated from our cap-validation flow (detected via PI metadata `source='cap_validation'`).
+6. Return `{ ok: true, stripeIntentId }` on success or `{ ok: false, error, declineCode }` on failure.
 
-This helper is the entire substance of PR1 (wrapped in an endpoint) and the substance of PR2's front-gate (wrapped in a different endpoint with rate-limiting).
+**Note on the side effect:** the cap-validation creates a brief card hold ($cap) that's released within seconds. Some issuers show the pending charge for 1-3 business days before clearing despite Stripe's immediate cancel. This is the same UX as today's Phase E onboarding hold; users are accustomed to it.
+
+**Why one helper, not two:** the fresh-eyes review suggested splitting into cap-validation + lightweight. John's decision (Option A) removes the need for a lightweight helper — there's no per-visit Stripe call. If we later add the periodic-health-check wishlist item, we can add a lightweight helper at that time.
 
 ### 2.2 PR1 endpoint shape
 
@@ -87,36 +97,64 @@ POST /payments/reactivate-link
 Body: { link_id }
 Auth: JWT required (link owner only)
 Behavior:
-  - Look up recipient's default PM for the link's mode
-  - If no PM: return 400 { error: "add_card_required" } — client opens AddCardModal
-  - If PM exists: run validatePaymentMethod(..., reason='reactivate')
-  - On success: write payment_validations + return { ok: true }
-  - On failure: return 402 + decline reason; link stays inactive
+  - Look up sendmo_link by id; verify caller == link.user_id; resolve mode
+  - Look up recipient's default PM for the link's mode (payment_methods table)
+  - If no PM: return 400 { error: "add_card_required" } — client opens AddCardModal,
+    then auto-fires Reactivate again on AddCardModal's onSuccess
+  - If PM exists: call validatePaymentMethodForCap({
+      customer, payment_method, link_id,
+      amount_cents: link.max_price_cents,
+      reason: 'reactivate', ...
+    })
+  - On success (helper writes both payment_validations + holds row): return
+    { ok: true }. Dashboard re-renders Active because the holds query now
+    returns a row.
+  - On decline: return 402 with { error: "card_declined", decline_code }.
+    Link stays Inactive. Dashboard shows clean error toast.
 ```
 
-The endpoint **does not modify `sendmo_links.status`**. It writes a `payment_validations` row. PR2 will start reading these rows to compute "is the link Active"; PR1 just establishes the audit trail without changing the link-status logic.
+**Why this actually unblocks John (per Blocking #2 in the review):** the helper writes a `holds` row alongside the new `payment_validations` audit row. The existing read sites (`Dashboard.tsx:497` badge query, `links/index.ts` `has_active_hold` field, `labels/index.ts:343` capture branch) all key off the `holds` table and will see the new row immediately. PR1 ships full end-to-end effect; the "acknowledged temporary asymmetry" framing from the pre-review draft is dropped.
 
-For PR1's dashboard rendering, the existing today's `b73dd7c` logic stays — "Needs payment" badge until a hold row exists. After Reactivate succeeds, we don't yet flip the link state visibly (because the rendering still keys off `holds`). PR1 ships this as **acknowledged temporary asymmetry**: the audit row is written but the badge stays "Needs payment" until PR2 swaps the rendering logic.
-
-**Why acceptable as temporary state:** the Reactivate button gives the user a clear "I tried, it worked, here's what happened" experience even if the badge is stale. We surface "Reactivated ✓ — full effect will take place after the next deploy" in the success toast. PR2 follows quickly.
-
-**Alternative considered:** flip the link to status='active' immediately in PR1. Rejected because the existing badge logic is `!holds`, not `!status`; we'd need to add the new payment_validations-based logic in PR1, which IS the PR2 work. Better to land it once cleanly in PR2.
+**PR2 changes the source of truth** from `holds` to `payment_validations` — at which point the cap-validation helper stops writing the legacy `holds` row, and `holds` is reserved for Phase 3 escrow per master proposal §3.8. The user-visible behavior during the PR1→PR2 transition is identical (both eras correctly mark John's link Active).
 
 ### 2.3 PR2 — the full pivot
 
 After PR2:
 
 - **`sendmo_links` rendering: Active/Inactive binary externally**, sub-statuses (`draft/active/in_use/completed/expired/cancelled`) remain in DB for diagnostics but never leak to UI. A view helper computes the binary externally.
-- **"Is link funded" logic** changes from "does `holds` row exist" → "does at least one `payment_validations` row exist for this user+mode, OR does a saved PM exist that we can re-validate on demand." Used by:
+- **"Is link funded" logic** changes from "does `holds` row exist" → "does at least one successful `payment_validations` row exist for this user+mode in the last N days, AND does the recipient still have an active PM whose expiry hasn't passed." Used by:
   - Dashboard badge (Active vs Inactive)
-  - Sender flow at link-open (passes through front gate)
-  - Labels function (allows the actual charge)
-- **Front gate**: `GET /links?code=...` now performs `validatePaymentMethod(..., reason='front_gate')` if no recent (e.g., <24h) successful validation exists for the link's PM. Rate-limited per IP / per short_code / per customer. If validation fails, link flips to Inactive, sender sees the friendly fallback message, recipient notified.
-- **Per-shipment capture**: `labels` Edge Function's flex branch is replaced. Today's capture-the-held-PI logic is removed. New logic: create fresh off_session PI for `display_price_cents` against saved PM, auto-capture, proceed with EasyPost buy. Existing auto-refund logic for EasyPost buy failure works unchanged.
-- **Webhook lifecycle simplifications**: drop `holds`-row creation in `amount_capturable_updated` and capture-state transitions in `succeeded` for `intent_role='flex_validation'`. Those PIs are now $0/$1 transient validations, not held funds.
+  - Sender flow at link-open (front gate; see below)
+  - Labels function (allows the off_session charge)
+- **Lightweight front gate** (per John 2026-05-16 — Tradeoff 1 Option A): `GET /links?code=...` returns `is_funded` computed from the DB state only — **no Stripe call**. Checks:
+  - `sendmo_links.status` is not `cancelled` or `expired`
+  - At least one recent successful `payment_validations` row exists for this link's user+mode
+  - The default PM hasn't passed its stored `exp_year/exp_month`
+- **Per-shipment capture (the back gate, source-of-truth)**: `labels` Edge Function's flex branch is replaced. Today's capture-the-held-PI logic is removed. New logic: create fresh off_session PI for `display_price_cents` against saved PM (`confirm: true, off_session: true, customer, payment_method=<default>`), auto-capture, proceed with EasyPost buy. Existing auto-refund logic for EasyPost buy failure works unchanged. On decline:
+  - Cancel the failed PI
+  - Return 402 to sender with friendly copy ("Your payment couldn't be processed right now. The link's been deactivated and we've notified the recipient.")
+  - Write a `link_state_events` row (`event='charge_failed'`, `reason=<stripe_decline_code>`)
+  - Flip link to Inactive (via flag, not status enum — see below)
+  - Fire `payment_intent.payment_failed` webhook side-effect: send recipient email
+- **Recipient decline-recovery email** (John's exact copy 2026-05-16):
+  > Subject: Action needed — your SendMo link needs payment update
+  >
+  > Your payment failed when [sender first name or "a sender"] was printing a shipping label using your link. We've temporarily deactivated the link. Click below to update your payment information and reactivate the link.
+  >
+  > [ Update payment ] → deep-link to `https://sendmo.co/dashboard?reactivate=<link_id>`
+- **Webhook lifecycle simplifications**: drop `holds`-row creation in `amount_capturable_updated` and capture-state transitions in `succeeded` for `intent_role='flex_hold'`. Those PIs are now cap-validations (PR1's helper does the auth + cancel + writes the holds row optimistically); the webhook needs to *not* clobber the helper-written holds row when its own `canceled` event fires (detect via PI metadata `source='cap_validation'`).
+- **`payment_intent.payment_failed` handler**: for `intent_role='flex_hold'` (any off_session flex charge that declined), look up the link from PI metadata, write a `link_state_events` row, send the recipient email (queued via Resend). Idempotent — multiple webhook deliveries don't send multiple emails (gated by `webhook_events.processed_at` dedup).
 - **URL rotation**: new `POST /links/:id/rotate` endpoint. Generates new short_code, marks old one with `status='cancelled'`. Existing senders mid-flow on the old code get the "not available" message (existing logic).
-- **Sender fallback message** when front gate fails: "This link isn't accepting payments right now. You can ship a regular label at usps.com / ups.com / fedex.com." Static for now; the prefilled-recipient-address flow is wishlist.
-- **Phase E one-shot artifacts revert**: `holds` table stays in schema (reserved for Phase 3 escrow per master proposal), flex flow stops writing to it. `stripe_intents.intent_role='flex_validation'` replaces `'flex_hold'` for new records (old `flex_hold` records remain in DB as historical).
+- **Sender fallback message** when link is Inactive at front gate: "This link isn't accepting payments right now. Please check back with [recipient name] once they've updated their payment method." Static — the self-paid-label fallback flow is wishlist.
+- **Phase E one-shot artifacts revert**: `holds` table stays in schema (reserved for Phase 3 escrow per master proposal), flex flow stops writing to it after PR2 (PR1 still writes to keep read paths working). Keep `intent_role='flex_hold'` value to avoid the metadata-migration gap the reviewer flagged in #6.
+
+**What's removed compared to the pre-review draft of this proposal:**
+- The per-visit Stripe call at the front gate (Option A walks this back)
+- The lightweight $1 helper (no per-visit Stripe call → no need for it)
+- The `flex_validation` rename (avoided per review #6 — keep `flex_hold` to dodge the transition gap)
+- The rate-limiting and soft-lock infrastructure (no public Stripe-touching endpoint to protect)
+
+These all move to WISHLIST as "front-gate aggression v2" — future work if scale/fraud demands.
 
 ### 2.4 What stays the same across both PRs
 
@@ -134,34 +172,37 @@ After PR2:
 
 | File | Change | LOC |
 |---|---|---|
-| `supabase/migrations/<NN>_payment_validations.sql` | NEW — create `payment_validations` table per strategy proposal §6.1. RLS: service role only writes; recipient can SELECT their own | ~25 |
-| `supabase/functions/_shared/stripe.ts` | Add `validatePaymentMethod` helper (the §2.1 logic) | ~80 |
-| `supabase/functions/payments/index.ts` | Add `reactivate-link` route (extends existing serve handler with URL pattern match) | ~60 |
+| `supabase/migrations/<NN>_payment_validations.sql` | NEW — create `payment_validations` table with full schema from §9 Author response (UNIQUE on stripe_intent_id; success+failure rows; result + decline_code + reason columns; partial indexes; RLS policies inline) | ~50 |
+| `supabase/functions/_shared/stripe.ts` | Add `validatePaymentMethodForCap` helper (§2.1 logic): manual-capture PI at `$cap` → cancel → write `payment_validations` row → write `holds` row with `status='authorized'` for legacy-read compatibility | ~140 |
+| `supabase/functions/payments/index.ts` | Add `reactivate-link` route (route discrimination via URL path). Reuses existing auth/mode/Customer resolution boilerplate from `flex_hold` branch | ~70 |
+| `supabase/functions/stripe-webhook/index.ts` | Tiny: when `payment_intent.canceled` fires with `pi.metadata.source === 'cap_validation'`, skip the `holds.status` update (helper already wrote it as 'authorized') | ~15 |
 | `src/lib/api.ts` | Add `reactivateLink({ link_id, accessToken })` client function | ~25 |
-| `src/pages/Dashboard.tsx` | (a) rename "Default" badge to "Primary" + sort primary PM to top of wallet list; (b) add Reactivate button next to "Needs payment" badge with three states: idle / loading / success-toast; if 400 "add_card_required", open AddCardModal then auto-reactivate on its onSuccess | ~80 |
-| `tests/unit/Dashboard.test.tsx` | Update test: "Default" → "Primary" assertion. Add tests for Reactivate states. | ~50 |
-| `tests/integration/reactivate-link.test.mjs` | NEW — POST endpoint test: missing-PM 400, success 200, decline 402 | ~60 |
-| `LOG.md` | Entry for PR1 with `Browser-verified:` block per Rule 19 | ~25 |
+| `src/pages/Dashboard.tsx` | (a) rename "Default" badge to "Primary" + sort primary PM to top of wallet list; (b) add Reactivate button next to "Needs payment" badge with states: idle / loading / success-toast / error-toast; if 400 `add_card_required`, open AddCardModal then auto-reactivate on its onSuccess; on success the existing badge re-renders Active via the holds-row check (no logic change to the badge query) | ~90 |
+| `tests/unit/Dashboard.test.tsx` | Update test: "Default" → "Primary" assertion. Add tests for Reactivate button states + add-card-then-reactivate path | ~60 |
+| `tests/integration/reactivate-link.test.mjs` | NEW — POST endpoint contract test: 401 missing JWT, 403 wrong owner, 400 missing PM, 200 success (writes both payment_validations + holds rows), 402 decline (writes payment_validations failure row, no holds row) | ~80 |
+| `LOG.md` | Entry for PR1 with `Browser-verified:` block per Rule 19 (mcp-session shape) | ~30 |
 
-**Total PR1: ~405 LOC** including tests + docs.
+**Total PR1: ~560 LOC** (revised upward from the pre-review ~405; includes the helper rigor from review finding #5 and the holds-row dual-write from finding #2).
 
 ### 3.2 PR2 files
 
 | File | Change | LOC |
 |---|---|---|
-| `supabase/functions/links/index.ts` | (a) GET endpoint: compute `is_funded` from `payment_validations` + saved-PM existence (instead of `holds` join); run front-gate `validatePaymentMethod` if no recent validation; rate-limit per IP/short_code/customer; (b) NEW POST `/:id/rotate` endpoint | ~180 |
-| `supabase/functions/payments/index.ts` | Remove `flex_hold` intent_role branch; either delete the function helper or stub it to error "deprecated; use validatePaymentMethod" | ~30 (deletions) |
-| `supabase/functions/stripe-webhook/index.ts` | Remove `holds`-row creation from `amount_capturable_updated`; remove `holds.captured` + `links.in_use` transitions from `succeeded` for flex; keep handling for non-flex `intent_role` unchanged | ~40 (deletions) |
-| `supabase/functions/labels/index.ts` | Replace flex capture branch with: lookup default PM, create off_session PI for `display_price_cents`, auto-capture, proceed; on decline, flip link to inactive (write `link_state_events` row, see §3.3) and return clean error | ~120 |
-| `src/components/recipient/RecipientStepFlexPayment.tsx` | Switch from PI($cap, manual) to validatePaymentMethod-on-confirm flow; reduce to single-CTA "Validate card" with $0 (or $1 fallback); on success, link is active immediately (webhook writes validation row) | ~80 (mostly deletions) |
-| `src/pages/SenderFlow.tsx` | Update intro-step error to use new `has_active_hold` → `is_funded` field; rendering unchanged on success path | ~15 |
-| `src/pages/Dashboard.tsx` | Badge rendering: "Active" (green) vs "Inactive" (amber) based on `is_funded`; rename "Needs payment" to "Inactive — Reactivate"; add URL-rotate button under link card | ~60 |
-| `src/lib/api.ts` | New `rotateLinkUrl({ link_id, accessToken })`. Update `LinkData.has_active_hold` → `is_funded` (rename). | ~30 |
-| `SPEC.md` | Update §13 Payment System for flex: validate-once + charge-per-shipment; §7 (Flex Step 22) — copy updates for the new validation step | ~40 |
-| `tests/e2e/flex-payment.spec.ts` | NEW or rewrite — full flex flow with mocked Stripe: validate at onboarding, charge at sender confirm, decline path, reactivate, URL rotation | ~200 |
-| `LOG.md` | Entry for PR2 with `Browser-verified:` block | ~30 |
+| `supabase/functions/links/index.ts` | GET endpoint: compute `is_funded` from DB-only state (no Stripe call per Tradeoff 1 Option A) — checks `sendmo_links.status` not in `(cancelled, expired)` + recent successful `payment_validations` row exists + default PM not past stored expiry. NEW POST `/:id/rotate` endpoint (generates new short_code, marks old `cancelled`) | ~140 |
+| `supabase/functions/payments/index.ts` | Remove the Phase E `flex_hold` PI-creation branch added in commit `ab92b3d` (the recipient onboarding hold). Recipient onboarding now uses the same `validatePaymentMethodForCap` helper PR1 ships, called from a different surface (`payments/onboard-flex-link` route). The `reactivate-link` route from PR1 stays unchanged. | ~80 (mostly deletions) |
+| `supabase/functions/stripe-webhook/index.ts` | (a) Drop the `amount_capturable_updated` handler's `holds`-row insert + link `draft→active` flip for `flex_hold` PIs whose `metadata.source === 'cap_validation'` (helper already wrote those rows synchronously); keep handler for any other flex_hold PI (defensive). (b) Drop `holds.captured` + link `active→in_use` from `succeeded` for `flex_hold` (we're not capturing held PIs anymore — off_session per-shipment PIs use a different metadata flag). (c) NEW: `payment_intent.payment_failed` side-effect when `metadata.intent_role='flex_hold'` AND `metadata.source='shipment_charge'` — flip link to Inactive, write `link_state_events.charge_failed` row, queue recipient decline email | ~120 |
+| `supabase/functions/labels/index.ts` | Replace lines ~336-454 (the Phase E flex-capture branch from `ab92b3d`): lookup default PM, create off_session PI for `display_price_cents` with `metadata.source='shipment_charge', intent_role='flex_hold'`, auto-capture, proceed with EasyPost buy. **Preserve** lines ~698-820 (link state transitions, recipient resolution) that predate Phase E. **Preserve** auto-refund logic for EasyPost buy failure (works unchanged). | ~150 |
+| `supabase/functions/_shared/resend.ts` + new `email-templates.ts` template | NEW email template `payment_declined_reactivate` with John's exact 2026-05-16 copy. Deep link to `/dashboard?reactivate=<link_id>` | ~50 |
+| `src/components/recipient/RecipientStepFlexPayment.tsx` | Switch from PI($cap, manual capture, Stripe Elements confirm) to `validatePaymentMethodForCap` flow: still uses Stripe Elements for card collection (SetupIntent under the hood, not PI), then on PM-attached webhook the server runs cap-validation. UI simplifies to "Add your card to fund this link." | ~70 (net deletions) |
+| `src/pages/SenderFlow.tsx` | Update intro-step Inactive error to use new `is_funded` field; rendering unchanged on success path; update Confirm-step error handler to surface the decline copy ("Your payment couldn't be processed right now. The link's been deactivated and we've notified the recipient.") | ~20 |
+| `src/pages/Dashboard.tsx` | Badge rendering: "Active" (green) vs "Inactive" (amber) based on `is_funded`; rename "Needs payment" to "Inactive — Reactivate"; add URL-rotate button under link card; on `?reactivate=<link_id>` URL param (from the recipient decline email), auto-fire the Reactivate button | ~80 |
+| `src/lib/api.ts` | New `rotateLinkUrl({ link_id, accessToken })`. Update `LinkData.has_active_hold` → `is_funded` rename | ~30 |
+| `SPEC.md` | (a) Rewrite §13 Payment System flex section: validate-once + charge-per-shipment + decline-recovery email; (b) Update §7 step 22 — copy updates; (c) §22 Testing Strategy: add `flex-payment.spec.ts` to the e2e catalog | ~60 |
+| `WISHLIST.md` | Add: nightly background validation (periodic health check); 30-day card-expiry warning email; LinksEditor /links/new payment-validation integration; per-visit front-gate aggression (Option B/C); sender-self-paid-fallback flow; fraud mitigation (rate limits + Radar + soft-lock); card account updater webhook handling | ~30 |
+| `tests/e2e/flex-payment.spec.ts` | NEW — full flex flow with mocked Stripe: onboarding → cap-validation → link Active; sender opens link → front gate passes (DB only) → fills form → off_session charge succeeds → label generated; decline path → link Inactive → email queued → reactivate via dashboard works; URL rotation → old code 404s, new code works; mid-flow recipient removes PM → link flips Inactive on next charge attempt | ~250 |
+| `LOG.md` | Entry for PR2 with `Browser-verified:` block (spec shape — references the e2e) | ~30 |
 
-**Total PR2: ~825 LOC** including tests + docs + deletions.
+**Total PR2: ~1110 LOC** (revised upward from the pre-review ~825; includes the explicit email template + the rewrite-vs-coarse-revert precision from review finding #7 + WISHLIST expansion).
 
 ### 3.3 Optional micro-table (PR2)
 
@@ -250,23 +291,16 @@ End-to-end Playwright spec covers each of the §4.2 e2e cases. Also one mcp-sess
 
 ## 7. Open questions
 
-Items the reviewer is most welcome to push on:
+**All resolved post-review and John's 2026-05-16 decisions.** Preserved here for institutional memory:
 
-1. **PR1's acknowledged temporary asymmetry** (badge stays "Needs payment" after successful Reactivate, until PR2 lands). My read: acceptable because (a) PR1→PR2 is intended to be fast (days, not weeks), (b) the success toast carries the user's mental model. Reviewer: is this a real footgun in production, or is it fine?
-
-2. **`payment_validations` table necessity in PR1.** PR1 could write to `event_logs` instead and defer the table to PR2 when it becomes load-bearing. My pick: write the table in PR1 because (a) it sets a clean audit trail from day 1, (b) PR2 will UPSERT into it heavily — better to have the schema settled and tested before then. Reviewer: defensible, or YAGNI?
-
-3. **Should PR1 also flip `sendmo_links.status` to a specific value (e.g., `validated`) on Reactivate success?** Today's status is `active`. Adding a new status would require a CHECK constraint migration and clutter the enum. Alternative: don't touch status in PR1, just write the validation row. My pick: don't touch status. Reviewer: agreed?
-
-4. **PR2's link_state_events table — defer or include?** Useful for support; not strictly load-bearing. My pick: include in PR2 because we'll write to it from the labels Edge Function on decline anyway, and having a clean audit trail before fraud-mitigation work makes that easier. Reviewer: scope creep?
-
-5. **Front-gate rate-limit thresholds in PR2.** Sketch: 5/min/IP, 50/hr/IP, 10/hr/short_code, 50/day/customer. Numbers picked from gut + the cancel-label precedent (5/60s). Reviewer: any of these obviously wrong? Should we name a fraud-flagging signal (e.g., >5 failed gates on one link in <10 min = soft-lock the link)?
-
-6. **PR2's revert of Phase E flex-capture code.** The webhook + labels + sender-flow code from commit `ab92b3d` (yesterday) gets ripped out. Reviewer: anything in that commit worth preserving that I'm about to delete (other than the `holds` schema, which stays for escrow)?
-
-7. **URL rotation timing.** Today: when rotated, old code is marked `cancelled`. A sender mid-flow on the old code gets "link not available." Alternative: 5-minute grace window where old code still works (logged as "rotation overlap"). My pick: no grace window — rotation is meant as a safety measure (e.g., link leaked), and the grace window defeats the purpose. Reviewer: agreed?
-
-8. **`payment_method_validation_window`.** PR2's front-gate skips re-validation if a recent successful one exists. What's "recent"? Sketched as 24h. Reviewer: too long (cards can go bad in less)? Too short (every sender visit triggers a Stripe call)?
+1. ~~PR1's acknowledged temporary asymmetry~~ — **Resolved (review Blocking #2 + author Accept):** dropped. PR1's helper writes a `holds` row alongside the `payment_validations` row. Existing read sites Just Work; full effect ships in PR1.
+2. **`payment_validations` table in PR1** — **Decided: include.** Schema rigor (UNIQUE, partial indexes, success+failure rows, RLS) added per review #5.
+3. **PR1 flipping `sendmo_links.status`** — **Decided: don't touch.** The `holds`-row write is sufficient for read-side state derivation; no enum churn.
+4. **PR2's `link_state_events` table** — **Decided: include in PR2.** Needed for the decline-recovery webhook handler and the future fraud-counter work.
+5. ~~Front-gate rate-limit thresholds~~ — **Moot.** John's Tradeoff 1 = Option A; no per-visit Stripe call; no public endpoint to rate-limit.
+6. **PR2's revert of Phase E** — **Decided per review #7:** specific line ranges in §3.2. Preserve `labels/index.ts:698-820` (link state transitions that predate Phase E).
+7. **URL rotation grace window** — **Decided: no grace window.** Rotation is a safety primitive; grace defeats it.
+8. ~~`payment_method_validation_window`~~ — **Moot.** No per-visit re-validation. The "recent successful validation exists" check on the lightweight front gate uses a generous window (e.g., 30 days — basically "has the recipient ever funded this link") because the real source of truth is the per-shipment off_session charge.
 
 ---
 
@@ -529,5 +563,65 @@ Please pick (A / B / C) and I'll do the in-place revision of §1-7 + the LOG ent
 
 ---
 
-<!-- Section 11 (Decision) appended at close. -->
+## 11. Decision
+
+**Decided:** 2026-05-16
+**Outcome:** approved (with revisions per fresh-eyes review + John's Tradeoff 1 = Option A)
+
+### What ships
+
+**PR1 (immediate):**
+- `payment_validations` migration with full schema rigor (UNIQUE, partial indexes, success+failure rows, RLS inline)
+- `validatePaymentMethodForCap` helper in `_shared/stripe.ts` — manual-capture PI at `$cap`, cancel, write both `payment_validations` and `holds` rows (the latter keeps PR1's read sites working without any rewrite)
+- `POST /payments/reactivate-link` endpoint — JWT-gated, owner-only, calls the helper
+- Tiny `stripe-webhook` patch — skip the `holds.status` flip on `payment_intent.canceled` when `pi.metadata.source='cap_validation'`
+- Dashboard: "Default" → "Primary" badge + sort primary PM to top + Reactivate button with idle/loading/success/error states + AddCardModal-then-reactivate path when no PM exists
+- Tests: unit (Dashboard) + integration (reactivate endpoint contract)
+- LOG entry with Browser-verified mcp-session block
+
+**PR2 (after PR1 ships + browser-verified):**
+- Pivot flex to validate-once + charge-per-shipment (off_session at sender confirm step)
+- Lightweight front gate: DB-only check (link status + recent validation + PM expiry); **no per-visit Stripe call** (per Tradeoff 1 Option A)
+- Recipient decline-recovery email with John's exact 2026-05-16 copy + deep-link `/dashboard?reactivate=<link_id>`
+- `link_state_events` audit table
+- URL rotation endpoint (`POST /links/:id/rotate`, no grace window)
+- Active/Inactive binary externally, sub-statuses retained in DB for diagnostics
+- Phase E `ab92b3d` flex-capture branch reverted with line-range precision (preserve pre-Phase-E link state transitions)
+- SPEC §7/§13/§22 + WISHLIST updates
+
+### What goes to WISHLIST (out of scope for PR1+PR2)
+
+- Nightly background validation cron (the "Option C end state" we discussed)
+- Per-visit front-gate aggression (Option B — only if scale/fraud demands)
+- 30-day card-expiry warning email
+- LinksEditor `/links/new` payment-validation integration
+- Sender-self-paid-fallback flow (recipient address prefilled, sender pays directly)
+- Fraud mitigation infrastructure (rate limits + Radar + soft-lock) — not needed since front gate is DB-only
+- Card account updater webhook (`payment_method.automatically_updated`)
+
+### Decisions summary
+
+| Question | Decision | Rationale |
+|---|---|---|
+| Tradeoff 1: front-gate aggression | Option A (lightweight, DB-only) | Ship faster; back-gate decline UX + recipient email is sufficient for dogfood scale; aggression can be added later |
+| Card-add validation extras ($1 auth) | None — SetupIntent only | Modern Stripe SetupIntent already does $0 ZDA with issuer fallback to $1; layering extra $1 auth is anti-pattern |
+| `payment_validations` schema | Full rigor in PR1 | Avoids re-migrating in PR2; supports fraud-counter use cases via failed-row partial index |
+| `holds`-table dual-write in PR1 | Yes | Makes PR1 actually unblock John end-to-end without a riskier read-path swap |
+| `intent_role` rename to `flex_validation` | No — keep `flex_hold` | Avoids the metadata-migration gap; semantic shift documented in code comments and LOG |
+| Decline-recovery copy | John's exact 2026-05-16 text | Preserved verbatim in the email template |
+| URL rotation grace window | None | Safety primitive; grace defeats the purpose |
+
+### What happens next
+
+1. Implement PR1 per §3.1.
+2. Spawn code-reviewer agent on PR1 commits **before** they land on `main` (per John's 2026-05-16 process ask).
+3. Browser-verify PR1: John clicks Reactivate on his stuck link → expects badge to flip Active, sender flow to work, labels-fn capture to succeed on next sender use.
+4. Once PR1 is verified live, draft PR2 implementation (separate session — this proposal is the only authoritative spec).
+5. PR2 also gets a code-reviewer pass before commit.
+
+### Lifecycle bookkeeping
+
+- This proposal's frontmatter `status` → `decided`, `outcome` → `approved`, `decided` → `2026-05-16`
+- Strategy proposal [`2026-05-15_payment-authorization-strategy.md`](2026-05-15_payment-authorization-strategy.md) frontmatter to be updated separately: `status` → `superseded`, with `superseded_by` field pointing to this proposal's file (preserves the institutional history without leaving stale "draft" in the directory).
+- File rename: this file becomes `2026-05-16_flex-payment-execution-pr1-pr2_reviewed-2026-05-16_decided-2026-05-16.md` per the protocol's filename progression spec.
 
