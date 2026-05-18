@@ -3,6 +3,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { log } from "../_shared/logger.ts";
 import { verifyAndParseWebhook } from "../_shared/stripe.ts";
+import { sendEmail } from "../_shared/resend.ts";
+import { paymentDeclinedReactivateEmail } from "../_shared/email-templates.ts";
 
 // POST /stripe-webhook
 //
@@ -183,6 +185,9 @@ serve(async (req: Request) => {
                 const { user_id, link_id, shipment_id, intent_role } = resolveIdsFromMetadata(meta);
 
                 // (1) UPSERT stripe_intents mirror — succeeded.
+                //     Pattern D (Phase F): also populate payment_method_id for
+                //     off_session shipment PIs so we can query "which PM was
+                //     used for this shipment" without round-tripping Stripe.
                 if (user_id) {
                     await supabase.from("stripe_intents").upsert({
                         user_id,
@@ -195,6 +200,7 @@ serve(async (req: Request) => {
                         funding_source: "card",
                         amount_cents: pi.amount,
                         captured_cents: amountCents,
+                        payment_method_id: typeof pi.payment_method === "string" ? pi.payment_method : null,
                         status: "succeeded",
                         mode,
                         idempotency_key: `pi.${piId}:create`,
@@ -204,8 +210,11 @@ serve(async (req: Request) => {
                 }
 
                 // (2) Append +charge ledger row.
-                // user_id falls back to the system-profile UUID for events whose
-                // metadata.sendmo_user_id is missing (pre-Phase-A in-flight PIs).
+                //     Works for every successful PI: full-label automatic-capture,
+                //     flex-shipment off_session (Pattern D), and any leftover
+                //     Phase E flex_hold captures still in flight at deploy time.
+                //     user_id falls back to the system-profile UUID for events
+                //     whose metadata.sendmo_user_id is missing.
                 const ledgerUserId = user_id ?? "00000000-0000-0000-0000-000000000001";
                 const { error: txErr } = await supabase.from("transactions").insert({
                     user_id: ledgerUserId,
@@ -223,25 +232,13 @@ serve(async (req: Request) => {
                     throw new Error(`transactions insert failed: ${txErr.message}`);
                 }
 
-                // (3) Flex-hold capture side-effects: holds row + link status.
-                // For full-label PIs the link transition is handled at link
-                // creation time (links function); here we only act on flex_hold.
-                if (intent_role === "flex_hold" && link_id) {
-                    await supabase.from("holds")
-                        .update({
-                            status: "captured",
-                            captured_at: new Date().toISOString(),
-                            capture_target_cents: amountCents,
-                        })
-                        .eq("stripe_intent_id", piId);
-                    // Move the link from 'active' (hold authorized) to 'in_use'
-                    // (label being shipped). Idempotent: only flip if currently
-                    // 'active' so we don't clobber later transitions.
-                    await supabase.from("sendmo_links")
-                        .update({ status: "in_use" })
-                        .eq("id", link_id)
-                        .eq("status", "active");
-                }
+                // NB: Pattern D explicitly does NOT update holds.status or flip
+                // sendmo_links.status here. Pre-Pattern D this handler updated
+                // holds.captured and flipped flex links active→in_use; both
+                // behaviors are vestigial under Pattern D (no holds rows for
+                // new flex shipments; links stay 'active' indefinitely).
+                // The active→in_use flip in labels/index.ts was also removed
+                // in this PR for the same reason.
 
                 log({
                     event_type: "stripe.payment_succeeded",
@@ -255,14 +252,16 @@ serve(async (req: Request) => {
 
             case "payment_intent.amount_capturable_updated": {
                 // Fires when a manual-capture PI is confirmed by the user and
-                // moves to 'requires_capture' state. For flex_hold PIs this is
-                // the "hold authorized" moment — create the holds row and flip
-                // the link to 'active' so senders can use it.
+                // moves to 'requires_capture' state. Pattern D (Phase F) does
+                // not create manual-capture PIs for any new flow — this event
+                // should only fire for in-flight Phase E flex_hold PIs at the
+                // moment of deploy. Defensive handler: mirror state to
+                // stripe_intents, log the event, do nothing else. (No holds-row
+                // insert, no link status flip — both were Phase E artifacts.)
                 const pi = obj as PaymentIntentObj;
                 const piId = pi.id;
                 const meta = pi.metadata || {};
                 const { user_id, link_id, intent_role } = resolveIdsFromMetadata(meta);
-                const capturableCents = (pi as { amount_capturable?: number }).amount_capturable ?? pi.amount;
 
                 if (user_id) {
                     await supabase.from("stripe_intents").upsert({
@@ -274,6 +273,7 @@ serve(async (req: Request) => {
                         capture_method: pi.capture_method ?? "manual",
                         funding_source: "card",
                         amount_cents: pi.amount,
+                        payment_method_id: typeof pi.payment_method === "string" ? pi.payment_method : null,
                         status: "requires_capture",
                         mode,
                         idempotency_key: `pi.${piId}:create`,
@@ -282,42 +282,27 @@ serve(async (req: Request) => {
                     }, { onConflict: "stripe_intent_id" });
                 }
 
-                if (intent_role === "flex_hold" && link_id) {
-                    // 7-day Stripe card-hold expiration window.
-                    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-                    await supabase.from("holds").upsert({
-                        link_id,
-                        stripe_intent_id: piId,
-                        amount_cents: capturableCents,
-                        status: "authorized",
-                        expires_at: expiresAt,
-                        mode,
-                    }, { onConflict: "stripe_intent_id" });
-
-                    // Flip the link 'draft' → 'active' so senders can use it.
-                    await supabase.from("sendmo_links")
-                        .update({ status: "active" })
-                        .eq("id", link_id)
-                        .eq("status", "draft");
-                }
-
                 log({
-                    event_type: "stripe.flex_hold_authorized",
-                    severity: "info",
+                    event_type: "stripe.amount_capturable_updated_unexpected",
+                    severity: "warn",
                     entity_type: "payment_intent",
                     entity_id: piId,
                     properties: {
-                        amount_cents: capturableCents,
                         live_mode: liveMode,
                         link_id,
                         intent_role,
+                        note: "Pattern D does not create manual-capture PIs; this likely is a Phase E in-flight remnant",
                     },
                 });
                 break;
             }
 
             case "payment_intent.canceled": {
-                // Manual void or auto-expiration of an authorized hold.
+                // Manual void or auto-expiration. Pattern D doesn't cancel
+                // PIs from our own code (we don't create manual-capture
+                // anymore), so this fires only for in-flight Phase E remnants
+                // or external cancellations. Mirror state to stripe_intents;
+                // no holds-table or link-status writes (both Phase E vestiges).
                 const pi = obj as PaymentIntentObj;
                 const piId = pi.id;
                 const meta = pi.metadata || {};
@@ -334,6 +319,8 @@ serve(async (req: Request) => {
                         capture_method: pi.capture_method ?? "manual",
                         funding_source: "card",
                         amount_cents: pi.amount,
+                        payment_method_id: typeof pi.payment_method === "string" ? pi.payment_method : null,
+                        cancellation_reason: cancellationReason,
                         status: "canceled",
                         mode,
                         idempotency_key: `pi.${piId}:create`,
@@ -342,29 +329,9 @@ serve(async (req: Request) => {
                     }, { onConflict: "stripe_intent_id" });
                 }
 
-                if (intent_role === "flex_hold" && link_id) {
-                    // 'abandoned' = Stripe auto-expired an unconfirmed PI;
-                    // anything else is a manual void.
-                    const holdStatus = cancellationReason === "abandoned" ? "expired" : "voided";
-                    await supabase.from("holds")
-                        .update({
-                            status: holdStatus,
-                            voided_at: new Date().toISOString(),
-                        })
-                        .eq("stripe_intent_id", piId);
-
-                    // Flip the link to 'expired' so the recipient knows it
-                    // needs re-authorization. Idempotent: only from active or
-                    // draft (don't clobber 'in_use'/'completed').
-                    await supabase.from("sendmo_links")
-                        .update({ status: "expired" })
-                        .eq("id", link_id)
-                        .in("status", ["draft", "active"]);
-                }
-
                 log({
                     event_type: "stripe.payment_canceled",
-                    severity: "warn",
+                    severity: "info",
                     entity_type: "payment_intent",
                     entity_id: piId,
                     properties: {
@@ -380,9 +347,11 @@ serve(async (req: Request) => {
             case "payment_intent.payment_failed": {
                 const pi = obj as PaymentIntentObj;
                 const piId = pi.id;
-                const failureReason = pi.last_payment_error?.message ?? null;
+                const failureMessage = pi.last_payment_error?.message ?? null;
+                const failureCode = (pi.last_payment_error as { code?: string } | undefined)?.code ?? null;
                 const meta = pi.metadata || {};
                 const { user_id, link_id, shipment_id, intent_role } = resolveIdsFromMetadata(meta);
+                const source = (meta as { source?: string }).source ?? null;
 
                 if (user_id) {
                     await supabase.from("stripe_intents").upsert({
@@ -395,6 +364,8 @@ serve(async (req: Request) => {
                         capture_method: pi.capture_method ?? "automatic",
                         funding_source: "card",
                         amount_cents: pi.amount,
+                        payment_method_id: typeof pi.payment_method === "string" ? pi.payment_method : null,
+                        last_payment_error_code: failureCode,
                         status: "failed",
                         mode,
                         idempotency_key: `pi.${piId}:create`,
@@ -409,8 +380,135 @@ serve(async (req: Request) => {
                     severity: "warn",
                     entity_type: "payment_intent",
                     entity_id: piId,
-                    properties: { failure_reason: failureReason, live_mode: liveMode },
+                    properties: {
+                        failure_message: failureMessage,
+                        failure_code: failureCode,
+                        live_mode: liveMode,
+                        source,
+                        link_id,
+                    },
                 });
+
+                // ─── Pattern D: flex shipment decline-recovery ───
+                // For off_session shipment PIs (source='flex_shipment') that
+                // decline, write a link_state_events row and send the
+                // recipient the decline-recovery email inline (5s timeout,
+                // event_logs fallback on send failure). Dedup via
+                // sendmo_links.last_decline_email_at (one email per link
+                // per day max).
+                //
+                // The labels Edge Function already returns 402 to the sender
+                // inline; this handler covers the async email side. If both
+                // paths race (rare — webhook usually beats the inline path),
+                // the dedup gate stops duplicate emails.
+                if (source === "flex_shipment" && link_id) {
+                    try {
+                        const { data: link } = await supabase
+                            .from("sendmo_links")
+                            .select("id, short_code, user_id, last_decline_email_at, profile:profiles!user_id(email)")
+                            .eq("id", link_id)
+                            .maybeSingle();
+
+                        if (link) {
+                            // Audit row — always written regardless of email outcome
+                            await supabase.from("link_state_events").insert({
+                                link_id: link.id,
+                                event: "charge_failed",
+                                reason: failureCode ?? failureMessage ?? "unknown",
+                                metadata: { stripe_intent_id: piId, mode },
+                            });
+
+                            // Dedup: skip email if one was already sent today
+                            const lastSent = (link as { last_decline_email_at?: string | null }).last_decline_email_at;
+                            const todayStart = new Date();
+                            todayStart.setHours(0, 0, 0, 0);
+                            const dedupSkip = lastSent && new Date(lastSent) >= todayStart;
+
+                            if (dedupSkip) {
+                                log({
+                                    event_type: "stripe.decline_email_deduped",
+                                    severity: "info",
+                                    entity_type: "sendmo_link",
+                                    entity_id: link.id,
+                                    properties: { last_sent: lastSent, stripe_intent_id: piId },
+                                });
+                            } else {
+                                // Recipient email lookup. profile is typed loosely.
+                                const recipientEmail =
+                                    (link as { profile?: { email?: string } | null }).profile?.email ?? null;
+
+                                if (recipientEmail) {
+                                    // Sender name not available in this event payload;
+                                    // labels-fn would have known it but we don't carry
+                                    // it here. Default to null → "a sender".
+                                    const tpl = paymentDeclinedReactivateEmail({
+                                        senderName: null,
+                                        linkId: link.id,
+                                        shortCode: (link as { short_code: string }).short_code,
+                                    });
+                                    // 5s timeout via AbortController. If Resend is slow,
+                                    // fail to event_logs rather than hold up the webhook.
+                                    const ac = new AbortController();
+                                    const timeoutId = setTimeout(() => ac.abort(), 5000);
+                                    try {
+                                        await sendEmail({
+                                            to: recipientEmail,
+                                            subject: tpl.subject,
+                                            html: tpl.html,
+                                            signal: ac.signal,
+                                        });
+                                        clearTimeout(timeoutId);
+                                        await supabase
+                                            .from("sendmo_links")
+                                            .update({ last_decline_email_at: new Date().toISOString() })
+                                            .eq("id", link.id);
+                                        log({
+                                            event_type: "stripe.decline_email_sent",
+                                            severity: "info",
+                                            entity_type: "sendmo_link",
+                                            entity_id: link.id,
+                                            properties: { stripe_intent_id: piId, recipient: recipientEmail },
+                                        });
+                                    } catch (sendErr) {
+                                        clearTimeout(timeoutId);
+                                        const sendErrMsg = sendErr instanceof Error ? sendErr.message : String(sendErr);
+                                        console.error("[stripe-webhook] decline email send failed:", sendErrMsg);
+                                        log({
+                                            event_type: "decline_email.send_failed",
+                                            severity: "error",
+                                            entity_type: "sendmo_link",
+                                            entity_id: link.id,
+                                            properties: {
+                                                stripe_intent_id: piId,
+                                                recipient: recipientEmail,
+                                                error_message: sendErrMsg,
+                                            },
+                                        });
+                                    }
+                                } else {
+                                    log({
+                                        event_type: "stripe.decline_email_no_recipient",
+                                        severity: "warn",
+                                        entity_type: "sendmo_link",
+                                        entity_id: link.id,
+                                        properties: { stripe_intent_id: piId },
+                                    });
+                                }
+                            }
+                        }
+                    } catch (declineErr) {
+                        // Never let decline-handling errors fail the webhook response.
+                        const msg = declineErr instanceof Error ? declineErr.message : String(declineErr);
+                        console.error("[stripe-webhook] flex decline handler error:", msg);
+                        log({
+                            event_type: "stripe.flex_decline_handler_error",
+                            severity: "error",
+                            entity_type: "payment_intent",
+                            entity_id: piId,
+                            properties: { error_message: msg, link_id },
+                        });
+                    }
+                }
                 break;
             }
 
@@ -549,6 +647,9 @@ serve(async (req: Request) => {
                 // Mirror SetupIntent state to stripe_intents. Card data
                 // (brand/last4/exp) is NOT on this event — see Phase B B1
                 // fix; that lives on payment_method.attached.
+                // Pattern D (Phase F): also populate payment_method_id so
+                // "current state of this PM" queries don't need a Stripe
+                // round-trip.
                 const seti = obj as SetupIntentObj;
                 const userId = await resolveUserByCustomer(supabase, seti.customer, liveMode);
                 if (userId) {
@@ -557,6 +658,7 @@ serve(async (req: Request) => {
                         stripe_intent_id: seti.id,
                         intent_kind: "setup",
                         funding_source: "card",
+                        payment_method_id: typeof seti.payment_method === "string" ? seti.payment_method : null,
                         status: "succeeded",
                         mode,
                         idempotency_key: `seti.${seti.id}:create`,
@@ -651,6 +753,48 @@ serve(async (req: Request) => {
                         is_default: setDefault,
                     },
                 });
+
+                // Pattern D (Phase F): when a recipient's first PM lands, flip
+                // their draft flex links in this mode to 'active'. Also covers
+                // the post-decline recovery path — if the recipient adds a new
+                // card after a decline, any draft links activate; existing
+                // active-but-Inactive-because-no-PM links re-render Active
+                // automatically (computed; no DB write needed).
+                if (setDefault) {
+                    const { data: activated } = await supabase
+                        .from("sendmo_links")
+                        .update({ status: "active" })
+                        .eq("user_id", userId)
+                        .eq("link_type", "flexible")
+                        .eq("status", "draft")
+                        // sendmo_links has no `mode` column; links carry is_test
+                        // (TRUE/FALSE) — match it to the current PM's mode.
+                        .eq("is_test", mode === "test")
+                        .select("id, short_code");
+
+                    for (const link of activated ?? []) {
+                        await supabase.from("link_state_events").insert({
+                            link_id: link.id,
+                            event: "activated",
+                            reason: "first_pm_attached",
+                            actor_user: userId,
+                            metadata: { stripe_payment_method_id: pm.id, mode },
+                        });
+                    }
+                    if (activated && activated.length > 0) {
+                        log({
+                            event_type: "stripe.flex_links_activated",
+                            severity: "info",
+                            entity_type: "payment_method",
+                            entity_id: pm.id,
+                            properties: {
+                                user_id: userId,
+                                mode,
+                                activated_count: activated.length,
+                            },
+                        });
+                    }
+                }
                 break;
             }
 
@@ -705,6 +849,121 @@ serve(async (req: Request) => {
                     entity_type: "payment_method",
                     entity_id: pm.id,
                     properties: { live_mode: liveMode, user_id: row.user_id, was_default: row.is_default },
+                });
+
+                // Pattern D (Phase F): write link_state_events.pm_detached for
+                // the user's active flex links in this mode. Useful for
+                // support diagnostics ("why did this link suddenly go
+                // Inactive?"). Pattern D's is_funded query will report
+                // Inactive on next GET (no DB UPDATE needed — computed).
+                if (row.is_default) {
+                    const { data: flexLinks } = await supabase
+                        .from("sendmo_links")
+                        .select("id")
+                        .eq("user_id", row.user_id)
+                        .eq("link_type", "flexible")
+                        .eq("is_test", row.mode === "test")
+                        .eq("status", "active");
+                    for (const link of flexLinks ?? []) {
+                        await supabase.from("link_state_events").insert({
+                            link_id: link.id,
+                            event: "pm_detached",
+                            reason: "default_pm_removed",
+                            metadata: { stripe_payment_method_id: pm.id, mode: row.mode },
+                        });
+                    }
+                }
+                break;
+            }
+
+            case "payment_method.updated":
+            case "payment_method.automatically_updated": {
+                // Pattern D (Phase F). Two distinct events handled by the same
+                // logic:
+                //   .updated              → manual update (dashboard / API)
+                //   .automatically_updated → Card Account Updater (CAU) push
+                //                           from Visa/MC/Amex; issuer reissued
+                //                           the card
+                // Refresh our cached metadata (brand/last4/exp) so is_funded's
+                // expiry check stays accurate. On brand change (CAU swapping
+                // Visa→MC etc.), write a link_state_events.pm_expired row for
+                // every active flex link the user owns — useful audit, no
+                // behavioral change (Pattern D's is_funded re-evaluates from
+                // the updated payment_methods row on next render).
+                const pm = obj as PaymentMethodObj;
+                const previous = (event.data as { previous_attributes?: { card?: { brand?: string } } } | undefined)
+                    ?.previous_attributes;
+                const brandChanged = !!(previous?.card?.brand && previous.card.brand !== pm.card?.brand);
+
+                const { data: row } = await supabase
+                    .from("payment_methods")
+                    .select("id, user_id, mode, brand")
+                    .eq("stripe_payment_method_id", pm.id)
+                    .is("deleted_at", null)
+                    .maybeSingle();
+
+                if (!row) {
+                    // Not ours (e.g., PM attached to a non-SendMo customer).
+                    log({
+                        event_type: "stripe.pm_updated_orphan",
+                        severity: "info",
+                        entity_type: "payment_method",
+                        entity_id: pm.id,
+                        properties: { event_type: eventType, live_mode: liveMode },
+                    });
+                    break;
+                }
+
+                await supabase
+                    .from("payment_methods")
+                    .update({
+                        brand: pm.card?.brand ?? null,
+                        last4: pm.card?.last4 ?? null,
+                        exp_month: pm.card?.exp_month ?? null,
+                        exp_year: pm.card?.exp_year ?? null,
+                    })
+                    .eq("id", row.id);
+
+                if (brandChanged) {
+                    // CAU-induced brand swap (e.g. issuer reissued the card as
+                    // a different network). We log against the affected flex
+                    // links so support can see the change history. Using the
+                    // 'pm_expired' event from the CHECK enum because the
+                    // semantic effect is the same — the prior card identity
+                    // is dead. A `brand_changed` event value would be more
+                    // semantically precise; deferred to a future migration
+                    // that revises the enum.
+                    const { data: flexLinks } = await supabase
+                        .from("sendmo_links")
+                        .select("id")
+                        .eq("user_id", row.user_id)
+                        .eq("link_type", "flexible")
+                        .eq("is_test", row.mode === "test")
+                        .eq("status", "active");
+                    for (const link of flexLinks ?? []) {
+                        await supabase.from("link_state_events").insert({
+                            link_id: link.id,
+                            event: "pm_expired",
+                            reason: `brand_changed: ${previous?.card?.brand} → ${pm.card?.brand ?? "unknown"}`,
+                            metadata: { stripe_payment_method_id: pm.id, mode: row.mode, source_event: eventType },
+                        });
+                    }
+                }
+
+                log({
+                    event_type: eventType === "payment_method.automatically_updated"
+                        ? "stripe.pm_auto_updated"
+                        : "stripe.pm_updated",
+                    severity: brandChanged ? "warn" : "info",
+                    entity_type: "payment_method",
+                    entity_id: pm.id,
+                    properties: {
+                        live_mode: liveMode,
+                        user_id: row.user_id,
+                        brand_changed: brandChanged,
+                        new_brand: pm.card?.brand,
+                        new_last4: pm.card?.last4,
+                    },
                 });
                 break;
             }

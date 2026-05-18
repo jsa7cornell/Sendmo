@@ -195,6 +195,55 @@ export function cancelPaymentIntent(
     });
 }
 
+// ─── Off_session shipment PI (Pattern D, Phase F) ───────────
+//
+// Sibling helper to createPaymentIntent (NOT a wrapper). The two diverge
+// on one critical field: createPaymentIntent sends
+// `automatic_payment_methods: { enabled: true }` so that PaymentElement
+// can negotiate PM types on the client. Stripe REJECTS that combination
+// when an explicit `payment_method` is also provided with `confirm: true`
+// (validation error: parameter_unknown / parameter_invalid_combination).
+// The off_session/MIT path needs the explicit-PM shape — so it gets its
+// own request body without `automatic_payment_methods`.
+//
+// Used by labels/index.ts on every flex sender confirm to charge the
+// recipient's saved PM for the actual shipment rate. The PI is created
+// pre-confirmed and auto-captures synchronously. The returned status is
+// one of:
+//   'succeeded'         — captured; proceed with EasyPost label buy
+//   'requires_action'   — SCA/3DS required; treat as decline in v1 (US-only)
+//   'requires_payment_method' / 'canceled' — declined; bail
+//
+// Stripe documents the off_session shape at:
+//   https://docs.stripe.com/payments/save-and-reuse
+//   https://docs.stripe.com/payments/cits-and-mits
+export function createOffSessionShipmentPI(params: {
+    amount_cents: number;
+    currency?: string;
+    customer: string;
+    payment_method: string;
+    metadata: Record<string, string>;
+    idempotency_key: string;
+    liveMode: boolean;
+}): Promise<PaymentIntent> {
+    return stripeRequest<PaymentIntent>("/payment_intents", {
+        method: "POST",
+        body: {
+            amount: params.amount_cents,
+            currency: params.currency || "usd",
+            capture_method: "automatic",
+            customer: params.customer,
+            payment_method: params.payment_method,
+            off_session: true,
+            confirm: true,
+            // NB: no automatic_payment_methods. See helper-level comment.
+            metadata: params.metadata,
+        },
+        idempotencyKey: params.idempotency_key,
+        liveMode: params.liveMode,
+    });
+}
+
 // ─── Customers ──────────────────────────────────────────────
 
 export interface Customer {

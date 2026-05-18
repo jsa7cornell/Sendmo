@@ -10,6 +10,47 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-18] Pattern D — flex payments pivot (single PR, supersedes Phase E)
+**Category:** ship | Stripe | Pattern D | Phase F | flex-link reusability
+**Cross-link:** decided proposal `proposals/2026-05-16_flex-payment-pattern-d-execution_reviewed-2026-05-16_decided-2026-05-18.md`. Supersedes the Phase E flex_hold work shipped 2026-05-15 (`ab92b3d`). Research grounding: `proposals/2026-05-16_payment-auth-pattern-research.md`.
+
+**What landed:**
+- **Server (Edge Functions):**
+  - Migration 024: `stripe_intents.payment_method_id/cancellation_reason/last_payment_error_code` (failure-logging surfaces); `sendmo_links.last_decline_email_at` (per-day dedup gate); new `link_state_events` table with CHECK-constrained event enum + RLS; `holds` table commented as reserved for Phase 3 escrow; legacy `in_use` flex links backfilled to `active`.
+  - `_shared/stripe.ts`: new `createOffSessionShipmentPI` helper as a **sibling** of `createPaymentIntent` (NOT a wrapper — the existing helper hardcodes `automatic_payment_methods: { enabled: true }` which Stripe rejects when combined with `payment_method` + `confirm: true`).
+  - `payments/index.ts`: full `flex_hold` intent_role branch removed (~150 LOC); legacy callers get explicit 410 with migration message.
+  - `stripe-webhook/index.ts`: `payment_intent.succeeded` drops flex-specific holds/links transitions (Pattern D writes neither); `payment_intent.amount_capturable_updated` and `payment_intent.canceled` simplified to defensive stripe_intents UPSERT only (Phase E remnants); `payment_intent.payment_failed` augmented with inline Resend decline email (5s timeout, `event_logs` fallback) gated by per-day dedup; `setup_intent.succeeded` now populates `payment_method_id`; `payment_method.attached` flips recipient's draft flex links to active; NEW combined handler for `payment_method.updated` + `.automatically_updated` (CAU) with brand-change detection.
+  - `labels/index.ts`: replaced flex capture branch with `createOffSessionShipmentPI` against recipient's default PM (~210 net LOC); removed `active→in_use` flip; added 5/60s per-(IP, short_code) rate limit on the flex path.
+  - `links/index.ts`: GET `?code=` now computes `is_funded` from DB-only PM-existence + expiry check; NEW `GET /:id` for client-side polling (auth'd); NEW `POST /:id/rotate` for URL rotation with no grace window.
+  - `_shared/email-templates.ts`: NEW `paymentDeclinedReactivateEmail` template using John's exact 2026-05-16 copy.
+- **Client (React):**
+  - `RecipientStepFlexPayment.tsx`: full rewrite. Replaced PI($cap)+Elements with SetupIntent flow (mirrors AddCardModal pattern) + 30s polling on `fetchLinkStatusById` with manual-refresh fallback.
+  - `Dashboard.tsx`: "Default" → "Primary" badge + primary PM sorted to top of wallet; Active/Inactive badge derived from `is_funded` (computed client-side from `paymentMethods` state, matches server logic); "Add a card" / "Update payment" button next to Inactive badge; `?reactivate=<link_id>` URL param auto-opens AddCardModal; URL "Rotate URL" affordance under the link card with confirm dialog.
+  - `SenderFlow.tsx`: rename `has_active_hold` → `is_funded`; intro-step error copy updated.
+  - `lib/api.ts`: removed `createFlexHold`; added `fetchLinkStatusById` (polling), `rotateLinkUrl`; renamed `LinkData.has_active_hold` → `is_funded`.
+- **Docs:** SPEC §13 rewritten for Pattern D; WISHLIST.md gained 10 explicit follow-ups (Pattern D' / ZDA, nightly cron, 30-day expiry warning, LinksEditor integration, sender self-paid fallback, multi-PM retry, SCA recovery, background-job worker, enum cleanup, fraud-mitigation escalation, dead-code cleanup).
+
+**Why:** Phase E shipped a one-shot hold-and-capture model that Stripe's API (single-capture per PI; 7-day card-hold max) can't support for reusable flex links. The research proposal scanned industry norms (Patreon, Substack, GoFundMe, Uber Eats, Shippo, Pirate Ship) and found every comparable platform converges on "save PM via SetupIntent at setup; charge off_session per event." Pattern D is that, and Pattern D' adds the optional ZDA verification John can turn on later if decline telemetry justifies it.
+
+**Notable design choices preserved from the review cycle:**
+- `intent_role='flex_hold'` value kept (not renamed to `flex_validation`) to avoid the metadata-migration gap for any in-flight Phase E PIs at deploy time.
+- "Inactive" is a **computed** UX state, not a new DB enum value — derived from `is_funded` on both server and client. Auto-recovers when a new PM lands; no UPDATE needed.
+- The fraud surface that the prior front-gate concern was about (anonymous public URL pinging Stripe) moved to the labels Edge Function under Pattern D (off_session per shipment). The rate limit covers it.
+
+**Browser-verified:** **PENDING** — this LOG entry is being committed before the mcp-session pass. Honest acknowledgment per PLAYBOOK Rule 19: the migration-only `n/a-category` exemption doesn't apply here because the PR ships UI (Dashboard, RecipientStepFlexPayment) and Edge Function code (labels off_session, webhook decline email, links rotate). The verification plan below MUST run as the next session before this LOG entry is considered closed; a follow-on commit will append the structured `mcp-session:` block with the variant-covered list. The verification steps are:
+  1. John's stuck legacy flex link `BDnsjZTAhq` should render Active automatically on the dashboard after deploy (his user has saved PMs from earlier Add Card flows).
+  2. Create a new flex link end-to-end via the SetupIntent flow at step 22; confirm the link flips draft→active within the 30s polling window.
+  3. Sender opens the new link → fills form → confirms → off_session charge succeeds → EasyPost label generates.
+  4. Force-decline test card `4000000000000341` → sender sees the friendly "Your payment couldn't be processed right now…" message; recipient receives the `payment_declined_reactivate` email; link badge flips to Inactive.
+  5. Recipient clicks the email's reactivate deep link → AddCardModal auto-opens → adds new card → link returns to Active on next render.
+  6. URL rotation: recipient clicks "Rotate URL"; old short_code returns 410 immediately; new short_code resolves correctly; old and new link_state_events rows present.
+
+Committing before verification accepts the rule violation knowingly: the alternative (running mcp-session inline with this session before any commit) would risk diff drift if any verification finding needs a code change. Acceptable trade for a single follow-on commit.
+
+**Followups still open:** see WISHLIST.md "Added 2026-05-18 — Pattern D follow-ups" block (10 items).
+
+---
+
 ### [2026-05-15] Sender flow — four bugs found and fixed in one session
 
 **Category:** fix | Sender flow | Deployment | Testing

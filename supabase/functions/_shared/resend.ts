@@ -10,6 +10,10 @@ interface SendEmailParams {
   subject: string;
   html: string;
   from?: string;
+  // Optional AbortSignal — pass from an AbortController to enforce a timeout
+  // on the Resend POST. The stripe-webhook decline-recovery email uses this
+  // to keep the webhook handler under Stripe's 30s response window.
+  signal?: AbortSignal;
 }
 
 interface ResendResponse {
@@ -37,6 +41,7 @@ export async function sendEmail(params: SendEmailParams): Promise<{ id: string }
       subject: params.subject,
       html: params.html,
     }),
+    signal: params.signal,
   });
 
   const data: ResendResponse = await response.json();

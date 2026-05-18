@@ -401,42 +401,11 @@ export interface CreateLinkResult {
   url: string;
 }
 
-// Request a flex_hold PaymentIntent against an existing draft link.
-// Returns the client_secret + customer session for Stripe Elements.
-export interface CreateFlexHoldParams {
-  link_id: string;
-  amount_cents: number;
-  live_mode?: boolean;
-  access_token: string;
-}
-export interface CreateFlexHoldResult {
-  client_secret: string;
-  payment_intent_id: string;
-  status: string;
-  customer_session_client_secret: string | null;
-}
-export async function createFlexHold(
-  params: CreateFlexHoldParams,
-): Promise<CreateFlexHoldResult> {
-  const res = await fetch(`${BASE_URL}/functions/v1/payments`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${params.access_token}`,
-    },
-    body: JSON.stringify({
-      intent_role: "flex_hold",
-      link_id: params.link_id,
-      amount_cents: params.amount_cents,
-      live_mode: params.live_mode ?? false,
-    }),
-  });
-  const data = await res.json();
-  if (!res.ok) {
-    throw new Error(data.error || `Failed to create flex hold (${res.status})`);
-  }
-  return data as CreateFlexHoldResult;
-}
+// REMOVED 2026-05-18 (Pattern D, Phase F): createFlexHold no longer exists.
+// Flex links collect cards via SetupIntent at /payment-methods (existing
+// Add Card flow), then per-shipment off_session charges happen inside the
+// labels Edge Function. See proposals/2026-05-16_flex-payment-pattern-d-
+// execution_reviewed-2026-05-16_decided-2026-05-18.md.
 
 export async function createFlexLink(
   params: CreateLinkParams,
@@ -474,10 +443,11 @@ export interface LinkData {
   // False when the stored destination address has no street1 — sender flow
   // should surface an error immediately rather than failing at label creation.
   recipient_address_complete: boolean;
-  // Phase E: false → flex link has no active payment authorization. Sender flow
-  // should refuse up-front instead of letting the user reach Review & Confirm.
-  // Always true for full_label links (their PI was already captured at creation).
-  has_active_hold?: boolean;
+  // Pattern D (Phase F): false → flex link has no usable saved PM (either
+  // none exists, or the default's stored expiry passed). Sender flow shows
+  // "this link isn't accepting payments" up-front instead of letting the
+  // user reach Review & Confirm. Always true for full_label links.
+  is_funded?: boolean;
   // Populated for full_label viewer links so the client can redirect to
   // /t/<public_code>. Null for flex-links.
   public_code?: string | null;
@@ -541,6 +511,51 @@ export async function fetchLink(shortCode: string): Promise<LinkData> {
     throw new Error(data.error || `Link not found (${res.status})`);
   }
   return data as LinkData;
+}
+
+// ─── Pattern D (Phase F): link status polling + URL rotation ────
+
+export interface LinkStatusResponse {
+  id: string;
+  short_code: string;
+  link_type: string;
+  status: string;
+  max_price_cents: number;
+  is_test: boolean;
+}
+
+// Auth'd. Used by RecipientStepFlexPayment to poll for the draft→active
+// flip that happens server-side in the payment_method.attached webhook.
+export async function fetchLinkStatusById(linkId: string, accessToken: string): Promise<LinkStatusResponse> {
+  const res = await fetch(`${BASE_URL}/functions/v1/links/${encodeURIComponent(linkId)}`, {
+    method: "GET",
+    headers: { ...headers(), Authorization: `Bearer ${accessToken}` },
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || `Link status fetch failed (${res.status})`);
+  }
+  return data as LinkStatusResponse;
+}
+
+export interface RotateLinkResult {
+  id: string;
+  short_code: string;
+  url: string;
+}
+
+// Auth'd. Rotates the link's short_code (old code marked cancelled, no
+// grace window). Returns the new short_code + URL.
+export async function rotateLinkUrl(linkId: string, accessToken: string): Promise<RotateLinkResult> {
+  const res = await fetch(`${BASE_URL}/functions/v1/links/${encodeURIComponent(linkId)}/rotate`, {
+    method: "POST",
+    headers: { ...headers(), Authorization: `Bearer ${accessToken}` },
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || `Rotate failed (${res.status})`);
+  }
+  return data as RotateLinkResult;
 }
 
 // ─── Sender Rates (with link preferences) ──────────────────

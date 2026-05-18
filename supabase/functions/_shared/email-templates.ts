@@ -192,3 +192,37 @@ export function trackingUpdateEmail(
     `),
   };
 }
+
+// ─── Payment Declined — Reactivate Email (Pattern D, Phase F) ───
+//
+// Sent to the recipient of a flex link when an off_session shipment charge
+// declines. Copy from proposal §2.1 (John's 2026-05-16 exact wording).
+// Deep link sends them to /dashboard?reactivate=<link_id> which auto-opens
+// AddCardModal so they can update payment and re-Activate the link.
+
+export function paymentDeclinedReactivateEmail(params: {
+  senderName: string | null;        // null → "a sender"
+  linkId: string;
+  shortCode: string;
+  dashboardOrigin?: string;          // defaults to https://sendmo.co
+}): { subject: string; html: string } {
+  const senderLabel = params.senderName?.trim() || "a sender";
+  const origin = (params.dashboardOrigin || "https://sendmo.co").replace(/\/$/, "");
+  const reactivateUrl = `${origin}/dashboard?reactivate=${encodeURIComponent(params.linkId)}`;
+  return {
+    subject: "Action needed — your SendMo link needs payment update",
+    html: layout(`
+      <h2 style="margin:0 0 8px;font-size:20px;font-weight:600;color:#111827;">Your payment needs an update</h2>
+      <p style="margin:0 0 16px;font-size:14px;color:${GRAY_600};line-height:1.5;">
+        Your payment failed when ${senderLabel} was printing a shipping label using your link.
+        We've temporarily deactivated the link. Click below to update your payment information and reactivate the link.
+      </p>
+      <div style="text-align:center;margin:24px 0;">
+        <a href="${reactivateUrl}" style="display:inline-block;background-color:${BRAND_BLUE};color:#ffffff;font-size:14px;font-weight:600;text-decoration:none;padding:12px 32px;border-radius:8px;">Update payment</a>
+      </div>
+      <p style="margin:0;font-size:12px;color:${GRAY_400};text-align:center;">
+        Link: sendmo.co/s/${params.shortCode}
+      </p>
+    `),
+  };
+}

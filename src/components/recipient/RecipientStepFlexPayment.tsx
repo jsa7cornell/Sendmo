@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { Elements, PaymentElement, useStripe, useElements } from "@stripe/react-stripe-js";
 import { CreditCard, ArrowLeft, Loader2, Shield } from "lucide-react";
@@ -6,10 +6,16 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/contexts/AuthContext";
 import { getStripeForMode } from "@/lib/stripeClient";
-import { createFlexLink, createFlexHold } from "@/lib/api";
+import { createFlexLink, createSetupIntent, fetchLinkStatusById } from "@/lib/api";
 import type { RecipientFlowState } from "@/hooks/useRecipientFlow";
 
-// ─── Rate estimate lookup (from PRD Section 7.1) ────────────
+// ─── Rate estimate lookup (kept for display only) ────────────
+// The estimate shown to the recipient is the same range the sender will
+// see in the rate list. Under Pattern D (Phase F), no $cap pre-auth is
+// created — the card is saved via SetupIntent at this step and per-shipment
+// off_session charges happen later in the labels Edge Function. The range
+// shown here is purely informational ("expect to be charged something in
+// this ballpark per shipment").
 
 interface RangeEstimate {
   low: number;
@@ -64,16 +70,16 @@ interface Props {
 export default function RecipientStepFlexPayment({ state, onUpdate, onContinue, onBack }: Props) {
   const { session, liveMode } = useAuth();
   const estimate = getEstimate(state);
-  const holdAmount = Math.round(estimate.high * 1.1);
 
   const [linkError, setLinkError] = useState<string | null>(null);
-  const [piError, setPiError] = useState<string | null>(null);
+  const [setupError, setSetupError] = useState<string | null>(null);
   const [clientSecret, setClientSecret] = useState<string | null>(null);
-  const [customerSessionClientSecret, setCustomerSessionClientSecret] = useState<string | null>(null);
-  const [paymentIntentId, setPaymentIntentId] = useState<string | null>(null);
+  const [setupIntentId, setSetupIntentId] = useState<string | null>(null);
 
-  // Step 1: ensure a draft link exists. Creates one if state.linkId is empty.
-  // Idempotent re-run guard: gated on state.linkId being empty.
+  // Step 1: ensure a draft sendmo_links row exists. Creates one with
+  // initial_status='draft' so the webhook (payment_method.attached) can flip
+  // it to 'active' once the SetupIntent lands. Idempotent: if state.linkId
+  // is already set (refresh of the page), skip re-creation.
   useEffect(() => {
     if (state.linkId) return;
     if (!session?.access_token) {
@@ -109,35 +115,32 @@ export default function RecipientStepFlexPayment({ state, onUpdate, onContinue, 
     return () => { cancelled = true; };
   }, [state.linkId, session?.access_token]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Step 2: once we have a linkId, request the flex_hold PaymentIntent.
+  // Step 2: once link exists, request a SetupIntent from /payment-methods.
+  // SetupIntent is the same primitive the Dashboard "Add a card" modal uses
+  // (commit 220b3e2). On confirm, Stripe runs its zero-dollar verification
+  // with the issuer; payment_method.attached webhook then flips this link's
+  // status draft→active server-side.
   useEffect(() => {
     if (!state.linkId || clientSecret) return;
     if (!session?.access_token) return;
     let cancelled = false;
     (async () => {
       try {
-        const result = await createFlexHold({
-          link_id: state.linkId,
-          amount_cents: holdAmount,
-          live_mode: liveMode,
-          access_token: session.access_token,
-        });
+        const result = await createSetupIntent(session.access_token);
         if (cancelled) return;
         setClientSecret(result.client_secret);
-        setPaymentIntentId(result.payment_intent_id);
-        setCustomerSessionClientSecret(result.customer_session_client_secret);
+        setSetupIntentId(result.setup_intent_id);
       } catch (err) {
         if (cancelled) return;
-        setPiError(err instanceof Error ? err.message : "Failed to set up payment");
+        setSetupError(err instanceof Error ? err.message : "Failed to set up card collection");
       }
     })();
     return () => { cancelled = true; };
-  }, [state.linkId, holdAmount, liveMode, clientSecret, session?.access_token]);
+  }, [state.linkId, clientSecret, session?.access_token]);
 
   const elementsOptions = useMemo(
     () => clientSecret ? {
       clientSecret,
-      ...(customerSessionClientSecret ? { customerSessionClientSecret } : {}),
       appearance: {
         theme: "flat" as const,
         variables: {
@@ -147,10 +150,10 @@ export default function RecipientStepFlexPayment({ state, onUpdate, onContinue, 
         },
       },
     } : undefined,
-    [clientSecret, customerSessionClientSecret],
+    [clientSecret],
   );
 
-  const error = linkError || piError;
+  const error = linkError || setupError;
 
   return (
     <div className="space-y-5">
@@ -158,16 +161,16 @@ export default function RecipientStepFlexPayment({ state, onUpdate, onContinue, 
       <div className="text-center">
         <div className="flex items-center justify-center gap-2 mb-2">
           <Shield className="w-5 h-5 text-primary" />
-          <h1 className="text-2xl font-bold text-foreground">Authorize payment</h1>
+          <h1 className="text-2xl font-bold text-foreground">Add your card</h1>
         </div>
         <p className="text-muted-foreground text-sm">
-          A temporary hold ensures your link is ready when your sender needs it.
+          We'll charge your card each time a sender uses your link.
         </p>
       </div>
 
-      {/* Estimated cost range */}
+      {/* Estimated cost range — informational only under Pattern D */}
       <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
-        <h3 className="text-sm font-semibold text-foreground mb-3">Estimated shipping cost</h3>
+        <h3 className="text-sm font-semibold text-foreground mb-3">Estimated shipping cost (per shipment)</h3>
         <div className="text-center mb-4">
           <motion.div
             animate={{ scale: [1, 1.02, 1] }}
@@ -200,22 +203,18 @@ export default function RecipientStepFlexPayment({ state, onUpdate, onContinue, 
             </div>
           )}
           <div className="flex justify-between">
-            <dt className="text-muted-foreground">Price cap</dt>
+            <dt className="text-muted-foreground">Price cap per shipment</dt>
             <dd className="font-medium text-foreground">${state.price_cap}</dd>
-          </div>
-          <div className="flex justify-between border-t border-border pt-2">
-            <dt className="font-semibold text-foreground">Hold amount</dt>
-            <dd className="font-bold text-primary text-lg">{formatCents(holdAmount)}</dd>
           </div>
         </dl>
       </div>
 
-      {/* Payment form (Stripe Elements) */}
+      {/* Card collection (Stripe Elements SetupIntent) */}
       <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
             <CreditCard className="w-4 h-4 text-primary" />
-            <h3 className="text-sm font-semibold text-foreground">Payment</h3>
+            <h3 className="text-sm font-semibold text-foreground">Payment method</h3>
           </div>
           <Badge
             variant="outline"
@@ -227,22 +226,19 @@ export default function RecipientStepFlexPayment({ state, onUpdate, onContinue, 
 
         {error ? (
           <p className="text-sm text-destructive">{error}</p>
-        ) : !clientSecret || !paymentIntentId || !elementsOptions ? (
+        ) : !clientSecret || !setupIntentId || !elementsOptions ? (
           <div className="space-y-3">
             <div className="h-32 rounded-xl bg-muted animate-pulse" />
-            <p className="text-xs text-muted-foreground">Setting up your link…</p>
+            <p className="text-xs text-muted-foreground">Setting up card collection…</p>
           </div>
         ) : (
           <Elements stripe={getStripeForMode(liveMode)} options={elementsOptions}>
-            <FlexHoldForm
-              holdAmount={holdAmount}
-              liveMode={liveMode}
-              onAuthorized={(piId) => {
-                onUpdate({ paymentStatus: "authorized" });
+            <FlexSetupForm
+              linkId={state.linkId}
+              accessToken={session?.access_token ?? null}
+              onActivated={() => {
+                onUpdate({ paymentStatus: "succeeded" });
                 onContinue();
-                // No further work needed — webhook flips link status to 'active'
-                // and step 23 just reads short_code from state.
-                void piId;
               }}
             />
           </Elements>
@@ -257,8 +253,8 @@ export default function RecipientStepFlexPayment({ state, onUpdate, onContinue, 
 
       {/* Explainer */}
       <div className="bg-muted rounded-xl px-4 py-3 text-xs text-muted-foreground">
-        We'll hold up to {formatCents(holdAmount)} on your card. You'll only be charged the actual
-        shipping cost when your sender prints a label. Any excess hold is automatically released.
+        You'll be charged the actual shipping cost each time a sender uses your link.
+        We cap each shipment at ${state.price_cap}. Update or remove your card anytime from your dashboard.
       </div>
 
       <Button variant="outline" onClick={onBack} className="rounded-xl">
@@ -269,19 +265,91 @@ export default function RecipientStepFlexPayment({ state, onUpdate, onContinue, 
   );
 }
 
-function FlexHoldForm({
-  holdAmount,
-  liveMode,
-  onAuthorized,
+// ─── Inner form (SetupIntent confirm + activation polling) ───
+
+function FlexSetupForm({
+  linkId,
+  accessToken,
+  onActivated,
 }: {
-  holdAmount: number;
-  liveMode: boolean;
-  onAuthorized: (paymentIntentId: string) => void;
+  linkId: string;
+  accessToken: string | null;
+  onActivated: () => void;
 }) {
   const stripe = useStripe();
   const elements = useElements();
   const [submitting, setSubmitting] = useState(false);
+  const [polling, setPolling] = useState(false);
+  const [pollTimedOut, setPollTimedOut] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const pollIntervalRef = useRef<number | null>(null);
+
+  // Poll the link's status server-side after SetupIntent confirms. The
+  // payment_method.attached webhook flips status draft→active; this poll
+  // lets us advance to step 23 as soon as that happens. Falls back to a
+  // Refresh button after 30s if the webhook is delayed (rare; Stripe
+  // usually delivers within 1-3 seconds).
+  function startPolling() {
+    if (!accessToken || !linkId) return;
+    setPolling(true);
+    setPollTimedOut(false);
+    const started = Date.now();
+    const intervalId = window.setInterval(async () => {
+      // Skip polls while the tab is hidden — saves background API traffic
+      // when the user has navigated away. The poll resumes when the tab is
+      // visible again. The 30s timeout still applies (wall-clock).
+      if (document.visibilityState === "hidden") {
+        if (Date.now() - started > 30_000) {
+          window.clearInterval(intervalId);
+          pollIntervalRef.current = null;
+          setPolling(false);
+          setPollTimedOut(true);
+        }
+        return;
+      }
+      try {
+        const status = await fetchLinkStatusById(linkId, accessToken);
+        if (status.status === "active") {
+          window.clearInterval(intervalId);
+          pollIntervalRef.current = null;
+          setPolling(false);
+          onActivated();
+          return;
+        }
+      } catch {
+        // Network blip; keep polling
+      }
+      if (Date.now() - started > 30_000) {
+        window.clearInterval(intervalId);
+        pollIntervalRef.current = null;
+        setPolling(false);
+        setPollTimedOut(true);
+      }
+    }, 2_000);
+    pollIntervalRef.current = intervalId;
+  }
+
+  useEffect(() => {
+    return () => {
+      if (pollIntervalRef.current) window.clearInterval(pollIntervalRef.current);
+    };
+  }, []);
+
+  async function handleRefresh() {
+    if (!accessToken || !linkId) return;
+    setPollTimedOut(false);
+    try {
+      const status = await fetchLinkStatusById(linkId, accessToken);
+      if (status.status === "active") {
+        onActivated();
+      } else {
+        // Try polling again once more
+        startPolling();
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to check link status");
+    }
+  }
 
   async function handleSubmit() {
     if (!stripe || !elements || submitting) return;
@@ -290,37 +358,66 @@ function FlexHoldForm({
 
     const { error: submitError } = await elements.submit();
     if (submitError) {
-      setError(submitError.message ?? "Payment details are incomplete");
+      setError(submitError.message ?? "Card details are incomplete");
       setSubmitting(false);
       return;
     }
 
-    // Manual-capture PI: confirmation moves status to 'requires_capture'
-    // (not 'succeeded'). The webhook fires payment_intent.amount_capturable_updated
-    // which flips the link to 'active' and creates the holds row.
-    const { error: confirmError, paymentIntent } = await stripe.confirmPayment({
+    // confirmSetup: Stripe runs zero-dollar verification with the issuer.
+    // On success, the payment_method.attached webhook fires and flips the
+    // link draft→active server-side. We then poll fetchLinkStatusById
+    // until status='active'.
+    const { error: confirmError, setupIntent } = await stripe.confirmSetup({
       elements,
       redirect: "if_required",
       confirmParams: {
-        // Keep the user on this page if 3DS triggers a redirect.
         return_url: window.location.href,
+        payment_method_data: {
+          // Make this card eligible for the saved-PM picker on the
+          // dashboard checkout (matches the Add Card flow's pattern).
+          allow_redisplay: "always",
+        },
       },
     });
 
     if (confirmError) {
-      setError(confirmError.message ?? "Payment failed");
+      setError(confirmError.message ?? "Card setup failed");
       setSubmitting(false);
       return;
     }
 
-    // For manual-capture, the success state is 'requires_capture'.
-    if (paymentIntent && (paymentIntent.status === "requires_capture" || paymentIntent.status === "succeeded")) {
-      onAuthorized(paymentIntent.id);
+    if (setupIntent?.status !== "succeeded") {
+      setError(`Card status: ${setupIntent?.status ?? "unknown"} — please try again`);
+      setSubmitting(false);
       return;
     }
 
-    setError(`Payment status: ${paymentIntent?.status ?? "unknown"} — please try again`);
+    // SetupIntent confirmed; start polling for the link activation.
     setSubmitting(false);
+    startPolling();
+  }
+
+  if (polling) {
+    return (
+      <div className="space-y-3 text-center py-6">
+        <Loader2 className="w-6 h-6 text-primary animate-spin mx-auto" />
+        <p className="text-sm font-medium text-foreground">Activating your link…</p>
+        <p className="text-xs text-muted-foreground">This usually takes a few seconds.</p>
+      </div>
+    );
+  }
+
+  if (pollTimedOut) {
+    return (
+      <div className="space-y-3">
+        <p className="text-sm text-foreground">
+          Your card is saved. We're still confirming with our payment processor — refresh in a moment to continue.
+        </p>
+        <Button type="button" onClick={handleRefresh} className="w-full rounded-xl">
+          Refresh
+        </Button>
+      </div>
+    );
   }
 
   return (
@@ -336,15 +433,12 @@ function FlexHoldForm({
         {submitting ? (
           <>
             <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-            Authorizing…
+            Saving…
           </>
         ) : (
-          `Authorize Hold — ${formatCents(holdAmount)}`
+          "Save card & activate link"
         )}
       </Button>
-      <p className="text-[10px] text-muted-foreground text-center">
-        {liveMode ? "Live mode — your card will be authorized for the hold amount." : "Test mode — no real charge."}
-      </p>
     </div>
   );
 }

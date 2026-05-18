@@ -13,8 +13,8 @@ import type { RecipientFlowState } from "@/hooks/useRecipientFlow";
 // Mirrors RecipientStepEmailVerifySupabase (full-label step 11) but targets
 // the flex verify URL for email-link redirects.
 //
-// A Supabase session is required at step 22 (createFlexLink + createFlexHold
-// both need a JWT). The session is created here via verifyOtp / signInWithOtp.
+// A Supabase session is required at step 22 (createFlexLink + the SetupIntent
+// flow both need a JWT). The session is created here via verifyOtp / signInWithOtp.
 //
 // Two paths:
 //   1. Tap the link in the email → Supabase verifies + redirects back with

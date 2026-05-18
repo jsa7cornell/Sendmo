@@ -4,7 +4,12 @@ import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { log } from "../_shared/logger.ts";
 import { sendEmail } from "../_shared/resend.ts";
 import { labelConfirmationEmail } from "../_shared/email-templates.ts";
-import { retrievePaymentIntent, createRefund, capturePaymentIntent } from "../_shared/stripe.ts";
+import {
+    retrievePaymentIntent,
+    createRefund,
+    createOffSessionShipmentPI,
+    cancelPaymentIntent,
+} from "../_shared/stripe.ts";
 
 // Pricing markup MUST stay in sync with supabase/functions/rates/index.ts.
 // Server-derives display_price_cents from EasyPost rate for the flex-link
@@ -15,6 +20,27 @@ const MARKUP_FLAT_CENTS = 100;
 
 function applyMarkup(rateDollars: number): number {
     return Math.round(rateDollars * 100 * MARKUP_MULTIPLIER) + MARKUP_FLAT_CENTS;
+}
+
+// In-memory rate limit for the flex sender path (Pattern D, Phase F).
+// 5 requests / 60s per (IP + link_short_code) — matches existing
+// cancel-label/index.ts:41-53 pattern. Mitigates the labels-fn-as-back-gate
+// fraud surface: under Pattern D, labels does a Stripe call on every public
+// sender confirm, so an attacker who knows a short_code could spam the
+// endpoint to probe the recipient's card state. The rate limit kicks in
+// well before the attack rate becomes meaningful.
+const FLEX_RATE_LIMIT_MAX = 5;
+const FLEX_RATE_LIMIT_WINDOW_MS = 60_000;
+const flexRateBucket = new Map<string, number[]>();
+function isFlexRateLimited(key: string, now: number): boolean {
+    const arr = (flexRateBucket.get(key) || []).filter((t) => now - t < FLEX_RATE_LIMIT_WINDOW_MS);
+    if (arr.length >= FLEX_RATE_LIMIT_MAX) {
+        flexRateBucket.set(key, arr);
+        return true;
+    }
+    arr.push(now);
+    flexRateBucket.set(key, arr);
+    return false;
 }
 
 serve(async (req: Request) => {
@@ -62,6 +88,31 @@ serve(async (req: Request) => {
             );
         }
 
+        // Pattern D rate limit (flex sender path only). The full-label path
+        // is JWT-authenticated and the comp path requires admin, so neither
+        // needs anonymous-URL rate limiting. Only the flex sender-confirm
+        // path (link_short_code present, no JWT, no comp) is hit here.
+        if (link_short_code && !comp) {
+            const ip = req.headers.get("x-forwarded-for")?.split(",")[0].trim()
+                ?? req.headers.get("x-real-ip")
+                ?? "unknown";
+            const rateKey = `${ip}:${link_short_code}`;
+            if (isFlexRateLimited(rateKey, Date.now())) {
+                log({
+                    event_type: "label.flex_rate_limited",
+                    session_id: sessionId,
+                    severity: "warn",
+                    entity_type: "label",
+                    entity_id: easypost_shipment_id,
+                    properties: { ip, link_short_code },
+                });
+                return new Response(
+                    JSON.stringify({ error: "Too many attempts. Please wait a moment and try again." }),
+                    { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+        }
+
         const isLive = live_mode === true;
         const isComp = comp === true;
 
@@ -87,6 +138,7 @@ serve(async (req: Request) => {
             short_code: string;
             user_id: string;
             max_price_cents: number;
+            is_test: boolean;
         } | null = null;
         if (link_short_code) {
             if (typeof link_short_code !== "string" || !link_short_code.match(/^[a-zA-Z0-9]{1,20}$/)) {
@@ -104,7 +156,7 @@ serve(async (req: Request) => {
             const { data: link, error: linkErr } = await supabase
                 .from("sendmo_links")
                 .select(`
-                    id, short_code, user_id, status, link_type, max_price_cents,
+                    id, short_code, user_id, status, link_type, max_price_cents, is_test,
                     recipient_address:addresses!recipient_address_id (
                         name, street1, street2, city, state, zip, country
                     )
@@ -163,7 +215,35 @@ serve(async (req: Request) => {
                 short_code: link.short_code,
                 user_id: link.user_id,
                 max_price_cents: link.max_price_cents,
+                is_test: link.is_test === true,
             };
+
+            // Mode-mismatch defense (Pattern D, Phase F): link.is_test is the
+            // server-side source of truth for whether this link runs in test
+            // or live mode. The sender's `live_mode` request body field is
+            // public input and can't be trusted. If the sender request's
+            // isLive doesn't match the link's is_test, reject — otherwise
+            // the off_session PM lookup would pick the wrong-mode PM (or
+            // none) and return a misleading 402.
+            const linkIsLive = !resolvedLink.is_test;
+            if (linkIsLive !== isLive) {
+                log({
+                    event_type: "label.flex_mode_mismatch",
+                    session_id: sessionId,
+                    severity: "warn",
+                    entity_type: "label",
+                    entity_id: easypost_shipment_id,
+                    properties: {
+                        link_short_code,
+                        link_is_test: resolvedLink.is_test,
+                        request_is_live: isLive,
+                    },
+                });
+                return new Response(
+                    JSON.stringify({ error: "Link mode mismatch" }),
+                    { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
 
             // Server-derive display_price_cents from EasyPost rate (B5).
             // Client-supplied value is used only for audit logging; the gate
@@ -326,129 +406,190 @@ serve(async (req: Request) => {
         // Three branches:
         //   1. comp=true (admin/internal) — bypass payment entirely; record
         //      as comp_grant in the post-buy ledger flow.
-        //   2. resolvedLink && !comp (FLEX) — capture the holds-row PI for
-        //      display_price_cents; Stripe auto-releases the excess hold.
+        //   2. resolvedLink && !comp (FLEX, Pattern D) — create a fresh
+        //      off_session PaymentIntent against the recipient's default
+        //      saved PM for display_price_cents. Auto-captures synchronously.
         //   3. else (FULL-LABEL) — verify the caller-supplied payment_intent_id
         //      is succeeded and metadata matches easypost_shipment_id.
         let verifiedPaymentIntent: { id: string; amount: number; status: string } | null = null;
 
         if (!isComp && resolvedLink) {
-            // ── Flex capture path (Phase E) ─────────────────────
+            // ── Flex off_session charge path (Pattern D, Phase F) ───
+            // Per proposal
+            // 2026-05-16_flex-payment-pattern-d-execution_reviewed-2026-05-16_decided-2026-05-18.md
+            // §2.1. Replaces the Phase E capture-from-held-PI logic that
+            // shipped in commit ab92b3d.
             if (!supabase) {
                 return new Response(
                     JSON.stringify({ error: "Server configuration error" }),
                     { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
                 );
             }
-            const { data: hold } = await supabase
-                .from("holds")
-                .select("stripe_intent_id, amount_cents, status, expires_at, mode")
-                .eq("link_id", resolvedLink.id)
-                .eq("status", "authorized")
-                .order("authorized_at", { ascending: false })
-                .limit(1)
-                .maybeSingle();
-            if (!hold) {
-                log({
-                    event_type: "label.flex_no_active_hold",
-                    session_id: sessionId,
-                    severity: "warn",
-                    entity_type: "label",
-                    entity_id: easypost_shipment_id,
-                    properties: { link_short_code, link_id: resolvedLink.id },
-                });
-                return new Response(
-                    JSON.stringify({ error: "No active payment authorization for this link. The recipient needs to re-authorize." }),
-                    { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-                );
-            }
-            // Hold expiration check (defense in depth — webhook flips status
-            // on Stripe canceled, but this is a belt to the suspenders).
-            if (hold.expires_at && new Date(hold.expires_at) < new Date()) {
-                return new Response(
-                    JSON.stringify({ error: "Payment authorization expired. The recipient needs to re-authorize." }),
-                    { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-                );
-            }
-            // Mode mismatch defense: hold mode must match the labels-fn isLive.
-            const holdIsLive = hold.mode === "live";
-            if (holdIsLive !== isLive) {
-                return new Response(
-                    JSON.stringify({ error: `Mode mismatch: hold is ${hold.mode}, request is ${isLive ? "live" : "test"}` }),
-                    { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-                );
-            }
-            // Capture amount must not exceed hold amount. The cap-exceeded
-            // check above (link.max_price_cents) already guards this in the
-            // common case but the hold amount could be smaller than max_price
-            // (recipient downgraded mid-flow). Fail fast with a clear message.
+
             if (typeof display_price_cents !== "number" || display_price_cents <= 0) {
                 return new Response(
-                    JSON.stringify({ error: "Could not derive display price for capture" }),
+                    JSON.stringify({ error: "Could not derive display price for charge" }),
                     { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
                 );
             }
-            if (display_price_cents > hold.amount_cents) {
+
+            // Resolve recipient's default PM in the link's mode.
+            const linkMode = isLive ? "live" : "test";
+            const { data: defaultPm } = await supabase
+                .from("payment_methods")
+                .select("stripe_payment_method_id")
+                .eq("user_id", resolvedLink.user_id)
+                .eq("mode", linkMode)
+                .eq("is_default", true)
+                .is("deleted_at", null)
+                .maybeSingle();
+
+            if (!defaultPm?.stripe_payment_method_id) {
                 log({
-                    event_type: "label.flex_capture_exceeds_hold",
+                    event_type: "label.flex_no_default_pm",
+                    session_id: sessionId,
+                    severity: "warn",
+                    entity_type: "label",
+                    entity_id: easypost_shipment_id,
+                    properties: { link_short_code, link_id: resolvedLink.id, mode: linkMode },
+                });
+                return new Response(
+                    JSON.stringify({
+                        error: "This link isn't accepting payments right now. The recipient needs to update their payment method.",
+                    }),
+                    { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+
+            // Resolve the recipient's Stripe Customer for this mode.
+            const customerCol = isLive ? "stripe_customer_id_live" : "stripe_customer_id_test";
+            const { data: recipientProfile } = await supabase
+                .from("profiles")
+                .select(customerCol)
+                .eq("id", resolvedLink.user_id)
+                .maybeSingle();
+            const recipientCustomerId =
+                (recipientProfile as Record<string, string | null> | null)?.[customerCol] ?? null;
+            if (!recipientCustomerId) {
+                log({
+                    event_type: "label.flex_no_customer",
+                    session_id: sessionId,
+                    severity: "error",
+                    entity_type: "label",
+                    entity_id: easypost_shipment_id,
+                    properties: { link_short_code, link_id: resolvedLink.id, mode: linkMode },
+                });
+                return new Response(
+                    JSON.stringify({
+                        error: "Recipient's payment account isn't set up. They need to re-add their card.",
+                    }),
+                    { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+
+            // Create fresh off_session PI for the actual rate. Sender's IP
+            // is the natural idempotency key partition; we also include the
+            // EasyPost shipment id so retries from the same client are safe.
+            const idempotencyKey = `pi_offsess_${easypost_shipment_id}_${defaultPm.stripe_payment_method_id}`;
+            try {
+                const pi = await createOffSessionShipmentPI({
+                    amount_cents: display_price_cents,
+                    customer: recipientCustomerId,
+                    payment_method: defaultPm.stripe_payment_method_id,
+                    metadata: {
+                        source: "flex_shipment",
+                        intent_role: "shipment",
+                        link_id: resolvedLink.id,
+                        sendmo_user_id: resolvedLink.user_id,
+                        easypost_shipment_id,
+                        link_short_code: resolvedLink.short_code,
+                    },
+                    idempotency_key: idempotencyKey,
+                    liveMode: isLive,
+                });
+
+                if (pi.status === "succeeded") {
+                    verifiedPaymentIntent = {
+                        id: pi.id,
+                        amount: (pi as { amount_received?: number }).amount_received ?? pi.amount,
+                        status: pi.status,
+                    };
+                    log({
+                        event_type: "label.flex_off_session_succeeded",
+                        session_id: sessionId,
+                        severity: "info",
+                        entity_type: "payment_intent",
+                        entity_id: pi.id,
+                        properties: {
+                            link_short_code,
+                            amount_cents: verifiedPaymentIntent.amount,
+                            live_mode: isLive,
+                        },
+                    });
+                } else if (pi.status === "requires_action") {
+                    // SCA/3DS required — off_session can't recover (US-only v1).
+                    // Cancel the PI so it doesn't sit awaiting a non-existent
+                    // confirmation, then return decline. Webhook payment_failed
+                    // will fire and send the recipient the decline email.
+                    try { await cancelPaymentIntent(pi.id, isLive); } catch { /* best effort */ }
+                    log({
+                        event_type: "label.flex_off_session_requires_action",
+                        session_id: sessionId,
+                        severity: "warn",
+                        entity_type: "payment_intent",
+                        entity_id: pi.id,
+                        properties: { link_short_code, live_mode: isLive },
+                    });
+                    return new Response(
+                        JSON.stringify({
+                            error: "Your payment couldn't be processed right now. The link's been deactivated and we've notified the recipient.",
+                        }),
+                        { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                    );
+                } else {
+                    // Other non-succeeded states (requires_payment_method,
+                    // canceled, processing). Treat as decline.
+                    log({
+                        event_type: "label.flex_off_session_not_succeeded",
+                        session_id: sessionId,
+                        severity: "warn",
+                        entity_type: "payment_intent",
+                        entity_id: pi.id,
+                        properties: { link_short_code, status: pi.status, live_mode: isLive },
+                    });
+                    return new Response(
+                        JSON.stringify({
+                            error: "Your payment couldn't be processed right now. The link's been deactivated and we've notified the recipient.",
+                        }),
+                        { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                    );
+                }
+            } catch (err) {
+                // Stripe API errors (card_declined, insufficient_funds, etc.)
+                // throw out of createOffSessionShipmentPI. The webhook
+                // payment_intent.payment_failed fires from Stripe's side and
+                // handles the recipient decline email. We just return the
+                // friendly error to the sender.
+                const errAny = err as { stripeCode?: string; message?: string };
+                const msg = errAny.message ?? "Payment failed";
+                console.error(`[Session ${sessionId}] [labels] flex off_session error:`, msg, errAny.stripeCode);
+                log({
+                    event_type: "label.flex_off_session_error",
                     session_id: sessionId,
                     severity: "warn",
                     entity_type: "label",
                     entity_id: easypost_shipment_id,
                     properties: {
                         link_short_code,
-                        capture_cents: display_price_cents,
-                        hold_cents: hold.amount_cents,
-                    },
-                });
-                return new Response(
-                    JSON.stringify({ error: "Selected rate exceeds the recipient's authorized hold" }),
-                    { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-                );
-            }
-            // Capture the held PI for the actual rate. Stripe auto-releases
-            // the excess hold; we don't need to call cancel.
-            try {
-                const captured = await capturePaymentIntent(
-                    hold.stripe_intent_id, isLive, display_price_cents,
-                );
-                if (captured.status !== "succeeded") {
-                    return new Response(
-                        JSON.stringify({ error: `Capture not succeeded (status=${captured.status})` }),
-                        { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-                    );
-                }
-                verifiedPaymentIntent = {
-                    id: captured.id,
-                    amount: (captured as { amount_received?: number }).amount_received ?? captured.amount,
-                    status: captured.status,
-                };
-                log({
-                    event_type: "label.flex_capture_succeeded",
-                    session_id: sessionId,
-                    severity: "info",
-                    entity_type: "payment_intent",
-                    entity_id: captured.id,
-                    properties: {
-                        link_short_code,
-                        captured_cents: verifiedPaymentIntent.amount,
-                        hold_cents: hold.amount_cents,
+                        error_message: msg,
+                        stripe_code: errAny.stripeCode ?? null,
                         live_mode: isLive,
                     },
                 });
-            } catch (err) {
-                const msg = err instanceof Error ? err.message : "Capture failed";
-                console.error(`[Session ${sessionId}] [labels] flex capture error:`, msg);
-                log({
-                    event_type: "label.flex_capture_error",
-                    session_id: sessionId,
-                    severity: "error",
-                    entity_type: "payment_intent",
-                    entity_id: hold.stripe_intent_id,
-                    properties: { error_message: msg, link_short_code },
-                });
                 return new Response(
-                    JSON.stringify({ error: `Payment capture failed: ${msg}` }),
+                    JSON.stringify({
+                        error: "Your payment couldn't be processed right now. The link's been deactivated and we've notified the recipient.",
+                    }),
                     { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
                 );
             }
@@ -804,19 +945,13 @@ serve(async (req: Request) => {
                             }
                         }
 
-                        // For FLEX links, flip status active → in_use. Full-label
-                        // links are already minted at in_use by the RPC (migration 020).
-                        // Optimistic update — no-op if already in_use (e.g. multi-shipment).
-                        if (resolvedLink && resolvedLink.link_type === 'flexible') {
-                            const { error: linkErr } = await supabase
-                                .from('sendmo_links')
-                                .update({ status: 'in_use' })
-                                .eq('id', resolvedLink.id)
-                                .eq('status', 'active');
-                            if (linkErr) {
-                                console.error('flex-link in_use flip error:', linkErr);
-                            }
-                        }
+                        // Pattern D (Phase F): flex links stay 'active' indefinitely.
+                        // The Phase E active→in_use flip was removed here per the
+                        // decided proposal §3.2 — flex is reusable, so 'in_use'
+                        // semantics no longer apply. Legacy 'in_use' rows are
+                        // backfilled to 'active' by migration 024.
+                        // Full-label links are minted at 'in_use' by the RPC
+                        // (migration 020); that path is unchanged.
 
                         log({
                             event_type: "label.db_persisted",

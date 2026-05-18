@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -15,7 +15,7 @@ import { supabase } from "@/lib/supabase";
 import LinksTab from "@/components/dashboard/LinksTab";
 import AddCardModal from "@/components/dashboard/AddCardModal";
 import AdminModeToolbar from "@/components/AdminModeToolbar";
-import { removePaymentMethod } from "@/lib/api";
+import { removePaymentMethod, rotateLinkUrl } from "@/lib/api";
 
 // ─── Types ──────────────────────────────────────────────────
 
@@ -94,10 +94,10 @@ interface DashboardLink {
     state: string;
     zip: string;
   } | null;
-  // Phase E: latest payment hold for this link. Null if no hold ever
-  // authorized (legacy link or new flex link still in draft). Used to
-  // render "Needs payment" badge instead of "Active".
-  holds?: Array<{ status: string; expires_at: string | null }> | null;
+  // Pattern D (Phase F): no longer joined on holds. isFunded is computed
+  // client-side from the user's saved payment_methods rows (paymentMethods
+  // state). Active iff at least one default PM exists and its stored
+  // exp_year/exp_month hasn't passed.
 }
 
 const SPEED_LABEL: Record<string, string> = {
@@ -224,11 +224,11 @@ export default function Dashboard() {
         .limit(50);
 
       // Most recent active flexible link (the user's reusable shareable link).
-      // Phase E: also join holds so we can show "Needs payment" when there's
-      // no active authorization (legacy link or expired hold).
+      // Pattern D (Phase F): isFunded is computed below from local
+      // paymentMethods state (DB-only, no Stripe call). No holds join.
       const linkPromise = supabase
         .from("sendmo_links")
-        .select("id, short_code, max_price_cents, preferred_speed, recipient_address:addresses!recipient_address_id(name, street1, street2, city, state, zip), holds(status, expires_at)")
+        .select("id, short_code, max_price_cents, preferred_speed, recipient_address:addresses!recipient_address_id(name, street1, street2, city, state, zip)")
         .eq("user_id", user.id)
         .eq("link_type", "flexible")
         .eq("status", "active")
@@ -331,6 +331,65 @@ export default function Dashboard() {
   // re-renders the latest status the next time it mounts or refetches.
 
   const shortUrl = link ? `sendmo.co/s/${link.short_code}` : null;
+
+  // Pattern D (Phase F): isFunded = has a default PM that hasn't expired.
+  // Computed client-side from local paymentMethods state — server's
+  // links Edge Function uses the same logic at GET /links?code=. Used to
+  // render the Active/Inactive badge and the Reactivate/Update button label.
+  const sortedPaymentMethods = useMemo(() => {
+    return [...paymentMethods].sort((a, b) => {
+      if (a.is_default && !b.is_default) return -1;
+      if (!a.is_default && b.is_default) return 1;
+      // Within is_default group, newest first
+      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    });
+  }, [paymentMethods]);
+
+  const defaultPm = sortedPaymentMethods.find((pm) => pm.is_default);
+  const isFunded = useMemo(() => {
+    if (!defaultPm) return false;
+    if (defaultPm.exp_year == null || defaultPm.exp_month == null) return true;
+    const now = new Date();
+    if (defaultPm.exp_year > now.getFullYear()) return true;
+    if (defaultPm.exp_year === now.getFullYear() && defaultPm.exp_month >= now.getMonth() + 1) return true;
+    return false;
+  }, [defaultPm]);
+
+  // Pattern D (Phase F): if recipient followed a decline email's
+  // /dashboard?reactivate=<link_id> deep link, auto-open AddCardModal so
+  // they can update payment in one click. The webhook flips the link
+  // active once a new PM lands.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("reactivate")) {
+      setShowAddCard(true);
+      // Clean the URL so a subsequent refresh doesn't re-trigger
+      const url = new URL(window.location.href);
+      url.searchParams.delete("reactivate");
+      window.history.replaceState({}, "", url.toString());
+    }
+  }, []);
+
+  // URL rotation
+  const [rotating, setRotating] = useState(false);
+  const [rotateError, setRotateError] = useState<string | null>(null);
+  async function handleRotate() {
+    if (!link || !session?.access_token) return;
+    if (!window.confirm("Rotate this link's URL? The old URL will stop working immediately and senders with the old link will see an error.")) {
+      return;
+    }
+    setRotating(true);
+    setRotateError(null);
+    try {
+      const result = await rotateLinkUrl(link.id, session.access_token);
+      // Update local state to the new short_code; refetch links list
+      setLink({ ...link, short_code: result.short_code, id: result.id });
+    } catch (err) {
+      setRotateError(err instanceof Error ? err.message : "Rotate failed");
+    } finally {
+      setRotating(false);
+    }
+  }
 
   function handleCopy() {
     if (!shortUrl) return;
@@ -490,20 +549,25 @@ export default function Dashboard() {
                 My Label Link
               </h2>
               <div className="flex items-center gap-2">
-                {link && (() => {
-                  // Phase E: link is only truly Active if there's an authorized,
-                  // unexpired hold. Legacy active links (no hold) and links
-                  // whose hold expired show "Needs payment" instead.
-                  const activeHold = link.holds?.find(
-                    (h) => h.status === "authorized" &&
-                      (!h.expires_at || new Date(h.expires_at) > new Date()),
-                  );
-                  return activeHold ? (
+                {link && (
+                  isFunded ? (
                     <Badge variant="outline" className="text-xs border-success/50 text-success bg-success/10">Active</Badge>
                   ) : (
-                    <Badge variant="outline" className="text-xs border-amber-300 text-amber-700 bg-amber-50">Needs payment</Badge>
-                  );
-                })()}
+                    <Badge variant="outline" className="text-xs border-amber-300 text-amber-700 bg-amber-50">Inactive</Badge>
+                  )
+                )}
+                {link && !isFunded && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setShowAddCard(true)}
+                    className="rounded-lg text-xs h-7 px-2.5"
+                    title={defaultPm ? "Update your payment method to reactivate this link" : "Add a card to activate this link"}
+                  >
+                    {defaultPm ? "Update payment" : "Add a card"}
+                  </Button>
+                )}
                 {link && (
                   <button
                     type="button"
@@ -556,6 +620,23 @@ export default function Dashboard() {
                   <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground">
                     <Shield className="w-3 h-3" /> Cap: {formatCents(link.max_price_cents)}
                   </span>
+                </div>
+
+                {/* Pattern D (Phase F): URL rotation. No grace window — the
+                    old URL stops working immediately. Use as a safety primitive
+                    when a link has been over-shared or leaked. */}
+                <div className="mt-3 flex items-center justify-between gap-2">
+                  <span className="text-[11px] text-muted-foreground">
+                    {rotateError ? <span className="text-destructive">{rotateError}</span> : "Need a new URL?"}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleRotate}
+                    disabled={rotating}
+                    className="text-[11px] text-muted-foreground hover:text-foreground underline disabled:opacity-50"
+                  >
+                    {rotating ? "Rotating…" : "Rotate URL"}
+                  </button>
                 </div>
               </>
             ) : (
@@ -616,7 +697,7 @@ export default function Dashboard() {
               </div>
             ) : (
               <div className="space-y-2">
-                {paymentMethods.map((pm) => (
+                {sortedPaymentMethods.map((pm) => (
                   <div
                     key={pm.id}
                     className="flex items-center justify-between bg-muted/20 rounded-xl px-3 py-2.5"
@@ -631,7 +712,7 @@ export default function Dashboard() {
                           <span className="text-muted-foreground">•••• {pm.last4 ?? "????"}</span>
                           {pm.is_default && (
                             <Badge variant="outline" className="text-[10px] ml-1 border-primary/30 text-primary bg-primary/5">
-                              Default
+                              Primary
                             </Badge>
                           )}
                         </div>

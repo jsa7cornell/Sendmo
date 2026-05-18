@@ -81,3 +81,21 @@
 ---
 
 *Last updated: 2026-05-11 — added failure-mode tracking emails + transient-Resend retry. Surfaced during the email audit that also produced PR #31 (delivery-performance badge) and the public-tracking-code proposal.*
+
+---
+
+## Added 2026-05-18 — Pattern D follow-ups
+
+Items deferred from the Pattern D execution proposal (`proposals/2026-05-16_flex-payment-pattern-d-execution_reviewed-2026-05-16_decided-2026-05-18.md`) §5 "Out of scope":
+
+- [ ] **ZDA verification at SetupIntent save (Pattern D')** — Add a small `$0` (Stripe ZDA, falls back to $1) auth-and-void server-side immediately after `setup_intent.succeeded` fires. The research proposal recommended this on first-pass for the "your card was accepted" moment of recipient confidence. John (2026-05-16) directed strict Pattern D first so we can measure decline rates via `stripe_intents.last_payment_error_code`. Add this if 4 weeks of telemetry shows real card-validity issues post-SetupIntent that the ZDA would have caught.
+- [ ] **Nightly background PM validation cron** — Once per day, validate every active flex link's default PM via a $0/$1 auth+void. Catches replaced/cancelled cards before a real sender hits the failure. Pair with the existing decline-recovery email. Defer until scale demands.
+- [ ] **30-day card-expiry warning email** — When a recipient's default PM is within 30 days of `exp_year`/`exp_month`, send a heads-up email with the "update card" CTA. Catches the "I haven't shipped in 6 months and now my card's about to expire" case.
+- [ ] **LinksEditor `/links/new` payment validation integration** — The dashboard "+ New Link" path currently creates flex links without ever collecting a PM. Under Pattern D, the link is created `active` but `is_funded=false` until the recipient adds a card via Dashboard. UX is fine but two-step. Could pull the SetupIntent flow into `/links/new` so card collection happens inline at link creation.
+- [ ] **Sender self-paid fallback flow** — When a flex link is Inactive at the front gate, today's UX is "check back with the recipient." Add an alternative: offer the sender a self-paid label flow with the recipient's address pre-filled. Sender pays for the shipment themselves. Requires its own UX + payment surface.
+- [ ] **Multi-PM retry on off_session decline** — If the recipient has multiple saved PMs and the default declines, the labels Edge Function could try the next PM (`is_default DESC, created_at DESC`) before flipping the link Inactive. Matches Stripe's Smart Retries pattern.
+- [ ] **SCA / `requires_action` recovery flow** — Pattern D treats `requires_action` (EU/UK 3DS-required) as a decline in v1. For when SendMo expands to EU: implement a recovery flow that emails the recipient with a Stripe-hosted 3DS challenge link.
+- [ ] **Background-job worker for webhook side-effects** — Today the `stripe-webhook` sends the decline-recovery email inline (5s timeout, `event_logs` fallback on failure). At higher scale, move email-send out of the webhook critical path via a separate worker / cron / edge-job.
+- [ ] **`sendmo_links.status` enum cleanup** — Drop `'in_use'`, `'used'`, `'completed'` values from the CHECK constraint via a future migration. Pattern D doesn't write them anymore (backfilled in migration 024); they're dead values cluttering the enum.
+- [ ] **Fraud mitigation escalation** — Pattern D ships a 5/60s per-(IP, short_code) rate limit on the labels Edge Function's flex path. If decline-burst patterns surface in `link_state_events.charge_failed` rows, escalate to: Stripe Radar integration, per-customer cumulative caps, soft-lock-and-recipient-acknowledge after N failed gates in M min.
+- [ ] **Drop the dead `'used'` legacy check in `links/index.ts:66`** — migration 020 renamed the status value `'used' → 'in_use'`, but the link resolver still has a vestigial `if (link.status === "used" && link.link_type !== "full_label") return 410` check that's now dead code. Cleanup task.

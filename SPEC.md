@@ -707,12 +707,27 @@ CREATE TABLE webhook_events (
 3. EasyPost generates label PDF
 4. Recipient downloads/shares
 
-### Flexible Link Flow
-1. Recipient sets preferences -> estimated range
-2. Stripe authorization hold at 110% of high range + insurance (manual capture)
+### Flexible Link Flow (Pattern D — Phase F, decided 2026-05-18)
+1. Recipient sets preferences -> estimated cost range (informational only)
+2. Recipient adds a card via Stripe SetupIntent (the same primitive the
+   dashboard's Add Card modal uses). Stripe runs its zero-dollar verification
+   with the issuer; on success the PaymentMethod is saved to the recipient's
+   Stripe Customer. **No persistent hold is created.**
 3. Sender uses link -> enters package -> rates fetched
-4. Label purchased at actual cost -> Stripe captures actual amount
-5. Excess hold released automatically
+4. Sender confirms -> labels Edge Function creates a fresh off_session
+   PaymentIntent against the recipient's default saved PaymentMethod for the
+   actual rate (server-derived, capped at link.max_price_cents). Stripe
+   auto-captures synchronously.
+5. EasyPost label purchased; transactions.charge ledger row written by the
+   stripe-webhook on payment_intent.succeeded.
+6. On off_session decline: link flips to externally-Inactive (computed from
+   payment_methods state, not a DB enum value); recipient receives a
+   payment_declined_reactivate email with a deep link to update their card.
+   Once a new PM is attached, the link returns to Active automatically on
+   the next render.
+
+See proposal `proposals/2026-05-16_flex-payment-pattern-d-execution_reviewed-2026-05-16_decided-2026-05-18.md`
+for the full rationale, decision history, and lifecycle map.
 
 ### SendMo Balance (Post-MVP)
 - Pre-loaded wallet via card or ACH (Plaid)

@@ -84,12 +84,13 @@ export default function SenderFlow() {
           setStep("error");
           return;
         }
-        // Phase E: flex link without an active hold can't be used — the
-        // labels function will refuse to capture. Show a recipient-named
-        // message up-front so the sender doesn't waste time filling the form.
-        if (data.link_type === "flexible" && data.has_active_hold === false) {
+        // Pattern D (Phase F): flex link without a usable saved PM can't
+        // accept new shipments — the labels function would refuse the
+        // off_session charge. Show a recipient-named message up-front so
+        // the sender doesn't waste time filling the form.
+        if (data.link_type === "flexible" && data.is_funded === false) {
           const name = data.recipient_name || "the recipient";
-          setLoadError(`This link isn't funded yet. Please check back with ${name} once they've authorized payment.`);
+          setLoadError(`This link isn't accepting payments right now. Please check back with ${name} once they've updated their payment method.`);
           setStep("error");
           return;
         }
@@ -159,8 +160,8 @@ export default function SenderFlow() {
           sender_email: shareContact && senderEmail ? senderEmail : (senderEmail || undefined),
         },
         { short_code: linkData.short_code },
-        // Phase E: drop comp:true. The labels function now captures the
-        // recipient's authorized hold (from the holds row) for the chosen
+        // Pattern D (Phase F): labels function creates a fresh off_session
+        // PaymentIntent against the recipient's saved PM for the actual
         // rate. display_price_cents is audit-only — server re-derives the
         // canonical value from the EasyPost rate.
         { comp: false, display_price_cents: selectedRate.display_price_cents },

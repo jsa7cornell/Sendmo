@@ -20,6 +20,199 @@ serve(async (req: Request) => {
     const supabase = createClient(supabaseUrl, serviceRoleKey);
 
     // ── GET /links?code=XXXXXXXXXX — Public: fetch link by short code ──
+    // Parse path segments to detect path-based routes (vs query-param GET).
+    // /functions/v1/links            → no extra segments (existing query-param flow)
+    // /functions/v1/links/<id>       → GET single link by id (Pattern D polling)
+    // /functions/v1/links/<id>/rotate → POST rotate the short_code
+    const pathSegments = url.pathname.split("/").filter(Boolean);
+    const linksIdx = pathSegments.indexOf("links");
+    const pathLinkId = linksIdx >= 0 && pathSegments.length > linksIdx + 1
+        ? pathSegments[linksIdx + 1]
+        : null;
+    const pathAction = linksIdx >= 0 && pathSegments.length > linksIdx + 2
+        ? pathSegments[linksIdx + 2]
+        : null;
+
+    // ── GET /links/:id — Authenticated: single link status (Pattern D polling) ──
+    if (req.method === "GET" && pathLinkId && !pathAction) {
+        const authHeader = req.headers.get("Authorization") || "";
+        const token = authHeader.replace("Bearer ", "");
+        const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+        if (authError || !user) {
+            return new Response(
+                JSON.stringify({ error: "Unauthorized" }),
+                { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+        const { data: link, error: linkErr } = await supabase
+            .from("sendmo_links")
+            .select("id, short_code, link_type, status, user_id, is_test, max_price_cents")
+            .eq("id", pathLinkId)
+            .eq("user_id", user.id)
+            .maybeSingle();
+        if (linkErr || !link) {
+            return new Response(
+                JSON.stringify({ error: "Link not found" }),
+                { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+        return new Response(
+            JSON.stringify({
+                id: link.id,
+                short_code: link.short_code,
+                link_type: link.link_type,
+                status: link.status,
+                max_price_cents: link.max_price_cents,
+                is_test: link.is_test,
+            }),
+            { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+    }
+
+    // ── POST /links/:id/rotate — Authenticated: rotate short_code (Pattern D) ──
+    if (req.method === "POST" && pathLinkId && pathAction === "rotate") {
+        const authHeader = req.headers.get("Authorization") || "";
+        const token = authHeader.replace("Bearer ", "");
+        const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+        if (authError || !user) {
+            return new Response(
+                JSON.stringify({ error: "Unauthorized" }),
+                { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+        // Ownership + existence
+        const { data: existing, error: existingErr } = await supabase
+            .from("sendmo_links")
+            .select("id, user_id, short_code, link_type, status")
+            .eq("id", pathLinkId)
+            .eq("user_id", user.id)
+            .maybeSingle();
+        if (existingErr || !existing) {
+            return new Response(
+                JSON.stringify({ error: "Link not found" }),
+                { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+        if (existing.link_type !== "flexible") {
+            return new Response(
+                JSON.stringify({ error: "Only flexible links can be rotated" }),
+                { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+        if (existing.status === "cancelled" || existing.status === "expired") {
+            return new Response(
+                JSON.stringify({ error: "Cannot rotate a cancelled or expired link" }),
+                { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+        // Generate new short_code with collision retry (matches POST /links pattern)
+        let newShortCode = "";
+        for (let retries = 0; retries < 3; retries++) {
+            const candidate = generateShortCode();
+            const { error: codeError } = await supabase
+                .from("sendmo_links")
+                .select("id")
+                .eq("short_code", candidate)
+                .single();
+            if (codeError) {
+                newShortCode = candidate;
+                break;
+            }
+        }
+        if (!newShortCode) {
+            return new Response(
+                JSON.stringify({ error: "Failed to generate unique short_code; try again" }),
+                { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+        // Rotate order: INSERT NEW FIRST, then cancel old. If insert fails,
+        // the old link stays usable — no window where the recipient has
+        // neither link active. No grace window on the old code; it returns
+        // 410 immediately after the cancel UPDATE. Proposal §6 "URL rotation
+        // grace window — none, by design."
+        //
+        // We enumerate the explicit allow-list of columns to copy instead of
+        // SELECT *, so future schema additions don't accidentally get carried
+        // forward (e.g., cancelled_at timestamps, EasyPost shipment IDs,
+        // unique-constrained generated columns).
+        const { data: oldRow, error: oldRowErr } = await supabase
+            .from("sendmo_links")
+            .select(
+                "user_id, link_type, recipient_address_id, max_price_cents, " +
+                "preferred_speed, preferred_carrier, size_hint, weight_hint_oz, " +
+                "notes, expires_at, is_test"
+            )
+            .eq("id", existing.id)
+            .single();
+        if (oldRowErr || !oldRow) {
+            return new Response(
+                JSON.stringify({ error: "Failed to read old link before rotate" }),
+                { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+        const insertRow = {
+            user_id: oldRow.user_id,
+            link_type: oldRow.link_type,
+            recipient_address_id: oldRow.recipient_address_id,
+            max_price_cents: oldRow.max_price_cents,
+            preferred_speed: oldRow.preferred_speed,
+            preferred_carrier: oldRow.preferred_carrier,
+            size_hint: oldRow.size_hint,
+            weight_hint_oz: oldRow.weight_hint_oz,
+            notes: oldRow.notes,
+            expires_at: oldRow.expires_at,
+            is_test: oldRow.is_test,
+            short_code: newShortCode,
+            status: existing.status === "draft" ? "draft" : "active",
+        };
+        const { data: newRow, error: insertErr } = await supabase
+            .from("sendmo_links")
+            .insert(insertRow)
+            .select("id, short_code")
+            .single();
+        if (insertErr || !newRow) {
+            return new Response(
+                JSON.stringify({ error: "Failed to create rotated link" }),
+                { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+        // New row exists; now cancel the old one. If THIS fails (vanishingly
+        // rare for a simple status UPDATE), we have two active links pointing
+        // at the same recipient — annoying but not broken. The recipient
+        // can rotate again or cancel manually.
+        const { error: cancelErr } = await supabase
+            .from("sendmo_links")
+            .update({ status: "cancelled" })
+            .eq("id", existing.id);
+        if (cancelErr) {
+            console.error("[links] rotate cancel of old link failed:", cancelErr);
+            // Don't fail the request — the new link works. Surface as audit only.
+        }
+        // Audit row
+        await supabase.from("link_state_events").insert({
+            link_id: newRow.id,
+            event: "rotated",
+            reason: `replaces ${existing.short_code}`,
+            actor_user: user.id,
+            metadata: { old_link_id: existing.id, old_short_code: existing.short_code },
+        });
+        await supabase.from("link_state_events").insert({
+            link_id: existing.id,
+            event: "cancelled_by_user",
+            reason: "rotated_to_new_short_code",
+            actor_user: user.id,
+            metadata: { new_link_id: newRow.id, new_short_code: newRow.short_code },
+        });
+        return new Response(
+            JSON.stringify({
+                id: newRow.id,
+                short_code: newRow.short_code,
+                url: `https://sendmo.co/s/${newRow.short_code}`,
+            }),
+            { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+    }
+
     if (req.method === "GET") {
         const code = url.searchParams.get("code");
         if (!code) {
@@ -32,7 +225,7 @@ serve(async (req: Request) => {
         const { data: link, error } = await supabase
             .from("sendmo_links")
             .select(`
-                id, short_code, link_type, status,
+                id, short_code, link_type, status, user_id, is_test,
                 max_price_cents, preferred_speed, preferred_carrier,
                 size_hint, weight_hint_oz, notes, expires_at,
                 created_at,
@@ -61,14 +254,11 @@ serve(async (req: Request) => {
         // Full-label links are intentionally created with status='used' because
         // the label was already bought server-side at link creation. The /s/<code>
         // resolver treats these as viewer links — it looks up the shipment's
-        // public_code and the client redirects to /t/<public_code>. Only
-        // flex-links use the single-shot "used means done" semantics.
-        if (link.status === "used" && link.link_type !== "full_label") {
-            return new Response(
-                JSON.stringify({ error: "This link has already been used", status: link.status }),
-                { status: 410, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-            );
-        }
+        // public_code and the client redirects to /t/<public_code>.
+        // Pattern D (Phase F): the legacy 'used' check for flex links is
+        // removed. Flex links stay 'active' indefinitely — see proposal
+        // 2026-05-16_flex-payment-pattern-d-execution. Legacy 'in_use' rows
+        // are backfilled to 'active' by migration 024.
 
         if (link.expires_at && new Date(link.expires_at) < new Date()) {
             // Auto-expire
@@ -93,21 +283,40 @@ serve(async (req: Request) => {
             publicCode = ship?.public_code ?? null;
         }
 
-        // Phase E: for flex links, check whether there's an active payment hold.
-        // A flex link without an active hold is unusable — the labels function
-        // will refuse to capture. Surfaces this early so the sender can be told
-        // to check back with the recipient before going through the whole flow.
-        let hasActiveHold = false;
+        // Pattern D (Phase F): for flex links, compute is_funded from DB
+        // state only — no Stripe call. The lightweight front gate. The
+        // actual source of truth is the per-shipment off_session charge in
+        // labels/index.ts. Computed: link is alive AND recipient has a
+        // default PaymentMethod in this mode whose stored expiry hasn't
+        // passed.
+        let isFunded = false;
         if (link.link_type === "flexible") {
-            const { data: hold } = await supabase
-                .from("holds")
-                .select("expires_at")
-                .eq("link_id", link.id)
-                .eq("status", "authorized")
-                .order("authorized_at", { ascending: false })
-                .limit(1)
+            const linkMode = link.is_test === false ? "live" : "test";
+            const now = new Date();
+            const { data: defaultPm } = await supabase
+                .from("payment_methods")
+                .select("exp_year, exp_month")
+                .eq("user_id", link.user_id)
+                .eq("mode", linkMode)
+                .eq("is_default", true)
+                .is("deleted_at", null)
                 .maybeSingle();
-            hasActiveHold = !!hold && (!hold.expires_at || new Date(hold.expires_at) > new Date());
+            if (defaultPm) {
+                const yr = (defaultPm as { exp_year?: number | null }).exp_year ?? null;
+                const mo = (defaultPm as { exp_month?: number | null }).exp_month ?? null;
+                if (yr == null || mo == null) {
+                    // ACH or other PM with no expiry — treat as funded
+                    isFunded = true;
+                } else if (yr > now.getFullYear()) {
+                    isFunded = true;
+                } else if (yr === now.getFullYear() && mo >= now.getMonth() + 1) {
+                    isFunded = true;
+                }
+            }
+        } else {
+            // Non-flex links (full-label viewer) — always treated as funded
+            // for response shape consistency.
+            isFunded = true;
         }
 
         // Return link data — never expose full recipient address to sender
@@ -129,9 +338,10 @@ serve(async (req: Request) => {
                 // Tells the sender flow whether the full address is on file.
                 // False → show an error immediately rather than failing at label creation.
                 recipient_address_complete: !!(link.recipient_address as unknown as { street1?: string } | null)?.street1,
-                // Phase E: false → sender flow should show "this link isn't funded"
-                // up-front rather than letting them get to Review & Confirm.
-                has_active_hold: hasActiveHold,
+                // Pattern D (Phase F): false → sender flow shows the "this
+                // link isn't accepting payments right now" message up front
+                // instead of letting the user reach Review & Confirm.
+                is_funded: isFunded,
                 public_code: publicCode,
             }),
             { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
