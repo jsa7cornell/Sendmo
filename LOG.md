@@ -12,6 +12,58 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-18] Frequent logout root cause — Supabase callback footgun (the real Bug 2)
+
+**Category:** fix | Auth | Session
+**Cross-link:** [proposals/2026-05-14_oauth-and-session-handoff.md](proposals/2026-05-14_oauth-and-session-handoff.md) | follow-up to [2026-05-15] Bug 2 entry below
+
+**Symptom (user-reported, 2026-05-18):** Still getting logged out frequently, despite the 2026-05-15 fix that removed the `getSession()` race.
+
+**Root cause:** A second, deeper Supabase footgun in `AuthContext.tsx` that the prior fix didn't address. `ensureProfile(s.user)` was called **directly inside** the `onAuthStateChange` callback, and `ensureProfile` makes Supabase DB calls (`supabase.from("profiles").select(...)`). Supabase docs are explicit:
+
+> NEVER use any async Supabase function inside the callback. It can lead to a deadlock.
+
+The auth subsystem holds an internal lock while the callback runs. Any Supabase call from within the callback (DB, auth, storage, RPC) can:
+1. Block the lock from being released cleanly
+2. Hang the next `autoRefreshToken` refresh attempt (fires every ~hour)
+3. Cause that refresh to use a stale/already-rotated refresh token
+4. Trigger "Detect and revoke potentially compromised refresh tokens" → session revoked silently → user logged out
+
+This explains the symptom: logout timing was unpredictable because it depended on `ensureProfile`'s DB round-trip timing colliding with a hidden token-refresh boundary. Could happen in minutes if unlucky, or after the first hour-mark refresh on a long session.
+
+**Fix:**
+
+```ts
+// Before — Supabase call inside the callback (deadlock risk):
+supabase.auth.onAuthStateChange((_event, s) => {
+  if (s?.user) ensureProfile(s.user);   // ← runs synchronously inside the lock
+});
+
+// After — defer with setTimeout so it runs AFTER the callback returns:
+supabase.auth.onAuthStateChange((event, s) => {
+  if (event === "INITIAL_SESSION" || event === "SIGNED_IN" || event === "USER_UPDATED") {
+    const user = s.user;
+    setTimeout(() => {
+      ensureProfile(user).catch(err => console.error("ensureProfile failed:", err));
+    }, 0);
+  }
+});
+```
+
+Two changes:
+1. **`setTimeout(fn, 0)`** — defers `ensureProfile` to the next macrotask, after the callback returns and the auth lock is released. This is the Supabase-recommended pattern (see refs in code comment).
+2. **Event-type gate** — only run `ensureProfile` on `INITIAL_SESSION` / `SIGNED_IN` / `USER_UPDATED`. Skipping `TOKEN_REFRESHED` (fires hourly, user metadata never changes there) reduces auth-lock contention surface to zero for the common case.
+
+**Verification approach:** This bug is functionally invisible until a long session crosses a token-refresh boundary. Browser-verifying it requires either (a) leaving a tab open >1 hour, or (b) manually expiring the JWT via dev tools and waiting for autorefresh. The fix is structural — it removes the violation of the documented Supabase contract. No regression risk in normal operation; the worst case (ensureProfile failure) now logs a console error instead of cascading into a silent sign-out.
+
+**For other agents — generalizable rule:** If you see `supabase.auth.onAuthStateChange(callback)`, audit the callback body for ANY Supabase call (`.from()`, `.rpc()`, `.auth.*`, `.storage.*`, `.functions.*`). If found, wrap in `setTimeout(fn, 0)`. This applies in EVERY framework (React, Vue, Svelte, Next.js). It's not a React-specific quirk — it's a constraint of the Supabase auth client's locking model.
+
+**Browser-verified:**
+  n/a-category: infra
+  n/a-reason: Auth-context internal — no rendered surface changed. Functional verification requires multi-hour session and is impractical in a sandboxed run. Structural fix; failure mode is documented.
+
+---
+
 ### [2026-05-18] Pattern D — flex payments pivot (single PR, supersedes Phase E)
 **Category:** ship | Stripe | Pattern D | Phase F | flex-link reusability
 **Cross-link:** decided proposal `proposals/2026-05-16_flex-payment-pattern-d-execution_reviewed-2026-05-16_decided-2026-05-18.md`. Supersedes the Phase E flex_hold work shipped 2026-05-15 (`ab92b3d`). Research grounding: `proposals/2026-05-16_payment-auth-pattern-research.md`.

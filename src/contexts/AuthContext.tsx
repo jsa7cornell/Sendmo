@@ -83,14 +83,49 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // With "Detect and revoke potentially compromised refresh tokens" ON, the
     // second exchange is treated as a replay attack and the session is revoked,
     // silently signing the user out. Single listener eliminates the race.
+    //
+    // CRITICAL — Supabase footgun:
+    // NEVER make Supabase calls (DB, auth, storage, RPC) directly inside this
+    // callback. The auth subsystem holds a lock while the callback runs; any
+    // Supabase call here can deadlock and cause the next token refresh to fail
+    // silently — which under "Detect and revoke" gets misread as replay and
+    // signs the user out. We defer ensureProfile via setTimeout(fn, 0) so it
+    // runs AFTER the callback returns (lock released).
+    // Refs: https://supabase.com/docs/reference/javascript/auth-onauthstatechange
+    //       https://github.com/supabase/auth-js/issues/762
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, s) => {
+    } = supabase.auth.onAuthStateChange((event, s) => {
       setSession(s);
       setUser(s?.user ?? null);
-      if (s?.user) ensureProfile(s.user);
-      else setIsAdmin(false);
       setLoading(false);
+
+      if (!s?.user) {
+        setIsAdmin(false);
+        return;
+      }
+
+      // Only run ensureProfile on events where user metadata could have
+      // changed — skip TOKEN_REFRESHED (fires ~hourly, metadata unchanged)
+      // to avoid pointless DB round-trips and reduce auth-lock contention.
+      const shouldEnsureProfile =
+        event === "INITIAL_SESSION" ||
+        event === "SIGNED_IN" ||
+        event === "USER_UPDATED";
+
+      if (shouldEnsureProfile) {
+        const user = s.user;
+        // setTimeout(_, 0) defers the call to the next macrotask, after the
+        // auth callback has returned and the auth lock is released. This is
+        // the Supabase-recommended pattern (see refs above).
+        setTimeout(() => {
+          ensureProfile(user).catch((err) => {
+            // ensureProfile failures should never sign the user out — log and
+            // continue. Worst case: isAdmin stays false until next refresh.
+            console.error("ensureProfile failed:", err);
+          });
+        }, 0);
+      }
     });
 
     return () => subscription.unsubscribe();
