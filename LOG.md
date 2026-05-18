@@ -4,6 +4,8 @@ This file combines two critical logs: **Decisions & Gotchas** (why decisions wer
 
 Agents should read this alongside PLAYBOOK.md. Before ending any session, propose additions here if you discovered anything new.
 
+> **For anything payment-related, also read [`PAYMENTS.md`](PAYMENTS.md)** — the operational reference for SendMo's payment architecture. Created 2026-05-18 alongside the Pattern D pivot.
+
 > **Entry conventions:** `Category:` + `Cross-link:` headers as shown in entries below. For `fix`/`ship` Categories touching product surface (`src/components/`, `src/pages/`, `supabase/functions/`, or any rendered surface), a structured **`Browser-verified:`** block is required per PLAYBOOK Rule 19. Three valid shapes (exactly one): `spec:` + `variants-covered:`, `mcp-session:` + `variants-covered:`, or `n/a-category:` (closed enum) + `n/a-reason:`. "I'm confident" is not a typable value. See PLAYBOOK §19 for the full definition.
 
 ---

@@ -701,6 +701,8 @@ CREATE TABLE webhook_events (
 
 ## 13. Payment System
 
+> **For implementation details, see [`PAYMENTS.md`](PAYMENTS.md).** This SPEC section covers product behavior; PAYMENTS.md covers the architecture, data model, and operational guidance.
+
 ### Full Label Flow
 1. Recipient completes shipment details -> exact price
 2. Stripe charges card immediately (PaymentIntent, immediate capture)
