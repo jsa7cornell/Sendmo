@@ -2,9 +2,11 @@
 title: Payment authorization & capture strategy across SendMo lifecycles
 slug: payment-authorization-strategy
 project: sendmo
-status: draft
+status: superseded
 created: 2026-05-15
-last_updated: 2026-05-15
+last_updated: 2026-05-18
+superseded_by: 2026-05-16_flex-payment-pattern-d-execution_reviewed-2026-05-16_decided-2026-05-18.md
+superseded_reason: Replaced by Pattern D (single coherent off_session-per-shipment model grounded in industry research). The strategy framing here was correct in direction but invented non-standard terminology ("validate-and-void") and conflated multiple patterns. The final pattern landed in the decided execution proposal.
 author: Claude (Sonnet 4.6) session — Phase E shipped 2026-05-15 (commit ab92b3d) on a one-shot hold model that doesn't fit reusable flex links; this proposal walks back the architectural decision before it sees real users
 reviewer: TBD — needs fresh-eyes review per PROPOSAL-REVIEW-PROTOCOL before any code lands
 ---

@@ -2,14 +2,14 @@
 title: Flex payment Pattern D execution — single PR
 slug: flex-payment-pattern-d-execution
 project: sendmo
-status: reviewed
+status: decided
 created: 2026-05-16
-last_updated: 2026-05-17
+last_updated: 2026-05-18
 reviewed: 2026-05-16
-decided: null
+decided: 2026-05-18
 author: Claude (Sonnet 4.6) — operationalizes the Pattern D recommendation from the 2026-05-16 industry-research proposal
 reviewer: Claude (Opus 4.7, 1M context) fresh-eyes session
-outcome: null
+outcome: approved
 ---
 
 ## 0. Glossary
@@ -363,4 +363,17 @@ Most prior open questions were resolved in the Review and Author response sectio
 
 ## 9. Decision
 
-*Pending John's read.*
+**Decided:** 2026-05-18
+**Outcome:** approved (no changes from the reviewed-and-revised version)
+
+John approved as-written. Implementation proceeds per §3 file-by-file plan with the discipline gate in §5 Verification (TypeScript clean → lint clean → unit tests pass → integration tests pass → stage diff → spawn code-reviewer agent → apply blocking findings → commit + push → deploy → mcp-session browser verification).
+
+Open questions in §7 to resolve during implementation rather than re-litigate here:
+- §7 Q1 (`payment_method.updated` vs `.automatically_updated`): handle both per non-blocking #8; same handler, brand-change branch
+- §7 Q2 (sender name in decline email): include when available from sender's optional Confirm-step email; fall back to "a sender" otherwise
+- §7 Q3 (step 23 polling): poll every 2s up to 30s, then Refresh button per non-blocking #11
+
+Lifecycle bookkeeping:
+- This proposal's frontmatter: `status: decided`, `outcome: approved`, `decided: 2026-05-18`
+- File renamed per protocol filename progression: `…_reviewed-2026-05-16_decided-2026-05-18.md`
+- Prior superseded proposals' frontmatter bumped to `status: superseded` with `superseded_by` pointing at this proposal

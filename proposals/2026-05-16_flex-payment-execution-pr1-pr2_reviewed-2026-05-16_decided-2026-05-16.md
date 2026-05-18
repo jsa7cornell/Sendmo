@@ -2,11 +2,13 @@
 title: Flex payment execution — PR1 (Reactivate) + PR2 (Active/Inactive pivot)
 slug: flex-payment-execution-pr1-pr2
 project: sendmo
-status: decided
+status: superseded
 created: 2026-05-16
-last_updated: 2026-05-16
+last_updated: 2026-05-18
 reviewed: 2026-05-16
 decided: 2026-05-16
+superseded_by: 2026-05-16_flex-payment-pattern-d-execution_reviewed-2026-05-16_decided-2026-05-18.md
+superseded_reason: Re-opened the same day after John's directive to standardize on one industry-norm pattern. Replaced by the Pattern D execution proposal (which collapses PR1+PR2 into one PR and aligns with the 2026-05-16 industry research findings).
 author: Claude (Sonnet 4.6) session — author of yesterday's strategy proposal; this execution plan folds in John's 2026-05-15 reframing (Active/Inactive binary) and 2026-05-16 Tradeoff 1 = Option A (lightweight front gate)
 reviewer: Claude (Opus 4.7) fresh-eyes session — read cold against strategy proposal, master Stripe plan, PLAYBOOK rules 14/16/19, and the touched code in payments/labels/stripe-webhook/links/Dashboard
 outcome: approved
