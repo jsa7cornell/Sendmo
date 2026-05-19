@@ -1,4 +1,5 @@
 import { createContext, useContext, useCallback, useEffect, useState, useRef } from "react";
+import { flushSync } from "react-dom";
 import { useNavigate, useParams } from "react-router-dom";
 import type {
   AddressInput,
@@ -277,20 +278,29 @@ export function RecipientFlowProvider({ children }: { children: React.ReactNode 
       next = nextStep(21, data.path);
     }
     if (next !== null) {
-      setData((prev) => ({
-        ...prev,
-        completedSteps: prev.completedSteps.includes(step)
-          ? (next === 12 && !prev.completedSteps.includes(11)
-              ? [...prev.completedSteps, 11]
-              : next === 22 && !prev.completedSteps.includes(21)
-                ? [...prev.completedSteps, 21]
-                : prev.completedSteps)
-          : (next === 12
-              ? [...prev.completedSteps, step, 11]
-              : next === 22
-                ? [...prev.completedSteps, step, 21]
-                : [...prev.completedSteps, step]),
-      }));
+      // flushSync forces React to commit the completedSteps update BEFORE we
+      // navigate. Without this, navigate() updates the URL synchronously while
+      // setData is still queued — the page-level guard at RecipientOnboarding
+      // reads the OLD completedSteps against the NEW URL's step and bounces
+      // the user back to firstIncompleteUrl. Notably visible on the flex
+      // /authorize → /share advance when the server auto-detected an existing
+      // PM and the auto-skip path fires (FlexPaymentStep first-effect).
+      flushSync(() => {
+        setData((prev) => ({
+          ...prev,
+          completedSteps: prev.completedSteps.includes(step)
+            ? (next === 12 && !prev.completedSteps.includes(11)
+                ? [...prev.completedSteps, 11]
+                : next === 22 && !prev.completedSteps.includes(21)
+                  ? [...prev.completedSteps, 21]
+                  : prev.completedSteps)
+            : (next === 12
+                ? [...prev.completedSteps, step, 11]
+                : next === 22
+                  ? [...prev.completedSteps, step, 21]
+                  : [...prev.completedSteps, step]),
+        }));
+      });
       directionRef.current = "forward";
       navigate(stepUrl(data.path, next));
     }
