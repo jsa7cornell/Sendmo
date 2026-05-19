@@ -35,25 +35,21 @@ describe("otpEmail", () => {
 });
 
 describe("labelConfirmationEmail", () => {
+  const baseParams = {
+    publicCode: "ABC1234",
+    carrierTracking: "1Z999AA10123456784",
+    carrier: "UPS",
+    eta: "3 business days",
+    trackingUrl: "https://sendmo.co/t/ABC1234",
+  };
+
   it("subject references the shipping label", () => {
-    const result = labelConfirmationEmail(
-      "ABC1234",
-      "1Z999AA10123456784",
-      "UPS",
-      "3 business days",
-      "https://sendmo.co/t/ABC1234",
-    );
+    const result = labelConfirmationEmail(baseParams);
     expect(result.subject).toContain("shipping label");
   });
 
   it("embeds public code, carrier tracking number, carrier, and ETA", () => {
-    const result = labelConfirmationEmail(
-      "ABC1234",
-      "1Z999AA10123456784",
-      "UPS",
-      "3 business days",
-      "https://sendmo.co/t/ABC1234",
-    );
+    const result = labelConfirmationEmail(baseParams);
     expect(result.html).toContain("ABC1234");
     expect(result.html).toContain("1Z999AA10123456784");
     expect(result.html).toContain("UPS");
@@ -61,27 +57,59 @@ describe("labelConfirmationEmail", () => {
   });
 
   it("includes the Track Package CTA pointing at the tracking URL", () => {
-    const result = labelConfirmationEmail(
-      "ABC1234",
-      "TRACK123",
-      "USPS",
-      "5 days",
-      "https://sendmo.co/t/ABC1234",
-    );
+    const result = labelConfirmationEmail(baseParams);
     expect(result.html).toContain("Track Package");
     expect(result.html).toContain("https://sendmo.co/t/ABC1234");
   });
 
   it("includes SendMo branding", () => {
-    const result = labelConfirmationEmail(
-      "ABC1234",
-      "TRACK123",
-      "USPS",
-      "5 days",
-      "https://sendmo.co/t/ABC1234",
-    );
+    const result = labelConfirmationEmail(baseParams);
     expect(result.html).toContain("SendMo");
     expect(result.html).toContain("#2563EB");
+  });
+
+  it("renders From / Item / Amount rows when provided", () => {
+    const result = labelConfirmationEmail({
+      ...baseParams,
+      senderName: "Jane Doe",
+      itemDescription: "Vintage camera lens",
+      displayPriceCents: 1234,
+    });
+    expect(result.html).toContain("From");
+    expect(result.html).toContain("Jane Doe");
+    expect(result.html).toContain("Item");
+    expect(result.html).toContain("Vintage camera lens");
+    expect(result.html).toContain("Amount");
+    expect(result.html).toContain("$12.34");
+  });
+
+  it("truncates long item descriptions to 40 chars + ellipsis", () => {
+    const result = labelConfirmationEmail({
+      ...baseParams,
+      itemDescription: "A very long item description that exceeds the forty character limit by a lot",
+    });
+    expect(result.html).toContain("A very long item description that exceed…");
+    expect(result.html).not.toContain("by a lot");
+  });
+
+  it("omits From / Item / Amount rows when fields are null or blank", () => {
+    const result = labelConfirmationEmail({
+      ...baseParams,
+      senderName: null,
+      itemDescription: "   ",
+      displayPriceCents: null,
+    });
+    expect(result.html).not.toContain(">From<");
+    expect(result.html).not.toContain(">Item<");
+    expect(result.html).not.toContain(">Amount<");
+  });
+
+  it("omits Amount row when displayPriceCents is zero or negative", () => {
+    const result = labelConfirmationEmail({
+      ...baseParams,
+      displayPriceCents: 0,
+    });
+    expect(result.html).not.toContain(">Amount<");
   });
 });
 
