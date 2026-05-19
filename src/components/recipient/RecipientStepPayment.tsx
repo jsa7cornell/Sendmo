@@ -1,8 +1,5 @@
 import { useState } from "react";
-import { motion } from "framer-motion";
-import {
-  CheckCircle2, Download, ExternalLink, Copy, Gift, Loader2,
-} from "lucide-react";
+import { Gift, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { formatCents, buyLabel, addressToApi } from "@/lib/api";
 import { carrierDisplayName, serviceDisplayName } from "@/lib/utils";
@@ -11,6 +8,7 @@ import type { RecipientFlowState } from "@/hooks/useRecipientFlow";
 import type { LabelResult } from "@/lib/types";
 import StripePaymentForm from "./StripePaymentForm";
 import { useAuth } from "@/contexts/AuthContext";
+import { useNavigate } from "react-router-dom";
 
 // Direct fetch for comp-mode label buys — bypasses Stripe entirely and
 // passes the user's JWT so the labels function's admin gate accepts the
@@ -41,131 +39,6 @@ async function buyCompLabel(args: {
   return data as LabelResult;
 }
 
-// ─── Label Ready View ───────────────────────────────────────
-
-function LabelReady({
-  labelResult,
-  state,
-}: {
-  labelResult: LabelResult;
-  state: RecipientFlowState;
-}) {
-  const [copied, setCopied] = useState(false);
-  const shortLink = labelResult.short_code
-    ? `sendmo.co/s/${labelResult.short_code}`
-    : null;
-
-  function handleCopy() {
-    if (!shortLink) return;
-    navigator.clipboard.writeText(`https://${shortLink}`);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  }
-
-  return (
-    <div className="space-y-5">
-      {/* Success banner */}
-      <motion.div
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-        className="bg-success/10 border border-success/30 rounded-2xl p-5 text-center"
-      >
-        <CheckCircle2 className="w-10 h-10 text-success mx-auto mb-2" />
-        <h2 className="text-xl font-bold text-foreground">Your shipping label and link are ready</h2>
-        <p className="text-sm text-muted-foreground mt-1">
-          Tracking: {labelResult.tracking_number}
-        </p>
-      </motion.div>
-
-      {/* View/Download label */}
-      <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
-        <h3 className="text-sm font-semibold text-foreground mb-3">Shipping Label</h3>
-        <div className="flex gap-3">
-          <Button
-            variant="outline"
-            className="flex-1 rounded-xl gap-2"
-            onClick={() => window.open(labelResult.label_url, "_blank")}
-          >
-            <ExternalLink className="w-4 h-4" />
-            View Label
-          </Button>
-          <Button
-            className="flex-1 rounded-xl gap-2"
-            onClick={() => {
-              const a = document.createElement("a");
-              a.href = labelResult.label_url;
-              a.download = `sendmo-label-${labelResult.tracking_number}.pdf`;
-              a.click();
-            }}
-          >
-            <Download className="w-4 h-4" />
-            Download PDF
-          </Button>
-        </div>
-      </div>
-
-      {/* Share link — only renders when the labels function returned a real short_code */}
-      {shortLink && (
-        <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
-          <h3 className="text-sm font-semibold text-foreground mb-3">Share Link</h3>
-          <div className="flex items-center gap-2 bg-muted/50 rounded-xl px-3 py-2.5">
-            <span className="text-sm text-foreground font-mono flex-1 truncate">{shortLink}</span>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleCopy}
-              className="rounded-lg gap-1.5 shrink-0"
-            >
-              <Copy className="w-3.5 h-3.5" />
-              {copied ? "Copied!" : "Copy"}
-            </Button>
-          </div>
-        </div>
-      )}
-
-      {/* Shipment summary */}
-      <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
-        <h3 className="text-sm font-semibold text-foreground mb-3">Shipment Details</h3>
-        <dl className="space-y-2 text-sm">
-          <div className="flex justify-between">
-            <dt className="text-muted-foreground">To</dt>
-            <dd className="font-medium text-foreground">
-              {state.destinationAddress.city}, {state.destinationAddress.state}
-            </dd>
-          </div>
-          <div className="flex justify-between">
-            <dt className="text-muted-foreground">From</dt>
-            <dd className="font-medium text-foreground">
-              {state.originAddress.city}, {state.originAddress.state}
-            </dd>
-          </div>
-          <div className="flex justify-between">
-            <dt className="text-muted-foreground">Carrier</dt>
-            <dd className="font-medium text-foreground">
-              {carrierDisplayName(labelResult.carrier)} — {serviceDisplayName(labelResult.service)}
-            </dd>
-          </div>
-          <div className="flex justify-between">
-            <dt className="text-muted-foreground">Total</dt>
-            <dd className="font-bold text-primary text-lg">
-              {formatCents(getTotalPriceCents(state))}
-            </dd>
-          </div>
-        </dl>
-      </div>
-
-      {/* CTA */}
-      <Button
-        variant="outline"
-        className="w-full rounded-xl"
-        onClick={() => window.location.href = "/dashboard"}
-      >
-        Go to your account page
-      </Button>
-    </div>
-  );
-}
-
 // ─── Main Component ─────────────────────────────────────────
 
 interface Props {
@@ -180,14 +53,23 @@ export default function RecipientStepPayment({ state, onUpdate, onBack, liveMode
   const [error, setError] = useState<string | null>(null);
   const [compLoading, setCompLoading] = useState(false);
   const { session } = useAuth();
-
-  // If label already generated, show the ready state
-  if (state.labelResult) {
-    return <LabelReady labelResult={state.labelResult} state={state} />;
-  }
+  const navigate = useNavigate();
 
   const totalCents = getTotalPriceCents(state);
   const loading = state.paymentStatus === "processing";
+
+  // Redirect to the canonical tracking page after a successful label buy.
+  // Mirrors the SenderFlow pattern (SenderFlow.tsx:177-191):
+  //   - ?fresh=1 flags the celebration state for TrackingPage.
+  //   - ?cancel=<hex> passes the cancel_token so TrackingPage can write it
+  //     to sessionStorage on first render (TrackingPage.tsx:178-185), enabling
+  //     the Cancel button for the payer in the same tab.
+  //   - { replace: true } so the back button doesn't return to a stale payment step.
+  function redirectToTracking(result: LabelResult) {
+    if (!result.public_code) return;
+    const cancelSuffix = result.cancel_token ? `&cancel=${result.cancel_token}` : "";
+    navigate(`/t/${result.public_code}?fresh=1${cancelSuffix}`, { replace: true });
+  }
 
   // Called by StripePaymentForm AFTER the card has been successfully charged.
   // We pass the captured PaymentIntent id to /labels, which verifies it
@@ -222,10 +104,8 @@ export default function RecipientStepPayment({ state, onUpdate, onBack, liveMode
         session?.access_token,
       );
 
-      onUpdate({
-        paymentStatus: "succeeded",
-        labelResult: result,
-      });
+      onUpdate({ paymentStatus: "succeeded", labelResult: result });
+      redirectToTracking(result);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Label generation failed";
       setError(msg);
@@ -327,6 +207,7 @@ export default function RecipientStepPayment({ state, onUpdate, onBack, liveMode
                   display_price_cents: totalCents,
                 });
                 onUpdate({ paymentStatus: "succeeded", labelResult: result });
+                redirectToTracking(result);
               } catch (err) {
                 const msg = err instanceof Error ? err.message : "Comp label failed";
                 setError(msg);

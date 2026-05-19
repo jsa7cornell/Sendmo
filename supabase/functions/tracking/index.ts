@@ -8,6 +8,20 @@ import { log } from "../_shared/logger.ts";
 const APP_URL = "https://sendmo.co";
 const NOTIFY_STATUSES = new Set(["in_transit", "out_for_delivery", "delivered"]);
 
+// viewerRole + recipient_first_name added per 2026-05-19_unify-confirmation-into-tracking proposal
+// (Author response → N1). The cancel_token-match identity proof is reused from
+// 2026-05-11_label-cancel-and-change.
+
+// Constant-time hex compare — same helper used in cancel-label/index.ts.
+// Returns false quickly on length mismatch; same-length compares run in
+// constant time to prevent timing-based token enumeration.
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let mismatch = 0;
+  for (let i = 0; i < a.length; i++) mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return mismatch === 0;
+}
+
 /**
  * Public tracking lookup — no auth required.
  *
@@ -35,6 +49,12 @@ serve(async (req: Request) => {
   const url = new URL(req.url);
   const publicCode = url.searchParams.get("code");
   const trackingNumber = url.searchParams.get("number");
+  // ?cancel=<hex> is the cancel-token query param transported from the
+  // sender's just-shipped redirect or the "Label ready" email link.
+  // Read here (before DB lookup) so it is available for viewerRole derivation
+  // after the shipment row is fetched. Validation against shipment.cancel_token
+  // happens below — never trust the param before that comparison.
+  const cancelTokenFromRequest = url.searchParams.get("cancel") ?? null;
 
   if (!publicCode && !trackingNumber) {
     return new Response(
@@ -67,7 +87,10 @@ serve(async (req: Request) => {
   // PostgREST FK relations (not denormalized columns — reviewer caught B2).
   // item_description added in migration 021. The from/to selects pull city +
   // state only, never street1 (PLAYBOOK Rule 7).
-  const selectFields = "id, tracking_number, public_code, carrier, service, status, refund_status, easypost_tracker_id, easypost_shipment_id, is_test, created_at, updated_at, promised_delivery_date, delivered_at, label_url, link_id, stripe_payment_intent_id, cancelled_at, item_description, sender_address:addresses!sender_address_id(city,state), recipient_address:addresses!recipient_address_id(city,state), sendmo_links!inner(short_code, user_id, status, link_type)";
+  // cancel_token is included in the SELECT for server-side identity validation
+  // (viewerHoldsValidCancelToken derivation below). It is NEVER returned in the
+  // response — the value never leaves this function.
+  const selectFields = "id, tracking_number, public_code, carrier, service, status, refund_status, easypost_tracker_id, easypost_shipment_id, is_test, created_at, updated_at, promised_delivery_date, delivered_at, label_url, link_id, stripe_payment_intent_id, cancelled_at, cancel_token, item_description, sender_address:addresses!sender_address_id(city,state), recipient_address:addresses!recipient_address_id(city,state), sendmo_links!inner(short_code, user_id, status, link_type)";
   const baseQuery = supabase.from("shipments").select(selectFields);
   const lookup = publicCode
     ? baseQuery.eq("public_code", publicCode).single()
@@ -361,6 +384,53 @@ serve(async (req: Request) => {
     }
   }
 
+  // ── viewerRole derivation ───────────────────────────────────────────────
+  // Three mutually-exclusive roles, evaluated in priority order:
+  //
+  //   "payer"       — JWT matches the link owner (recipient who paid), or admin.
+  //                   Sees receipt block + cancel surface.
+  //   "sender_flex" — holds a valid cancel_token for this shipment but is NOT
+  //                   the link owner. This is the flex-flow sender: they just
+  //                   confirmed the label but the charge went to the recipient's
+  //                   saved PM (Pattern D off_session). They get celebration +
+  //                   cancel + drop-off + ETA but NOT the receipt block.
+  //   "anonymous"   — everyone else. No payment fields, no receipt.
+  //
+  // cancel_token validation uses the same constant-time compare as
+  // cancel-label/index.ts to prevent timing-based enumeration.
+  // shipment.cancel_token is fetched above (never returned in the response).
+  const shipmentCancelToken = (shipment as { cancel_token?: string | null }).cancel_token ?? null;
+  const viewerHoldsValidCancelToken =
+    cancelTokenFromRequest != null &&
+    shipmentCancelToken != null &&
+    timingSafeEqual(cancelTokenFromRequest, shipmentCancelToken);
+
+  const viewerRole: "payer" | "sender_flex" | "anonymous" =
+    (viewerIsRecipient || isAdmin)
+      ? "payer"
+      : viewerHoldsValidCancelToken
+        ? "sender_flex"
+        : "anonymous";
+
+  // Fetch recipient first name for payer and sender_flex viewers.
+  // Done as a separate targeted query (rather than a nested PostgREST join)
+  // because we only need it for two of three roles, and the second query
+  // avoids complicating the primary shipment SELECT with a transitive join
+  // that PostgREST resolves via FK inference (sendmo_links.user_id → profiles.id).
+  // Anonymous callers skip this entirely to avoid the extra round-trip.
+  let recipientFirstName: string | null = null;
+  if ((viewerRole === "payer" || viewerRole === "sender_flex") && linkJoin?.user_id) {
+    const { data: recipientProfile } = await supabase
+      .from("profiles")
+      .select("full_name")
+      .eq("id", linkJoin.user_id)
+      .single();
+    // Extract the first word of full_name as the first name.
+    // e.g. "Jane Smith" → "Jane"; "Jane" → "Jane"; null → null.
+    const rawName = (recipientProfile as { full_name?: string | null } | null)?.full_name ?? null;
+    recipientFirstName = rawName ? rawName.split(" ")[0] : null;
+  }
+
   // Per B2: addresses are embedded — never denormalized on shipments.
   const senderAddr = (shipment as { sender_address?: { city?: string; state?: string } | null }).sender_address ?? null;
   const recipientAddr = (shipment as { recipient_address?: { city?: string; state?: string } | null }).recipient_address ?? null;
@@ -387,15 +457,50 @@ serve(async (req: Request) => {
       link_status: linkJoin?.status ?? null,
       link_type: linkJoin?.link_type ?? null,
       viewer_is_recipient: viewerIsRecipient,
+      // viewerRole: "payer" | "sender_flex" | "anonymous" — server-derived.
+      // Clients should gate receipt block and cancel surface on this field.
+      // See 2026-05-19_unify-confirmation-into-tracking (Author response → N1).
+      viewerRole,
+      // recipient_first_name: first word of profiles.full_name for the link
+      // owner. Exposed to payer (receipt + cancel context) and sender_flex
+      // (affirmative "Jane has paid for shipping" block). Anonymous callers
+      // receive null — the join is skipped entirely for them.
+      recipient_first_name: recipientFirstName,
       refund_status: shipment.refund_status ?? "none",
+      // ─── Payment-field gating ────────────────────────────────────────────
+      // Server-side gate per 2026-05-19_unify-confirmation-into-tracking
+      // proposal, blocking finding #2. Pattern D (decided 2026-05-16,
+      // shipped 2026-05-18) made `amount_paid_cents` fillable from the
+      // transactions ledger; before Pattern D it was always null and the
+      // leak surface was zero. Now that paid shipments are imminent, gate
+      // server-side so no client can leak.
+      //
+      // For anonymous viewers (no JWT, or JWT not matching link.user_id),
+      // we collapse `paid`/`amount_paid_cents` to the unpaid/comp shape
+      // regardless of actual payment state. This makes anonymous-on-paid
+      // indistinguishable from anonymous-on-unpaid — true information-zero,
+      // not just "the UI hides it."
+      //
       // `paid` is true when there's a Stripe PI on the shipment (Phase A
       // forward-compat slot; comp shipments have NULL). amount_paid_cents
       // is derived from the transactions ledger (type='charge') in Phase E
       // when real money starts flowing. For the cancel UI today (comp-only),
-      // `paid` will be false everywhere and the refund-amount copy
-      // gracefully degrades to "no charge was made".
-      paid: shipment.stripe_payment_intent_id != null,
-      amount_paid_cents: null as number | null,
+      // `paid` is false everywhere and the refund-amount copy gracefully
+      // degrades to "no charge was made".
+      //
+      // Future receipt fields (receipt_url, charged_at, payment_method_last4,
+      // etc.) MUST be added inside this gate, not outside it. See proposal
+      // §"Author response → blocking finding #2" for the contract.
+      //
+      // NOTE: refactored to read viewerRole === "payer" for consistency with
+      // the new role model. Behavior is identical: only the link owner + admin
+      // qualify as "payer", same as the previous (viewerIsRecipient || isAdmin).
+      paid: viewerRole === "payer"
+        ? (shipment.stripe_payment_intent_id != null)
+        : false,
+      amount_paid_cents: viewerRole === "payer"
+        ? (null as number | null)
+        : null,
       // EasyPost test-mode shipments use synthetic tracking numbers that look
       // real (USPS format) but never hit the actual carrier. Surfacing this
       // flag lets the UI render a TEST banner and hide things that would

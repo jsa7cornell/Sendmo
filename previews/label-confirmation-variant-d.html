@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SendMo — Label Confirmation D · Quiet</title>
+<style>
+  :root {
+    --background: hsl(0 0% 100%);
+    --foreground: hsl(210 11% 15%);
+    --card: hsl(0 0% 100%);
+    --primary: hsl(214 89% 52%);
+    --primary-foreground: hsl(0 0% 100%);
+    --muted: hsl(210 14% 95%);
+    --muted-foreground: hsl(210 7% 46%);
+    --success: hsl(142 71% 45%);
+    --border: hsl(210 14% 89%);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+    background: var(--background);
+    color: var(--foreground);
+    -webkit-font-smoothing: antialiased;
+    line-height: 1.5;
+  }
+  .page { max-width: 480px; margin: 0 auto; padding: 28px 16px 64px; }
+  .variant-label {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--muted-foreground); font-weight: 600;
+    text-align: center; margin-bottom: 24px;
+  }
+
+  /* === Hero (no background, on the white page) === */
+  .hero {
+    text-align: center;
+    padding: 4px 0 8px;
+  }
+  .mini-label-wrap {
+    display: flex;
+    justify-content: center;
+  }
+  .mini-label {
+    width: 140px;                /* shrunk from 180 */
+    background: white;
+    border: 1px solid hsl(0 0% 80%);
+    border-radius: 5px;
+    box-shadow:
+      0 1px 0 rgb(0 0 0 / 0.04),
+      0 3px 6px rgb(0 0 0 / 0.07),
+      0 10px 24px rgb(0 0 0 / 0.07);
+    overflow: hidden;
+    transform: rotate(-2deg);
+    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+    color: #1a1a1a;
+  }
+  .ml-header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 5px 7px;
+    border-bottom: 1.5px solid black;
+    font-size: 7px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+  }
+  .ml-class { background: black; color: white; padding: 3px 5px; border-radius: 2px; }
+  .ml-section { padding: 5px 7px; border-bottom: 1px dashed #d4d4d4; }
+  .ml-tiny { font-size: 5.5px; color: #555; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 1px; }
+  .ml-addr { font-size: 7.5px; line-height: 1.3; font-weight: 600; }
+  .ml-addr.big { font-size: 9px; line-height: 1.3; }
+  .ml-barcode {
+    height: 26px;
+    background:
+      repeating-linear-gradient(to right,
+        black 0 2px, transparent 2px 3px,
+        black 3px 4px, transparent 4px 6px,
+        black 6px 8px, transparent 8px 9px,
+        black 9px 11px, transparent 11px 12px,
+        black 12px 13px, transparent 13px 16px);
+    margin: 4px 0 2px;
+  }
+  .ml-trk { font-size: 6.5px; font-weight: 700; text-align: center; letter-spacing: 0.04em; }
+  .ml-svc {
+    display: flex; align-items: center; gap: 5px; padding: 4px 7px;
+    background: hsl(214 89% 52% / 0.06);
+    border-top: 1px solid hsl(0 0% 88%);
+  }
+  .ml-svc-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--primary); }
+  .ml-svc-text { font-size: 6.5px; font-weight: 700; letter-spacing: 0.04em; color: #1a1a1a; }
+
+  .hero h1 {
+    margin: 18px 0 0;
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+
+  /* === Actions: no card, no header — just buttons on page === */
+  .actions {
+    display: flex; gap: 10px;
+    margin: 20px 0 8px;
+  }
+  .btn {
+    flex: 1;
+    border: none;
+    border-radius: 12px;
+    padding: 12px 14px;
+    font: inherit; font-size: 14px; font-weight: 500;
+    cursor: pointer;
+    box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    transition: transform 100ms;
+  }
+  .btn:active { transform: translateY(1px); }
+  .btn-outline { background: white; border: 1px solid var(--border); color: var(--foreground); }
+  .btn-primary { background: var(--primary); color: white; }
+  svg.icon { width: 16px; height: 16px; }
+
+  /* === Secondary row: Track / Cancel — small ghost links === */
+  .secondary-row {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 4px;
+    margin: 18px 0 28px;
+    font-size: 13px;
+  }
+  .secondary-row a {
+    color: var(--muted-foreground);
+    text-decoration: none;
+    padding: 6px 10px;
+    border-radius: 8px;
+    display: inline-flex; align-items: center; gap: 5px;
+  }
+  .secondary-row a:hover { color: var(--foreground); background: hsl(210 14% 95% / 0.6); }
+  .secondary-row a.primary-link { color: var(--primary); font-weight: 500; }
+  .secondary-row a.primary-link:hover { background: hsl(214 89% 52% / 0.06); }
+  .secondary-row .dot {
+    width: 3px; height: 3px; border-radius: 50%; background: var(--muted-foreground); opacity: 0.5;
+  }
+
+  /* === Drop-off hint (carrier-specific, mirrors HowToShipStrip step 3) === */
+  .dropoff-hint {
+    background: hsl(210 14% 95% / 0.5);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px 14px;
+    margin-bottom: 20px;
+    font-size: 13px;
+    color: var(--muted-foreground);
+    line-height: 1.5;
+  }
+  .dropoff-hint strong { color: var(--foreground); font-weight: 600; }
+  .dropoff-hint a {
+    color: var(--primary); text-decoration: none; font-weight: 500;
+    display: inline-flex; align-items: center; gap: 4px;
+    margin-top: 4px;
+  }
+  .dropoff-hint a:hover { text-decoration: underline; }
+
+  /* === Card (used only for shipment details) === */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 18px 20px;
+    box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+    margin-bottom: 20px;
+  }
+  .card h3 { margin: 0 0 10px; font-size: 13px; font-weight: 600; }
+  .row { display: flex; justify-content: space-between; align-items: baseline; font-size: 14px; padding: 3px 0; }
+  .row dt { color: var(--muted-foreground); }
+  .row dd { margin: 0; font-weight: 500; }
+  .total { color: var(--primary); font-weight: 700; font-size: 18px; }
+  .border-t { border-top: 1px solid var(--border); margin-top: 4px; padding-top: 8px; }
+  .btn-outline-wide { width: 100%; background: white; border: 1px solid var(--border); color: var(--foreground); border-radius: 12px; padding: 11px; font-size: 14px; font-weight: 500; cursor: pointer; }
+
+  /* fold guideline (visible only as a thin dashed marker for review) */
+  .fold {
+    position: relative; height: 0; margin: 0;
+    border-top: 1px dashed hsl(0 0% 70%);
+  }
+  .fold::after {
+    content: "iPhone SE fold (~640px)";
+    position: absolute; top: -8px; right: 0;
+    background: var(--background);
+    font-size: 9px; color: hsl(0 0% 60%);
+    padding: 0 6px; letter-spacing: 0.04em;
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="variant-label">Variant D — quiet · static · label-only</div>
+
+  <div class="hero">
+    <div class="mini-label-wrap">
+      <div class="mini-label" aria-label="Shipping label preview">
+        <div class="ml-header">
+          <span>USPS</span>
+          <span class="ml-class">GROUND ADVANTAGE™</span>
+        </div>
+        <div class="ml-section">
+          <div class="ml-tiny">From</div>
+          <div class="ml-addr">JOHN A.<br/>PORTOLA VALLEY, CA 94028</div>
+        </div>
+        <div class="ml-section">
+          <div class="ml-tiny">Ship To</div>
+          <div class="ml-addr big">JOHN ANDERSON<br/>TRUCKEE, CA 96161</div>
+        </div>
+        <div class="ml-section" style="border-bottom: none;">
+          <div class="ml-barcode"></div>
+          <div class="ml-trk">9400 1002 0830 3112 20</div>
+        </div>
+        <div class="ml-svc">
+          <span class="ml-svc-dot"></span>
+          <span class="ml-svc-text">PAID · SENDMO</span>
+        </div>
+      </div>
+    </div>
+    <h1>Your Label is Ready</h1>
+  </div>
+
+  <div class="actions">
+    <button class="btn btn-primary">
+      <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+      Print Label
+    </button>
+    <button class="btn btn-outline">
+      <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      Download PDF
+    </button>
+  </div>
+
+  <div class="fold"></div>
+
+  <div class="secondary-row">
+    <a href="#" class="primary-link">
+      <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-12V5l-8-3-8 3v5c0 8 8 12 8 12z"/><path d="m9 12 2 2 4-4"/></svg>
+      Track shipment
+    </a>
+    <span class="dot"></span>
+    <a href="#">
+      <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+      Cancel label
+    </a>
+  </div>
+
+  <div class="dropoff-hint">
+    <strong>Drop off at any USPS location</strong> or hand it to your mail carrier — no scan required at drop-off.
+    <a href="https://tools.usps.com/find-location.htm" target="_blank" rel="noopener noreferrer">
+      Find a USPS location
+      <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 12px; height: 12px;"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>
+    </a>
+  </div>
+
+  <div class="card">
+    <h3>Shipment Details</h3>
+    <dl style="margin: 0;">
+      <div class="row"><dt>To</dt><dd>Truckee, CA</dd></div>
+      <div class="row"><dt>From</dt><dd>Portola Valley, CA</dd></div>
+      <div class="row"><dt>Carrier</dt><dd>USPS — Ground Advantage</dd></div>
+      <div class="row border-t"><dt>Total</dt><dd class="total">$7.59</dd></div>
+    </dl>
+  </div>
+
+  <button class="btn-outline-wide">Go to your account page</button>
+</div>
+</body>
+</html>

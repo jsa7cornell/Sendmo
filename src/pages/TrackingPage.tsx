@@ -1,11 +1,10 @@
 import { useParams, useSearchParams, Link, useNavigate } from "react-router-dom";
 import AppHeader from "@/components/AppHeader";
 import { useState, useEffect } from "react";
-import { Package, Truck, CheckCircle2, AlertCircle, Clock, ArrowLeft, MapPin, Calendar, ExternalLink, Sparkles, FlaskConical } from "lucide-react";
+import { Package, Truck, CheckCircle2, AlertCircle, Clock, ArrowLeft, MapPin, ExternalLink, FlaskConical, Printer, Download, Check } from "lucide-react";
 import { carrierTrackingUrl } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase as supabaseClient } from "@/lib/supabase";
-import ShipmentLabelSection from "@/components/tracking/ShipmentLabelSection";
 import ShipAgainCTA from "@/components/tracking/ShipAgainCTA";
 import CancelLabelDialog from "@/components/tracking/CancelLabelDialog";
 import CancelledShipmentBanner from "@/components/tracking/CancelledShipmentBanner";
@@ -13,6 +12,12 @@ import DetailsCard from "@/components/tracking/DetailsCard";
 import HowToShipStrip from "@/components/tracking/HowToShipStrip";
 import PrintAnotherLabelCTA from "@/components/tracking/PrintAnotherLabelCTA";
 import AdminDebugPanel from "@/components/tracking/AdminDebugPanel";
+import StateHero from "@/components/tracking/StateHero";
+import EtaBanner from "@/components/tracking/EtaBanner";
+import ReceiptBlock from "@/components/tracking/ReceiptBlock";
+import PaidByRecipientBlock from "@/components/tracking/PaidByRecipientBlock";
+import HelpLink from "@/components/tracking/HelpLink";
+import { Button } from "@/components/ui/button";
 import { cancelShipment, logLabelPrint } from "@/lib/api";
 
 const BASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
@@ -44,6 +49,10 @@ interface TrackingData {
   link_status?: string | null;
   link_type?: string | null;
   viewer_is_recipient: boolean;
+  // New server fields from 2026-05-19_unify-confirmation-into-tracking.
+  // Optional — old responses without them fall back to legacy viewer_is_recipient.
+  viewerRole?: "payer" | "sender_flex" | "anonymous";
+  recipient_first_name?: string | null;
   // Cancel-flow Phase A additions (decided 2026-05-12):
   refund_status?: "none" | "submitted" | "refunded" | "rejected" | "not_applicable";
   paid?: boolean;
@@ -162,17 +171,37 @@ function formatDeliveryDate(iso: string): string {
   });
 }
 
+/** Lifecycle bucket derived from shipment status.
+ *  Returns null for terminal statuses (handled by the F3 path). */
+type LifecycleState = "pre-dropoff" | "post-dropoff" | "post-delivery";
+
+function deriveLifecycleState(status: string): LifecycleState | null {
+  if (status === "label_created") return "pre-dropoff";
+  if (status === "in_transit" || status === "out_for_delivery") return "post-dropoff";
+  if (status === "delivered") return "post-delivery";
+  return null; // terminal or unknown
+}
+
+/** Whether the status is terminal (F3 family). */
+function isTerminalStatus(status: string): boolean {
+  return status === "cancelled" || status === "return_to_sender";
+}
+
 export default function TrackingPage() {
   const { code } = useParams<{ code: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
   const { user, isAdmin } = useAuth();
   const navigate = useNavigate();
 
-  // ?fresh=1 → just landed here from the sender flow's Confirm.
+  // ?fresh=1 → just landed here from the sender/recipient flow's Confirm.
   // ?cancel=<hex> → tokenized cancel link from the sender's "Label ready"
   //   email. Captured to sessionStorage on mount, then stripped from the
   //   URL. Per author-response B3 — React Router primitives only.
-  const [showCelebration, setShowCelebration] = useState(() => searchParams.get("fresh") === "1");
+  //
+  // The ?fresh=1 flag is a PRESENTATION HINT ONLY, never an identity claim.
+  // Captured to state on mount so it survives the URL strip. Gate receipt
+  // visibility on viewerRole, not on this flag.
+  const [showCelebration] = useState(() => searchParams.get("fresh") === "1");
   useEffect(() => {
     const cancelParam = searchParams.get("cancel");
     if (cancelParam && code) {
@@ -249,6 +278,16 @@ export default function TrackingPage() {
     )
   );
 
+  // Derive effective viewerRole. Trust the server-returned value when present;
+  // fall back to the legacy viewer_is_recipient boolean for old server responses.
+  // Sender_flex cannot be inferred client-side, so falls back to anonymous.
+  const effectiveViewerRole: "payer" | "sender_flex" | "anonymous" = (() => {
+    if (!data) return "anonymous";
+    if (data.viewerRole) return data.viewerRole;
+    // Legacy fallback: viewer_is_recipient boolean from old server response
+    return data.viewer_is_recipient ? "payer" : "anonymous";
+  })();
+
   // Fire the print-log POST on Print click + optimistically bump the chip.
   // Rollback on failure (N3) — silent revert, no toast; the user's primary
   // task (opening the PDF) succeeded in parallel via target="_blank".
@@ -300,9 +339,228 @@ export default function TrackingPage() {
     }
   }
 
-  const config = data ? STATUS_CONFIG[data.status] || STATUS_CONFIG.label_created : null;
-  const StatusIcon = config?.icon || Package;
   const currentStepIndex = data ? TIMELINE_STEPS.indexOf(data.status) : -1;
+
+  // ── Viewer-conditional bottom block ───────────────────────────────────────
+  // Rendered below DetailsCard in all non-terminal lifecycle states.
+  // payer → ReceiptBlock (full when just-bought, condensed otherwise)
+  // sender_flex → PaidByRecipientBlock ("Jane has paid for shipping")
+  // anonymous → nothing
+  function ViewerBlock() {
+    if (!data) return null;
+    if (effectiveViewerRole === "payer") {
+      // Gate receipt on payer role (server-side enforced — amount_paid_cents
+      // is gated by viewerRole === "payer" in tracking/index.ts). Show $0 /
+      // comp copy when amount_paid_cents is null (comp shipments).
+      const totalCents = data.amount_paid_cents ?? 0;
+      const chargedAt = data.created_at;
+      const receiptMode = showCelebration ? "full" : "condensed";
+      return (
+        <ReceiptBlock
+          mode={receiptMode}
+          totalCents={totalCents}
+          chargedAt={chargedAt}
+        />
+      );
+    }
+    if (effectiveViewerRole === "sender_flex") {
+      const firstName = data.recipient_first_name ?? "the recipient";
+      return <PaidByRecipientBlock recipientFirstName={firstName} />;
+    }
+    return null;
+  }
+
+  // ── DetailsCard footer row (cancel + help) ───────────────────────────────
+  // Wraps the DetailsCard render + appends a footer row with cancel link
+  // (payer-only, F1 only) and HelpLink (universal). Uses flexbox:
+  //   justify-between when both are present, justify-end when help only.
+  // Per proposal: when cancel is ineligible, the slot is simply omitted —
+  // no inert grey note (John directive #4, 2026-05-19).
+  function DetailsCardWithFooter({
+    family,
+    showCancel,
+  }: {
+    family: 1 | 2 | 3;
+    showCancel: boolean;
+  }) {
+    if (!data) return null;
+
+    const helpContext = {
+      trackingNumber: data.tracking_number,
+      fromCity: data.from_city ?? undefined,
+      fromState: data.from_state ?? undefined,
+      toCity: data.to_city ?? undefined,
+      toState: data.to_state ?? undefined,
+      status: STATUS_CONFIG[data.status]?.label,
+      deliveredAt: data.delivered_at ?? undefined,
+    };
+
+    return (
+      <div>
+        <DetailsCard
+          family={family}
+          data={{
+            public_code: data.public_code,
+            tracking_number: data.tracking_number,
+            carrier: data.carrier,
+            service: data.service,
+            item_description: data.item_description ?? null,
+            from_city: data.from_city ?? null,
+            from_state: data.from_state ?? null,
+            to_city: data.to_city ?? null,
+            to_state: data.to_state ?? null,
+            created_at: data.created_at,
+            cancelled_at: data.cancelled_at,
+            is_test: data.is_test,
+          }}
+        />
+        {/* Footer row: Cancel (when eligible) + Need help */}
+        <div className={`flex items-center mt-2 px-1 ${showCancel ? "justify-between" : "justify-end"}`}>
+          {showCancel && (
+            <button
+              type="button"
+              onClick={() => setConfirmMode("cancel")}
+              className="text-xs text-destructive hover:underline font-medium"
+            >
+              Cancel this label
+            </button>
+          )}
+          <HelpLink shipmentContext={helpContext} />
+        </div>
+      </div>
+    );
+  }
+
+  // ── Action buttons row (Print + Download) — pre-dropoff only ─────────────
+  // Equal-width buttons, no chip inside the button.
+  // Print button gets soft-green tint when print_count > 0.
+  // Count surfaces as a small line BELOW the row.
+  function ActionButtonsRow() {
+    if (!data || !data.label_url) return null;
+    const printCount = (data.print_count ?? 0) + optimisticPrintBump;
+    const printed = printCount > 0;
+    return (
+      <div className="space-y-2">
+        <div className="grid grid-cols-2 gap-2">
+          {/* Print button — soft-green tint when printed */}
+          <a
+            href={data.label_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={handlePrintClick}
+            className="block"
+          >
+            <Button
+              className={`w-full rounded-xl py-5 text-sm font-semibold ${
+                printed
+                  ? "bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100"
+                  : ""
+              }`}
+              variant={printed ? "outline" : "default"}
+            >
+              <Printer className="w-4 h-4 mr-2" />
+              Print
+            </Button>
+          </a>
+
+          {/* Download button */}
+          <a href={data.label_url} download className="block">
+            <Button variant="outline" className="w-full rounded-xl py-5 text-sm font-semibold">
+              <Download className="w-4 h-4 mr-2" />
+              Download
+            </Button>
+          </a>
+        </div>
+
+        {/* Print-count line below the row */}
+        <p className={`text-center text-xs ${printed ? "text-emerald-600" : "text-muted-foreground"}`}>
+          {printed ? (
+            <>
+              <Check className="w-3 h-3 inline mr-0.5" />
+              {`Printed ${printCount}× · tap again to reprint`}
+            </>
+          ) : (
+            "Not printed yet"
+          )}
+        </p>
+      </div>
+    );
+  }
+
+  // ── Lifecycle progress (F2 — post-dropoff and post-delivery) ─────────────
+  function LifecycleProgressCard() {
+    if (!data) return null;
+    return (
+      <div className="bg-card rounded-2xl border border-border shadow-sm p-6">
+        <h2 className="text-sm font-semibold text-foreground mb-4">Progress</h2>
+        <div className="space-y-0">
+          {TIMELINE_STEPS.map((step, i) => {
+            const stepConfig = STATUS_CONFIG[step];
+            const StepIcon = stepConfig.icon;
+            const isComplete = i <= currentStepIndex;
+            const isCurrent = i === currentStepIndex;
+            return (
+              <div key={step} className="flex items-start gap-3">
+                <div className="flex flex-col items-center">
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
+                    isComplete ? "bg-primary text-white" : "bg-muted text-muted-foreground"
+                  } ${isCurrent ? "ring-2 ring-primary/30" : ""}`}>
+                    <StepIcon className="w-4 h-4" />
+                  </div>
+                  {i < TIMELINE_STEPS.length - 1 && (
+                    <div className={`w-0.5 h-8 ${i < currentStepIndex ? "bg-primary" : "bg-border"}`} />
+                  )}
+                </div>
+                <div className="pt-1">
+                  <p className={`text-sm font-medium ${isComplete ? "text-foreground" : "text-muted-foreground"}`}>
+                    {stepConfig.label}
+                  </p>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  // ── Tracking events ───────────────────────────────────────────────────────
+  function TrackingEventsCard() {
+    if (!data || data.events.length === 0) return null;
+    return (
+      <div className="bg-card rounded-2xl border border-border shadow-sm p-6">
+        <h2 className="text-sm font-semibold text-foreground mb-4">Tracking History</h2>
+        <div className="space-y-0">
+          {data.events.map((event, i) => (
+            <div key={i} className="flex items-start gap-3">
+              <div className="flex flex-col items-center">
+                <div className={`w-2.5 h-2.5 rounded-full mt-1.5 ${
+                  i === 0 ? "bg-primary" : "bg-border"
+                }`} />
+                {i < data.events.length - 1 && (
+                  <div className="w-0.5 h-10 bg-border" />
+                )}
+              </div>
+              <div className="pb-4">
+                <p className={`text-sm ${i === 0 ? "font-medium text-foreground" : "text-muted-foreground"}`}>
+                  {event.message}
+                </p>
+                <div className="flex items-center gap-3 mt-0.5 text-xs text-muted-foreground">
+                  <span>{formatEventDate(event.datetime)}</span>
+                  {event.location && (
+                    <span className="flex items-center gap-0.5">
+                      <MapPin className="w-3 h-3" />
+                      {event.location}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -329,297 +587,300 @@ export default function TrackingPage() {
           </div>
         )}
 
-        {data && config && (
-          <div className="space-y-6">
-            {/* Cancel-failure banner — surfaces when handleCancelConfirm
-                threw. Dismissible. The rest of the page stays intact. */}
-            {cancelError && (
-              <div className="bg-destructive/5 border border-destructive/30 rounded-2xl p-4 flex items-start gap-3">
-                <AlertCircle className="w-5 h-5 text-destructive flex-shrink-0 mt-0.5" />
-                <div className="flex-1">
-                  <h2 className="text-sm font-semibold text-foreground">Couldn't cancel this label</h2>
-                  <p className="text-xs text-muted-foreground mt-0.5">{cancelError}</p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    The label itself is unchanged — try again, or contact support if it keeps failing.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setCancelError(null)}
-                  className="text-xs text-muted-foreground hover:text-foreground"
-                  aria-label="Dismiss"
-                >
-                  Dismiss
-                </button>
-              </div>
-            )}
+        {data && (() => {
+          const lifecycleState = deriveLifecycleState(data.status);
+          const isTerminal = isTerminalStatus(data.status);
 
-            {/* Test-mode banner — synthetic tracking number from the EasyPost
-                test API. Renders above everything else so viewers can't miss
-                it. Carrier-site link is hidden below in the status card. */}
-            {data.is_test && (
-              <div className="bg-amber-50 border border-amber-300 rounded-2xl p-4 flex items-start gap-3">
-                <FlaskConical className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
-                <div className="flex-1">
-                  <h2 className="text-sm font-semibold text-amber-900">Test label — not a real shipment</h2>
-                  <p className="text-xs text-amber-800 mt-0.5">
-                    This was generated against EasyPost's test API. The tracking number
-                    looks real but USPS has never seen it. Statuses on this page
-                    auto-advance and aren't tied to anything physical.
-                  </p>
-                </div>
-              </div>
-            )}
+          // ── Derive subtitle for post-dropoff / post-delivery ────────────
+          let heroSubtitle: string | undefined;
+          if (lifecycleState === "post-dropoff") {
+            const parts: string[] = [];
+            if (data.estimated_delivery) {
+              parts.push(`Arrives ${formatDeliveryDate(data.estimated_delivery)}`);
+            }
+            const lastEvent = data.events[0];
+            if (lastEvent?.location) {
+              parts.push(`last scan ${lastEvent.location}`);
+            }
+            if (parts.length > 0) heroSubtitle = parts.join(" · ");
+          } else if (lifecycleState === "post-delivery") {
+            const parts: string[] = [];
+            if (data.delivered_at) {
+              parts.push(`Delivered ${formatDeliveryDate(data.delivered_at)}`);
+            }
+            const lastEvent = data.events[0];
+            if (lastEvent?.location) {
+              parts.push(lastEvent.location);
+            }
+            if (parts.length > 0) heroSubtitle = parts.join(" · ");
+          }
 
-            {/* Celebration banner — first paint only when ?fresh=1 was in URL */}
-            {showCelebration && (
-              <div className="bg-success/10 border border-success/30 rounded-2xl p-5 flex items-start gap-3">
-                <Sparkles className="w-5 h-5 text-success flex-shrink-0 mt-0.5" />
-                <div className="flex-1">
-                  <h2 className="text-base font-semibold text-foreground">Label ready!</h2>
-                  <p className="text-sm text-muted-foreground">
-                    Print it, tape it to the package, and drop it off.
-                  </p>
+          return (
+            <div className="space-y-6">
+              {/* Cancel-failure banner — surfaces when handleCancelConfirm
+                  threw. Dismissible. The rest of the page stays intact. */}
+              {cancelError && (
+                <div className="bg-destructive/5 border border-destructive/30 rounded-2xl p-4 flex items-start gap-3">
+                  <AlertCircle className="w-5 h-5 text-destructive flex-shrink-0 mt-0.5" />
+                  <div className="flex-1">
+                    <h2 className="text-sm font-semibold text-foreground">Couldn't cancel this label</h2>
+                    <p className="text-xs text-muted-foreground mt-0.5">{cancelError}</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      The label itself is unchanged — try again, or contact support if it keeps failing.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setCancelError(null)}
+                    className="text-xs text-muted-foreground hover:text-foreground"
+                    aria-label="Dismiss"
+                  >
+                    Dismiss
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setShowCelebration(false)}
-                  className="text-xs text-muted-foreground hover:text-foreground"
-                  aria-label="Dismiss"
-                >
-                  Dismiss
-                </button>
-              </div>
-            )}
+              )}
 
-            {/* Cancelled state: rich banner with timestamp, actor, refund chip */}
-            {data.status === "cancelled" && (
-              <CancelledShipmentBanner
-                cancelledAt={data.cancelled_at ?? null}
-                actor={data.cancelled_by_actor ?? null}
-                viewerIsRecipient={data.viewer_is_recipient}
-                refundStatus={data.refund_status ?? "none"}
+              {/* Test-mode banner — synthetic tracking number from the EasyPost
+                  test API. Renders above everything else so viewers can't miss
+                  it. Carrier-site link is hidden below in the status card. */}
+              {data.is_test && (
+                <div className="bg-amber-50 border border-amber-300 rounded-2xl p-4 flex items-start gap-3">
+                  <FlaskConical className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                  <div className="flex-1">
+                    <h2 className="text-sm font-semibold text-amber-900">Test label — not a real shipment</h2>
+                    <p className="text-xs text-amber-800 mt-0.5">
+                      This was generated against EasyPost's test API. The tracking number
+                      looks real but USPS has never seen it. Statuses on this page
+                      auto-advance and aren't tied to anything physical.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Cancel / Change confirmation dialog (modal — position-agnostic) */}
+              <CancelLabelDialog
+                open={confirmMode !== null}
+                onOpenChange={(o) => !o && setConfirmMode(null)}
+                mode={confirmMode ?? "cancel"}
+                paid={data.paid ?? false}
                 amountPaidCents={data.amount_paid_cents ?? null}
+                onConfirm={handleCancelConfirm}
               />
-            )}
 
-            {/* Return-to-sender: simple terminal banner */}
-            {data.status === "return_to_sender" && (
-              <div className="bg-destructive/10 border border-destructive/30 rounded-2xl p-5 flex items-start gap-3">
-                <AlertCircle className="w-5 h-5 text-destructive flex-shrink-0 mt-0.5" />
-                <div className="flex-1">
-                  <h2 className="text-base font-semibold text-foreground">{TERMINAL_BANNERS.return_to_sender.title}</h2>
-                  <p className="text-sm text-muted-foreground">{TERMINAL_BANNERS.return_to_sender.body}</p>
-                </div>
-              </div>
-            )}
+              {/* ── TERMINAL (F3): cancelled / return_to_sender ────────────
+                  Preserved unchanged from the decided 2026-05-13 IA-polish spec.
+                  Only additions: HelpLink in the DetailsCard footer + payer-only
+                  condensed ReceiptBlock at the bottom.
+                  Per proposal: 2026-05-19_unify-confirmation-into-tracking
+                  Author response → blocking finding #1. */}
+              {isTerminal && (
+                <>
+                  {/* Cancelled state: rich banner with timestamp, actor, refund chip */}
+                  {data.status === "cancelled" && (
+                    <CancelledShipmentBanner
+                      cancelledAt={data.cancelled_at ?? null}
+                      actor={data.cancelled_by_actor ?? null}
+                      viewerIsRecipient={data.viewer_is_recipient}
+                      refundStatus={data.refund_status ?? "none"}
+                      amountPaidCents={data.amount_paid_cents ?? null}
+                    />
+                  )}
 
-            {/* Cancel / Change confirmation dialog (modal — position-agnostic) */}
-            <CancelLabelDialog
-              open={confirmMode !== null}
-              onOpenChange={(o) => !o && setConfirmMode(null)}
-              mode={confirmMode ?? "cancel"}
-              paid={data.paid ?? false}
-              amountPaidCents={data.amount_paid_cents ?? null}
-              onConfirm={handleCancelConfirm}
-            />
-
-            {/* Status hero — F1 + F2 only. F3 is handled by CancelledShipmentBanner
-                above and doesn't need a status card (the banner carries
-                state + timestamp + actor + refund chip). Per the IA pivot:
-                each family has one hero, not two stacked. */}
-            {data.status !== "cancelled" && data.status !== "return_to_sender" && (
-              <div className="bg-card rounded-2xl border border-border shadow-sm p-6">
-                <div className="flex items-center gap-4">
-                  <div className={`w-14 h-14 rounded-xl ${config.bgColor} flex items-center justify-center`}>
-                    <StatusIcon className={`w-7 h-7 ${config.color}`} />
-                  </div>
-                  <div>
-                    <h1 className="text-xl font-bold text-foreground">{config.label}</h1>
-                    {data.estimated_delivery && data.status !== "delivered" && (
-                      <p className="text-sm text-muted-foreground flex items-center gap-1 mt-0.5">
-                        <Calendar className="w-3.5 h-3.5" />
-                        Expected {formatDeliveryDate(data.estimated_delivery)}
-                      </p>
-                    )}
-                    {data.status === "delivered" && (() => {
-                      const perf = deliveryPerformance(data.promised_delivery_date, data.delivered_at);
-                      return perf ? (
-                        <span className={`inline-flex items-center gap-1 mt-1 rounded-full border px-2 py-0.5 text-xs font-medium ${perf.color}`}>
-                          <span>{perf.emoji}</span>
-                          {perf.label}
-                        </span>
-                      ) : null;
-                    })()}
-                  </div>
-                </div>
-
-                {/* F2 only: carrier-site deep-link. F1 hides it because USPS
-                    hasn't scanned the package yet (would 404). Test-mode
-                    hides it too — synthetic tracking number isn't real. */}
-                {(data.status === "in_transit" || data.status === "out_for_delivery" || data.status === "delivered") && !data.is_test && (() => {
-                  const carrierUrl = carrierTrackingUrl(data.carrier, data.tracking_number);
-                  return carrierUrl ? (
-                    <a
-                      href={carrierUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-primary mt-4"
-                    >
-                      View on {data.carrier} site
-                      <ExternalLink className="w-3 h-3" />
-                    </a>
-                  ) : null;
-                })()}
-              </div>
-            )}
-
-            {/* F1 — Ready to Ship. Label section + HowToShipStrip rendered
-                after the status hero so users see state first, then action,
-                then instructions. The `label_url` gate is INSIDE
-                ShipmentLabelSection (orphan-recovered shipments without a
-                PDF still surface Cancel + Share). */}
-            {data.status === "label_created" && (
-              <>
-                <ShipmentLabelSection
-                  labelUrl={data.label_url}
-                  trackingNumber={data.tracking_number}
-                  carrier={data.carrier}
-                  shareUrl={typeof window !== "undefined" ? `${window.location.origin}/t/${data.public_code}` : `/t/${data.public_code}`}
-                  canCancel={canCancel}
-                  onCancelClick={() => setConfirmMode("cancel")}
-                  onChangeClick={() => setConfirmMode("change")}
-                  printCount={(data.print_count ?? 0) + optimisticPrintBump}
-                  onPrintClick={handlePrintClick}
-                />
-                <HowToShipStrip carrier={data.carrier} />
-              </>
-            )}
-
-            {/* Per-family Details card — uniform across F1/F2/F3 with field
-                set determined by family prop. Replaces the legacy 2x2 grid
-                that duplicated state across status-card + progress + events. */}
-            <DetailsCard
-              family={
-                data.status === "label_created" ? 1 :
-                (data.status === "cancelled" || data.status === "return_to_sender") ? 3 : 2
-              }
-              data={{
-                public_code: data.public_code,
-                tracking_number: data.tracking_number,
-                carrier: data.carrier,
-                service: data.service,
-                item_description: data.item_description ?? null,
-                from_city: data.from_city ?? null,
-                from_state: data.from_state ?? null,
-                to_city: data.to_city ?? null,
-                to_state: data.to_state ?? null,
-                created_at: data.created_at,
-                cancelled_at: data.cancelled_at,
-                is_test: data.is_test,
-              }}
-            />
-
-            {/* F3 cancelled — parent link reference + forward CTA so the user
-                isn't stuck on a dead-end AND knows whether the link is still
-                reusable. */}
-            <PrintAnotherLabelCTA
-              linkShortCode={data.link_short_code}
-              linkStatus={data.link_status ?? null}
-              status={data.status}
-            />
-
-            {/* Progress bar — F2 only. F1 has nothing to progress (label not
-                yet scanned); F3 is terminal. */}
-            {(data.status === "in_transit" || data.status === "out_for_delivery" || data.status === "delivered") && (
-            <div className="bg-card rounded-2xl border border-border shadow-sm p-6">
-              <h2 className="text-sm font-semibold text-foreground mb-4">Progress</h2>
-              <div className="space-y-0">
-                {TIMELINE_STEPS.map((step, i) => {
-                  const stepConfig = STATUS_CONFIG[step];
-                  const StepIcon = stepConfig.icon;
-                  const isComplete = i <= currentStepIndex;
-                  const isCurrent = i === currentStepIndex;
-                  return (
-                    <div key={step} className="flex items-start gap-3">
-                      <div className="flex flex-col items-center">
-                        <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
-                          isComplete ? "bg-primary text-white" : "bg-muted text-muted-foreground"
-                        } ${isCurrent ? "ring-2 ring-primary/30" : ""}`}>
-                          <StepIcon className="w-4 h-4" />
-                        </div>
-                        {i < TIMELINE_STEPS.length - 1 && (
-                          <div className={`w-0.5 h-8 ${i < currentStepIndex ? "bg-primary" : "bg-border"}`} />
-                        )}
-                      </div>
-                      <div className="pt-1">
-                        <p className={`text-sm font-medium ${isComplete ? "text-foreground" : "text-muted-foreground"}`}>
-                          {stepConfig.label}
-                        </p>
+                  {/* Return-to-sender: simple terminal banner */}
+                  {data.status === "return_to_sender" && (
+                    <div className="bg-destructive/10 border border-destructive/30 rounded-2xl p-5 flex items-start gap-3">
+                      <AlertCircle className="w-5 h-5 text-destructive flex-shrink-0 mt-0.5" />
+                      <div className="flex-1">
+                        <h2 className="text-base font-semibold text-foreground">{TERMINAL_BANNERS.return_to_sender.title}</h2>
+                        <p className="text-sm text-muted-foreground">{TERMINAL_BANNERS.return_to_sender.body}</p>
                       </div>
                     </div>
-                  );
-                })}
-              </div>
+                  )}
+
+                  {/* F3 DetailsCard — family=3. Cancel not shown (terminal).
+                      HelpLink is the sole footer item. */}
+                  <DetailsCardWithFooter family={3} showCancel={false} />
+
+                  {/* F3 — parent link reference + forward CTA so the user
+                      isn't stuck on a dead-end AND knows whether the link is
+                      still reusable. */}
+                  <PrintAnotherLabelCTA
+                    linkShortCode={data.link_short_code}
+                    linkStatus={data.link_status ?? null}
+                    status={data.status}
+                  />
+
+                  {/* Payer-only condensed receipt at bottom of F3 */}
+                  {effectiveViewerRole === "payer" && (
+                    <ReceiptBlock
+                      mode="condensed"
+                      totalCents={data.amount_paid_cents ?? 0}
+                      chargedAt={data.created_at}
+                    />
+                  )}
+                </>
+              )}
+
+              {/* ── PRE-DROP-OFF (F1): status = label_created ───────────── */}
+              {lifecycleState === "pre-dropoff" && (
+                <>
+                  {/* State hero */}
+                  <StateHero lifecycleState="pre-dropoff" />
+
+                  {/* ETA banner — hides itself when promised_delivery_date is null */}
+                  <EtaBanner
+                    promisedDeliveryDate={data.promised_delivery_date}
+                    carrier={data.carrier}
+                    service={data.service}
+                  />
+
+                  {/* Action buttons row (Print + Download) + print-count line */}
+                  <ActionButtonsRow />
+
+                  {/* How to ship strip */}
+                  <HowToShipStrip
+                    carrier={data.carrier}
+                    printDone={(data.print_count ?? 0) + optimisticPrintBump > 0}
+                  />
+
+                  {/* DetailsCard (family=1) + footer: Cancel (when eligible) + Help */}
+                  <DetailsCardWithFooter family={1} showCancel={canCancel} />
+
+                  {/* Viewer-conditional bottom block */}
+                  <ViewerBlock />
+                </>
+              )}
+
+              {/* ── POST-DROP-OFF (F2): status = in_transit / out_for_delivery */}
+              {lifecycleState === "post-dropoff" && (
+                <>
+                  {/* State hero with last-scan subtitle */}
+                  <StateHero lifecycleState="post-dropoff" subtitle={heroSubtitle} />
+
+                  {/* Lifecycle progress card */}
+                  <LifecycleProgressCard />
+
+                  {/* Carrier-site deep-link (not shown in test mode) */}
+                  {!data.is_test && (() => {
+                    const carrierUrl = carrierTrackingUrl(data.carrier, data.tracking_number);
+                    return carrierUrl ? (
+                      <a
+                        href={carrierUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-primary"
+                      >
+                        View on {data.carrier} site
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    ) : null;
+                  })()}
+
+                  {/* Tracking events */}
+                  <TrackingEventsCard />
+
+                  {/* DetailsCard (family=2) + footer: no cancel (ineligible — slot hidden) + Help */}
+                  <DetailsCardWithFooter family={2} showCancel={false} />
+
+                  {/* Viewer-conditional bottom block (condensed receipt for payer) */}
+                  <ViewerBlock />
+                </>
+              )}
+
+              {/* ── POST-DELIVERY (F2'): status = delivered ──────────────── */}
+              {lifecycleState === "post-delivery" && (
+                <>
+                  {/* State hero with delivered-at subtitle */}
+                  <StateHero lifecycleState="post-delivery" subtitle={heroSubtitle} />
+
+                  {/* Lifecycle progress card (all states checked) */}
+                  <LifecycleProgressCard />
+
+                  {/* Delivery performance badge */}
+                  {(() => {
+                    const perf = deliveryPerformance(data.promised_delivery_date, data.delivered_at);
+                    return perf ? (
+                      <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium ${perf.color}`}>
+                        <span>{perf.emoji}</span>
+                        {perf.label}
+                      </span>
+                    ) : null;
+                  })()}
+
+                  {/* Carrier-site deep-link (not shown in test mode) */}
+                  {!data.is_test && (() => {
+                    const carrierUrl = carrierTrackingUrl(data.carrier, data.tracking_number);
+                    return carrierUrl ? (
+                      <a
+                        href={carrierUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-primary"
+                      >
+                        View on {data.carrier} site
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    ) : null;
+                  })()}
+
+                  {/* Tracking events */}
+                  <TrackingEventsCard />
+
+                  {/* DetailsCard (family=2) + footer: no cancel + Help */}
+                  <DetailsCardWithFooter family={2} showCancel={false} />
+
+                  {/* Viewer-conditional bottom block */}
+                  <ViewerBlock />
+                </>
+              )}
+
+              {/* ── UNKNOWN STATUS FALLBACK ───────────────────────────────
+                  Status doesn't map to any known lifecycle state or terminal
+                  bucket. Render a minimal status card + DetailsCard so
+                  something useful shows rather than blank. */}
+              {lifecycleState === null && !isTerminal && (
+                <>
+                  <div className="bg-card rounded-2xl border border-border shadow-sm p-6">
+                    <div className="flex items-center gap-4">
+                      <div className={`w-14 h-14 rounded-xl ${STATUS_CONFIG[data.status]?.bgColor ?? "bg-muted"} flex items-center justify-center`}>
+                        {(() => {
+                          const cfg = STATUS_CONFIG[data.status];
+                          const Icon = cfg?.icon ?? Package;
+                          return <Icon className={`w-7 h-7 ${cfg?.color ?? "text-muted-foreground"}`} />;
+                        })()}
+                      </div>
+                      <div>
+                        <h1 className="text-xl font-bold text-foreground">
+                          {STATUS_CONFIG[data.status]?.label ?? data.status}
+                        </h1>
+                      </div>
+                    </div>
+                  </div>
+                  <DetailsCardWithFooter family={2} showCancel={false} />
+                </>
+              )}
+
+              {/* Ship-Again upsell — visibility per the layered signal in ShipAgainCTA */}
+              <ShipAgainCTA
+                isFresh={showCelebration}
+                isAuthenticated={!!user}
+                viewerIsRecipient={data.viewer_is_recipient}
+                linkShortCode={data.link_short_code}
+                recipientName={null}
+              />
+
+              <Link to="/" className="inline-flex items-center gap-1 text-sm text-primary hover:underline">
+                <ArrowLeft className="w-4 h-4" /> Back to SendMo
+              </Link>
+
+              {/* Admin-only inline debug panel (Ask 4, decided 2026-05-13).
+                  Replaces the earlier AdminAffordanceFooter stub. Collapsible,
+                  lazy-fetches on first expand via the role-gated
+                  tracking-admin edge function. */}
+              {isAdmin && <AdminDebugPanel publicCode={data.public_code} />}
             </div>
-
-            )}
-
-            {/* Live tracking events */}
-            {data.events.length > 0 && (
-              <div className="bg-card rounded-2xl border border-border shadow-sm p-6">
-                <h2 className="text-sm font-semibold text-foreground mb-4">Tracking History</h2>
-                <div className="space-y-0">
-                  {data.events.map((event, i) => (
-                    <div key={i} className="flex items-start gap-3">
-                      <div className="flex flex-col items-center">
-                        <div className={`w-2.5 h-2.5 rounded-full mt-1.5 ${
-                          i === 0 ? "bg-primary" : "bg-border"
-                        }`} />
-                        {i < data.events.length - 1 && (
-                          <div className="w-0.5 h-10 bg-border" />
-                        )}
-                      </div>
-                      <div className="pb-4">
-                        <p className={`text-sm ${i === 0 ? "font-medium text-foreground" : "text-muted-foreground"}`}>
-                          {event.message}
-                        </p>
-                        <div className="flex items-center gap-3 mt-0.5 text-xs text-muted-foreground">
-                          <span>{formatEventDate(event.datetime)}</span>
-                          {event.location && (
-                            <span className="flex items-center gap-0.5">
-                              <MapPin className="w-3 h-3" />
-                              {event.location}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Ship-Again upsell — visibility per the layered signal in ShipAgainCTA */}
-            <ShipAgainCTA
-              isFresh={showCelebration}
-              isAuthenticated={!!user}
-              viewerIsRecipient={data.viewer_is_recipient}
-              linkShortCode={data.link_short_code}
-              recipientName={null}
-            />
-
-            <Link to="/" className="inline-flex items-center gap-1 text-sm text-primary hover:underline">
-              <ArrowLeft className="w-4 h-4" /> Back to SendMo
-            </Link>
-
-            {/* Admin-only inline debug panel (Ask 4, decided 2026-05-13).
-                Replaces the earlier AdminAffordanceFooter stub. Collapsible,
-                lazy-fetches on first expand via the role-gated
-                tracking-admin edge function. */}
-            {isAdmin && <AdminDebugPanel publicCode={data.public_code} />}
-          </div>
-        )}
+          );
+        })()}
       </main>
     </div>
   );

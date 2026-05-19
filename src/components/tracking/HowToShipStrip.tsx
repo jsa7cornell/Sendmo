@@ -3,36 +3,69 @@
 // deep-link pulled from the existing dropOffCopy helper. Subsumes the
 // older standalone "Drop off your package" card from ShipmentLabelSection
 // (removed 2026-05-13 evening — visual duplication on /t/<code>).
-import { ExternalLink } from "lucide-react";
+// 2026-05-19: printDone prop + map-pin step 3 + cutoff hint, per unify-confirmation-into-tracking proposal.
+import { Check, ExternalLink, MapPin } from "lucide-react";
 import { dropOffCopy } from "@/components/sender/senderState";
 
 interface Props {
   carrier: string | null;
+  printDone?: boolean;
 }
 
-export default function HowToShipStrip({ carrier }: Props) {
+export default function HowToShipStrip({ carrier, printDone = false }: Props) {
   const dropOff = dropOffCopy(carrier ?? "");
-  const steps = [
-    { n: 1, head: "Print", body: "At home, your library, or any print shop." },
-    { n: 2, head: "Tape securely", body: "To the largest flat side. Cover any old barcodes." },
-    { n: 3, head: "Drop off", body: dropOff.body },
-  ];
+  const carrierName = carrier || "carrier";
+  const dropOffBody = `${dropOff.body} Most ${carrierName} locations accept drop-offs until late afternoon.`;
 
   return (
     <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
       <h3 className="text-sm font-semibold text-foreground mb-3">How to ship</h3>
       <ol className="space-y-3">
-        {steps.map(({ n, head, body }) => (
-          <li key={n} className="flex gap-3">
-            <span className="flex-shrink-0 w-6 h-6 rounded-full bg-primary text-primary-foreground text-xs font-bold flex items-center justify-center">
-              {n}
+        {/* Step 1 — Print */}
+        <li className="flex gap-3">
+          {printDone ? (
+            <span className="flex-shrink-0 w-6 h-6 rounded-full bg-success flex items-center justify-center">
+              <Check className="w-[11px] h-[11px] text-white" strokeWidth={3.5} />
             </span>
-            <div className="text-sm">
-              <span className="font-medium text-foreground">{head}</span>
-              <span className="text-muted-foreground"> — {body}</span>
-            </div>
-          </li>
-        ))}
+          ) : (
+            <span className="flex-shrink-0 w-6 h-6 rounded-full bg-primary text-primary-foreground text-xs font-bold flex items-center justify-center">
+              1
+            </span>
+          )}
+          <div className="text-sm">
+            {printDone ? (
+              <>
+                <span className="font-medium text-foreground">Print</span>
+                <span className="text-muted-foreground"> — done!</span>
+              </>
+            ) : (
+              <>
+                <span className="font-medium text-foreground">Print</span>
+                <span className="text-muted-foreground"> — At home, your library, or any print shop.</span>
+              </>
+            )}
+          </div>
+        </li>
+
+        {/* Step 2 — Tape securely */}
+        <li className="flex gap-3">
+          <span className="flex-shrink-0 w-6 h-6 rounded-full bg-primary text-primary-foreground text-xs font-bold flex items-center justify-center">
+            2
+          </span>
+          <div className="text-sm">
+            <span className="font-medium text-foreground">Tape securely</span>
+            <span className="text-muted-foreground"> — To the largest flat side. Cover any old barcodes.</span>
+          </div>
+        </li>
+
+        {/* Step 3 — Drop off */}
+        <li className="flex gap-3">
+          <MapPin className="w-6 h-6 text-primary flex-shrink-0" strokeWidth={2.2} />
+          <div className="text-sm">
+            <span className="font-medium text-foreground">Drop off</span>
+            <span className="text-muted-foreground"> — {dropOffBody}</span>
+          </div>
+        </li>
       </ol>
       {dropOff.locationUrl && (
         <a

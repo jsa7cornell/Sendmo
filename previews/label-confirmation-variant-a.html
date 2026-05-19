@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SendMo — Label Confirmation A · USPS-style thumbnail</title>
+<style>
+  :root {
+    --background: hsl(0 0% 96%);
+    --foreground: hsl(210 11% 15%);
+    --card: hsl(0 0% 100%);
+    --primary: hsl(214 89% 52%);
+    --primary-foreground: hsl(0 0% 100%);
+    --muted: hsl(210 14% 95%);
+    --muted-foreground: hsl(210 7% 46%);
+    --success: hsl(142 71% 45%);
+    --border: hsl(210 14% 89%);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+    background: var(--background);
+    color: var(--foreground);
+    -webkit-font-smoothing: antialiased;
+    line-height: 1.5;
+  }
+  .page { max-width: 480px; margin: 0 auto; padding: 24px 16px 64px; }
+  .variant-label {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--muted-foreground); font-weight: 600;
+    text-align: center; margin-bottom: 20px;
+  }
+
+  /* Generic card */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 20px;
+    box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+    margin-bottom: 20px;
+  }
+  .card h3 { margin: 0 0 12px; font-size: 13px; font-weight: 600; }
+  .muted { color: var(--muted-foreground); }
+  .row { display: flex; justify-content: space-between; align-items: baseline; font-size: 14px; padding: 4px 0; }
+  .row dt { color: var(--muted-foreground); }
+  .row dd { margin: 0; font-weight: 500; }
+
+  /* Hero banner */
+  .hero {
+    background: hsl(142 71% 45% / 0.08);
+    border: 1px solid hsl(142 71% 45% / 0.3);
+    border-radius: 16px;
+    padding: 24px 20px 20px;
+    text-align: center;
+    margin-bottom: 20px;
+  }
+  .hero h2 { margin: 16px 0 6px; font-size: 20px; font-weight: 700; letter-spacing: -0.01em; }
+  .hero p.tracking { margin: 0; font-size: 13px; color: var(--muted-foreground); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+  /* === Variant A: Mini USPS-style label === */
+  .mini-label-wrap {
+    display: flex;
+    justify-content: center;
+    perspective: 800px;
+  }
+  .mini-label {
+    width: 180px;
+    background: white;
+    border: 1px solid hsl(0 0% 80%);
+    border-radius: 6px;
+    box-shadow:
+      0 1px 0 rgb(0 0 0 / 0.04),
+      0 4px 8px rgb(0 0 0 / 0.08),
+      0 16px 32px rgb(0 0 0 / 0.08);
+    overflow: hidden;
+    transform: rotate(-2.2deg);
+    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+    color: #1a1a1a;
+    animation: tilt-in 700ms cubic-bezier(.2,.9,.3,1.1) both;
+  }
+  @keyframes tilt-in {
+    0% { opacity: 0; transform: rotate(-12deg) translateY(-12px) scale(0.92); }
+    100% { opacity: 1; transform: rotate(-2.2deg) translateY(0) scale(1); }
+  }
+
+  .ml-header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 6px 8px;
+    border-bottom: 2px solid black;
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+  }
+  .ml-class {
+    background: black; color: white; padding: 4px 6px; border-radius: 2px;
+  }
+  .ml-section { padding: 6px 8px; border-bottom: 1px dashed #d4d4d4; }
+  .ml-tiny { font-size: 6.5px; color: #555; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 2px; }
+  .ml-addr { font-size: 8.5px; line-height: 1.35; font-weight: 600; }
+  .ml-addr.big { font-size: 10px; line-height: 1.35; }
+  .ml-barcode {
+    height: 36px;
+    background:
+      repeating-linear-gradient(to right,
+        black 0 2px, transparent 2px 3px,
+        black 3px 4px, transparent 4px 6px,
+        black 6px 8px, transparent 8px 9px,
+        black 9px 11px, transparent 11px 12px,
+        black 12px 13px, transparent 13px 16px);
+    margin: 6px 0 4px;
+  }
+  .ml-trk {
+    font-size: 8px; font-weight: 700;
+    text-align: center;
+    letter-spacing: 0.04em;
+  }
+  .ml-svc {
+    display: flex; align-items: center; gap: 6px; padding: 6px 8px;
+    background: hsl(214 89% 52% / 0.06);
+    border-top: 1px solid hsl(0 0% 88%);
+  }
+  .ml-svc-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--primary); }
+  .ml-svc-text { font-size: 7.5px; font-weight: 700; letter-spacing: 0.04em; color: #1a1a1a; }
+
+  /* Buttons */
+  .btn-row { display: flex; gap: 10px; }
+  .btn {
+    flex: 1;
+    border: none;
+    border-radius: 12px;
+    padding: 11px 14px;
+    font: inherit; font-size: 14px; font-weight: 500;
+    cursor: pointer;
+    box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    transition: transform 100ms, box-shadow 100ms;
+  }
+  .btn:active { transform: translateY(1px); }
+  .btn-outline { background: white; border: 1px solid var(--border); color: var(--foreground); }
+  .btn-primary { background: var(--primary); color: white; }
+  .btn-outline-wide { width: 100%; background: white; border: 1px solid var(--border); color: var(--foreground); border-radius: 12px; padding: 11px; font-size: 14px; font-weight: 500; cursor: pointer; }
+
+  /* Share link */
+  .share {
+    display: flex; align-items: center; gap: 8px;
+    background: hsl(210 14% 95% / 0.5);
+    border-radius: 12px; padding: 10px 12px;
+  }
+  .share span { flex: 1; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 14px; }
+  .share button {
+    background: transparent; border: none; color: var(--foreground);
+    font-size: 13px; font-weight: 500; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 4px 8px; border-radius: 8px;
+  }
+  .share button:hover { background: hsl(210 14% 89% / 0.6); }
+  .total { color: var(--primary); font-weight: 700; font-size: 18px; }
+  .border-t { border-top: 1px solid var(--border); margin-top: 4px; padding-top: 8px; }
+  svg.icon { width: 16px; height: 16px; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="variant-label">Variant A — Mini USPS-style label thumbnail</div>
+
+  <!-- Hero with mini label graphic -->
+  <div class="hero">
+    <div class="mini-label-wrap">
+      <div class="mini-label" aria-label="Mini label preview">
+        <div class="ml-header">
+          <span>USPS</span>
+          <span class="ml-class">GROUND ADVANTAGE™</span>
+        </div>
+        <div class="ml-section">
+          <div class="ml-tiny">From</div>
+          <div class="ml-addr">JOHN A.<br/>PORTOLA VALLEY, CA 94028</div>
+        </div>
+        <div class="ml-section">
+          <div class="ml-tiny">Ship To</div>
+          <div class="ml-addr big">JOHN ANDERSON<br/>TRUCKEE, CA 96161</div>
+        </div>
+        <div class="ml-section" style="border-bottom: none;">
+          <div class="ml-barcode"></div>
+          <div class="ml-trk">9400 1002 0830 3112 20</div>
+        </div>
+        <div class="ml-svc">
+          <span class="ml-svc-dot"></span>
+          <span class="ml-svc-text">PAID · SENDMO</span>
+        </div>
+      </div>
+    </div>
+    <h2>Your shipping label and link are ready</h2>
+    <p class="tracking">Tracking: 9400 1002 0830 3112 20</p>
+  </div>
+
+  <!-- Shipping label actions -->
+  <div class="card">
+    <h3>Shipping Label</h3>
+    <div class="btn-row">
+      <button class="btn btn-outline">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>
+        View Label
+      </button>
+      <button class="btn btn-primary">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Download PDF
+      </button>
+    </div>
+  </div>
+
+  <!-- Share Link -->
+  <div class="card">
+    <h3>Share Link</h3>
+    <div class="share">
+      <span>sendmo.co/s/k7M2nQp4R9</span>
+      <button>
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+        Copy
+      </button>
+    </div>
+  </div>
+
+  <!-- Shipment Details -->
+  <div class="card">
+    <h3>Shipment Details</h3>
+    <dl style="margin: 0;">
+      <div class="row"><dt>To</dt><dd>Truckee, CA</dd></div>
+      <div class="row"><dt>From</dt><dd>Portola Valley, CA</dd></div>
+      <div class="row"><dt>Carrier</dt><dd>USPS — Ground Advantage</dd></div>
+      <div class="row border-t"><dt>Total</dt><dd class="total">$7.59</dd></div>
+    </dl>
+  </div>
+
+  <button class="btn-outline-wide">Go to your account page</button>
+</div>
+</body>
+</html>

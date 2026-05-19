@@ -12,6 +12,42 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-19] Unify post-purchase confirmation into `/t/<code>` — one state-driven page
+
+**Category:** Architecture | Refactor | Tracking page | Privacy (server-side gating) | UX
+**Cross-link:** [proposals/2026-05-19_unify-confirmation-into-tracking_reviewed-2026-05-19_decided-2026-05-19.md](proposals/2026-05-19_unify-confirmation-into-tracking_reviewed-2026-05-19_decided-2026-05-19.md) | builds on [2026-05-13_tracking-page-ia-polish](proposals/2026-05-13_tracking-page-ia-polish_reviewed-2026-05-13_decided-2026-05-13.md) (F3 family preserved) | reuses cancel-token transport from [2026-05-11_label-cancel-and-change](proposals/2026-05-11_label-cancel-and-change_reviewed-2026-05-12_decided-2026-05-12.md) (sender_flex identity proof)
+
+**What landed:** The inline `LabelReady` view inside `RecipientStepPayment.tsx` was deleted. On payment success the recipient now redirects to `/t/<public_code>?fresh=1&cancel=<token>` (`{ replace: true }`). Comp-mode path applies the same redirect. `?fresh=1` is treated as a presentation hint only, stripped on first paint — never an identity claim. SenderFlow's redirect was already correct (no changes).
+
+`TrackingPage.tsx` is now a state-driven dispatcher. The render path is a four-way switch on shipment status:
+- `cancelled` / `return_to_sender` → existing F3 family (`CancelledShipmentBanner` + `DetailsCardWithFooter(family=3)` + `PrintAnotherLabelCTA`) preserved unchanged from the 2026-05-13 IA-polish proposal. Additions: `HelpLink` in the footer, payer-only condensed `ReceiptBlock` at the bottom.
+- `label_created` → `StateHero("pre-dropoff")` + `EtaBanner` (consumes server `promised_delivery_date`, no client-side ETA computation) + `ActionButtonsRow` (Print/Download, equal-width, soft-green tint when `print_count > 0`, count surfaces as a small line below) + `HowToShipStrip(printDone)` (step 1 → green check on done, step 3 → map-pin glyph instead of numbered circle, cutoff hint appended to step 3 body) + `DetailsCardWithFooter` (Cancel + Need help) + viewer-conditional bottom block.
+- `in_transit` / `out_for_delivery` → `StateHero("post-dropoff")` + lifecycle progress + `DetailsCardWithFooter` (no cancel slot — and **no inert "cancel unavailable" note** per John's directive D; the slot is simply hidden) + viewer-conditional bottom.
+- `delivered` → `StateHero("post-delivery")` + lifecycle progress + `DetailsCardWithFooter` + viewer-conditional bottom. The "Everything OK?" card from earlier drafts was removed per John's directive C; `HelpLink` in DetailsCard footer carries support intake universally.
+
+Three viewer roles compose orthogonally to the four lifecycle states: `payer` (JWT match + admin) sees a `ReceiptBlock` (full when `?fresh=1` was present at navigation, condensed otherwise) — full receipt has line items + payment method + PDF link; condensed is a single line. `sender_flex` (holds a valid cancel-token but is NOT the link owner) sees a `PaidByRecipientBlock`: green check + "Jane has paid for shipping · No charge to you — the prepaid label is on the recipient." `anonymous` sees no payment block at all.
+
+**The load-bearing privacy fix.** Anonymous viewers must never see payment state. Two server-side gates in `supabase/functions/tracking/index.ts`:
+1. `paid` / `amount_paid_cents` now collapse to `false` / `null` for anonymous regardless of actual payment state — info-zero, not "the UI hides it." Pattern D (shipped 2026-05-18) made `amount_paid_cents` fillable; without this gate, the next paid shipment would leak through.
+2. `recipient_first_name` (joined from `sendmo_links.user_id → profiles.full_name`, first word) is only returned for `viewerRole ∈ {payer, sender_flex}`. Anonymous gets null.
+
+`viewerRole` derivation is a 3-tier ladder, server-side: `(viewerIsRecipient || isAdmin) → payer` else `(timing-safe cancel-token match) → sender_flex` else `anonymous`. Cancel-token transport reuses the `?cancel=<hex>` query param from the 2026-05-11 cancel-and-change proposal; the timing-safe compare is mirrored from `cancel-label/index.ts` to prevent token enumeration.
+
+**Browser-verified:**
+```
+spec: tests/e2e/tracking-lifecycle-states.spec.ts (pre-drop-off, post-drop-off, post-delivery, terminal/cancelled, out_for_delivery sanity) ;
+      tests/e2e/tracking-anonymous-payment-gating.spec.ts (mocked anonymous render assertions — load-bearing regression guard for blocking finding #2 ; live API tests gated on env vars) ;
+      tests/e2e/onboarding.spec.ts (updated to follow redirect to /t/[A-Z0-9]+ and assert against new TrackingPage surface) ;
+      tests/e2e/url-step-routing.spec.ts (Step 12 redirect assertion updated)
+variants-covered: 4 lifecycle states × 3 viewer roles ; existing F3 family preservation regression-guarded ; e2e suite not executed in this session per project convention (EasyPost test-credit conservation + Maps-API-key bug per WISHLIST). Pre-merge gate: John exercises the recipient onboarding flow end-to-end in the browser. Suite is wired so `npm run test:e2e` from a green local environment would assert the new surface.
+```
+
+**For other agents reading this LOG entry without the full context:** the proposal review surfaced 5 blocking findings (lifecycle dropped F3, anonymous payment-field client-only gating, fictional auth-signal infrastructure, `?just=bought` URL-leak, client-side ETA helper reinventing EasyPost data). All five were accepted in the author response. The proposal artifact is the canonical decision record; the HTML mockup at `previews/proposal-unify-confirmation-into-tracking.html` is the visual spec. Read both before extending this surface.
+
+**One small follow-up to track:** `ActionButtonsRow` returns null when `data.label_url` is null (orphan-recovered shipments — the EasyPost id is known but the PDF URL wasn't captured at buy time). The orphan-recovery "Label PDF not available" affordance from the old `ShipmentLabelSection` is no longer rendered. Low priority (orphan shipments are a recovery edge case, not normal flow), but worth a WISHLIST entry if a real orphan-recovery scenario hits.
+
+---
+
 ### [2026-05-18] Frequent logout root cause — Supabase callback footgun (the real Bug 2)
 
 **Category:** fix | Auth | Session

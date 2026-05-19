@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SendMo — Label Confirmation B · Paper shipping tag</title>
+<style>
+  :root {
+    --background: hsl(0 0% 96%);
+    --foreground: hsl(210 11% 15%);
+    --card: hsl(0 0% 100%);
+    --primary: hsl(214 89% 52%);
+    --primary-foreground: hsl(0 0% 100%);
+    --muted: hsl(210 14% 95%);
+    --muted-foreground: hsl(210 7% 46%);
+    --success: hsl(142 71% 45%);
+    --border: hsl(210 14% 89%);
+    --kraft: #d9b97c;
+    --kraft-dark: #b89352;
+    --kraft-deep: #8a6a35;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+    background: var(--background);
+    color: var(--foreground);
+    -webkit-font-smoothing: antialiased;
+    line-height: 1.5;
+  }
+  .page { max-width: 480px; margin: 0 auto; padding: 24px 16px 64px; }
+  .variant-label {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--muted-foreground); font-weight: 600;
+    text-align: center; margin-bottom: 20px;
+  }
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 20px;
+    box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+    margin-bottom: 20px;
+  }
+  .card h3 { margin: 0 0 12px; font-size: 13px; font-weight: 600; }
+  .row { display: flex; justify-content: space-between; align-items: baseline; font-size: 14px; padding: 4px 0; }
+  .row dt { color: var(--muted-foreground); }
+  .row dd { margin: 0; font-weight: 500; }
+
+  /* Hero banner */
+  .hero {
+    background: hsl(142 71% 45% / 0.08);
+    border: 1px solid hsl(142 71% 45% / 0.3);
+    border-radius: 16px;
+    padding: 28px 20px 20px;
+    text-align: center;
+    margin-bottom: 20px;
+    overflow: hidden;
+  }
+  .hero h2 { margin: 22px 0 6px; font-size: 20px; font-weight: 700; letter-spacing: -0.01em; }
+  .hero p.tracking { margin: 0; font-size: 13px; color: var(--muted-foreground); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+  /* === Variant B: Paper shipping tag === */
+  .tag-stage {
+    position: relative;
+    height: 180px;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    padding-top: 4px;
+  }
+
+  /* Twine — a thin curve from above the hero */
+  .twine {
+    position: absolute;
+    top: -4px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 60px;
+    height: 26px;
+    pointer-events: none;
+  }
+  .twine svg { width: 100%; height: 100%; overflow: visible; }
+  .twine path { stroke: #9a8264; stroke-width: 1.5; fill: none; stroke-dasharray: 1.2 1.6; stroke-linecap: round; }
+
+  .tag {
+    --tag-w: 180px;
+    --tag-h: 150px;
+    --hole-r: 9px;
+    width: var(--tag-w);
+    height: var(--tag-h);
+    margin-top: 14px;
+    position: relative;
+    transform-origin: top center;
+    transform: rotate(-3deg);
+    animation: tag-drop 800ms cubic-bezier(.34,1.3,.5,1) both;
+    filter: drop-shadow(0 4px 8px rgba(0,0,0,0.10)) drop-shadow(0 12px 20px rgba(0,0,0,0.06));
+  }
+  @keyframes tag-drop {
+    0% { opacity: 0; transform: rotate(-18deg) translateY(-30px); }
+    60% { opacity: 1; transform: rotate(1deg) translateY(0); }
+    100% { opacity: 1; transform: rotate(-3deg); }
+  }
+  .tag-svg { width: 100%; height: 100%; display: block; }
+
+  .tag-content {
+    position: absolute;
+    inset: 28px 12px 10px 22px;
+    color: #4a3a1e;
+    text-align: left;
+  }
+  .tag-brand {
+    font-size: 9px; font-weight: 700; letter-spacing: 0.18em;
+    color: var(--kraft-deep);
+    margin-bottom: 4px;
+  }
+  .tag-to-label {
+    font-size: 8px; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--kraft-deep); opacity: 0.7;
+    margin-bottom: 2px;
+  }
+  .tag-name {
+    font-family: 'Caveat', 'Brush Script MT', cursive;
+    font-size: 22px; font-weight: 700; color: #2a1e08;
+    line-height: 1; margin-bottom: 4px;
+    letter-spacing: 0.01em;
+  }
+  .tag-city {
+    font-family: 'Caveat', 'Brush Script MT', cursive;
+    font-size: 18px; color: #4a3a1e; line-height: 1;
+    margin-bottom: 8px;
+  }
+  .tag-divider {
+    height: 1px; background: var(--kraft-dark); opacity: 0.4;
+    margin: 6px 0;
+  }
+  .tag-trk-label {
+    font-size: 7px; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--kraft-deep); opacity: 0.7;
+  }
+  .tag-trk {
+    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+    font-size: 9px; font-weight: 700; color: #2a1e08;
+    letter-spacing: 0.02em;
+  }
+  .tag-stamp {
+    position: absolute;
+    bottom: -8px;
+    right: -6px;
+    transform: rotate(8deg);
+    border: 2px solid hsl(214 89% 52%);
+    color: hsl(214 89% 52%);
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 9px; font-weight: 800;
+    letter-spacing: 0.12em;
+    background: rgba(255,255,255,0.7);
+    opacity: 0.85;
+    animation: stamp-in 700ms ease-out 700ms both;
+  }
+  @keyframes stamp-in {
+    0% { opacity: 0; transform: rotate(18deg) scale(1.6); }
+    100% { opacity: 0.85; transform: rotate(8deg) scale(1); }
+  }
+
+  /* Buttons & misc */
+  .btn-row { display: flex; gap: 10px; }
+  .btn {
+    flex: 1; border: none; border-radius: 12px; padding: 11px 14px;
+    font: inherit; font-size: 14px; font-weight: 500; cursor: pointer;
+    box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  }
+  .btn-outline { background: white; border: 1px solid var(--border); color: var(--foreground); }
+  .btn-primary { background: var(--primary); color: white; }
+  .btn-outline-wide { width: 100%; background: white; border: 1px solid var(--border); color: var(--foreground); border-radius: 12px; padding: 11px; font-size: 14px; font-weight: 500; cursor: pointer; }
+  .share { display: flex; align-items: center; gap: 8px; background: hsl(210 14% 95% / 0.5); border-radius: 12px; padding: 10px 12px; }
+  .share span { flex: 1; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 14px; }
+  .share button { background: transparent; border: none; color: var(--foreground); font-size: 13px; font-weight: 500; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; border-radius: 8px; }
+  .total { color: var(--primary); font-weight: 700; font-size: 18px; }
+  .border-t { border-top: 1px solid var(--border); margin-top: 4px; padding-top: 8px; }
+  svg.icon { width: 16px; height: 16px; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="variant-label">Variant B — Paper shipping tag</div>
+
+  <div class="hero">
+    <div class="tag-stage">
+      <!-- Twine -->
+      <div class="twine" aria-hidden="true">
+        <svg viewBox="0 0 60 26">
+          <path d="M30 0 C 18 8, 22 18, 30 22 S 42 18, 30 0" />
+        </svg>
+      </div>
+
+      <!-- Kraft paper tag, custom-shaped via SVG -->
+      <div class="tag">
+        <svg class="tag-svg" viewBox="0 0 180 150" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <defs>
+            <linearGradient id="kraft" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#e3c891"/>
+              <stop offset="1" stop-color="#cca867"/>
+            </linearGradient>
+            <pattern id="grain" patternUnits="userSpaceOnUse" width="3" height="3">
+              <rect width="3" height="3" fill="transparent"/>
+              <circle cx="0.7" cy="0.7" r="0.25" fill="#a98445" opacity="0.18"/>
+              <circle cx="2.1" cy="1.9" r="0.2" fill="#7c5e2a" opacity="0.13"/>
+            </pattern>
+          </defs>
+          <!-- Tag silhouette: angled top corners + hole -->
+          <path d="M 30 4 L 150 4 Q 156 4 159 8 L 176 28 Q 178 31 178 36 L 178 142 Q 178 146 174 146 L 6 146 Q 2 146 2 142 L 2 36 Q 2 31 4 28 L 21 8 Q 24 4 30 4 Z"
+                fill="url(#kraft)" stroke="#8a6a35" stroke-width="1.2"/>
+          <path d="M 30 4 L 150 4 Q 156 4 159 8 L 176 28 Q 178 31 178 36 L 178 142 Q 178 146 174 146 L 6 146 Q 2 146 2 142 L 2 36 Q 2 31 4 28 L 21 8 Q 24 4 30 4 Z"
+                fill="url(#grain)"/>
+          <!-- Grommet hole -->
+          <circle cx="90" cy="18" r="6" fill="#f6f1e6" stroke="#8a6a35" stroke-width="1"/>
+          <circle cx="90" cy="18" r="3" fill="#3a2a10"/>
+          <!-- Subtle inner border -->
+          <path d="M 32 8 L 148 8 Q 154 8 156 11 L 172 30 Q 174 33 174 37 L 174 140 Q 174 143 171 143 L 9 143 Q 6 143 6 140 L 6 37 Q 6 33 8 30 L 24 11 Q 26 8 32 8 Z"
+                fill="none" stroke="#8a6a35" stroke-width="0.5" stroke-dasharray="2 2" opacity="0.5"/>
+        </svg>
+
+        <div class="tag-content">
+          <div class="tag-brand">SENDMO · PREPAID</div>
+          <div class="tag-to-label">Ship to</div>
+          <div class="tag-name">John Anderson</div>
+          <div class="tag-city">Truckee, CA</div>
+          <div class="tag-divider"></div>
+          <div class="tag-trk-label">Tracking</div>
+          <div class="tag-trk">9400 1002 0830<br/>3112 20</div>
+        </div>
+
+        <div class="tag-stamp">READY</div>
+      </div>
+    </div>
+
+    <h2>Your shipping label and link are ready</h2>
+    <p class="tracking">Tracking: 9400 1002 0830 3112 20</p>
+  </div>
+
+  <div class="card">
+    <h3>Shipping Label</h3>
+    <div class="btn-row">
+      <button class="btn btn-outline">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>
+        View Label
+      </button>
+      <button class="btn btn-primary">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Download PDF
+      </button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Share Link</h3>
+    <div class="share">
+      <span>sendmo.co/s/k7M2nQp4R9</span>
+      <button>
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+        Copy
+      </button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Shipment Details</h3>
+    <dl style="margin: 0;">
+      <div class="row"><dt>To</dt><dd>Truckee, CA</dd></div>
+      <div class="row"><dt>From</dt><dd>Portola Valley, CA</dd></div>
+      <div class="row"><dt>Carrier</dt><dd>USPS — Ground Advantage</dd></div>
+      <div class="row border-t"><dt>Total</dt><dd class="total">$7.59</dd></div>
+    </dl>
+  </div>
+
+  <button class="btn-outline-wide">Go to your account page</button>
+</div>
+</body>
+</html>

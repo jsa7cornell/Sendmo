@@ -66,6 +66,43 @@ const MOCK_LABEL: import("../../src/lib/types").LabelResult = {
   service: "GroundAdvantage",
   label_url: "https://easypost.com/labels/mock-label.pdf",
   sendmo_id: "SM-TEST-001",
+  public_code: "TESTPC1",
+  cancel_token: "aabbccdd1122334455667788aabbccdd",
+};
+
+/** Minimal tracking response shape that TrackingPage expects after the redirect. */
+const MOCK_TRACKING = {
+  tracking_number: "9400111899223456789012",
+  public_code: "TESTPC1",
+  carrier: "USPS",
+  service: "GroundAdvantage",
+  status: "label_created",
+  estimated_delivery: null,
+  events: [],
+  created_at: new Date().toISOString(),
+  updated_at: new Date().toISOString(),
+  promised_delivery_date: null,
+  delivered_at: null,
+  label_url: "https://easypost.com/labels/mock-label.pdf",
+  link_short_code: "TESTSC1",
+  link_status: "in_use",
+  link_type: "full_label",
+  viewer_is_recipient: false,
+  viewerRole: "anonymous",
+  recipient_first_name: null,
+  refund_status: "none",
+  paid: false,
+  amount_paid_cents: null,
+  is_test: true,
+  cancelled_at: null,
+  cancelled_by_actor: null,
+  item_description: null,
+  from_city: "San Francisco",
+  from_state: "CA",
+  to_city: "San Francisco",
+  to_state: "CA",
+  print_count: 0,
+  last_printed_at: null,
 };
 
 /**
@@ -136,6 +173,16 @@ async function mockAllEdgeFunctions(page: Page) {
       status: 200,
       contentType: "application/json",
       body: JSON.stringify(MOCK_LABEL),
+    })
+  );
+
+  // Mock tracking endpoint — TrackingPage calls this after the post-payment redirect.
+  // Route is keyed by public_code from MOCK_LABEL so the redirect lands correctly.
+  await page.route(`${SUPABASE_URL}/functions/v1/tracking*`, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(MOCK_TRACKING),
     })
   );
 
@@ -255,22 +302,31 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
       .getByRole("button", { name: /Pay.*generate label/i })
       .click();
 
-    // ── Step 12: Label Ready ────────────────────────────────
-    await expect(
-      page.getByRole("heading", {
-        name: /shipping label and link are ready/i,
-      })
-    ).toBeVisible({ timeout: 10000 });
+    // ── Step 12: TrackingPage redirect ─────────────────────
+    // After payment succeeds, the app navigates to /t/<public_code>?fresh=1.
+    // TrackingPage strips ?fresh=1 on first paint (setSearchParams replace:true),
+    // so the URL settles at /t/TESTPC1.
+    await expect(page).toHaveURL(/\/t\/[A-Z0-9]+/, { timeout: 10000 });
 
-    // Tracking number from mock
-    await expect(page.getByText("9400111899223456789012")).toBeVisible();
+    // Pre-drop-off state hero — headline contains "ready to print"
+    await expect(page.getByText(/ready to print/i)).toBeVisible({ timeout: 10000 });
 
-    // Download and View buttons
+    // Print button (formerly "View Label" — renamed per proposal)
     await expect(
-      page.getByRole("button", { name: /Download PDF/i })
+      page.getByRole("button", { name: /Print/i })
+        .or(page.getByRole("link", { name: /Print/i }))
     ).toBeVisible();
+
+    // Download button
     await expect(
-      page.getByRole("button", { name: /View Label/i })
+      page.getByRole("button", { name: /Download/i })
+        .or(page.getByRole("link", { name: /Download/i }))
     ).toBeVisible();
+
+    // "How to ship" heading from HowToShipStrip
+    await expect(page.getByText(/how to ship/i)).toBeVisible();
+
+    // ETA banner is conditional on promised_delivery_date — not asserted here
+    // because MOCK_TRACKING has promised_delivery_date: null (banner hides itself).
   });
 });

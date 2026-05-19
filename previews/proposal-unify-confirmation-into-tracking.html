@@ -1,0 +1,1292 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Proposal — One page, state-driven: /t/&lt;code&gt;</title>
+<style>
+  :root {
+    --background: hsl(0 0% 96%);
+    --foreground: hsl(210 11% 15%);
+    --card: hsl(0 0% 100%);
+    --primary: hsl(214 89% 52%);
+    --primary-soft: hsl(214 89% 96%);
+    --primary-foreground: hsl(0 0% 100%);
+    --muted: hsl(210 14% 95%);
+    --muted-foreground: hsl(210 7% 46%);
+    --success: hsl(142 71% 45%);
+    --success-soft: hsl(142 71% 95%);
+    --destructive: hsl(0 72% 51%);
+    --border: hsl(210 14% 89%);
+    --warm: hsl(35 92% 55%);
+    --warm-soft: hsl(43 96% 95%);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+    background: hsl(210 20% 97%);
+    color: var(--foreground);
+    -webkit-font-smoothing: antialiased;
+    line-height: 1.55;
+  }
+
+  /* Doc layout */
+  .doc { max-width: 1280px; margin: 0 auto; padding: 40px 24px 96px; }
+  .doc-header { margin-bottom: 24px; }
+  .doc-eyebrow { font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted-foreground); font-weight: 600; margin: 0 0 6px; }
+  .doc-title { font-size: 32px; font-weight: 700; margin: 0 0 8px; letter-spacing: -0.02em; }
+  .doc-meta { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; color: var(--muted-foreground); font-size: 13px; }
+  .status-pill { display: inline-flex; align-items: center; gap: 6px; background: hsl(43 96% 56% / 0.15); color: hsl(28 80% 36%); border: 1px solid hsl(43 96% 56% / 0.4); padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+  .status-pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: hsl(28 80% 50%); }
+  h2 { font-size: 20px; font-weight: 700; letter-spacing: -0.01em; margin: 40px 0 12px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+  h3 { font-size: 15px; font-weight: 600; margin: 22px 0 8px; }
+  p { margin: 0 0 12px; max-width: 78ch; }
+  ul, ol { margin: 0 0 12px; padding-left: 20px; max-width: 78ch; }
+  li { margin: 4px 0; }
+  code { background: hsl(210 14% 92%); padding: 1px 6px; border-radius: 4px; font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 0.88em; }
+  .callout { background: white; border: 1px solid var(--border); border-left: 3px solid var(--primary); border-radius: 8px; padding: 12px 16px; margin: 16px 0; max-width: 78ch; font-size: 14px; }
+  .callout strong { color: var(--primary); }
+  .callout.warn { border-left-color: var(--warm); }
+  .callout.warn strong { color: hsl(28 80% 36%); }
+
+  /* State matrix */
+  .matrix { margin: 18px 0 20px; background: white; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; max-width: 1000px; display: grid; grid-template-columns: 200px repeat(3, 1fr); }
+  .matrix > div { padding: 12px 14px; border-top: 1px solid var(--border); border-left: 1px solid var(--border); font-size: 13px; }
+  .matrix > div:nth-child(-n+4) { border-top: none; }
+  .matrix > div:nth-child(4n+1) { border-left: none; background: hsl(210 14% 97%); font-weight: 600; }
+  .matrix-head { background: var(--foreground) !important; color: white !important; font-weight: 600 !important; }
+  .matrix-head .sub { display: block; font-size: 11px; opacity: 0.7; font-weight: 400; margin-top: 2px; }
+  .matrix .cell-note { color: var(--muted-foreground); font-size: 12px; margin-top: 3px; }
+  .pill { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 10px; font-weight: 600; letter-spacing: 0.02em; margin-right: 4px; }
+  .pill.show { background: var(--success-soft); color: hsl(142 50% 25%); }
+  .pill.hide { background: var(--muted); color: var(--muted-foreground); }
+  .pill.modal { background: var(--primary-soft); color: hsl(214 70% 35%); }
+
+  /* Mockup row */
+  .mockup-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin: 20px 0 16px; }
+  @media (max-width: 1100px) { .mockup-row { grid-template-columns: 1fr; max-width: 460px; } }
+  .mockup { background: white; border-radius: 22px; border: 1px solid var(--border); box-shadow: 0 1px 2px rgba(0,0,0,0.04), 0 8px 20px rgba(0,0,0,0.06); overflow: hidden; display: flex; flex-direction: column; }
+  .mockup-caption { background: hsl(210 14% 95%); border-bottom: 1px solid var(--border); padding: 10px 14px; font-size: 12px; }
+  .mockup-caption b { display: block; font-size: 13px; color: var(--foreground); }
+  .mockup-caption .sub { color: var(--muted-foreground); }
+  .mockup-caption code { background: white; border: 1px solid var(--border); font-size: 11px; padding: 1px 6px; }
+  .device { background: var(--background); padding: 0; overflow: hidden; flex: 1; }
+  .device-scroll { padding: 14px; max-height: 880px; overflow-y: auto; }
+  .device-scroll::-webkit-scrollbar { width: 6px; }
+  .device-scroll::-webkit-scrollbar-thumb { background: hsl(210 14% 80%); border-radius: 3px; }
+
+  /* Fake AppHeader */
+  .app-header { background: white; border-bottom: 1px solid var(--border); padding: 10px 14px; display: flex; align-items: center; justify-content: space-between; }
+  .app-header .brand { font-weight: 700; font-size: 15px; color: var(--primary); letter-spacing: -0.01em; }
+  .app-header .avatar { width: 24px; height: 24px; border-radius: 50%; background: var(--muted); color: var(--muted-foreground); display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; }
+
+  /* Phone content shared */
+  .ph-card { background: white; border: 1px solid var(--border); border-radius: 14px; padding: 14px 16px; margin-bottom: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.04); }
+  .ph-card h3 { font-size: 12px; font-weight: 600; margin: 0 0 10px; color: var(--foreground); }
+  .ph-row { display: flex; justify-content: space-between; align-items: baseline; font-size: 13px; padding: 3px 0; }
+  .ph-row dt { color: var(--muted-foreground); margin: 0; }
+  .ph-row dd { margin: 0; font-weight: 500; }
+  .ph-border-t { border-top: 1px solid var(--border); margin-top: 6px; padding-top: 8px; }
+  .ph-total { color: var(--primary); font-weight: 700; font-size: 16px; }
+
+  /* State hero — fun illustration + headline (v4: 25% smaller per John) */
+  .state-hero { text-align: center; padding: 6px 0 4px; margin-bottom: 10px; }
+  .state-hero .scene { height: 64px; display: flex; justify-content: center; align-items: flex-end; margin-bottom: 4px; }
+  .state-hero .scene svg { height: 64px; }
+  .state-hero h1 { font-size: 14px; font-weight: 700; letter-spacing: -0.01em; margin: 3px 8px 0; line-height: 1.2; }
+  .state-hero h1 .accent { color: var(--primary); }
+  .state-hero h1 .accent-warm { color: var(--warm); }
+  .state-hero h1 .accent-success { color: var(--success); }
+  .state-hero p.line { margin: 4px 0 0; color: var(--muted-foreground); font-size: 12.5px; }
+
+  /* === ETA banner — mini-hero with walking-person SVG (v4) === */
+  .eta-banner {
+    background: linear-gradient(180deg, hsl(214 89% 96%) 0%, hsl(214 89% 94%) 100%);
+    border: 1px solid hsl(214 89% 80%);
+    border-radius: 14px;
+    padding: 10px 14px 10px 8px;
+    margin: 4px 0 14px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .eta-banner .eta-scene {
+    flex-shrink: 0;
+    width: 84px; height: 56px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .eta-banner .eta-scene svg { width: 84px; height: 56px; }
+  .eta-banner .eta-body { flex: 1; font-size: 13px; line-height: 1.35; }
+  .eta-banner .eta-body strong { display: block; font-size: 13.5px; color: var(--foreground); }
+  .eta-banner .eta-body .when { color: var(--primary); font-weight: 700; }
+  .eta-banner .eta-body .src { color: var(--muted-foreground); font-size: 11px; margin-top: 2px; }
+
+  /* Action buttons — thinner, counter as small text below */
+  .action-row { display: flex; gap: 8px; margin: 4px 0 4px; }
+  .action-btn {
+    flex: 1;
+    border: 1px solid var(--border);
+    background: white;
+    color: var(--foreground);
+    border-radius: 10px;
+    padding: 8px 12px;            /* thinner — was 10px 12px */
+    font: inherit; font-size: 13px; font-weight: 500;
+    cursor: pointer;
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.05);
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  }
+  .action-btn.primary { background: var(--primary); color: white; border-color: var(--primary); }
+  .action-btn.done { background: white; color: hsl(142 50% 30%); border-color: hsl(142 71% 45% / 0.5); }
+  .print-count {
+    text-align: center;
+    font-size: 11px;
+    color: var(--muted-foreground);
+    margin: 6px 0 10px;
+  }
+  .print-count.done { color: hsl(142 50% 30%); font-weight: 500; }
+  .print-count.done svg { width: 11px; height: 11px; vertical-align: -1px; margin-right: 2px; }
+
+  /* HowToShip strip */
+  .how-strip { background: white; border: 1px solid var(--border); border-radius: 14px; padding: 14px 16px; margin-bottom: 12px; }
+  .how-strip h3 { font-size: 12px; font-weight: 600; margin: 0 0 10px; }
+  .how-strip ol { padding-left: 0; margin: 0; list-style: none; }
+  .how-step { display: flex; gap: 10px; align-items: flex-start; padding: 4px 0; font-size: 12.5px; }
+  .how-step .n { flex-shrink: 0; width: 20px; height: 20px; border-radius: 50%; background: var(--primary); color: white; font-size: 10px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+  .how-step .n.pin { background: transparent; color: var(--primary); }
+  .how-step .n.pin svg { width: 20px; height: 20px; }
+  .how-step .n.check { background: var(--success); }
+  .how-step .n.check svg { width: 11px; height: 11px; }
+  .how-step span.body { color: var(--muted-foreground); }
+  .how-strip .find-loc { margin: 8px 0 0 30px; font-size: 11px; color: var(--primary); text-decoration: none; display: inline-flex; align-items: center; gap: 3px; }
+  .how-strip .activate { margin: 12px 0 0; font-size: 11px; color: var(--muted-foreground); font-style: italic; }
+
+  /* Lifecycle progress */
+  .lifecycle { background: white; border: 1px solid var(--border); border-radius: 14px; padding: 14px 16px; margin-bottom: 12px; }
+  .lifecycle h3 { font-size: 12px; font-weight: 600; margin: 0 0 12px; }
+  .lc-row { display: flex; gap: 10px; align-items: flex-start; padding: 6px 0; font-size: 12.5px; border-left: 2px solid var(--border); padding-left: 12px; margin-left: 8px; position: relative; }
+  .lc-row::before { content: ""; position: absolute; left: -5px; top: 10px; width: 8px; height: 8px; border-radius: 50%; background: var(--border); border: 2px solid white; }
+  .lc-row.done::before { background: var(--success); }
+  .lc-row.active::before { background: var(--primary); box-shadow: 0 0 0 3px hsl(214 89% 52% / 0.2); }
+  .lc-row .label { font-weight: 600; display: block; }
+  .lc-row .when { color: var(--muted-foreground); font-size: 11px; }
+
+  /* Receipt block — payer only, lives at BOTTOM */
+  .receipt { background: white; border: 1px solid var(--border); border-radius: 14px; padding: 14px 16px; margin-bottom: 12px; }
+  .receipt h3 { font-size: 12px; font-weight: 600; margin: 0 0 8px; display: flex; justify-content: space-between; align-items: center; }
+  .receipt h3 .pdf { font-size: 11px; color: var(--primary); text-decoration: none; font-weight: 500; display: inline-flex; align-items: center; gap: 3px; }
+  .receipt .charged { font-size: 11px; color: var(--muted-foreground); margin: 6px 0 0; }
+
+  /* Cancel + Help links inside Details (v4: Need help always present; cancel conditional) */
+  .ph-details-actions {
+    display: flex; justify-content: space-between; align-items: center; gap: 12px;
+    margin-top: 10px; padding-top: 10px;
+    border-top: 1px solid var(--border);
+  }
+  .ph-details-actions.solo { justify-content: flex-end; }
+  .ph-cancel-link { color: var(--destructive); text-decoration: none; font-size: 12px; font-weight: 500; display: inline-flex; align-items: center; gap: 5px; }
+  .ph-cancel-link:hover { text-decoration: underline; }
+  .ph-help-link { color: var(--muted-foreground); text-decoration: none; font-size: 12px; font-weight: 500; display: inline-flex; align-items: center; gap: 5px; }
+  .ph-help-link:hover { color: var(--primary); text-decoration: underline; }
+
+  /* Variant flag chips */
+  .variant-flags { display: flex; gap: 4px; margin-bottom: 6px; flex-wrap: wrap; }
+  .vflag { font-size: 9.5px; padding: 2px 7px; border-radius: 999px; font-weight: 600; letter-spacing: 0.02em; }
+  .vflag.lifecycle { background: hsl(214 89% 52% / 0.1); color: hsl(214 70% 35%); }
+  .vflag.viewer { background: hsl(285 60% 60% / 0.12); color: hsl(285 50% 40%); }
+  .vflag.referral { background: hsl(28 80% 50% / 0.12); color: hsl(28 70% 36%); }
+
+  svg.ico { width: 14px; height: 14px; }
+  svg.ico-sm { width: 12px; height: 12px; }
+
+  .mockup-row.two-up { grid-template-columns: repeat(2, 1fr); max-width: 860px; }
+  @media (max-width: 800px) { .mockup-row.two-up { grid-template-columns: 1fr; max-width: 460px; } }
+  .mockup-row.three-up { grid-template-columns: repeat(3, 1fr); }
+  @media (max-width: 1100px) { .mockup-row.three-up { grid-template-columns: 1fr; max-width: 460px; } }
+
+  /* "Paid by recipient" block — sender_flex viewer (no receipt for non-paying sender) */
+  .paid-by {
+    background: var(--success-soft);
+    border: 1px solid hsl(142 71% 45% / 0.35);
+    border-radius: 14px;
+    padding: 12px 16px;
+    margin-bottom: 12px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .paid-by .check {
+    width: 22px; height: 22px; border-radius: 50%;
+    background: var(--success); color: white;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .paid-by .check svg { width: 12px; height: 12px; }
+  .paid-by .text { font-size: 13px; line-height: 1.35; }
+  .paid-by .text strong { color: hsl(142 50% 25%); font-weight: 600; }
+  .paid-by .text .sub { display: block; color: var(--muted-foreground); font-size: 11.5px; margin-top: 1px; }
+
+  .decision-box { background: white; border: 1px dashed var(--border); border-radius: 10px; padding: 18px 20px; margin-top: 12px; color: var(--muted-foreground); font-style: italic; max-width: 78ch; }
+
+  /* Open questions */
+  .toq { background: white; border: 1px solid var(--border); border-radius: 10px; padding: 0; margin: 16px 0; overflow: hidden; max-width: 90ch; }
+  .toq-row { display: grid; grid-template-columns: 220px 1fr; gap: 16px; padding: 14px 18px; border-top: 1px solid var(--border); }
+  .toq-row:first-child { border-top: none; }
+  .toq-row .toq-q { font-weight: 600; font-size: 13px; }
+  .toq-row .toq-a { font-size: 13px; color: var(--foreground); }
+  .toq-row .toq-a .stance { display: block; color: var(--primary); font-weight: 500; font-size: 12px; margin-top: 4px; }
+
+  /* Nits */
+  .nit-block { display: grid; grid-template-columns: 28px 1fr; gap: 12px; margin: 16px 0; max-width: 78ch; }
+  .nit-num { background: var(--primary); color: white; width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; margin-top: 2px; }
+  .nit-body { font-size: 14px; }
+  .nit-quote { font-style: italic; color: var(--muted-foreground); border-left: 2px solid var(--border); padding-left: 10px; margin: 0 0 6px; }
+
+  /* SVG illustration helpers (inline)
+     — pre-dropoff package, in-transit truck, delivered package-on-mat */
+</style>
+</head>
+<body>
+<div class="doc">
+
+  <header class="doc-header">
+    <p class="doc-eyebrow">SendMo · Proposal Review · v4 (post-review, post-John-tweaks)</p>
+    <h1 class="doc-title">One page, state-driven: <code>/t/&lt;code&gt;</code> over a shipment's lifetime</h1>
+    <div class="doc-meta">
+      <span class="status-pill">v4 — reviewer findings accepted; John design tweaks applied; execution starting</span>
+      <span>Slug: <code>2026-05-19_unify-confirmation-into-tracking</code></span>
+    </div>
+  </header>
+
+  <!-- Mental model -->
+  <h2>Mental model</h2>
+  <p><strong>One page. Three lifecycle states. Layered on top: viewer-identity and referral-source variants that augment the state.</strong></p>
+  <ul>
+    <li><strong>Primary axis — lifecycle:</strong> <em>pre-drop-off</em> → <em>post-drop-off</em> → <em>post-delivery</em>. Determines the hero, headline, what actions are available.</li>
+    <li><strong>Viewer-identity axis:</strong> <em>payer</em> (logged in, owned-link cookie, or signed email link) vs <em>anonymous</em>. Determines whether receipt + cancel surface at all.</li>
+    <li><strong>Referral axis:</strong> <em>fresh from checkout</em> (<code>?just=bought</code>) vs returning. Currently used only for an optional confetti flourish on the pre-drop-off hero; the underlying content is the same.</li>
+  </ul>
+
+  <div class="callout">
+    <strong>What this replaces:</strong> the inline <code>LabelReady</code> in <code>RecipientStepPayment</code>, the parallel sender-flow success view, and the "is this confirmation or tracking?" question. One page. State-driven. Viewer-aware.
+  </div>
+
+  <!-- Matrix -->
+  <h2>State × viewer matrix</h2>
+  <div class="matrix">
+    <div class="matrix-head"></div>
+    <div class="matrix-head">Payer · just bought<span class="sub">arrived from checkout</span></div>
+    <div class="matrix-head">Payer · returning<span class="sub">login, cookie, or email link</span></div>
+    <div class="matrix-head">Anonymous viewer<span class="sub">URL only</span></div>
+
+    <div>pre-drop-off<div class="cell-note">goal: print &amp; drop off</div></div>
+    <div>
+      <span class="pill show">SVG hero</span> <span class="pill show">ETA banner</span><br/>
+      <span class="pill show">print/download</span> <span class="pill show">drop-off strip</span><br/>
+      <span class="pill show">cancel</span> <span class="pill show">receipt at bottom</span>
+    </div>
+    <div>
+      <span class="pill show">SVG hero</span> <span class="pill show">ETA banner</span><br/>
+      <span class="pill show">print/download</span> <span class="pill show">drop-off strip</span><br/>
+      <span class="pill show">cancel</span> <span class="pill show">receipt at bottom</span>
+    </div>
+    <div>
+      <span class="pill show">SVG hero</span> <span class="pill show">ETA banner</span><br/>
+      <span class="pill show">print/download</span> <span class="pill show">drop-off strip</span><br/>
+      <span class="pill hide">no cancel</span> <span class="pill hide">no receipt</span>
+    </div>
+
+    <div style="background: hsl(35 92% 55% / 0.04); font-style: italic;">sender_flex<div class="cell-note">filled a prepaid link; recipient is the payer</div></div>
+    <div style="grid-column: span 3; background: hsl(35 92% 55% / 0.04);">
+      <span class="pill show">SVG hero</span> <span class="pill show">ETA banner</span> <span class="pill show">print/download</span> <span class="pill show">drop-off strip</span> <span class="pill show">cancel (via session-token)</span> <span class="pill show">"Need help" link</span>
+      <br/><span class="pill show" style="background:hsl(142 71% 45% / 0.18); color:hsl(142 60% 25%);">✓ "Paid by [recipient name]" block — replaces receipt</span>
+      &nbsp;·&nbsp; <span class="pill hide">no receipt to sender (it's the recipient's)</span>
+      <div class="cell-note">Sender-flex is pre-drop-off only in v1; sender returning later renders as anonymous (no durable identity post-checkout). v1.x could persist a session token for "sender returning" continuity.</div>
+    </div>
+
+    <div>post-drop-off<div class="cell-note">goal: tracking</div></div>
+    <div style="grid-column: span 2; background: hsl(214 89% 52% / 0.04);">
+      <span class="pill show">in-transit hero</span> <span class="pill show">lifecycle progress</span> <span class="pill show">details</span> <span class="pill show">receipt at bottom</span>
+      &nbsp;·&nbsp; <span class="pill hide">cancel disabled — scanned</span>
+    </div>
+    <div>
+      <span class="pill show">in-transit hero</span> <span class="pill show">lifecycle</span> <span class="pill show">details</span>
+      <span class="pill hide">no receipt</span>
+    </div>
+
+    <div>post-delivery<div class="cell-note">goal: closure + resolve</div></div>
+    <div style="grid-column: span 2; background: hsl(142 71% 45% / 0.05);">
+      <span class="pill show">delivered hero</span> <span class="pill show">lifecycle</span> <span class="pill show">details + cancel-eligibility-conditional</span> <span class="pill show">"Need help" link (in details)</span> <span class="pill show">receipt at bottom</span>
+    </div>
+    <div>
+      <span class="pill show">delivered hero</span> <span class="pill show">lifecycle</span> <span class="pill show">details</span>
+      <span class="pill show">"Need help" link</span> <span class="pill hide">no receipt</span>
+    </div>
+
+    <div>terminal<div class="cell-note">cancelled / RTS (F3 family preserved from 2026-05-13 IA polish)</div></div>
+    <div style="grid-column: span 3; background: hsl(0 72% 51% / 0.04);">
+      <span class="pill show">CancelledShipmentBanner / RTS banner</span> <span class="pill show">DetailsCard(family=3)</span> <span class="pill show">PrintAnotherLabelCTA</span> <span class="pill show">"Need help" link</span>
+      &nbsp;·&nbsp; <span class="pill show">receipt at bottom (payer)</span> <span class="pill hide">no print/download</span> <span class="pill hide">no how-to-ship</span>
+    </div>
+  </div>
+
+  <div class="callout">
+    <strong>Reconciliation with prior decided proposal.</strong> The "terminal" row above preserves the F3 family decided in <a href="2026-05-13_tracking-page-ia-polish_reviewed-2026-05-13_decided-2026-05-13.md">2026-05-13_tracking-page-ia-polish</a> §2.1. The new 3-state lifecycle (pre-drop-off / post-drop-off / post-delivery) layers on top of the existing F1/F3 split, not as a replacement. Routing logic: <code>if (status ∈ {cancelled, return_to_sender}) → terminal (F3 composition unchanged); else dispatch on new 3-state axis</code>. Net result: <code>label_created</code> → pre (was F1) · <code>in_transit</code>/<code>out_for_delivery</code> → post-drop-off (was F2) · <code>delivered</code> → post-delivery (was F2′) · <code>cancelled</code>/<code>return_to_sender</code> → terminal (was F3, untouched).
+  </div>
+
+  <!-- Mockups — three lifecycle states, payer viewer -->
+  <h2>The three states · payer view</h2>
+  <p>Same URL across all three. The user is the known payer in each, freshly arrived from checkout in (1), returning in (2) and (3). Today is Tuesday, May&nbsp;19.</p>
+
+  <div class="mockup-row">
+
+    <!-- ① PRE-DROPOFF, PAYER, JUST-BOUGHT -->
+    <div class="mockup">
+      <div class="mockup-caption">
+        <b>① Pre-drop-off · payer · just bought</b>
+        <span class="sub"><code>/t/k7M2nQp4R9?just=bought</code></span>
+      </div>
+      <div class="device">
+        <div class="app-header"><span class="brand">SendMo</span><span class="avatar">JA</span></div>
+        <div class="device-scroll">
+          <div class="variant-flags">
+            <span class="vflag lifecycle">pre-dropoff</span>
+            <span class="vflag viewer">payer</span>
+            <span class="vflag referral">just-bought</span>
+          </div>
+
+          <!-- SVG state hero -->
+          <div class="state-hero">
+            <div class="scene">
+              <svg viewBox="0 0 200 100" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <ellipse cx="100" cy="92" rx="48" ry="5" fill="rgba(20,40,80,0.10)"/>
+                <g transform="translate(58,30)">
+                  <path d="M0 18 L36 0 L36 44 L0 62 Z" fill="#c98e3e" stroke="#7d5520" stroke-width="1.2" stroke-linejoin="round"/>
+                  <path d="M0 18 L36 0 L72 18 L36 36 Z" fill="#e5b06b" stroke="#7d5520" stroke-width="1.2" stroke-linejoin="round"/>
+                  <path d="M36 36 L72 18 L72 62 L36 80 Z" fill="#b97c34" stroke="#7d5520" stroke-width="1.2" stroke-linejoin="round"/>
+                  <path d="M36 4 L36 32" stroke="#a26a26" stroke-width="2" stroke-dasharray="3 2"/>
+                  <rect x="14" y="10" width="32" height="20" rx="2" transform="skewY(-26)" fill="white" stroke="#214b91" stroke-width="1"/>
+                  <line x1="14" y1="13" x2="46" y2="13" transform="skewY(-26)" stroke="#214b91" stroke-width="0.8"/>
+                  <line x1="14" y1="17" x2="40" y2="17" transform="skewY(-26)" stroke="#666" stroke-width="0.5"/>
+                  <line x1="14" y1="20" x2="38" y2="20" transform="skewY(-26)" stroke="#666" stroke-width="0.5"/>
+                  <g transform="skewY(-26) translate(14, 23)">
+                    <rect x="0" y="0" width="1" height="4" fill="black"/><rect x="2" y="0" width="2" height="4" fill="black"/><rect x="5" y="0" width="1" height="4" fill="black"/><rect x="7" y="0" width="1.5" height="4" fill="black"/><rect x="10" y="0" width="2" height="4" fill="black"/><rect x="13" y="0" width="1" height="4" fill="black"/><rect x="15" y="0" width="2" height="4" fill="black"/><rect x="18" y="0" width="1" height="4" fill="black"/><rect x="21" y="0" width="1.5" height="4" fill="black"/><rect x="24" y="0" width="2" height="4" fill="black"/>
+                  </g>
+                </g>
+                <g fill="hsl(43 96% 55%)" stroke="hsl(43 90% 40%)" stroke-width="0.6">
+                  <path d="M40 22 L42 28 L48 30 L42 32 L40 38 L38 32 L32 30 L38 28 Z"/>
+                </g>
+                <g fill="hsl(214 89% 52%)" opacity="0.85">
+                  <circle cx="160" cy="40" r="2"/><circle cx="170" cy="55" r="1.5"/><circle cx="155" cy="60" r="1"/>
+                </g>
+                <g fill="hsl(43 96% 55%)" stroke="hsl(43 90% 40%)" stroke-width="0.5">
+                  <path d="M150 25 L151 28 L154 29 L151 30 L150 33 L149 30 L146 29 L149 28 Z"/>
+                </g>
+              </svg>
+            </div>
+            <h1>Your label is <span class="accent">ready to print</span> — waiting for drop-off!</h1>
+          </div>
+
+          <!-- ETA banner — mini-hero with walking-person SVG (v4) -->
+          <div class="eta-banner">
+            <div class="eta-scene" aria-hidden="true">
+              <svg viewBox="0 0 100 60" xmlns="http://www.w3.org/2000/svg">
+                <line x1="5" y1="55" x2="95" y2="55" stroke="hsl(210 14% 70%)" stroke-width="1" stroke-dasharray="3 3"/>
+                <g stroke="hsl(214 89% 65%)" stroke-width="1.5" stroke-linecap="round" opacity="0.55">
+                  <line x1="6" y1="22" x2="20" y2="22"/><line x1="10" y1="32" x2="22" y2="32"/><line x1="4" y1="42" x2="16" y2="42"/>
+                </g>
+                <g transform="translate(35,8)">
+                  <circle cx="14" cy="7" r="5" fill="#f4d4b1" stroke="#3a3a3a" stroke-width="0.8"/>
+                  <path d="M9 5 Q14 1 19 5 L19 7 Q14 4 9 7 Z" fill="#3a3a3a"/>
+                  <path d="M8 13 L20 13 L19 28 L9 28 Z" fill="#214b91" stroke="#13325a" stroke-width="0.8"/>
+                  <path d="M9 15 L4 26" stroke="#f4d4b1" stroke-width="2.4" stroke-linecap="round"/>
+                  <path d="M19 15 L25 22" stroke="#f4d4b1" stroke-width="2.4" stroke-linecap="round"/>
+                  <g transform="translate(22,18)">
+                    <path d="M0 4 L9 1 L9 11 L0 13 Z" fill="#c98e3e" stroke="#7d5520" stroke-width="0.6"/>
+                    <path d="M0 4 L9 1 L18 4 L9 7 Z" fill="#e5b06b" stroke="#7d5520" stroke-width="0.6"/>
+                    <path d="M9 7 L18 4 L18 11 L9 13 Z" fill="#b97c34" stroke="#7d5520" stroke-width="0.6"/>
+                    <rect x="2" y="1.5" width="5" height="3.5" rx="0.3" transform="skewY(-26)" fill="white" stroke="#214b91" stroke-width="0.4"/>
+                  </g>
+                  <path d="M11 28 L7 42" stroke="#3a3a3a" stroke-width="2.4" stroke-linecap="round"/>
+                  <path d="M17 28 L22 41" stroke="#3a3a3a" stroke-width="2.4" stroke-linecap="round"/>
+                  <ellipse cx="6" cy="42" rx="2.6" ry="1.2" fill="#1a1a1a"/>
+                  <ellipse cx="23" cy="41" rx="2.6" ry="1.2" fill="#1a1a1a"/>
+                </g>
+              </svg>
+            </div>
+            <div class="eta-body">
+              <strong>Drop off today → arrives <span class="when">Sat, May 23</span></strong>
+              <div class="src">USPS Ground Advantage · per carrier estimate</div>
+            </div>
+          </div>
+
+          <!-- Action buttons — thinner, no chip inside -->
+          <div class="action-row">
+            <button class="action-btn primary">
+              <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+              Print Label
+            </button>
+            <button class="action-btn">
+              <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Download
+            </button>
+          </div>
+          <p class="print-count">Not printed yet</p>
+
+          <!-- How to ship — cutoff hint moved into step 3 body per N2 -->
+          <div class="how-strip">
+            <h3>How to ship</h3>
+            <ol>
+              <li class="how-step"><span class="n">1</span><span><b>Print</b> <span class="body">— at home, library, or any print shop.</span></span></li>
+              <li class="how-step"><span class="n">2</span><span><b>Tape securely</b> <span class="body">— largest flat side; cover old barcodes.</span></span></li>
+              <li class="how-step">
+                <span class="n pin"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg></span>
+                <span><b>Drop off</b> <span class="body">— any USPS Blue Box, Post Office, or hand to your mail carrier. Most USPS locations accept drop-offs until late afternoon.</span></span>
+              </li>
+            </ol>
+            <a class="find-loc" href="#" target="_blank">Find a USPS location
+              <svg class="ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>
+            </a>
+            <p class="activate">Tracking activates once USPS scans the package.</p>
+          </div>
+
+          <!-- Shipment details + cancel + Need help (v4) -->
+          <div class="ph-card">
+            <h3>Shipment Details</h3>
+            <dl style="margin:0;">
+              <div class="ph-row"><dt>To</dt><dd>Truckee, CA</dd></div>
+              <div class="ph-row"><dt>From</dt><dd>Portola Valley, CA</dd></div>
+              <div class="ph-row"><dt>Carrier</dt><dd>USPS — Ground Adv.</dd></div>
+              <div class="ph-row"><dt>Tracking</dt><dd style="font-family:ui-monospace,Menlo,monospace;font-size:11px;">9400…3112 20</dd></div>
+            </dl>
+            <div class="ph-details-actions">
+              <a href="#" class="ph-cancel-link">
+                <svg class="ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+                Cancel this label
+              </a>
+              <a href="mailto:support@sendmo.co?subject=Help%20with%20shipment%20940010020830311220&body=Hi%20SendMo%2C%0A%0AI%20need%20help%20with%20my%20shipment.%0A%0ATracking%3A%209400%201002%200830%203112%2020%0AFrom%3A%20Portola%20Valley%2C%20CA%0ATo%3A%20Truckee%2C%20CA%0A%0AWhat%20I%20need%3A%0A" class="ph-help-link">
+                <svg class="ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                Need help
+              </a>
+            </div>
+          </div>
+
+          <!-- RECEIPT AT BOTTOM (payer + just-bought = full receipt) -->
+          <div class="receipt">
+            <h3>
+              Receipt
+              <a href="#" class="pdf">PDF
+                <svg class="ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              </a>
+            </h3>
+            <dl style="margin:0;">
+              <div class="ph-row"><dt>Shipping</dt><dd>$6.59</dd></div>
+              <div class="ph-row"><dt>Insurance</dt><dd>$1.00</dd></div>
+              <div class="ph-row ph-border-t"><dt>Charged to •••• 4242</dt><dd class="ph-total">$7.59</dd></div>
+            </dl>
+            <p class="charged">May 19, 2026 · 11:14 AM</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ② POST-DROPOFF (in transit) -->
+    <div class="mockup">
+      <div class="mockup-caption">
+        <b>② Post-drop-off · payer · returning</b>
+        <span class="sub"><code>/t/k7M2nQp4R9</code> · in_transit</span>
+      </div>
+      <div class="device">
+        <div class="app-header"><span class="brand">SendMo</span><span class="avatar">JA</span></div>
+        <div class="device-scroll">
+          <div class="variant-flags">
+            <span class="vflag lifecycle">post-dropoff</span>
+            <span class="vflag viewer">payer</span>
+          </div>
+
+          <div class="state-hero">
+            <div class="scene">
+              <svg viewBox="0 0 220 100" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <g stroke="hsl(214 89% 65%)" stroke-width="2" stroke-linecap="round" opacity="0.7">
+                  <line x1="10" y1="55" x2="38" y2="55"/>
+                  <line x1="18" y1="65" x2="42" y2="65"/>
+                  <line x1="12" y1="75" x2="36" y2="75"/>
+                </g>
+                <g transform="translate(50,28)">
+                  <rect x="0" y="14" width="40" height="40" rx="3" fill="#214b91" stroke="#13325a" stroke-width="1.2"/>
+                  <rect x="6" y="20" width="28" height="14" rx="2" fill="#bcd3f5" stroke="#13325a" stroke-width="1"/>
+                  <rect x="38" y="6" width="80" height="48" rx="3" fill="white" stroke="#13325a" stroke-width="1.2"/>
+                  <text x="78" y="36" text-anchor="middle" font-family="Inter, sans-serif" font-weight="800" font-size="12" fill="hsl(214 89% 52%)" letter-spacing="0.04em">SENDMO</text>
+                  <line x1="78" y1="6" x2="78" y2="54" stroke="#13325a" stroke-width="0.6" stroke-dasharray="2 2"/>
+                  <circle cx="14" cy="58" r="7" fill="#1a1a1a"/><circle cx="14" cy="58" r="3" fill="#555"/>
+                  <circle cx="60" cy="58" r="7" fill="#1a1a1a"/><circle cx="60" cy="58" r="3" fill="#555"/>
+                  <circle cx="102" cy="58" r="7" fill="#1a1a1a"/><circle cx="102" cy="58" r="3" fill="#555"/>
+                </g>
+                <line x1="20" y1="93" x2="200" y2="93" stroke="hsl(210 14% 70%)" stroke-width="1" stroke-dasharray="3 3"/>
+              </svg>
+            </div>
+            <h1>Your package is <span class="accent-warm">in transit!</span></h1>
+            <p class="line">Arrives Wed, May 22 · last scan Sacramento, CA</p>
+          </div>
+
+          <div class="lifecycle">
+            <h3>Progress</h3>
+            <div class="lc-row done"><div><span class="label">Label created</span><span class="when">May 19, 11:14 AM</span></div></div>
+            <div class="lc-row done"><div><span class="label">Picked up · Portola Valley</span><span class="when">May 20, 9:38 AM</span></div></div>
+            <div class="lc-row active"><div><span class="label">In transit · Sacramento, CA</span><span class="when">May 21, 4:02 AM</span></div></div>
+            <div class="lc-row"><div><span class="label" style="color:var(--muted-foreground);">Out for delivery</span></div></div>
+            <div class="lc-row"><div><span class="label" style="color:var(--muted-foreground);">Delivered</span></div></div>
+          </div>
+
+          <div class="ph-card">
+            <h3>Shipment Details</h3>
+            <dl style="margin:0;">
+              <div class="ph-row"><dt>To</dt><dd>Truckee, CA</dd></div>
+              <div class="ph-row"><dt>From</dt><dd>Portola Valley, CA</dd></div>
+              <div class="ph-row"><dt>Carrier</dt><dd>USPS — Ground Adv.</dd></div>
+              <div class="ph-row"><dt>Tracking</dt><dd style="font-family:ui-monospace,Menlo,monospace;font-size:11px;">9400…3112 20</dd></div>
+            </dl>
+            <div class="ph-details-actions solo">
+              <a href="mailto:support@sendmo.co?subject=Help%20with%20shipment%20940010020830311220&body=Hi%20SendMo%2C%0A%0AI%20need%20help%20with%20my%20shipment.%0A%0ATracking%3A%209400%201002%200830%203112%2020%0AFrom%3A%20Portola%20Valley%2C%20CA%0ATo%3A%20Truckee%2C%20CA%0AStatus%3A%20In%20transit%20(last%20scan%20Sacramento%2C%20CA)%0A%0AWhat%20I%20need%3A%0A" class="ph-help-link">
+                <svg class="ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                Need help
+              </a>
+            </div>
+          </div>
+
+          <!-- RECEIPT AT BOTTOM -->
+          <div class="receipt">
+            <h3>Receipt
+              <a href="#" class="pdf">PDF
+                <svg class="ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              </a>
+            </h3>
+            <p class="charged">$7.59 · charged to •••• 4242 · May 19</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ③ POST-DELIVERY -->
+    <div class="mockup">
+      <div class="mockup-caption">
+        <b>③ Post-delivery · payer · returning</b>
+        <span class="sub"><code>/t/k7M2nQp4R9</code> · delivered</span>
+      </div>
+      <div class="device">
+        <div class="app-header"><span class="brand">SendMo</span><span class="avatar">JA</span></div>
+        <div class="device-scroll">
+          <div class="variant-flags">
+            <span class="vflag lifecycle">post-delivery</span>
+            <span class="vflag viewer">payer</span>
+          </div>
+
+          <div class="state-hero">
+            <div class="scene">
+              <svg viewBox="0 0 200 100" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <ellipse cx="100" cy="86" rx="60" ry="6" fill="rgba(20,40,80,0.1)"/>
+                <rect x="50" y="78" width="100" height="10" rx="2" fill="#a4cda9" stroke="#5a8a64" stroke-width="0.8"/>
+                <line x1="60" y1="83" x2="140" y2="83" stroke="#5a8a64" stroke-width="0.6" stroke-dasharray="3 3"/>
+                <g transform="translate(78,30)">
+                  <path d="M0 18 L22 6 L22 44 L0 56 Z" fill="#c98e3e" stroke="#7d5520" stroke-width="1.2"/>
+                  <path d="M0 18 L22 6 L44 18 L22 30 Z" fill="#e5b06b" stroke="#7d5520" stroke-width="1.2"/>
+                  <path d="M22 30 L44 18 L44 44 L22 56 Z" fill="#b97c34" stroke="#7d5520" stroke-width="1.2"/>
+                  <path d="M22 8 L22 28" stroke="#a26a26" stroke-width="2" stroke-dasharray="3 2"/>
+                </g>
+                <g transform="translate(124,38)">
+                  <circle cx="14" cy="14" r="14" fill="hsl(142 71% 45%)" stroke="white" stroke-width="2.5"/>
+                  <path d="M7 14.5 L12 19 L21 9" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+                </g>
+                <g fill="hsl(43 96% 55%)" stroke="hsl(43 90% 40%)" stroke-width="0.5">
+                  <path d="M40 30 L41 33 L44 34 L41 35 L40 38 L39 35 L36 34 L39 33 Z"/>
+                  <path d="M170 50 L171 52 L173 53 L171 54 L170 56 L169 54 L167 53 L169 52 Z"/>
+                </g>
+                <g fill="hsl(214 89% 52%)" opacity="0.8">
+                  <circle cx="50" cy="46" r="1.5"/><circle cx="156" cy="32" r="1.5"/>
+                </g>
+              </svg>
+            </div>
+            <h1>Your package was <span class="accent-success">delivered!</span></h1>
+            <p class="line">May 22, 2:17 PM · Truckee, CA — front porch</p>
+          </div>
+
+          <div class="lifecycle">
+            <h3>Progress</h3>
+            <div class="lc-row done"><div><span class="label">Label created</span><span class="when">May 19</span></div></div>
+            <div class="lc-row done"><div><span class="label">Picked up · Portola Valley</span><span class="when">May 20</span></div></div>
+            <div class="lc-row done"><div><span class="label">Out for delivery · Truckee</span><span class="when">May 22, 9:04 AM</span></div></div>
+            <div class="lc-row done"><div><span class="label">Delivered · front porch</span><span class="when">May 22, 2:17 PM</span></div></div>
+          </div>
+
+          <div class="ph-card">
+            <h3>Shipment Details</h3>
+            <dl style="margin:0;">
+              <div class="ph-row"><dt>To</dt><dd>Truckee, CA</dd></div>
+              <div class="ph-row"><dt>From</dt><dd>Portola Valley, CA</dd></div>
+              <div class="ph-row"><dt>Carrier</dt><dd>USPS — Ground Adv.</dd></div>
+              <div class="ph-row"><dt>Tracking</dt><dd style="font-family:ui-monospace,Menlo,monospace;font-size:11px;">9400…3112 20</dd></div>
+            </dl>
+            <div class="ph-details-actions solo">
+              <a href="mailto:support@sendmo.co?subject=Help%20with%20shipment%20940010020830311220&body=Hi%20SendMo%2C%0A%0AI%20need%20help%20with%20my%20delivered%20shipment.%0A%0ATracking%3A%209400%201002%200830%203112%2020%0AFrom%3A%20Portola%20Valley%2C%20CA%0ATo%3A%20Truckee%2C%20CA%0ADelivered%3A%20May%2022%2C%202%3A17%20PM%0A%0AWhat%20happened%3A%0A" class="ph-help-link">
+                <svg class="ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                Need help
+              </a>
+            </div>
+          </div>
+
+          <!-- RECEIPT AT BOTTOM -->
+          <div class="receipt">
+            <h3>Receipt
+              <a href="#" class="pdf">PDF
+                <svg class="ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              </a>
+            </h3>
+            <p class="charged">$7.59 · charged to •••• 4242 · May 19</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Variants on same lifecycle -->
+  <h2>Variants on a single lifecycle state</h2>
+  <p>Three viewers on the same pre-drop-off label. Left: payer who has already printed once. Middle: <strong>sender on a prepaid flex link</strong> (didn't pay — recipient did). Right: anonymous URL visitor.</p>
+
+  <div class="mockup-row three-up">
+
+    <!-- Payer, already printed -->
+    <div class="mockup">
+      <div class="mockup-caption">
+        <b>Payer · pre-drop-off · printed once</b>
+        <span class="sub">Print count surfaces below buttons; step 1 turns green. Buttons stay thin.</span>
+      </div>
+      <div class="device">
+        <div class="app-header"><span class="brand">SendMo</span><span class="avatar">JA</span></div>
+        <div class="device-scroll">
+          <div class="variant-flags">
+            <span class="vflag lifecycle">pre-dropoff</span>
+            <span class="vflag viewer">payer</span>
+          </div>
+
+          <div class="state-hero">
+            <div class="scene">
+              <svg viewBox="0 0 200 80" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <ellipse cx="100" cy="72" rx="40" ry="4" fill="rgba(20,40,80,0.1)"/>
+                <g transform="translate(70,18)">
+                  <path d="M0 18 L26 4 L26 46 L0 60 Z" fill="#c98e3e" stroke="#7d5520" stroke-width="1.2"/>
+                  <path d="M0 18 L26 4 L52 18 L26 32 Z" fill="#e5b06b" stroke="#7d5520" stroke-width="1.2"/>
+                  <path d="M26 32 L52 18 L52 46 L26 60 Z" fill="#b97c34" stroke="#7d5520" stroke-width="1.2"/>
+                  <rect x="10" y="8" width="24" height="16" rx="1.5" transform="skewY(-26)" fill="white" stroke="#214b91" stroke-width="0.8"/>
+                </g>
+                <g fill="hsl(43 96% 55%)" stroke="hsl(43 90% 40%)" stroke-width="0.5">
+                  <path d="M45 25 L46 28 L49 29 L46 30 L45 33 L44 30 L41 29 L44 28 Z"/>
+                </g>
+              </svg>
+            </div>
+            <h1>Your label is <span class="accent">ready to print</span> — waiting for drop-off!</h1>
+          </div>
+
+          <div class="eta-banner">
+            <div class="eta-scene" aria-hidden="true">
+              <svg viewBox="0 0 100 60" xmlns="http://www.w3.org/2000/svg">
+                <line x1="5" y1="55" x2="95" y2="55" stroke="hsl(210 14% 70%)" stroke-width="1" stroke-dasharray="3 3"/>
+                <g stroke="hsl(214 89% 65%)" stroke-width="1.5" stroke-linecap="round" opacity="0.55"><line x1="6" y1="22" x2="20" y2="22"/><line x1="10" y1="32" x2="22" y2="32"/><line x1="4" y1="42" x2="16" y2="42"/></g>
+                <g transform="translate(35,8)">
+                  <circle cx="14" cy="7" r="5" fill="#f4d4b1" stroke="#3a3a3a" stroke-width="0.8"/>
+                  <path d="M9 5 Q14 1 19 5 L19 7 Q14 4 9 7 Z" fill="#3a3a3a"/>
+                  <path d="M8 13 L20 13 L19 28 L9 28 Z" fill="#214b91" stroke="#13325a" stroke-width="0.8"/>
+                  <path d="M9 15 L4 26" stroke="#f4d4b1" stroke-width="2.4" stroke-linecap="round"/>
+                  <path d="M19 15 L25 22" stroke="#f4d4b1" stroke-width="2.4" stroke-linecap="round"/>
+                  <g transform="translate(22,18)">
+                    <path d="M0 4 L9 1 L9 11 L0 13 Z" fill="#c98e3e" stroke="#7d5520" stroke-width="0.6"/>
+                    <path d="M0 4 L9 1 L18 4 L9 7 Z" fill="#e5b06b" stroke="#7d5520" stroke-width="0.6"/>
+                    <path d="M9 7 L18 4 L18 11 L9 13 Z" fill="#b97c34" stroke="#7d5520" stroke-width="0.6"/>
+                    <rect x="2" y="1.5" width="5" height="3.5" rx="0.3" transform="skewY(-26)" fill="white" stroke="#214b91" stroke-width="0.4"/>
+                  </g>
+                  <path d="M11 28 L7 42" stroke="#3a3a3a" stroke-width="2.4" stroke-linecap="round"/>
+                  <path d="M17 28 L22 41" stroke="#3a3a3a" stroke-width="2.4" stroke-linecap="round"/>
+                  <ellipse cx="6" cy="42" rx="2.6" ry="1.2" fill="#1a1a1a"/>
+                  <ellipse cx="23" cy="41" rx="2.6" ry="1.2" fill="#1a1a1a"/>
+                </g>
+              </svg>
+            </div>
+            <div class="eta-body">
+              <strong>Drop off today → arrives <span class="when">Sat, May 23</span></strong>
+              <div class="src">USPS Ground Advantage · per carrier estimate</div>
+            </div>
+          </div>
+
+          <div class="action-row">
+            <button class="action-btn done">
+              <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+              Print Label
+            </button>
+            <button class="action-btn">
+              <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Download
+            </button>
+          </div>
+          <p class="print-count done">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            Printed 1× · tap again to reprint
+          </p>
+
+          <div class="how-strip">
+            <h3>How to ship</h3>
+            <ol>
+              <li class="how-step">
+                <span class="n check"><svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span>
+                <span><b>Print</b> <span class="body">— done!</span></span>
+              </li>
+              <li class="how-step"><span class="n">2</span><span><b>Tape securely</b> <span class="body">— largest flat side; cover old barcodes.</span></span></li>
+              <li class="how-step">
+                <span class="n pin"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg></span>
+                <span><b>Drop off</b> <span class="body">— any USPS Blue Box, Post Office, or hand to your mail carrier.</span></span>
+              </li>
+            </ol>
+            <a class="find-loc" href="#">Find a USPS location
+              <svg class="ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>
+            </a>
+          </div>
+
+          <div class="ph-card">
+            <h3>Shipment Details</h3>
+            <dl style="margin:0;">
+              <div class="ph-row"><dt>To</dt><dd>Truckee, CA</dd></div>
+              <div class="ph-row"><dt>From</dt><dd>Portola Valley, CA</dd></div>
+              <div class="ph-row"><dt>Carrier</dt><dd>USPS — Ground Adv.</dd></div>
+            </dl>
+            <div class="ph-details-actions">
+              <a href="#" class="ph-cancel-link">
+                <svg class="ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+                Cancel this label
+              </a>
+              <a href="mailto:support@sendmo.co?subject=Help%20with%20shipment%20940010020830311220&body=Hi%20SendMo%2C%0A%0AI%20need%20help%20with%20my%20shipment.%0A%0ATracking%3A%209400%201002%200830%203112%2020%0AFrom%3A%20Portola%20Valley%2C%20CA%0ATo%3A%20Truckee%2C%20CA%0A%0AWhat%20I%20need%3A%0A" class="ph-help-link">
+                <svg class="ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                Need help
+              </a>
+            </div>
+          </div>
+
+          <div class="receipt">
+            <h3>Receipt <a href="#" class="pdf">PDF</a></h3>
+            <p class="charged">$7.59 · charged to •••• 4242 · May 19</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sender on a prepaid flex link — NOT the payer; the recipient is. (v4 addition per John 2026-05-19) -->
+    <div class="mockup">
+      <div class="mockup-caption">
+        <b>Sender · pre-drop-off · flex link</b>
+        <span class="sub">Filled in a prepaid link the recipient set up. Sees everything except receipt — replaced by a "Paid by recipient" note.</span>
+      </div>
+      <div class="device">
+        <div class="app-header"><span class="brand">SendMo</span><span class="avatar" style="background: hsl(285 60% 60% / 0.15); color: hsl(285 50% 35%);">JA</span></div>
+        <div class="device-scroll">
+          <div class="variant-flags">
+            <span class="vflag lifecycle">pre-dropoff</span>
+            <span class="vflag viewer" style="background: hsl(35 92% 55% / 0.12); color: hsl(28 70% 36%);">sender_flex</span>
+          </div>
+
+          <div class="state-hero">
+            <div class="scene">
+              <svg viewBox="0 0 200 80" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <ellipse cx="100" cy="72" rx="40" ry="4" fill="rgba(20,40,80,0.1)"/>
+                <g transform="translate(70,18)">
+                  <path d="M0 18 L26 4 L26 46 L0 60 Z" fill="#c98e3e" stroke="#7d5520" stroke-width="1.2"/>
+                  <path d="M0 18 L26 4 L52 18 L26 32 Z" fill="#e5b06b" stroke="#7d5520" stroke-width="1.2"/>
+                  <path d="M26 32 L52 18 L52 46 L26 60 Z" fill="#b97c34" stroke="#7d5520" stroke-width="1.2"/>
+                  <rect x="10" y="8" width="24" height="16" rx="1.5" transform="skewY(-26)" fill="white" stroke="#214b91" stroke-width="0.8"/>
+                </g>
+                <g fill="hsl(43 96% 55%)" stroke="hsl(43 90% 40%)" stroke-width="0.5">
+                  <path d="M45 25 L46 28 L49 29 L46 30 L45 33 L44 30 L41 29 L44 28 Z"/>
+                </g>
+              </svg>
+            </div>
+            <h1>Your label is <span class="accent">ready to print</span> — waiting for drop-off!</h1>
+          </div>
+
+          <div class="eta-banner">
+            <div class="eta-scene" aria-hidden="true">
+              <svg viewBox="0 0 100 60" xmlns="http://www.w3.org/2000/svg">
+                <line x1="5" y1="55" x2="95" y2="55" stroke="hsl(210 14% 70%)" stroke-width="1" stroke-dasharray="3 3"/>
+                <g stroke="hsl(214 89% 65%)" stroke-width="1.5" stroke-linecap="round" opacity="0.55"><line x1="6" y1="22" x2="20" y2="22"/><line x1="10" y1="32" x2="22" y2="32"/><line x1="4" y1="42" x2="16" y2="42"/></g>
+                <g transform="translate(35,8)">
+                  <circle cx="14" cy="7" r="5" fill="#f4d4b1" stroke="#3a3a3a" stroke-width="0.8"/>
+                  <path d="M9 5 Q14 1 19 5 L19 7 Q14 4 9 7 Z" fill="#3a3a3a"/>
+                  <path d="M8 13 L20 13 L19 28 L9 28 Z" fill="#214b91" stroke="#13325a" stroke-width="0.8"/>
+                  <path d="M9 15 L4 26" stroke="#f4d4b1" stroke-width="2.4" stroke-linecap="round"/>
+                  <path d="M19 15 L25 22" stroke="#f4d4b1" stroke-width="2.4" stroke-linecap="round"/>
+                  <g transform="translate(22,18)">
+                    <path d="M0 4 L9 1 L9 11 L0 13 Z" fill="#c98e3e" stroke="#7d5520" stroke-width="0.6"/>
+                    <path d="M0 4 L9 1 L18 4 L9 7 Z" fill="#e5b06b" stroke="#7d5520" stroke-width="0.6"/>
+                    <path d="M9 7 L18 4 L18 11 L9 13 Z" fill="#b97c34" stroke="#7d5520" stroke-width="0.6"/>
+                    <rect x="2" y="1.5" width="5" height="3.5" rx="0.3" transform="skewY(-26)" fill="white" stroke="#214b91" stroke-width="0.4"/>
+                  </g>
+                  <path d="M11 28 L7 42" stroke="#3a3a3a" stroke-width="2.4" stroke-linecap="round"/>
+                  <path d="M17 28 L22 41" stroke="#3a3a3a" stroke-width="2.4" stroke-linecap="round"/>
+                  <ellipse cx="6" cy="42" rx="2.6" ry="1.2" fill="#1a1a1a"/>
+                  <ellipse cx="23" cy="41" rx="2.6" ry="1.2" fill="#1a1a1a"/>
+                </g>
+              </svg>
+            </div>
+            <div class="eta-body">
+              <strong>Drop off today → arrives <span class="when">Sat, May 23</span></strong>
+              <div class="src">USPS Ground Advantage · per carrier estimate</div>
+            </div>
+          </div>
+
+          <div class="action-row">
+            <button class="action-btn primary">
+              <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+              Print Label
+            </button>
+            <button class="action-btn">
+              <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Download
+            </button>
+          </div>
+          <p class="print-count">Not printed yet</p>
+
+          <div class="how-strip">
+            <h3>How to ship</h3>
+            <ol>
+              <li class="how-step"><span class="n">1</span><span><b>Print</b> <span class="body">— at home, library, or any print shop.</span></span></li>
+              <li class="how-step"><span class="n">2</span><span><b>Tape securely</b> <span class="body">— largest flat side.</span></span></li>
+              <li class="how-step">
+                <span class="n pin"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg></span>
+                <span><b>Drop off</b> <span class="body">— any USPS Blue Box, Post Office, or hand to your mail carrier. Most USPS locations accept drop-offs until late afternoon.</span></span>
+              </li>
+            </ol>
+            <a class="find-loc" href="#">Find a USPS location
+              <svg class="ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>
+            </a>
+          </div>
+
+          <div class="ph-card">
+            <h3>Shipment Details</h3>
+            <dl style="margin:0;">
+              <div class="ph-row"><dt>To</dt><dd>Truckee, CA</dd></div>
+              <div class="ph-row"><dt>From</dt><dd>Portola Valley, CA</dd></div>
+              <div class="ph-row"><dt>Carrier</dt><dd>USPS — Ground Adv.</dd></div>
+            </dl>
+            <div class="ph-details-actions">
+              <a href="#" class="ph-cancel-link">
+                <svg class="ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+                Cancel this label
+              </a>
+              <a href="mailto:support@sendmo.co?subject=Help%20with%20shipment%20940010020830311220&body=Hi%20SendMo%2C%0A%0AI%20need%20help%20with%20a%20shipment.%0A%0ATracking%3A%209400%201002%200830%203112%2020%0AFrom%3A%20Portola%20Valley%2C%20CA%0ATo%3A%20Truckee%2C%20CA%0A%0AWhat%20I%20need%3A%0A" class="ph-help-link">
+                <svg class="ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                Need help
+              </a>
+            </div>
+          </div>
+
+          <!-- "Paid by recipient" — replaces the receipt block for sender_flex viewer -->
+          <div class="paid-by">
+            <div class="check" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            </div>
+            <div class="text">
+              <strong>Jane has paid for shipping</strong>
+              <span class="sub">No charge to you — the prepaid label is on the recipient.</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Anonymous viewer — NO receipt, NO cancel; help link still available -->
+    <div class="mockup">
+      <div class="mockup-caption">
+        <b>Anonymous · pre-drop-off · same label</b>
+        <span class="sub">No receipt, no cancel. Same ETA banner + how-to-ship. Payment info entirely absent.</span>
+      </div>
+      <div class="device">
+        <div class="app-header"><span class="brand">SendMo</span><span class="avatar" style="background:transparent;border:1px dashed var(--border);">—</span></div>
+        <div class="device-scroll">
+          <div class="variant-flags">
+            <span class="vflag lifecycle">pre-dropoff</span>
+            <span class="vflag viewer">anonymous</span>
+          </div>
+
+          <div class="state-hero">
+            <div class="scene">
+              <svg viewBox="0 0 200 80" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <ellipse cx="100" cy="72" rx="40" ry="4" fill="rgba(20,40,80,0.1)"/>
+                <g transform="translate(70,18)">
+                  <path d="M0 18 L26 4 L26 46 L0 60 Z" fill="#c98e3e" stroke="#7d5520" stroke-width="1.2"/>
+                  <path d="M0 18 L26 4 L52 18 L26 32 Z" fill="#e5b06b" stroke="#7d5520" stroke-width="1.2"/>
+                  <path d="M26 32 L52 18 L52 46 L26 60 Z" fill="#b97c34" stroke="#7d5520" stroke-width="1.2"/>
+                  <rect x="10" y="8" width="24" height="16" rx="1.5" transform="skewY(-26)" fill="white" stroke="#214b91" stroke-width="0.8"/>
+                </g>
+              </svg>
+            </div>
+            <h1>This label is <span class="accent">ready to ship</span></h1>
+          </div>
+
+          <div class="eta-banner">
+            <div class="eta-scene" aria-hidden="true">
+              <svg viewBox="0 0 100 60" xmlns="http://www.w3.org/2000/svg">
+                <line x1="5" y1="55" x2="95" y2="55" stroke="hsl(210 14% 70%)" stroke-width="1" stroke-dasharray="3 3"/>
+                <g stroke="hsl(214 89% 65%)" stroke-width="1.5" stroke-linecap="round" opacity="0.55"><line x1="6" y1="22" x2="20" y2="22"/><line x1="10" y1="32" x2="22" y2="32"/><line x1="4" y1="42" x2="16" y2="42"/></g>
+                <g transform="translate(35,8)">
+                  <circle cx="14" cy="7" r="5" fill="#f4d4b1" stroke="#3a3a3a" stroke-width="0.8"/>
+                  <path d="M9 5 Q14 1 19 5 L19 7 Q14 4 9 7 Z" fill="#3a3a3a"/>
+                  <path d="M8 13 L20 13 L19 28 L9 28 Z" fill="#214b91" stroke="#13325a" stroke-width="0.8"/>
+                  <path d="M9 15 L4 26" stroke="#f4d4b1" stroke-width="2.4" stroke-linecap="round"/>
+                  <path d="M19 15 L25 22" stroke="#f4d4b1" stroke-width="2.4" stroke-linecap="round"/>
+                  <g transform="translate(22,18)">
+                    <path d="M0 4 L9 1 L9 11 L0 13 Z" fill="#c98e3e" stroke="#7d5520" stroke-width="0.6"/>
+                    <path d="M0 4 L9 1 L18 4 L9 7 Z" fill="#e5b06b" stroke="#7d5520" stroke-width="0.6"/>
+                    <path d="M9 7 L18 4 L18 11 L9 13 Z" fill="#b97c34" stroke="#7d5520" stroke-width="0.6"/>
+                    <rect x="2" y="1.5" width="5" height="3.5" rx="0.3" transform="skewY(-26)" fill="white" stroke="#214b91" stroke-width="0.4"/>
+                  </g>
+                  <path d="M11 28 L7 42" stroke="#3a3a3a" stroke-width="2.4" stroke-linecap="round"/>
+                  <path d="M17 28 L22 41" stroke="#3a3a3a" stroke-width="2.4" stroke-linecap="round"/>
+                  <ellipse cx="6" cy="42" rx="2.6" ry="1.2" fill="#1a1a1a"/>
+                  <ellipse cx="23" cy="41" rx="2.6" ry="1.2" fill="#1a1a1a"/>
+                </g>
+              </svg>
+            </div>
+            <div class="eta-body">
+              <strong>Drop off today → arrives <span class="when">Sat, May 23</span></strong>
+              <div class="src">USPS Ground Advantage · per carrier estimate</div>
+            </div>
+          </div>
+
+          <div class="action-row">
+            <button class="action-btn primary">
+              <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+              Print Label
+            </button>
+            <button class="action-btn">
+              <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Download
+            </button>
+          </div>
+          <p class="print-count">Not printed yet</p>
+
+          <div class="how-strip">
+            <h3>How to ship</h3>
+            <ol>
+              <li class="how-step"><span class="n">1</span><span><b>Print</b> <span class="body">— at home, library, or any print shop.</span></span></li>
+              <li class="how-step"><span class="n">2</span><span><b>Tape securely</b> <span class="body">— largest flat side.</span></span></li>
+              <li class="how-step">
+                <span class="n pin"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg></span>
+                <span><b>Drop off</b> <span class="body">— any USPS Blue Box, Post Office, or hand to your mail carrier.</span></span>
+              </li>
+            </ol>
+            <a class="find-loc" href="#">Find a USPS location
+              <svg class="ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>
+            </a>
+          </div>
+
+          <div class="ph-card">
+            <h3>Shipment Details</h3>
+            <dl style="margin:0;">
+              <div class="ph-row"><dt>To</dt><dd>Truckee, CA</dd></div>
+              <div class="ph-row"><dt>From</dt><dd>Portola Valley, CA</dd></div>
+              <div class="ph-row"><dt>Carrier</dt><dd>USPS — Ground Adv.</dd></div>
+            </dl>
+            <!-- no cancel (anonymous) — Need help still available -->
+            <div class="ph-details-actions solo">
+              <a href="mailto:support@sendmo.co?subject=Help%20with%20shipment%20940010020830311220&body=Hi%20SendMo%2C%0A%0AI%20need%20help%20with%20a%20shipment.%0A%0ATracking%3A%209400%201002%200830%203112%2020%0AFrom%3A%20Portola%20Valley%2C%20CA%0ATo%3A%20Truckee%2C%20CA%0A%0AWhat%20I%20need%3A%0A" class="ph-help-link">
+                <svg class="ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                Need help
+              </a>
+            </div>
+          </div>
+
+          <!-- no receipt block at all -->
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- TERMINAL STATE — F3 reconciliation (v4, added per reviewer blocking finding #1) -->
+  <h2>Terminal lifecycle bucket (F3) — preserved from prior IA polish</h2>
+  <p>One mockup to confirm the F3 family from <a href="2026-05-13_tracking-page-ia-polish_reviewed-2026-05-13_decided-2026-05-13.md">2026-05-13_tracking-page-ia-polish</a> §2.1 still renders unchanged when the shipment is cancelled or RTS. The proposal does not redesign this — it routes around it. <code>if (status ∈ {cancelled, return_to_sender}) → existing F3 path; else → new 3-state lifecycle</code>.</p>
+
+  <div class="mockup-row two-up">
+    <div class="mockup">
+      <div class="mockup-caption">
+        <b>④ Terminal · payer · cancelled</b>
+        <span class="sub"><code>/t/k7M2nQp4R9</code> · cancelled (F3 — unchanged from 2026-05-13)</span>
+      </div>
+      <div class="device">
+        <div class="app-header"><span class="brand">SendMo</span><span class="avatar">JA</span></div>
+        <div class="device-scroll">
+          <div class="variant-flags">
+            <span class="vflag lifecycle" style="background: hsl(0 72% 51% / 0.1); color: hsl(0 60% 35%);">terminal</span>
+            <span class="vflag viewer">payer</span>
+          </div>
+
+          <!-- F3 banner -->
+          <div class="ph-card" style="background: hsl(0 72% 51% / 0.05); border-color: hsl(0 72% 51% / 0.3);">
+            <h3 style="color: hsl(0 60% 35%);">
+              <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline; margin-right:6px; vertical-align:-3px;"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+              This label was voided
+            </h3>
+            <p style="font-size:12.5px; margin:0 0 8px; color:var(--muted-foreground); line-height:1.45;">The shipment will not ship. If a refund is due, it'll appear on your SendMo account within 2–4 weeks.</p>
+            <p style="font-size:11px; margin:6px 0 0; color:var(--muted-foreground);">Cancelled May 20, 8:42 AM</p>
+          </div>
+
+          <!-- PrintAnotherLabelCTA (preserved from F3) -->
+          <div class="ph-card">
+            <h3>Need to send this differently?</h3>
+            <p style="font-size:12.5px; margin:0 0 10px; color:var(--muted-foreground);">Start a new label with the same addresses pre-filled.</p>
+            <button class="action-btn primary" style="width:100%;">
+              <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+              Print another label
+            </button>
+          </div>
+
+          <!-- DetailsCard(family=3) — Need help only, no cancel -->
+          <div class="ph-card">
+            <h3>Shipment Details</h3>
+            <dl style="margin:0;">
+              <div class="ph-row"><dt>To</dt><dd>Truckee, CA</dd></div>
+              <div class="ph-row"><dt>From</dt><dd>Portola Valley, CA</dd></div>
+              <div class="ph-row"><dt>Carrier</dt><dd>USPS — Ground Adv.</dd></div>
+              <div class="ph-row"><dt>Tracking</dt><dd style="font-family:ui-monospace,Menlo,monospace;font-size:11px;">9400…3112 20</dd></div>
+            </dl>
+            <div class="ph-details-actions solo">
+              <a href="mailto:support@sendmo.co?subject=Help%20with%20cancelled%20shipment%20940010020830311220&body=Hi%20SendMo%2C%0A%0AI%20need%20help%20with%20a%20cancelled%20shipment.%0A%0ATracking%3A%209400%201002%200830%203112%2020%0AFrom%3A%20Portola%20Valley%2C%20CA%0ATo%3A%20Truckee%2C%20CA%0ACancelled%3A%20May%2020%0A%0AWhat%20I%20need%3A%0A" class="ph-help-link">
+                <svg class="ico-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                Need help
+              </a>
+            </div>
+          </div>
+
+          <!-- Receipt at bottom (payer still sees what was charged + refund state) -->
+          <div class="receipt">
+            <h3>Receipt <a href="#" class="pdf">PDF</a></h3>
+            <p class="charged">$7.59 charged May 19 · refund submitted May 20 · pending</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div style="background: white; border: 1px solid var(--border); border-radius: 14px; padding: 20px 22px; font-size: 13px;">
+      <h3 style="margin-top: 0;">What's the same as today</h3>
+      <ul style="font-size: 13px; padding-left: 18px;">
+        <li><code>CancelledShipmentBanner</code> component — unchanged.</li>
+        <li><code>PrintAnotherLabelCTA</code> — unchanged.</li>
+        <li><code>DetailsCard(family=3)</code> composition — unchanged structurally; only addition is the "Need help" link (new in v4, added to all viewer states).</li>
+        <li>Refund-status logic from <a href="2026-05-11_label-cancel-and-change_reviewed-2026-05-12_decided-2026-05-12.md">2026-05-11_label-cancel-and-change</a> — unchanged.</li>
+      </ul>
+      <h3>What's new for terminal</h3>
+      <ul style="font-size: 13px; padding-left: 18px;">
+        <li>Receipt block at bottom (was not on F3 before; payer-only).</li>
+        <li>"Need help" link in DetailsCard footer (universal, v4).</li>
+      </ul>
+      <h3>What's <em>not</em> shown on terminal</h3>
+      <ul style="font-size: 13px; padding-left: 18px;">
+        <li>Print/Download buttons — no live label to print.</li>
+        <li>HowToShipStrip — nothing to ship.</li>
+        <li>ETA banner — nothing to estimate.</li>
+        <li>State hero — F3 banner takes that slot (existing convention).</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- v4 design directives from John (2026-05-19, post-review) -->
+  <h2>v4 design directives — John, post-review</h2>
+  <p>Five new directives from John applied after the fresh-eyes review came back. Each touches a visible element in the mockups above.</p>
+
+  <div class="nit-block">
+    <div class="nit-num">A</div>
+    <div class="nit-body">
+      <p class="nit-quote">"ETA banner gets a matching SVG hero in the same visual language as the truck — a person walking with a package."</p>
+      <p><strong>Done.</strong> Replaced the small calendar icon with an illustrated SVG showing a person mid-stride carrying a package, plus motion lines and a dashed ground line — matching the truck hero's compositional grammar (ground line + motion lines + character + box detail). Visible on all three pre-drop-off variants (mockup ①, payer-already-printed, anonymous).</p>
+    </div>
+  </div>
+
+  <div class="nit-block">
+    <div class="nit-num">B</div>
+    <div class="nit-body">
+      <p class="nit-quote">"State hero graphic and text 25% smaller."</p>
+      <p><strong>Done.</strong> Scene height 86px → 64px (≈26% reduction). H1 font 17px → 14px (≈18%). The heroes now sit more quietly above the actionable content; the ETA banner mini-hero is the new visual anchor on pre-drop-off.</p>
+    </div>
+  </div>
+
+  <div class="nit-block">
+    <div class="nit-num">C</div>
+    <div class="nit-body">
+      <p class="nit-quote">"'Everything OK?' card on delivered is overstated — remove. Make it a 'Need help' link next to cancel (or in the cancel slot if cancel is gone) inside DetailsCard."</p>
+      <p><strong>Done.</strong> The standalone "Everything OK?" card is removed from the delivered state. A "Need help" link now lives in the DetailsCard footer on <em>every</em> viewer + state combination — alongside Cancel when present, alone in the cancel slot when not. Mailto target stays <code>support@sendmo.co</code>; subject/body pre-fill with tracking + from/to + current lifecycle state context so John can triage inbound.</p>
+    </div>
+  </div>
+
+  <div class="nit-block">
+    <div class="nit-num">D</div>
+    <div class="nit-body">
+      <p class="nit-quote">"When cancel isn't available, don't say 'cancel unavailable' — just hide it."</p>
+      <p><strong>Done.</strong> The inert grey "Cancel unavailable — package has been scanned" note is removed from mockup ② (in-transit). When cancel is ineligible, the cancel slot is empty; the "Need help" link occupies the row alone (right-aligned). No copy required to explain absence.</p>
+    </div>
+  </div>
+
+  <div class="nit-block">
+    <div class="nit-num">E</div>
+    <div class="nit-body">
+      <p class="nit-quote">"How do we handle scheduled pickup vs drop-off? Does the hero update?"</p>
+      <p><strong>v1: drop-off only — matches today's reality.</strong> SendMo has no pickup wiring in the codebase (grep'd; no <code>Pickup</code> calls into EasyPost). All three pre-drop-off mockups assume the shipper physically drops the package off. <strong>v1.x or later: pickup adaptation.</strong> When EasyPost Pickup API integration ships (wishlist entry added 2026-05-19), the pre-drop-off hero swaps the "person walking with package" illustration for a "carrier arriving at the door" illustration, the ETA banner copy changes from "Drop off today → arrives X" to "Pickup scheduled Wed → arrives X", and HowToShipStrip step 3 ("Drop off") becomes "Leave for pickup." Detection signal: presence of a non-null <code>shipments.pickup_easypost_id</code> (column doesn't exist today; would land with the pickup-API proposal).</p>
+    </div>
+  </div>
+
+  <div class="nit-block">
+    <div class="nit-num">F</div>
+    <div class="nit-body">
+      <p class="nit-quote">"Non-paying sender (filled a prepaid link) should land on pre-drop-off but with no receipt. Instead of receipt, say 'X (the recipient) has paid.'"</p>
+      <p><strong>Done.</strong> New <code>sender_flex</code> viewer role — distinct from <code>payer</code> and <code>anonymous</code>. Renders pre-drop-off identically (state hero + ETA banner + print/download + how-to-ship + details with cancel + Need help), but the receipt block is replaced by a soft-green confirmation block: a green check + "<strong>Jane has paid for shipping</strong> · No charge to you — the prepaid label is on the recipient." See the middle mockup in the variants row above.</p>
+      <p>Server derivation: in <code>tracking/index.ts</code>, add a <code>viewerRole</code> field computed from <code>(viewerIsRecipient ? "payer" : viewerHoldsCancelToken ? "sender_flex" : "anonymous")</code> where <code>viewerHoldsCancelToken</code> means the caller passed a valid <code>cancel_token</code> matching <code>shipments.cancel_token</code>. That's the same auth proof we already use for the sender's cancel surface (decided in <a href="2026-05-11_label-cancel-and-change_reviewed-2026-05-12_decided-2026-05-12.md">2026-05-11_label-cancel-and-change</a>) — so the sender's "I just shipped this" identity is provable without new infrastructure. Recipient first-name surfaces via the existing <code>sendmo_links.user_id → profiles</code> join (already loaded server-side; need to add <code>first_name</code> to the SELECT). Privacy: sender already knows the recipient — they just shipped <em>to</em> them — so revealing first name is not a leak.</p>
+    </div>
+  </div>
+
+  <!-- v3 nit responses preserved below for institutional memory -->
+  <h2>v3 nit responses (preserved for institutional memory)</h2>
+
+  <div class="nit-block">
+    <div class="nit-num">1</div>
+    <div class="nit-body">
+      <p class="nit-quote">"Drop the PREVIEW tearsheet — keep the SVG state visual instead. Stick with the inline SVGs for v1."</p>
+      <p><strong>Done.</strong> Tearsheet block + watermark + caption removed from every pre-drop-off variant. The "labelness" of the moment now lives entirely in the SVG illustration at the top — a package with a label affixed and sparkles. No risk of mistaking a thumbnail for a printable artifact, and one less component to maintain. (We can revisit polishing the SVG illustrations as a family if/when the rest of the product gets an illustration pass.)</p>
+    </div>
+  </div>
+
+  <div class="nit-block">
+    <div class="nit-num">2</div>
+    <div class="nit-body">
+      <p class="nit-quote">"Add a prominent ETA banner — 'if you get it to {carrier} today, expected delivery around {date}'. Smart about what day it is."</p>
+      <p><strong>Done.</strong> A blue-tinted banner sits right under the hero, on every pre-drop-off variant: calendar icon + carrier-aware copy. Today is Tue May 19; USPS Ground Advantage estimated 3 days; Mon–Sat delivery → "Drop off at USPS today → arrives Sat, May 23." Smaller subline gives the cutoff context ("drop by 5pm today for next-day pickup").</p>
+      <p>Logic lives in a new helper <code>computeDeliveryEta(carrier, estimatedDays, now)</code> returning <code>{ deliveryDateLabel, cutoffNote }</code>. Inputs: carrier name (already in <code>labelResult.carrier</code>), <code>labelResult.selectedRate.estimated_days</code>, and <code>new Date()</code>. The helper:</p>
+      <ul>
+        <li>Knows each carrier's delivery schedule: USPS Mon–Sat, UPS/FedEx Mon–Fri, DHL Mon–Fri.</li>
+        <li>Knows pickup cutoffs (default 5pm local; configurable per-carrier in a constants table).</li>
+        <li>If "now" is past the cutoff, copy shifts to "Drop off tomorrow (Wed) → arrives …".</li>
+        <li>If "now" is on a non-pickup day (Sun for USPS retail, weekend for UPS/FedEx), copy shifts to "Drop off Mon → arrives …".</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="nit-block">
+    <div class="nit-num">3</div>
+    <div class="nit-body">
+      <p class="nit-quote">"Use the existing print counter; just keep the button thinner. Don't reinvent."</p>
+      <p><strong>Done.</strong> No new schema, no new state. Existing server-side <code>shipments.print_count</code> + <code>/label-print</code> endpoint are reused. The visual treatment changes:</p>
+      <ul>
+        <li>Buttons stay equal-width and <em>thinner</em> (padding reduced from 10px to 8px vertical). No inline chip making one wider than the other.</li>
+        <li>Below the button row, one small centered line: <em>"Not printed yet"</em> when count is 0, <em>"✓ Printed 1× · tap again to reprint"</em> when count ≥ 1 (success-green).</li>
+        <li>The Print button itself gains a subtle "done" styling once <code>print_count &gt; 0</code> — soft green tint, no shape change.</li>
+        <li>How-to-ship step 1's numbered circle becomes a green checkmark on first print, so "I did that" reads from two places without doubling the noise.</li>
+      </ul>
+      <p>Download isn't tracked (no <code>download_count</code> column). Punt: localStorage hint, or just leave Download visually static. Author leans static — Print is the meaningful business event.</p>
+    </div>
+  </div>
+
+  <div class="nit-block">
+    <div class="nit-num">4</div>
+    <div class="nit-body">
+      <p class="nit-quote">"Receipt at bottom, below delivery information. Show on payer just-bought OR payer returning. Anonymous shows nothing — no link, no modal. (Email-receipt idea → wishlist.) Payers can always reach the receipt from their dashboard."</p>
+      <p><strong>Done.</strong> Receipt block now lives at the bottom of the scroll, beneath the Shipment Details card, on every payer view. Density varies:</p>
+      <ul>
+        <li><strong>Payer + just-bought</strong> — full receipt (Shipping line, Insurance line, Charged total, payment method, timestamp + PDF link).</li>
+        <li><strong>Payer + returning</strong> — condensed single-line receipt ("$7.59 · charged to •••• 4242 · May 19") + PDF link.</li>
+        <li><strong>Anonymous</strong> — no receipt block, no "View receipt" link. Payment information is entirely absent from anonymous views. Payers who want the receipt sign in via Dashboard → tracking page renders the full version.</li>
+      </ul>
+      <p>The "email the receipt to me" modal is wishlisted (good idea, not v1).</p>
+    </div>
+  </div>
+
+  <div class="nit-block">
+    <div class="nit-num">5</div>
+    <div class="nit-body">
+      <p class="nit-quote">"Contact support = mailto: for now. Wishlist a real support system."</p>
+      <p><strong>Done.</strong> Delivered state renders an "Everything OK?" card with a single "Email support" link that opens <code>mailto:support@sendmo.co</code> with a pre-filled subject (<code>Issue with shipment &lt;tracking&gt;</code>) and a body that includes the tracking number, from/to cities, delivered timestamp, and an empty "What happened:" field. Address confirmed at <a href="#">src/pages/Terms.tsx</a>. Wishlist item added for a proper support intake (ticket system, in-app form, or Zendesk integration).</p>
+    </div>
+  </div>
+
+  <!-- Open questions -->
+  <h2>Open questions for reviewer</h2>
+  <div class="toq">
+    <div class="toq-row">
+      <div class="toq-q">"Payer" gate signals</div>
+      <div class="toq-a">
+        Proposal counts the viewer as payer if any of: (a) auth session userId matches link owner, (b) recent post-payment session cookie set for this shipment, (c) signed query param from the receipt/label email (<code>?as=payer&amp;t=…</code>). Default falls back to anonymous. Are these the right three? Anything missing?
+        <span class="stance">Author stance: a + b + c. Conservative — anonymous unless we have proof.</span>
+      </div>
+    </div>
+    <div class="toq-row">
+      <div class="toq-q">ETA helper edge cases</div>
+      <div class="toq-a">
+        Three edge cases worth deciding now: (1) Late-night usage — at 11pm Tue, do we say "today" or "tomorrow"? Proposal: past 5pm = "tomorrow". (2) Federal holidays — currently ignored; conservative path is to add USPS observed holidays as a constants table. (3) <code>estimated_days</code> missing — fallback to a carrier-default range or hide the banner?
+        <span class="stance">Author stance: cutoff = 5pm; holidays added in v1 as a static list; hide banner if <code>estimated_days</code> is null.</span>
+      </div>
+    </div>
+    <div class="toq-row">
+      <div class="toq-q">Sender-flex parity</div>
+      <div class="toq-a">
+        Senders who finish flex checkout also land on a fresh label. Today SenderFlow pushes a cancel token via the same query-param transport and routes to <code>/t/&lt;code&gt;</code>. Adding <code>?just=bought</code> to that redirect gives senders the same celebration moment. They show as payers (they paid), so receipt-at-bottom + cancel-in-details all apply.
+        <span class="stance">Author stance: include senders. Same surface, same rules.</span>
+      </div>
+    </div>
+    <div class="toq-row">
+      <div class="toq-q">"Cancel" placement when cancel is unavailable</div>
+      <div class="toq-a">
+        Today's mockup shows an inert grey note ("Cancel unavailable — package has been scanned") in the Details card for payer+in-transit. Alternative: hide the slot entirely. Author leans showing the note — it answers "why isn't the cancel button there anymore?" without making the user hunt.
+        <span class="stance">Author stance: show the inert note.</span>
+      </div>
+    </div>
+    <div class="toq-row">
+      <div class="toq-q">e2e suite impact</div>
+      <div class="toq-a">
+        The full-prepaid Playwright spec currently asserts on the inline <code>LabelReady</code> view. Those asserts need to follow the redirect to <code>/t/&lt;code&gt;</code>. Estimate ~3 specs to update. Pre-merge audit task: grep <code>tests/e2e/</code> for "Your shipping label" and "Print Label" inside the recipient-onboarding suite.
+        <span class="stance">Action: pre-merge audit of e2e specs.</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Trade-offs -->
+  <h2>Trade-offs &amp; risks</h2>
+  <div class="callout warn">
+    <strong>Variant complexity.</strong> 3 lifecycle states × 3 viewer identities × 1 referral flag = up to 9 distinct rendered combinations. Mitigation: the viewer axis only swaps three blocks (cancel surface, receipt block, "Everything OK?" link). Lifecycle is the heavy axis with three branches. Manageable.
+  </div>
+  <div class="callout warn">
+    <strong>SVG illustrations are crude.</strong> The three inline SVGs in this mockup are functional but not portfolio-ready. They'll feel "design-system-y in the bad way" until a polish pass. Author recommends shipping v1 with them as-is and revisiting once the rest of the product gets an illustration pass.
+  </div>
+  <div class="callout warn">
+    <strong>ETA helper accuracy.</strong> "Drop off today → arrives X" is a promise. If our cutoff/holiday logic is wrong, we'll under- or over-promise. v1 mitigation: use phrasing like "expected delivery around" (already proposed) and add a small "* estimated" tooltip on the date. v2 could surface EasyPost's <code>delivery_date_guaranteed</code> when available.
+  </div>
+
+  <!-- Implementation -->
+  <h2>Implementation sketch</h2>
+  <ol>
+    <li><code>RecipientStepPayment.tsx</code> &amp; <code>SenderFlow</code> success branch — replace inline success view with <code>navigate(\`/t/\${publicCode}?just=bought\`, { replace: true })</code>. Cancel token continues via existing query-param transport.</li>
+    <li><code>TrackingPage.tsx</code> — derive <code>lifecycleState</code> from shipment status (<code>label_created</code> → pre-drop-off; <code>in_transit</code> / <code>out_for_delivery</code> → post-drop-off; <code>delivered</code> → post-delivery). Derive <code>viewerIdentity</code> from existing auth signals + cookie + email-link param. Render <code>&lt;StateHero kind={lifecycleState} /&gt;</code> + state-specific blocks.</li>
+    <li>New components in <code>src/components/tracking/</code>:
+      <ul>
+        <li><code>StateHero</code> — SVG scene + state-specific headline.</li>
+        <li><code>EtaBanner</code> — pre-drop-off only. Consumes <code>computeDeliveryEta()</code> helper.</li>
+        <li><code>ReceiptBlock</code> — payer-only, two density modes (full vs condensed). Rendered at the bottom of the scroll on every payer view.</li>
+        <li><code>ContactSupportCard</code> — delivered state. <code>mailto:support@sendmo.co</code> with pre-filled subject + body from shipment context.</li>
+      </ul>
+    </li>
+    <li>New helper <code>src/lib/deliveryEta.ts</code> — <code>computeDeliveryEta(carrier, estimatedDays, now)</code>. Constants table for carrier delivery schedules + cutoffs + USPS holidays. Unit-tested.</li>
+    <li><code>ShipmentLabelSection</code> — collapse into <code>ActionButtons</code> (the thin Print/Download row + print-count line) + reuse <code>HowToShipStrip</code>. Existing cancel surface moves into <code>DetailsCard</code> as the destructive link. Print-count chip is removed from inside the button.</li>
+    <li><code>HowToShipStrip</code> — accept an <code>printDone</code> prop; step 1 numbered circle becomes green check when true. Step 3 number → map pin icon (already drafted in v1's nit response).</li>
+    <li>e2e: update existing inline-confirmation specs to follow redirect. Add new specs for state-hero rendering, ETA banner copy across days/cutoffs, payer/anonymous variant branches.</li>
+    <li>Wishlist: "Email me the receipt" modal (deferred — not v1). Real support system (deferred — mailto for v1).</li>
+  </ol>
+
+  <!-- Decision -->
+  <h2>Decision</h2>
+  <div class="decision-box">
+    Submitted for fresh-eyes review. Reviewer responds to the five open questions, raises additional concerns, author revises, John decides.
+  </div>
+
+</div>
+</body>
+</html>
