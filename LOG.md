@@ -166,6 +166,26 @@ variants-covered: 4 lifecycle states × 3 viewer roles ; existing F3 family pres
 
 ---
 
+### [2026-05-18] Dashboard Shipments — rename From/To → Origin/Destination, add city caption
+
+**Category:** ship | UI | Dashboard
+**Cross-link:** none
+
+**Change:** Renamed Shipments-table headers `From` → `Origin` and `To` → `Destination`. Added a `City, ST` caption beneath each name in `text-xs text-muted-foreground` style. Applies to both the desktop table and the mobile cards on the Shipments tab.
+
+**Files changed:**
+- `src/pages/Dashboard.tsx` — `DashboardShipment` type widened to include `city, state` on sender/recipient address embeddings; PostgREST select extended with `city, state`; both desktop `<th>` headers renamed; both desktop `<td>` cells and the mobile-card name line now stack `name` + small city caption.
+
+**Falls back gracefully:** when `city` is null, no caption row renders (no "undefined", no broken layout). Mobile dual-city paragraph only renders when at least one of (origin city, destination city) is non-empty; otherwise omitted entirely.
+
+**Surfaces:** Shipments tab desktop (`md:block` table at Dashboard.tsx:836) and Shipments tab mobile cards (Dashboard.tsx:898). The Links tab grouping (`components/dashboard/LinksTab.tsx`) already shows recipient city/state in its own "For …" caption line; no change needed there.
+
+Browser-verified:
+  mcp-session: previews/dashboard-shipments-origin-dest.html → previews/screenshots/dashboard-shipments-origin-dest-desktop.png
+  variants-covered: [desktop × both-cities-present, desktop × origin-city-missing, desktop × both-cities-missing, mobile × both-cities-present, mobile × origin-city-missing, mobile × both-cities-missing]
+
+---
+
 ### [2026-05-18] Frequent logout root cause — Supabase callback footgun (the real Bug 2)
 
 **Category:** fix | Auth | Session
