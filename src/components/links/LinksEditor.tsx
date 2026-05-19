@@ -128,9 +128,11 @@ export default function LinksEditor({ mode, initialValue, linkId }: Props) {
             speed_preference: value.speed_preference,
             preferred_carrier: value.preferred_carrier,
             price_cap: value.price_cap,
+            address: value.address,
           }}
           onDone={() => navigate("/dashboard")}
           doneLabel="Go to dashboard"
+          onBack={() => navigate(-1)}
         />
       </main>
     );

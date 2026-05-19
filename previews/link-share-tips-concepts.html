@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Link Share — Marketplace v2 — SendMo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f5f5f5;
+    --card: #ffffff;
+    --primary: hsl(214, 89%, 52%);
+    --primary-fg: #ffffff;
+    --foreground: hsl(210, 11%, 15%);
+    --muted-fg: hsl(210, 7%, 46%);
+    --border: hsl(210, 14%, 89%);
+    --muted: hsl(210, 14%, 95%);
+    --success: hsl(142, 71%, 45%);
+    --success-bg: hsl(142, 71%, 96%);
+    --success-border: hsl(142, 71%, 80%);
+    --accent-bg: hsl(214, 89%, 97%);
+    --accent-border: hsl(214, 89%, 88%);
+    --radius: 14px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Inter', sans-serif;
+    background: var(--bg);
+    color: var(--foreground);
+    padding: 32px 16px 80px;
+    font-size: 14px;
+    line-height: 1.4;
+  }
+  .lab {
+    max-width: 1500px;
+    margin: 0 auto;
+  }
+  .lab-title {
+    text-align: center;
+    margin-bottom: 28px;
+  }
+  .lab-title h1 {
+    font-size: 18px;
+    font-weight: 700;
+  }
+  .lab-title p {
+    color: var(--muted-fg);
+    font-size: 13px;
+    margin-top: 4px;
+  }
+  .row {
+    display: flex;
+    gap: 24px;
+    justify-content: center;
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .col {
+    flex: 0 0 380px;
+    max-width: 380px;
+  }
+  .col-label {
+    text-align: center;
+    font-weight: 700;
+    margin-bottom: 6px;
+    color: var(--primary);
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .col-desc {
+    text-align: center;
+    color: var(--muted-fg);
+    font-size: 12px;
+    margin-bottom: 14px;
+    min-height: 32px;
+  }
+  .phone {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 28px;
+    padding: 14px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.04);
+  }
+  .stack { display: flex; flex-direction: column; gap: 12px; }
+
+  /* Combined "ready" + preferences card */
+  .ready-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px;
+  }
+  .ready-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+  .ready-check {
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    background: var(--success);
+    color: white;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+    font-weight: 700;
+    font-size: 14px;
+  }
+  .ready-head h2 {
+    font-size: 15px;
+    font-weight: 700;
+    line-height: 1.1;
+  }
+  .link-row {
+    background: var(--muted);
+    border-radius: 10px;
+    padding: 8px 10px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .link-row .url {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13px;
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* Tiny meta line */
+  .meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--muted-fg);
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+  .meta-dot { opacity: 0.4; }
+  .meta strong { color: var(--foreground); font-weight: 500; }
+
+  .btn {
+    border-radius: 10px;
+    padding: 8px 12px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    border: 1px solid transparent;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: transparent;
+    color: var(--foreground);
+    font-family: inherit;
+  }
+  .btn-ghost:hover { background: rgba(0,0,0,0.04); }
+  .btn-outline {
+    border: 1px solid var(--border);
+    background: var(--card);
+    width: 100%;
+    justify-content: center;
+  }
+  .btn-primary {
+    background: var(--primary);
+    color: var(--primary-fg);
+    width: 100%;
+    justify-content: center;
+    padding: 10px;
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .btn-row { display: flex; flex-direction: column-reverse; gap: 8px; }
+
+  /* Marketplace card */
+  .mp-card {
+    background: var(--accent-bg);
+    border: 1px solid var(--accent-border);
+    border-radius: var(--radius);
+    padding: 14px;
+  }
+  .mp-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .mp-icon {
+    width: 28px; height: 28px;
+    border-radius: 7px;
+    background: #1877F2;
+    color: white;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+    font-weight: 700;
+    font-size: 16px;
+    font-family: Georgia, serif;
+  }
+  .mp-head-text { flex: 1; }
+  .mp-head-text strong {
+    font-size: 13px;
+    font-weight: 600;
+    display: block;
+  }
+  .mp-head-text small {
+    font-size: 12px;
+    color: var(--muted-fg);
+  }
+  .snippet-text {
+    font-size: 12.5px;
+    color: var(--foreground);
+    background: white;
+    border-radius: 10px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    white-space: pre-wrap;
+    line-height: 1.5;
+    border: 1px solid var(--accent-border);
+  }
+  .snippet-text .url-inline {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+    color: var(--primary);
+    word-break: break-all;
+  }
+  .btn-copy {
+    background: var(--primary);
+    color: white;
+    border: 1px solid var(--primary);
+    border-radius: 10px;
+    padding: 8px 12px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    width: 100%;
+    font-family: inherit;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+  }
+
+  .fold {
+    position: relative;
+    border-top: 2px dashed hsl(0, 70%, 60%);
+    margin: 6px -14px;
+    height: 0;
+  }
+  .fold::after {
+    content: "↑ above the fold (mobile)";
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    top: -10px;
+    background: var(--bg);
+    color: hsl(0, 60%, 50%);
+    padding: 0 8px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+  .note {
+    background: white;
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 11px;
+    color: var(--muted-fg);
+    margin-top: 12px;
+    line-height: 1.5;
+  }
+  .copy-variants {
+    max-width: 700px;
+    margin: 40px auto 0;
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 24px;
+  }
+  .copy-variants h2 {
+    font-size: 15px;
+    margin-bottom: 12px;
+  }
+  .copy-variants p {
+    font-size: 13px;
+    color: var(--muted-fg);
+    margin-bottom: 16px;
+    line-height: 1.5;
+  }
+  .copy-option {
+    border-left: 3px solid var(--primary);
+    padding: 10px 14px;
+    background: var(--accent-bg);
+    border-radius: 0 8px 8px 0;
+    margin-bottom: 10px;
+    font-size: 13px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+  }
+  .copy-option-label {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--primary);
+    display: block;
+    margin-bottom: 4px;
+  }
+</style>
+</head>
+<body>
+
+<div class="lab">
+  <div class="lab-title">
+    <h1>Link Share — Marketplace v2</h1>
+    <p>Combined success + preferences card. Marketplace-only tips. Tighter copy.</p>
+  </div>
+
+  <div class="row">
+
+    <!-- ════════════════════════════ DESIGN ════════════════════════════ -->
+    <div class="col">
+      <div class="col-label">Tight stacked layout</div>
+      <div class="col-desc">Header + link + preferences in one card. Marketplace tip below.</div>
+      <div class="phone">
+        <div class="stack">
+
+          <div class="ready-card">
+            <div class="ready-head">
+              <div class="ready-check">✓</div>
+              <h2>Your link is ready</h2>
+            </div>
+            <div class="link-row">
+              <span class="url">sendmo.co/s/fqaYPCvYWS</span>
+              <button class="btn btn-ghost">📋 Copy</button>
+            </div>
+            <button class="btn btn-outline">▦ Show QR code</button>
+            <div class="meta">
+              <span>↗</span>
+              <strong>123 Main St, Brooklyn NY 11201</strong>
+              <span class="meta-dot">·</span>
+              <span>Standard</span>
+              <span class="meta-dot">·</span>
+              <span>$100 cap</span>
+            </div>
+          </div>
+
+          <div class="mp-card">
+            <div class="mp-head">
+              <div class="mp-icon">f</div>
+              <div class="mp-head-text">
+                <strong>Selling on Facebook Marketplace?</strong>
+                <small>Paste this into your listing description.</small>
+              </div>
+            </div>
+            <div class="snippet-text">📦 I ship with SendMo — open my link, enter your address, and print the prepaid label. I cover shipping.
+
+<span class="url-inline">sendmo.co/s/fqaYPCvYWS</span></div>
+            <button class="btn-copy">📋 Copy snippet</button>
+          </div>
+
+          <div class="fold"></div>
+
+          <div class="btn-row">
+            <button class="btn btn-primary">Go to dashboard →</button>
+            <button class="btn btn-outline">← Go back</button>
+          </div>
+        </div>
+        <div class="note"><strong>Above the fold:</strong> success + link + copy + QR + destination + Marketplace snippet — all visible without scrolling on 375×812.</div>
+      </div>
+    </div>
+
+    <!-- ════════════════════════════ ALT meta placement ════════════════════════════ -->
+    <div class="col">
+      <div class="col-label">Alt — meta as subtitle</div>
+      <div class="col-desc">Destination shown as a subtitle under the check, address only.</div>
+      <div class="phone">
+        <div class="stack">
+
+          <div class="ready-card">
+            <div class="ready-head">
+              <div class="ready-check">✓</div>
+              <div>
+                <h2>Your link is ready</h2>
+                <small style="font-size:12px; color:var(--muted-fg);">Ships to 123 Main St, Brooklyn NY · Standard · $100 cap</small>
+              </div>
+            </div>
+            <div class="link-row">
+              <span class="url">sendmo.co/s/fqaYPCvYWS</span>
+              <button class="btn btn-ghost">📋 Copy</button>
+            </div>
+            <button class="btn btn-outline">▦ Show QR code</button>
+          </div>
+
+          <div class="mp-card">
+            <div class="mp-head">
+              <div class="mp-icon">f</div>
+              <div class="mp-head-text">
+                <strong>Selling on Facebook Marketplace?</strong>
+                <small>Paste this into your listing description.</small>
+              </div>
+            </div>
+            <div class="snippet-text">📦 I ship with SendMo — open my link, enter your address, and print the prepaid label. I cover shipping.
+
+<span class="url-inline">sendmo.co/s/fqaYPCvYWS</span></div>
+            <button class="btn-copy">📋 Copy snippet</button>
+          </div>
+
+          <div class="fold"></div>
+
+          <div class="btn-row">
+            <button class="btn btn-primary">Go to dashboard →</button>
+            <button class="btn btn-outline">← Go back</button>
+          </div>
+        </div>
+        <div class="note"><strong>Tighter still:</strong> ~30px shorter. But destination wraps on long addresses, which can be ugly.</div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="copy-variants">
+    <h2>Marketplace snippet — copy alternates</h2>
+    <p>Goal: accurate (seller pays, not "free"), short enough to paste into a Marketplace listing without breaking the seller's own description, and clear about what the buyer does.</p>
+
+    <div class="copy-option">
+      <span class="copy-option-label">A — current (in mockups above)</span>📦 I ship with SendMo — open my link, enter your address, and print the prepaid label. I cover shipping.
+
+sendmo.co/s/fqaYPCvYWS</div>
+
+    <div class="copy-option">
+      <span class="copy-option-label">B — friendlier</span>📦 Shipping handled — I use SendMo. Once we agree on a price, just open my link, enter your address, and print the label. No shipping cost to you.
+
+sendmo.co/s/fqaYPCvYWS</div>
+
+    <div class="copy-option">
+      <span class="copy-option-label">C — minimal</span>📦 I ship with SendMo. After we agree on price, use this link to print your shipping label — I'll cover it.
+
+sendmo.co/s/fqaYPCvYWS</div>
+
+    <div class="copy-option">
+      <span class="copy-option-label">D — branded headline</span>✅ Ships with SendMo
+I cover shipping. Open my link, enter your address, print the prepaid label.
+
+sendmo.co/s/fqaYPCvYWS</div>
+
+    <p style="margin-top: 16px; margin-bottom: 0;"><strong>My pick: A.</strong> Shortest, leads with the verb the buyer cares about ("I ship"), avoids the "free" word, and the steps are concrete enough to feel real. <strong>D</strong> is a strong second if you want a logo-ish headline that's grep-able in a listing scroll.</p>
+  </div>
+</div>
+
+</body>
+</html>

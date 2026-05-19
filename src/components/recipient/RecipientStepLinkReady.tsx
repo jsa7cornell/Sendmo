@@ -30,6 +30,7 @@ export default function RecipientStepLinkReady({ state }: Props) {
         speed_preference: state.speed_preference as SpeedTier,
         preferred_carrier: state.preferred_carrier,
         price_cap: state.price_cap,
+        address: state.destinationAddress,
       }}
       onDone={() => (window.location.href = "/dashboard")}
     />

@@ -563,9 +563,9 @@ export default function Dashboard() {
                     variant="outline"
                     onClick={() => setShowAddCard(true)}
                     className="rounded-lg text-xs h-7 px-2.5"
-                    title={defaultPm ? "Update your payment method to reactivate this link" : "Add a card to activate this link"}
+                    title={defaultPm ? "Update your payment information to reactivate this link" : "Add payment information to activate this link"}
                   >
-                    {defaultPm ? "Update payment" : "Add a card"}
+                    {defaultPm ? "Update payment information" : "Add payment information"}
                   </Button>
                 )}
                 {link && (

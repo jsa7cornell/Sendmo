@@ -1,13 +1,24 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { CheckCircle2, Copy, MessageSquare, Mail, ArrowRight } from "lucide-react";
+import {
+  CheckCircle2,
+  Copy,
+  ArrowRight,
+  ArrowLeft,
+  QrCode,
+  MapPin,
+  Facebook,
+} from "lucide-react";
+import { QRCodeSVG } from "qrcode.react";
 import { Button } from "@/components/ui/button";
-import type { SpeedTier } from "@/lib/types";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import type { AddressInput, SpeedTier } from "@/lib/types";
 
 interface ShareValueSummary {
   speed_preference: SpeedTier;
   preferred_carrier: string;
   price_cap: number;
+  address?: AddressInput;
 }
 
 interface Props {
@@ -15,79 +26,86 @@ interface Props {
   value: ShareValueSummary;
   onDone: () => void;
   doneLabel?: string;
+  onBack?: () => void;
+  backLabel?: string;
 }
 
-function QRPlaceholder({ url }: { url: string }) {
-  return (
-    <div className="w-40 h-40 mx-auto bg-white rounded-xl border border-border flex items-center justify-center p-3">
-      <div className="text-center">
-        <div className="grid grid-cols-5 gap-0.5 mx-auto w-20 h-20 mb-2">
-          {Array.from({ length: 25 }, (_, i) => (
-            <div
-              key={i}
-              className={`w-full aspect-square rounded-[1px] ${
-                [0, 1, 2, 4, 5, 6, 9, 10, 14, 15, 18, 19, 20, 22, 23, 24].includes(i)
-                  ? "bg-foreground"
-                  : "bg-transparent"
-              }`}
-            />
-          ))}
-        </div>
-        <p className="text-[8px] text-muted-foreground leading-tight break-all">{url}</p>
-      </div>
-    </div>
-  );
-}
-
-export default function LinkShareCard({ shortCode, value, onDone, doneLabel }: Props) {
+export default function LinkShareCard({
+  shortCode,
+  value,
+  onDone,
+  doneLabel,
+  onBack,
+  backLabel,
+}: Props) {
   const [copied, setCopied] = useState(false);
+  const [snippetCopied, setSnippetCopied] = useState(false);
+  const [qrOpen, setQrOpen] = useState(false);
   const shortLink = `sendmo.co/s/${shortCode}`;
   const fullUrl = `https://${shortLink}`;
 
-  function handleCopy() {
+  function handleCopyLink() {
     navigator.clipboard.writeText(fullUrl);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   }
 
-  const smsBody = encodeURIComponent(
-    `I set up a prepaid shipping link for you. Use it to send me a package — just click the link, enter your package details, and print the label. No payment needed on your end!\n\n${fullUrl}`,
-  );
-  const emailSubject = encodeURIComponent("Send me a package with SendMo");
-  const emailBody = encodeURIComponent(
-    `Hi!\n\nI've set up a prepaid shipping link so you can easily send me a package. Just click the link below, enter your package details, and print the label. No payment needed on your end.\n\n${fullUrl}\n\nThanks!`,
-  );
+  const marketplaceSnippet = `📦 I ship with SendMo — open my link, enter your address, and print the prepaid label.
+
+${shortLink}`;
+
+  function handleCopySnippet() {
+    navigator.clipboard.writeText(marketplaceSnippet);
+    setSnippetCopied(true);
+    setTimeout(() => setSnippetCopied(false), 2000);
+  }
+
+  const addressLine = value.address
+    ? [
+        value.address.street,
+        [
+          [value.address.city, value.address.state].filter(Boolean).join(", "),
+          value.address.zip,
+        ]
+          .filter(Boolean)
+          .join(" "),
+      ]
+        .filter(Boolean)
+        .join(", ")
+    : null;
+
+  const carrierLabel =
+    value.preferred_carrier && value.preferred_carrier !== "any"
+      ? value.preferred_carrier.toUpperCase()
+      : null;
 
   return (
-    <div className="space-y-5">
-      {/* Success banner */}
+    <div className="space-y-4">
+      {/* Combined "ready" + link + meta card */}
       <motion.div
-        initial={{ opacity: 0, scale: 0.95 }}
+        initial={{ opacity: 0, scale: 0.97 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="bg-success/10 border border-success/30 rounded-2xl p-6 text-center"
+        className="bg-card rounded-2xl border border-border shadow-sm p-4 sm:p-5"
       >
-        <motion.div
-          initial={{ scale: 0 }}
-          animate={{ scale: 1 }}
-          transition={{ type: "spring", stiffness: 200, delay: 0.1 }}
-        >
-          <CheckCircle2 className="w-12 h-12 text-success mx-auto mb-3" />
-        </motion.div>
-        <h2 className="text-xl font-bold text-foreground">Your link is ready!</h2>
-        <p className="text-sm text-muted-foreground mt-1">
-          Share it with anyone who needs to send you a package.
-        </p>
-      </motion.div>
+        <div className="flex items-center gap-2.5 mb-3">
+          <motion.div
+            initial={{ scale: 0 }}
+            animate={{ scale: 1 }}
+            transition={{ type: "spring", stiffness: 200, delay: 0.1 }}
+          >
+            <CheckCircle2 className="w-6 h-6 text-success" />
+          </motion.div>
+          <h2 className="text-base sm:text-lg font-bold text-foreground">
+            Your link is ready
+          </h2>
+        </div>
 
-      {/* Link + copy */}
-      <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
-        <h3 className="text-sm font-semibold text-foreground mb-3">Your shipping link</h3>
-        <div className="flex items-center gap-2 bg-muted/50 rounded-xl px-3 py-2.5 mb-4">
+        <div className="flex items-center gap-2 bg-muted/50 rounded-xl px-3 py-2.5 mb-2">
           <span className="text-sm text-foreground font-mono flex-1 truncate">{shortLink}</span>
           <Button
             variant="ghost"
             size="sm"
-            onClick={handleCopy}
+            onClick={handleCopyLink}
             className="rounded-lg gap-1.5 shrink-0"
           >
             <Copy className="w-3.5 h-3.5" />
@@ -95,63 +113,102 @@ export default function LinkShareCard({ shortCode, value, onDone, doneLabel }: P
           </Button>
         </div>
 
-        <QRPlaceholder url={shortLink} />
-      </div>
+        <Button
+          variant="outline"
+          className="w-full rounded-xl gap-2"
+          onClick={() => setQrOpen(true)}
+        >
+          <QrCode className="w-4 h-4" />
+          Show QR code
+        </Button>
 
-      {/* Share buttons */}
-      <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
-        <h3 className="text-sm font-semibold text-foreground mb-3">Share with your sender</h3>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Button
-            variant="outline"
-            className="rounded-xl gap-2"
-            onClick={() => window.open(`sms:?body=${smsBody}`, "_self")}
-          >
-            <MessageSquare className="w-4 h-4" />
-            Text
-          </Button>
-          <Button
-            variant="outline"
-            className="rounded-xl gap-2"
-            onClick={() =>
-              window.open(`mailto:?subject=${emailSubject}&body=${emailBody}`, "_self")
-            }
-          >
-            <Mail className="w-4 h-4" />
-            Email
-          </Button>
-        </div>
-      </div>
-
-      {/* Link preferences summary */}
-      <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
-        <h3 className="text-sm font-semibold text-foreground mb-3">Link preferences</h3>
-        <dl className="space-y-2 text-sm">
-          <div className="flex justify-between">
-            <dt className="text-muted-foreground">Speed</dt>
-            <dd className="font-medium text-foreground capitalize">{value.speed_preference}</dd>
-          </div>
-          {value.preferred_carrier && value.preferred_carrier !== "any" && (
-            <div className="flex justify-between">
-              <dt className="text-muted-foreground">Carrier</dt>
-              <dd className="font-medium text-foreground uppercase">{value.preferred_carrier}</dd>
+        {(addressLine || carrierLabel) && (
+          <div className="mt-3 pt-3 border-t border-border flex items-start gap-2 text-xs text-muted-foreground">
+            <MapPin className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+            <div className="flex-1 min-w-0">
+              {addressLine && (
+                <div className="text-foreground font-medium truncate">{addressLine}</div>
+              )}
+              <div>
+                <span className="capitalize">{value.speed_preference}</span>
+                {carrierLabel && <> · {carrierLabel}</>}
+                <> · ${value.price_cap} cap</>
+              </div>
             </div>
-          )}
-          <div className="flex justify-between">
-            <dt className="text-muted-foreground">Price cap</dt>
-            <dd className="font-medium text-foreground">${value.price_cap}</dd>
           </div>
-        </dl>
+        )}
+      </motion.div>
+
+      {/* Marketplace snippet card */}
+      <div className="bg-primary/5 rounded-2xl border border-primary/20 p-4 sm:p-5">
+        <div className="flex items-center gap-2.5 mb-3">
+          <div className="w-8 h-8 rounded-lg bg-[#1877F2] text-white flex items-center justify-center shrink-0">
+            <Facebook className="w-4 h-4 fill-white" />
+          </div>
+          <div className="min-w-0">
+            <div className="text-sm font-semibold text-foreground">
+              Selling on Facebook Marketplace?
+            </div>
+            <div className="text-xs text-muted-foreground">
+              Paste this into your listing description.
+            </div>
+          </div>
+        </div>
+        <div className="bg-card rounded-xl border border-primary/20 px-3 py-2.5 mb-2 text-sm text-foreground whitespace-pre-wrap leading-relaxed">
+          {`📦 I ship with SendMo — open my link, enter your address, and print the prepaid label.\n\n`}
+          <span className="font-mono text-primary text-xs break-all">{shortLink}</span>
+        </div>
+        <Button
+          onClick={handleCopySnippet}
+          className="w-full rounded-xl gap-2"
+        >
+          <Copy className="w-4 h-4" />
+          {snippetCopied ? "Copied!" : "Copy snippet"}
+        </Button>
       </div>
 
-      {/* CTA */}
-      <Button
-        className="w-full rounded-xl shadow-sm gap-2"
-        onClick={onDone}
-      >
-        {doneLabel ?? "Go to your account page"}
-        <ArrowRight className="w-4 h-4" />
-      </Button>
+      {/* CTAs */}
+      <div className="flex flex-col-reverse sm:flex-row gap-2 sm:gap-3">
+        {onBack && (
+          <Button
+            variant="outline"
+            onClick={onBack}
+            className="sm:flex-1 rounded-xl gap-2"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            {backLabel ?? "Go back"}
+          </Button>
+        )}
+        <Button
+          className="sm:flex-1 rounded-xl shadow-sm gap-2"
+          onClick={onDone}
+        >
+          {doneLabel ?? "Go to your account page"}
+          <ArrowRight className="w-4 h-4" />
+        </Button>
+      </div>
+
+      {/* QR modal */}
+      <Dialog open={qrOpen} onOpenChange={setQrOpen}>
+        <DialogContent className="max-w-sm rounded-2xl">
+          <DialogHeader>
+            <DialogTitle>Scan to open your link</DialogTitle>
+          </DialogHeader>
+          <div className="flex flex-col items-center gap-3 pt-2">
+            <div className="bg-white p-4 rounded-xl border border-border">
+              <QRCodeSVG
+                value={fullUrl}
+                size={220}
+                level="M"
+                marginSize={0}
+              />
+            </div>
+            <p className="text-xs text-muted-foreground font-mono break-all text-center">
+              {shortLink}
+            </p>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

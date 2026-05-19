@@ -14,6 +14,7 @@ import Admin from "@/pages/Admin";
 import LabelTest from "@/pages/LabelTest";
 import SenderPreview from "@/pages/SenderPreview";
 import HeaderPreview from "@/pages/HeaderPreview";
+import LinkSharePreview from "@/pages/LinkSharePreview";
 import TrackingPage from "@/pages/TrackingPage";
 import LegacyTrackingRedirect from "@/pages/LegacyTrackingRedirect";
 import LinksNew from "@/pages/LinksNew";
@@ -100,6 +101,7 @@ function App() {
           <Route path="/label-test" element={<LabelTest />} />
           <Route path="/sender-preview" element={<SenderPreview />} />
           <Route path="/header-preview" element={<HeaderPreview />} />
+          <Route path="/link-share-preview" element={<LinkSharePreview />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </AuthProvider>
