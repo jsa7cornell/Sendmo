@@ -12,6 +12,39 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-18] LinksEditor `/links/new` — inline SetupIntent (Pattern D follow-up)
+
+**Category:** ship | Payments | Pattern D
+**Cross-link:** [PAYMENTS.md](PAYMENTS.md) §7 item 5 | [proposals/2026-05-16_flex-payment-pattern-d-execution_reviewed-2026-05-16_decided-2026-05-18.md](proposals/2026-05-16_flex-payment-pattern-d-execution_reviewed-2026-05-16_decided-2026-05-18.md) (Pattern D)
+
+**Problem:** Dashboard "+ New Link" (`/links/new`) bypassed Pattern D entirely. `LinksEditor` called `createFlexLink` with no card collection, so links were born `status='active'` but `is_funded=false`. Recipient ended up with an Inactive link without realizing payment info was needed. Reproed 2026-05-18 with `testerjohnanderson@gmail.com` → link `fqaYPCvYWS`.
+
+**Fix:**
+
+- New shared `<FlexPaymentStep>` at [`src/components/flex/FlexPaymentStep.tsx`](src/components/flex/FlexPaymentStep.tsx) — extracted from `RecipientStepFlexPayment`'s SetupIntent + polling + Stripe Elements logic. The RATE_TABLE estimate panel lives inside, gated by a `showCostEstimate` prop.
+- [`RecipientStepFlexPayment.tsx`](src/components/recipient/RecipientStepFlexPayment.tsx) becomes a thin wrapper around `<FlexPaymentStep>` (passes `showCostEstimate={true}`). Onboarding UX unchanged.
+- [`LinksEditor.tsx`](src/components/links/LinksEditor.tsx) `create` mode is now a 2-step wizard with a Details/Payment progress indicator: Step 1 = address + preferences (existing form); Step 2 = `<FlexPaymentStep showCostEstimate={false}>` (with a compact "See typical costs" disclosure instead of the per-shipment rate panel); Step 3 = `LinkShareCard` (unchanged). `edit` mode (`/links/:id/edit`) is unchanged.
+- Server: [`supabase/functions/links/index.ts`](supabase/functions/links/index.ts) POST handler now accepts `initial_status: 'auto'` — inspects the user's default PM in the link's mode (mirrors the GET `is_funded` logic) and picks `draft`/`active` server-side. Resolved status is returned in the response.
+- Returning users with a usable saved PM: server returns `status: 'active'`, client skips Step 2 entirely and jumps straight to Step 3 (LinkShareCard). New users with no PM: server returns `status: 'draft'`, client shows the inline Stripe Elements + Save button. Back from Step 2 reuses the same draft (no orphan-link creation on re-Continue).
+
+**Why this shape:** Mirroring the proven onboarding pattern (rather than re-implementing inline) means one source of truth for the SetupIntent flow, and Pattern D's invariant — flex link is_funded ⇒ link has a saved PM — is now enforced at *both* link-creation surfaces.
+
+**Browser-verified:**
+- **mcp-session:** local dev (`http://localhost:5173`) with mocked Supabase session + intercepted POST `/functions/v1/links`.
+- **variants-covered:**
+  - `/links/new` Step 1 renders with new 2-step Details/Payment indicator + "Continue to payment" button.
+  - Continue → Step 2 renders "Add your card" with the compact "See typical costs" disclosure, Test Mode badge, payment card panel, Back button.
+  - Server returns `status: 'active'` (mocked) → Step 2 is skipped, Step 3 LinkShareCard renders with the resolved short_code.
+  - Server returns 401 (no mock) → Step 2 surfaces the error inline; no crash, link is still draft.
+  - Back from Step 2 → Step 1 preserves entered details (Recipient Name persisted, address sticky).
+  - `/onboarding/flexible/destination` still mounts cleanly after the extract (onboarding flow not regressed).
+
+**Out of scope (still on the wishlist):**
+- Orphan-draft cleanup (Step 2 abandoned mid-flow) — covered by the existing nightly-cleanup wishlist item.
+- ZDA verification at SetupIntent save (Pattern D').
+
+---
+
 ### [2026-05-18] Frequent logout root cause — Supabase callback footgun (the real Bug 2)
 
 **Category:** fix | Auth | Session

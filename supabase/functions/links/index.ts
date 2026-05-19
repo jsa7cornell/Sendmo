@@ -371,14 +371,42 @@ serve(async (req: Request) => {
             size_hint,
             distance_hint,
             notes,
-            // Optional: 'draft' for onboarding flex flow (link awaits a hold
-            // before becoming visible to senders). Defaults to 'active' for
-            // backward compat with LinksEditor and tests. Only 'draft' or
-            // 'active' are accepted from the client; webhooks own all other
-            // transitions.
+            // Optional: 'draft' for onboarding flex flow (link awaits a saved
+            // PM before becoming visible to senders). 'active' creates ready.
+            // 'auto' (Pattern D follow-up) inspects the user's default PM in
+            // the link's mode and picks draft/active accordingly — used by the
+            // dashboard +New Link flow so a returning user with a saved card
+            // skips the inline SetupIntent. Webhooks own all other transitions.
             initial_status,
         } = body;
-        const startStatus = initial_status === "draft" ? "draft" : "active";
+        let startStatus: "draft" | "active";
+        if (initial_status === "draft") {
+            startStatus = "draft";
+        } else if (initial_status === "auto") {
+            // Mirror the is_funded logic in GET /links?code= : the link is
+            // created with is_test=TRUE (column default), so we look up the
+            // user's default PM in test mode with un-expired stored expiry.
+            const now = new Date();
+            const { data: defaultPm } = await supabase
+                .from("payment_methods")
+                .select("exp_year, exp_month")
+                .eq("user_id", user.id)
+                .eq("mode", "test")
+                .eq("is_default", true)
+                .is("deleted_at", null)
+                .maybeSingle();
+            let hasUsablePm = false;
+            if (defaultPm) {
+                const yr = (defaultPm as { exp_year?: number | null }).exp_year ?? null;
+                const mo = (defaultPm as { exp_month?: number | null }).exp_month ?? null;
+                if (yr == null || mo == null) hasUsablePm = true;
+                else if (yr > now.getFullYear()) hasUsablePm = true;
+                else if (yr === now.getFullYear() && mo >= now.getMonth() + 1) hasUsablePm = true;
+            }
+            startStatus = hasUsablePm ? "active" : "draft";
+        } else {
+            startStatus = "active";
+        }
 
         // Validate required fields
         if (!recipient_address?.street1 || !recipient_address?.city || !recipient_address?.state || !recipient_address?.zip) {
@@ -471,6 +499,7 @@ serve(async (req: Request) => {
                 id: link.id,
                 short_code: link.short_code,
                 url: `https://sendmo.co/s/${link.short_code}`,
+                status: startStatus,
             }),
             { status: 201, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );

@@ -390,15 +390,24 @@ export interface CreateLinkParams {
   size_hint?: string | null;
   distance_hint?: string;
   notes?: string;
-  // 'draft' for flows that authorize a hold before activation (Phase E flex
-  // onboarding). Defaults to 'active' on the server when omitted.
-  initial_status?: "draft" | "active";
+  // 'draft' = link starts inactive, becomes active after webhook attaches a PM
+  //   (used by RecipientStepFlexPayment for onboarding).
+  // 'active' = link is immediately usable; assumes a PM exists (or will be
+  //   added separately). Default when omitted, for backward compat.
+  // 'auto'  = server inspects the user's default PM in the link's mode and
+  //   picks draft/active. Used by /links/new so returning users skip the
+  //   inline SetupIntent step. The resolved status is returned in the response.
+  initial_status?: "draft" | "active" | "auto";
 }
 
 export interface CreateLinkResult {
   id: string;
   short_code: string;
   url: string;
+  // Populated when initial_status='auto' (and benign for the other forms,
+  // where it echoes what the client requested). Lets the client branch on
+  // whether the SetupIntent step still needs to run.
+  status?: "draft" | "active";
 }
 
 // REMOVED 2026-05-18 (Pattern D, Phase F): createFlexHold no longer exists.

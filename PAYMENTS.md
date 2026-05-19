@@ -195,7 +195,7 @@ Superseded proposals (preserved for institutional memory):
 2. **Sender self-paid fallback flow** — when a link is Inactive, sender can pay themselves
 3. **Multi-PM retry on decline** — if default declines, try the next saved PM
 4. **Nightly background PM validation cron** — catches expired/replaced cards before sender failure
-5. **LinksEditor `/links/new` integration** — dashboard "+ New Link" still creates links without inline card collection
+5. ~~**LinksEditor `/links/new` integration** — dashboard "+ New Link" still creates links without inline card collection~~ **DONE 2026-05-18** — `/links/new` is now a 2-step wizard (Details → Payment), Step 2 mounts the shared `<FlexPaymentStep>`. Returning users with a usable PM skip Step 2 via the server's new `initial_status: 'auto'` resolution.
 6. **`sendmo_links.status` enum cleanup migration** — drop dead values (`'in_use'`, `'used'`, `'completed'`)
 7. **Fraud-mitigation escalation** — if `link_state_events.charge_failed` bursts show real fraud signal, add Stripe Radar / per-customer caps / soft-lock
 
