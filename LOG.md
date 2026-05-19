@@ -12,6 +12,41 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-19] Sender star scale recalibrated — 1$ below $10
+
+**Category:** fix | UX | sender flow
+**Cross-link:** John feedback (2026-05-19) — sender saw star prices that "seemed expensive based on how many stars"; wants under $10 to start at 1$ and scale up from there.
+
+**What changed:** `priceTierSymbol` bucket array in [`src/components/sender/senderState.ts`](src/components/sender/senderState.ts) moved from `[5, 10, 15, 20, 30, 50, 75, 100, 150]` to `[10, 15, 22, 32, 45, 65, 90, 125, 175]`. New mapping: <$10 = 1$, <$15 = 2$, <$22 = 3$, <$32 = 4$, <$45 = 5$, <$65 = 6$, <$90 = 7$, <$125 = 8$, <$175 = 9$, ≥$175 = 10$. Curve is steeper at the low end (where everyday shipments cluster — $5 increments below $25) and widens at the top so a premium cross-country express ($75-150) lands at 8-9$.
+
+**Spot checks against real recent rates:** USPS Ground $5.73 → 1$ (was 2$). USPS Ground $7.59 → 1$. Standard $12.99 → 2$. Premium $100 → 8$. Premium $150 → 9$. Old scale was reading every cheap-USPS-ground shipment as 2$, which felt expensive against the visual scale.
+
+**Browser-verified:**
+```
+n/a-category: pure-logic
+n/a-reason: `priceTierSymbol` is a pure cents→string mapping with one caller (`SenderStepRates.tsx:93`), rendered as plain text with no conditional styling. The change is a single array literal; bucket boundaries are inspectable. A unit test on bucket boundaries (~10 min to wire if Vitest is configured) is the tighter alternative — flagged for follow-up but not blocking.
+variants-covered: bucket-boundaries [$0, $10, $15, $22, $32, $45, $65, $90, $125, $175]
+```
+
+---
+
+### [2026-05-19] UPS no-show in sender rate picker — environmental, not a code bug
+
+**Category:** investigation | EasyPost | rate fetching
+**Cross-link:** John feedback (2026-05-19) — recent test on shipment `9c8fef8d-0a0e-47a6-b260-9096e55068b0` (public_code CW4YBAC, link `LDZBm1V9zd`) showed only USPS and FedEx in the rate picker, no UPS.
+
+**Root cause:** Sporadic EasyPost test-mode UPSDAP API failure. The `rate.fetched` event for that test's EasyPost shipment (`shp_07cc41ff792e416583f9ed32c573daed`, 22:53:43 UTC, 19.2 oz parcel) recorded carrier_message `[UPSDAP] UPS responded with an invalid response, please try again` and `carriers_returned: ["USPS", "FedExDefault"]`. The label was purchased from this rate set at 23:00:31.
+
+**Evidence it's not a code bug:** Another rate fetch four minutes later (22:57:08) for the *same* origin/destination ZIPs (53217 → 94028) with a 13 oz parcel returned all three carriers (`USPS`, `UPSDAP`, `FedExDefault`). Two more calls at 23:12:35/51/52 for a different route (94028 → 96161) all returned three carriers consistently. So:
+1. **Not** EasyPost account config — UPSDAP is enabled and quotes most of the time.
+2. **Not** `pickBestPerCarrier` / `normalizeCarrier` dropping UPS — `normalizeCarrier("UPSDAP")` correctly returns `"UPS"`.
+3. **Not** the link's `preferred_carrier` filter — `sendmo_links` row has `preferred_carrier: null, preferred_speed: null`.
+4. **Not** the parcel dims/weight — same dims worked on the very next attempt.
+
+The EasyPost-side UPSDAP integration in test mode is intermittently flaky. Backend logs the carrier_message correctly; nothing for SendMo to fix in code. Filed on WISHLIST as an environmental note + monitoring idea.
+
+---
+
 ### [2026-05-19] Unify post-purchase confirmation into `/t/<code>` — one state-driven page
 
 **Category:** Architecture | Refactor | Tracking page | Privacy (server-side gating) | UX

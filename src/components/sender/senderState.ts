@@ -131,12 +131,12 @@ export function pickBestPerCarrier<T extends ShippingRate>(rates: T[]): T[] {
 
 // Rough cost indicator for the sender — they don't see the exact price but
 // $-symbols give an order-of-magnitude signal so they can pick mindfully.
-// Bucket boundaries chosen against the SPEC §7.1 rate tables so a "cheap
-// envelope" lands at $ and a "premium cross-country express" lands at the
-// top of the scale.
+// 1$ < $10 baseline (cheap USPS Ground envelope); scale is steeper at the
+// low end where most everyday shipments cluster, wider at the top so a
+// premium cross-country express ($75–150) lands at 8–9$.
 export function priceTierSymbol(displayPriceCents: number): string {
   const dollars = displayPriceCents / 100;
-  const buckets = [5, 10, 15, 20, 30, 50, 75, 100, 150];
+  const buckets = [10, 15, 22, 32, 45, 65, 90, 125, 175];
   let n = 1;
   for (const b of buckets) {
     if (dollars < b) break;
