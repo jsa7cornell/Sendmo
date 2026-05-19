@@ -12,6 +12,27 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-18] Label confirmation email — add From / Item / Amount rows
+**Category:** fix | email | UX
+**Cross-link:** John's feedback on the post-buy "Label created!" email — couldn't recognize the shipment at a glance.
+
+**What changed:**
+- `supabase/functions/_shared/email-templates.ts`: `labelConfirmationEmail` now takes a single options object (was 5 positional args). Adds three optional fields: `senderName`, `itemDescription`, `displayPriceCents`. Each renders as its own summary row above Carrier/ETA. Item descriptions over 40 chars are truncated with `…`. Price formatted as `$XX.YY`.
+- `supabase/functions/labels/index.ts` (~L978): caller updated to pass `from_address?.name`, `parcel?.description`, and the resolved `display_price_cents` (server-derived for flex, body-provided for full-label). All three are already in scope at the email-send point — no new DB queries.
+- `tests/unit/emailTemplates.test.ts`: signature migration + 3 new cases covering presence, truncation, and null/blank omission.
+
+**Null handling:** rows are **omitted entirely** when a field is null/blank/non-positive (matches the `carrierRow`/`etaRow` pattern in `trackingUpdateEmail`). Cleaner than `—` placeholders for the legacy-shipment case.
+
+**Preview file:** [`previews/label-confirmation-email-variants.html`](previews/label-confirmation-email-variants.html), generator at [`scripts/render-label-email-preview.mts`](scripts/render-label-email-preview.mts) (re-run with `node --experimental-strip-types scripts/render-label-email-preview.mts`).
+
+**Deploy status:** NOT deployed. Changes committed; `npx supabase functions deploy labels` pending John's approval.
+
+**Browser-verified:**
+  mcp-session: previews/label-confirmation-email-variants.html rendered via python3 -m http.server 3456; inspected each variant's srcdoc for FROM/ITEM/AMOUNT row presence and 40-char truncation. Unit suite: 20/20 pass; `npx tsc -b --noEmit` clean.
+  variants-covered: [full_label-all-fields, flex-full-sender-info, flex-no-sender-name, legacy-no-item_description]
+
+---
+
 ### [2026-05-18] Frequent logout root cause — Supabase callback footgun (the real Bug 2)
 
 **Category:** fix | Auth | Session

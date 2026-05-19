@@ -60,13 +60,48 @@ export function otpEmail(code: string): { subject: string; html: string } {
 
 // ─── Label Confirmation Email ──────────────────────────────
 
-export function labelConfirmationEmail(
-  publicCode: string,
-  carrierTracking: string,
-  carrier: string,
-  eta: string,
-  trackingUrl: string,
-): { subject: string; html: string } {
+export function labelConfirmationEmail(params: {
+  publicCode: string;
+  carrierTracking: string;
+  carrier: string;
+  eta: string;
+  trackingUrl: string;
+  senderName?: string | null;
+  itemDescription?: string | null;
+  displayPriceCents?: number | null;
+}): { subject: string; html: string } {
+  const {
+    publicCode,
+    carrierTracking,
+    carrier,
+    eta,
+    trackingUrl,
+    senderName,
+    itemDescription,
+    displayPriceCents,
+  } = params;
+
+  const trimmedSender = senderName?.trim();
+  const trimmedItem = itemDescription?.trim();
+  const itemDisplay = trimmedItem && trimmedItem.length > 40
+    ? `${trimmedItem.slice(0, 40)}…`
+    : trimmedItem;
+  const priceDisplay = typeof displayPriceCents === "number" && displayPriceCents > 0
+    ? `$${(displayPriceCents / 100).toFixed(2)}`
+    : null;
+
+  const summaryRow = (label: string, value: string) => `
+    <tr>
+      <td style="padding:12px 16px;border-bottom:1px solid #e5e7eb;">
+        <span style="font-size:12px;color:${GRAY_400};text-transform:uppercase;letter-spacing:0.5px;">${label}</span><br/>
+        <span style="font-size:14px;font-weight:500;color:#111827;">${value}</span>
+      </td>
+    </tr>`;
+
+  const fromRow = trimmedSender ? summaryRow("From", trimmedSender) : "";
+  const itemRow = itemDisplay ? summaryRow("Item", itemDisplay) : "";
+  const amountRow = priceDisplay ? summaryRow("Amount", priceDisplay) : "";
+
   return {
     subject: "Your shipping label is ready — SendMo",
     html: layout(`
@@ -82,6 +117,9 @@ export function labelConfirmationEmail(
             <span style="font-size:11px;color:${GRAY_400};">${carrier} #${carrierTracking}</span>
           </td>
         </tr>
+        ${fromRow}
+        ${itemRow}
+        ${amountRow}
         <tr>
           <td style="padding:12px 16px;border-bottom:1px solid #e5e7eb;">
             <span style="font-size:12px;color:${GRAY_400};text-transform:uppercase;letter-spacing:0.5px;">Carrier</span><br/>

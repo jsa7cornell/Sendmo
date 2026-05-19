@@ -975,13 +975,16 @@ serve(async (req: Request) => {
                                 ? `${buyData.selected_rate.delivery_days} business days`
                                 : "Estimated upon pickup";
                             const trackingUrl = `https://sendmo.co/t/${publicCode}`;
-                            const template = labelConfirmationEmail(
+                            const template = labelConfirmationEmail({
                                 publicCode,
-                                trackingNumber || "Pending",
-                                carrier || "Standard",
+                                carrierTracking: trackingNumber || "Pending",
+                                carrier: carrier || "Standard",
                                 eta,
                                 trackingUrl,
-                            );
+                                senderName: from_address?.name ?? null,
+                                itemDescription: typeof parcel?.description === "string" ? parcel.description : null,
+                                displayPriceCents: typeof display_price_cents === "number" ? display_price_cents : null,
+                            });
                             sendEmail({
                                 to: recipient_email,
                                 subject: template.subject,
