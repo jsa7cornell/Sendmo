@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Dashboard Shipments — Origin/Destination preview</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  :root {
+    --background: 0 0% 96%;
+    --foreground: 210 11% 15%;
+    --card: 0 0% 100%;
+    --primary: 214 89% 52%;
+    --muted: 210 14% 95%;
+    --muted-foreground: 210 7% 46%;
+    --border: 210 14% 89%;
+  }
+  html, body { font-family: ui-sans-serif, system-ui, "Inter", sans-serif; background: hsl(var(--background)); }
+  .bg-card { background: hsl(var(--card)); }
+  .border-border { border-color: hsl(var(--border)); }
+  .text-foreground { color: hsl(var(--foreground)); }
+  .text-muted-foreground { color: hsl(var(--muted-foreground)); }
+  .text-primary { color: hsl(var(--primary)); }
+  .border-border\/50 { border-color: hsla(210, 14%, 89%, 0.5); }
+  .border-border\/60 { border-color: hsla(210, 14%, 89%, 0.6); }
+  .hover\:bg-muted\/30:hover { background: hsla(210, 14%, 95%, 0.3); }
+</style>
+</head>
+<body class="p-6 space-y-10">
+
+  <section>
+    <h2 class="text-lg font-semibold mb-3 text-foreground">Desktop Shipments table (Origin / Destination)</h2>
+    <div class="bg-card rounded-2xl border border-border shadow-sm overflow-hidden">
+      <div class="hidden md:block overflow-x-auto" style="display:block">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="border-b border-border text-left text-muted-foreground">
+              <th class="px-5 py-3 font-medium">Origin</th>
+              <th class="px-5 py-3 font-medium">Destination</th>
+              <th class="px-5 py-3 font-medium">Carrier</th>
+              <th class="px-5 py-3 font-medium">Status</th>
+              <th class="px-5 py-3 font-medium">Amount</th>
+              <th class="px-5 py-3 font-medium">SendMo Label ID</th>
+            </tr>
+          </thead>
+          <tbody>
+            <!-- Variant 1: Both cities present -->
+            <tr class="border-b border-border/50 hover:bg-muted/30 transition-colors">
+              <td class="px-5 py-3">
+                <div class="flex flex-col gap-0.5">
+                  <span class="font-medium text-foreground">sender john</span>
+                  <span class="text-xs text-muted-foreground">Milwaukee, WI</span>
+                </div>
+              </td>
+              <td class="px-5 py-3">
+                <div class="flex flex-col gap-0.5">
+                  <span class="text-foreground">john anderson</span>
+                  <span class="text-xs text-muted-foreground">Portola Valley, CA</span>
+                </div>
+              </td>
+              <td class="px-5 py-3 text-muted-foreground">USPS</td>
+              <td class="px-5 py-3">
+                <span class="inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium border-emerald-200 bg-emerald-50 text-emerald-700">In transit</span>
+              </td>
+              <td class="px-5 py-3 font-medium">$8.42</td>
+              <td class="px-5 py-3"><span class="text-primary text-xs font-mono">ABC123XYZ9</span></td>
+            </tr>
+            <!-- Variant 2: Origin city missing -->
+            <tr class="border-b border-border/50 hover:bg-muted/30 transition-colors">
+              <td class="px-5 py-3">
+                <div class="flex flex-col gap-0.5">
+                  <span class="font-medium text-foreground">anon sender</span>
+                  <!-- no city -->
+                </div>
+              </td>
+              <td class="px-5 py-3">
+                <div class="flex flex-col gap-0.5">
+                  <span class="text-foreground">jane doe</span>
+                  <span class="text-xs text-muted-foreground">Austin, TX</span>
+                </div>
+              </td>
+              <td class="px-5 py-3 text-muted-foreground">UPS</td>
+              <td class="px-5 py-3">
+                <span class="inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium border-blue-200 bg-blue-50 text-blue-700">Label created</span>
+              </td>
+              <td class="px-5 py-3 font-medium">$11.05</td>
+              <td class="px-5 py-3"><span class="text-primary text-xs font-mono">QRS456TUV1</span></td>
+            </tr>
+            <!-- Variant 3: Both cities missing -->
+            <tr class="border-b border-border/50 hover:bg-muted/30 transition-colors">
+              <td class="px-5 py-3">
+                <div class="flex flex-col gap-0.5">
+                  <span class="font-medium text-foreground">Unknown</span>
+                </div>
+              </td>
+              <td class="px-5 py-3">
+                <div class="flex flex-col gap-0.5">
+                  <span class="text-foreground">—</span>
+                </div>
+              </td>
+              <td class="px-5 py-3 text-muted-foreground">USPS</td>
+              <td class="px-5 py-3">
+                <span class="inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium border-gray-200 bg-gray-50 text-gray-700">Delivered</span>
+              </td>
+              <td class="px-5 py-3 font-medium">$6.99</td>
+              <td class="px-5 py-3"><span class="text-muted-foreground text-xs">—</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2 class="text-lg font-semibold mb-3 text-foreground">Mobile Shipments cards</h2>
+    <div class="bg-card rounded-2xl border border-border shadow-sm overflow-hidden max-w-sm">
+      <div class="divide-y divide-border/50">
+        <!-- Variant 1: Both cities -->
+        <div class="p-4 space-y-2">
+          <div class="flex items-center justify-between gap-3">
+            <div class="text-sm text-foreground min-w-0">
+              <div>
+                <span class="font-medium">sender john</span>
+                <span class="text-muted-foreground"> → </span>
+                <span class="font-medium">john anderson</span>
+              </div>
+              <p class="text-xs text-muted-foreground">Milwaukee, WI → Portola Valley, CA</p>
+            </div>
+            <span class="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium border-emerald-200 bg-emerald-50 text-emerald-700">In transit</span>
+          </div>
+          <p class="text-xs text-muted-foreground">Shipped 2 days ago</p>
+          <div class="flex items-center justify-between text-xs">
+            <span class="text-muted-foreground">USPS</span>
+            <span class="font-medium text-foreground">$8.42</span>
+          </div>
+        </div>
+        <!-- Variant 2: Origin city missing -->
+        <div class="p-4 space-y-2">
+          <div class="flex items-center justify-between gap-3">
+            <div class="text-sm text-foreground min-w-0">
+              <div>
+                <span class="font-medium">anon sender</span>
+                <span class="text-muted-foreground"> → </span>
+                <span class="font-medium">jane doe</span>
+              </div>
+              <p class="text-xs text-muted-foreground">— → Austin, TX</p>
+            </div>
+            <span class="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium border-blue-200 bg-blue-50 text-blue-700">Label created</span>
+          </div>
+          <p class="text-xs text-muted-foreground">Created today</p>
+          <div class="flex items-center justify-between text-xs">
+            <span class="text-muted-foreground">UPS</span>
+            <span class="font-medium text-foreground">$11.05</span>
+          </div>
+        </div>
+        <!-- Variant 3: Both missing -->
+        <div class="p-4 space-y-2">
+          <div class="flex items-center justify-between gap-3">
+            <div class="text-sm text-foreground min-w-0">
+              <div>
+                <span class="font-medium">Unknown</span>
+                <span class="text-muted-foreground"> → </span>
+                <span class="font-medium">—</span>
+              </div>
+              <!-- no city paragraph rendered when both empty -->
+            </div>
+            <span class="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium border-gray-200 bg-gray-50 text-gray-700">Delivered</span>
+          </div>
+          <div class="flex items-center justify-between text-xs">
+            <span class="text-muted-foreground">USPS</span>
+            <span class="font-medium text-foreground">$6.99</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</body>
+</html>

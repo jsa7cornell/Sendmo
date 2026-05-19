@@ -46,8 +46,8 @@ interface DashboardShipment {
   // FKs to `addresses`. The shipment-level address is canonical — for flex
   // links the link's sender_name is null and only shipments.sender_address.name
   // tells us who actually shipped this particular parcel.
-  sender_address: { name: string | null } | null;
-  recipient_address: { name: string | null } | null;
+  sender_address: { name: string | null; city: string | null; state: string | null } | null;
+  recipient_address: { name: string | null; city: string | null; state: string | null } | null;
 }
 
 // Phase B saved card row — direct PostgREST read from payment_methods.
@@ -218,7 +218,7 @@ export default function Dashboard() {
 
       const shipmentsPromise = supabase
         .from("shipments")
-        .select("id, link_id, tracking_number, public_code, carrier, service, status, refund_status, display_price_cents, rate_cents, is_test, easypost_shipment_id, created_at, updated_at, sendmo_links!inner(user_id, sender_name), sender_address:addresses!sender_address_id(name), recipient_address:addresses!recipient_address_id(name)")
+        .select("id, link_id, tracking_number, public_code, carrier, service, status, refund_status, display_price_cents, rate_cents, is_test, easypost_shipment_id, created_at, updated_at, sendmo_links!inner(user_id, sender_name), sender_address:addresses!sender_address_id(name, city, state), recipient_address:addresses!recipient_address_id(name, city, state)")
         .eq("sendmo_links.user_id", user.id)
         .order("created_at", { ascending: false })
         .limit(50);
@@ -824,8 +824,8 @@ export default function Dashboard() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-border text-left text-muted-foreground">
-                      <th className="px-5 py-3 font-medium">From</th>
-                      <th className="px-5 py-3 font-medium">To</th>
+                      <th className="px-5 py-3 font-medium">Origin</th>
+                      <th className="px-5 py-3 font-medium">Destination</th>
                       <th className="px-5 py-3 font-medium">Carrier</th>
                       <th className="px-5 py-3 font-medium">Status</th>
                       <th className="px-5 py-3 font-medium">Amount</th>
@@ -841,10 +841,22 @@ export default function Dashboard() {
                       // (older full_label rows) then "Unknown".
                       const fromName = s.sender_address?.name || s.sendmo_links?.sender_name || "Unknown";
                       const toName = s.recipient_address?.name || "—";
+                      const fromCity = [s.sender_address?.city, s.sender_address?.state].filter(Boolean).join(", ");
+                      const toCity = [s.recipient_address?.city, s.recipient_address?.state].filter(Boolean).join(", ");
                       return (
                         <tr key={s.id} className="border-b border-border/50 last:border-0 hover:bg-muted/30 transition-colors">
-                          <td className="px-5 py-3 font-medium text-foreground">{fromName}</td>
-                          <td className="px-5 py-3 text-foreground">{toName}</td>
+                          <td className="px-5 py-3">
+                            <div className="flex flex-col gap-0.5">
+                              <span className="font-medium text-foreground">{fromName}</span>
+                              {fromCity && <span className="text-xs text-muted-foreground">{fromCity}</span>}
+                            </div>
+                          </td>
+                          <td className="px-5 py-3">
+                            <div className="flex flex-col gap-0.5">
+                              <span className="text-foreground">{toName}</span>
+                              {toCity && <span className="text-xs text-muted-foreground">{toCity}</span>}
+                            </div>
+                          </td>
                           <td className="px-5 py-3 text-muted-foreground">{s.carrier}</td>
                           <td className="px-5 py-3">
                             <div className="flex flex-col gap-0.5">
@@ -900,13 +912,22 @@ export default function Dashboard() {
                   const StatusIcon = statusCfg.icon;
                   const fromName = s.sender_address?.name || s.sendmo_links?.sender_name || "Unknown";
                   const toName = s.recipient_address?.name || "—";
+                  const fromCity = [s.sender_address?.city, s.sender_address?.state].filter(Boolean).join(", ");
+                  const toCity = [s.recipient_address?.city, s.recipient_address?.state].filter(Boolean).join(", ");
                   return (
                     <div key={s.id} className="p-4 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <div className="text-sm text-foreground">
-                          <span className="font-medium">{fromName}</span>
-                          <span className="text-muted-foreground"> → </span>
-                          <span className="font-medium">{toName}</span>
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-sm text-foreground min-w-0">
+                          <div>
+                            <span className="font-medium">{fromName}</span>
+                            <span className="text-muted-foreground"> → </span>
+                            <span className="font-medium">{toName}</span>
+                          </div>
+                          {(fromCity || toCity) && (
+                            <p className="text-xs text-muted-foreground">
+                              {fromCity || "—"} → {toCity || "—"}
+                            </p>
+                          )}
                         </div>
                         <span className={cn(
                           "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium",
