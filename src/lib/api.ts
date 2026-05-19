@@ -567,6 +567,32 @@ export async function rotateLinkUrl(linkId: string, accessToken: string): Promis
   return data as RotateLinkResult;
 }
 
+export interface ActivateLinkResult {
+  id: string;
+  short_code: string;
+  status: "active";
+}
+
+// Auth'd. Activates a draft flex link using the user's existing default
+// payment method (no Stripe call needed; the PM is already attached server-
+// side from a prior SetupIntent). Used by FlexPaymentStep when a returning
+// user clicks "Activate" on the saved-card row. Idempotent — if the link is
+// already active, the server returns 200 with the same shape.
+export async function activateLinkWithExistingPm(
+  linkId: string,
+  accessToken: string,
+): Promise<ActivateLinkResult> {
+  const res = await fetch(`${BASE_URL}/functions/v1/links/${encodeURIComponent(linkId)}/activate`, {
+    method: "POST",
+    headers: { ...headers(), Authorization: `Bearer ${accessToken}` },
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || `Activate failed (${res.status})`);
+  }
+  return data as ActivateLinkResult;
+}
+
 // ─── Sender Rates (with link preferences) ──────────────────
 
 export async function fetchSenderRates(

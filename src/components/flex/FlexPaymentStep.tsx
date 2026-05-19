@@ -1,17 +1,27 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { Elements, PaymentElement, useStripe, useElements } from "@stripe/react-stripe-js";
-import { CreditCard, ArrowLeft, Loader2, Shield, Info } from "lucide-react";
+import { CreditCard, ArrowLeft, Loader2, Shield, Info, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/contexts/AuthContext";
+import { supabase } from "@/lib/supabase";
 import { getStripeForMode } from "@/lib/stripeClient";
 import {
+  activateLinkWithExistingPm,
   createFlexLink,
   createSetupIntent,
   fetchLinkStatusById,
   type CreateLinkParams,
 } from "@/lib/api";
+
+interface SavedPm {
+  id: string;
+  brand: string | null;
+  last4: string | null;
+  exp_month: number | null;
+  exp_year: number | null;
+}
 
 // ─── Rate estimate lookup (onboarding only) ───────────────────
 // Shown to recipients in step 22 so they get a sense of per-shipment cost
@@ -99,12 +109,78 @@ export default function FlexPaymentStep({
   const [clientSecret, setClientSecret] = useState<string | null>(null);
   const [setupIntentId, setSetupIntentId] = useState<string | null>(null);
   const [showCostInfo, setShowCostInfo] = useState(false);
+  // Saved-PM state: when a usable default PM exists for the current mode, we
+  // show a "Use Visa ending 4242 [Activate]" card instead of Stripe Elements.
+  // `useNewCard` lets the user expand the Stripe Elements form to add a
+  // different card; when there's no saved PM, `useNewCard` starts true so the
+  // form renders immediately (same UX as before this surface existed).
+  const [savedPm, setSavedPm] = useState<SavedPm | null>(null);
+  const [pmLoading, setPmLoading] = useState(true);
+  const [useNewCard, setUseNewCard] = useState(false);
+  const [activating, setActivating] = useState(false);
+  const [activateError, setActivateError] = useState<string | null>(null);
 
   // Keep local state in sync if the parent supplies a linkId mid-flow
   // (e.g., onboarding restores from useRecipientFlow state).
   useEffect(() => {
     if (initialLinkId && initialLinkId !== linkId) setLinkId(initialLinkId);
   }, [initialLinkId, linkId]);
+
+  // Fetch the user's default PM in the link's mode. If found, render the
+  // saved-card row instead of Stripe Elements. RLS scopes the read to the
+  // current user; we filter mode + is_default + not-deleted to mirror the
+  // server-side is_funded logic in supabase/functions/links/index.ts.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const mode = liveMode ? "live" : "test";
+      const { data, error } = await supabase
+        .from("payment_methods")
+        .select("id, brand, last4, exp_month, exp_year")
+        .eq("mode", mode)
+        .eq("is_default", true)
+        .is("deleted_at", null)
+        .maybeSingle();
+      if (cancelled) return;
+      if (error || !data) {
+        setSavedPm(null);
+        setUseNewCard(true); // no saved card → expand Stripe Elements by default
+      } else {
+        // Reject expired cards client-side; the server enforces the same
+        // check at activate time, but hiding the "Activate" CTA is the
+        // cleaner UX.
+        const now = new Date();
+        const yr = data.exp_year ?? null;
+        const mo = data.exp_month ?? null;
+        const isExpired = yr !== null && mo !== null && (
+          yr < now.getFullYear() ||
+          (yr === now.getFullYear() && mo < now.getMonth() + 1)
+        );
+        if (isExpired) {
+          setSavedPm(null);
+          setUseNewCard(true);
+        } else {
+          setSavedPm(data as SavedPm);
+          setUseNewCard(false);
+        }
+      }
+      setPmLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [liveMode]);
+
+  async function handleActivateWithSavedPm() {
+    if (!linkId || !session?.access_token) return;
+    setActivating(true);
+    setActivateError(null);
+    try {
+      const result = await activateLinkWithExistingPm(linkId, session.access_token);
+      onContinue(result.id, result.short_code ?? shortCode ?? "");
+    } catch (err) {
+      setActivateError(err instanceof Error ? err.message : "Failed to activate link");
+      setActivating(false);
+    }
+  }
 
   // Step 1: ensure a link row exists. If parent passed linkId, reuse it.
   // Always create the link as a draft when there's no linkId — the user
@@ -137,11 +213,15 @@ export default function FlexPaymentStep({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [linkId, session?.access_token]);
 
-  // Step 2: once the link exists (as a draft), request a SetupIntent. Same
-  // /payment-methods endpoint the Dashboard "Add a card" modal uses.
+  // Step 2: once the link exists AND we know the user wants to enter a new
+  // card (no saved PM, or they explicitly clicked "Use a different card"),
+  // request a SetupIntent. Same /payment-methods endpoint the Dashboard
+  // "Add a card" modal uses. Gating on useNewCard avoids burning a
+  // SetupIntent for returning users who never expand the card form.
   useEffect(() => {
     if (!linkId || clientSecret) return;
     if (!session?.access_token) return;
+    if (!useNewCard) return;
     let cancelled = false;
     (async () => {
       try {
@@ -155,7 +235,7 @@ export default function FlexPaymentStep({
       }
     })();
     return () => { cancelled = true; };
-  }, [linkId, clientSecret, session?.access_token]);
+  }, [linkId, clientSecret, session?.access_token, useNewCard]);
 
   const elementsOptions = useMemo(
     () => clientSecret ? {
@@ -268,24 +348,82 @@ export default function FlexPaymentStep({
 
         {error ? (
           <p className="text-sm text-destructive">{error}</p>
-        ) : !clientSecret || !setupIntentId || !elementsOptions || !linkId ? (
+        ) : pmLoading || !linkId ? (
+          <div className="space-y-3">
+            <div className="h-32 rounded-xl bg-muted animate-pulse" />
+            <p className="text-xs text-muted-foreground">Loading payment options…</p>
+          </div>
+        ) : savedPm && !useNewCard ? (
+          /* Saved-card row: returning user with default PM. One click
+             activates the link via the new /links/:id/activate endpoint;
+             no Stripe iframe involved. "Use a different card" expands to
+             the Stripe Elements form below. */
+          <div className="space-y-3">
+            <div className="flex items-center gap-3 rounded-xl border border-primary/40 bg-primary/5 p-4">
+              <CreditCard className="w-5 h-5 text-primary flex-shrink-0" />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-foreground capitalize">
+                  {(savedPm.brand ?? "Card")} ending in {savedPm.last4 ?? "••••"}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {savedPm.exp_month != null && savedPm.exp_year != null
+                    ? `Expires ${String(savedPm.exp_month).padStart(2, "0")}/${savedPm.exp_year} · Primary card on file`
+                    : "Primary card on file"}
+                </p>
+              </div>
+              <CheckCircle2 className="w-5 h-5 text-primary flex-shrink-0" />
+            </div>
+            {activateError && (
+              <p className="text-sm text-destructive">{activateError}</p>
+            )}
+            <Button
+              onClick={handleActivateWithSavedPm}
+              disabled={activating || !linkId}
+              className="w-full rounded-xl"
+            >
+              {activating ? (
+                <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Activating link…</>
+              ) : (
+                <>Activate link with {savedPm.brand ?? "saved card"} ending in {savedPm.last4 ?? "••••"}</>
+              )}
+            </Button>
+            <button
+              type="button"
+              onClick={() => setUseNewCard(true)}
+              className="text-xs text-primary hover:underline w-full text-center"
+            >
+              Or use a different card
+            </button>
+          </div>
+        ) : !clientSecret || !setupIntentId || !elementsOptions ? (
           <div className="space-y-3">
             <div className="h-32 rounded-xl bg-muted animate-pulse" />
             <p className="text-xs text-muted-foreground">Setting up card collection…</p>
           </div>
         ) : (
-          <Elements stripe={getStripeForMode(liveMode)} options={elementsOptions}>
-            <FlexSetupForm
-              linkId={linkId}
-              accessToken={session?.access_token ?? null}
-              onActivated={() => {
-                onContinue(linkId, shortCode ?? "");
-              }}
-            />
-          </Elements>
+          <div className="space-y-3">
+            {savedPm && (
+              <button
+                type="button"
+                onClick={() => setUseNewCard(false)}
+                className="text-xs text-primary hover:underline"
+              >
+                ← Use saved {savedPm.brand ?? "card"} ending in {savedPm.last4 ?? "••••"} instead
+              </button>
+            )}
+            <Elements stripe={getStripeForMode(liveMode)} options={elementsOptions}>
+              <FlexSetupForm
+                linkId={linkId}
+                accessToken={session?.access_token ?? null}
+                onActivated={() => {
+                  onContinue(linkId, shortCode ?? "");
+                }}
+              />
+            </Elements>
+          </div>
         )}
 
-        {!liveMode && !error && (
+        {!liveMode && !error && useNewCard && (
           <p className="text-[11px] text-muted-foreground mt-3">
             Test mode — use card <code className="font-mono">4242 4242 4242 4242</code>, any future expiry, any 3-digit CVC.
           </p>

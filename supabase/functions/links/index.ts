@@ -213,6 +213,113 @@ serve(async (req: Request) => {
         );
     }
 
+    // ── POST /links/:id/activate — Authenticated: flip draft → active using
+    // the user's existing default PM (no Stripe call needed; the PM is already
+    // attached server-side from a prior SetupIntent). Used by FlexPaymentStep
+    // when a returning user clicks "Activate link with my saved card". Mirrors
+    // the is_funded logic from POST /links auto-resolve so we never activate a
+    // link without a usable PM.
+    if (req.method === "POST" && pathLinkId && pathAction === "activate") {
+        const authHeader = req.headers.get("Authorization") || "";
+        const token = authHeader.replace("Bearer ", "");
+        const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+        if (authError || !user) {
+            return new Response(
+                JSON.stringify({ error: "Unauthorized" }),
+                { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+
+        const { data: existing, error: linkErr } = await supabase
+            .from("sendmo_links")
+            .select("id, user_id, short_code, link_type, status, is_test")
+            .eq("id", pathLinkId)
+            .maybeSingle();
+        if (linkErr || !existing) {
+            return new Response(
+                JSON.stringify({ error: "Link not found" }),
+                { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+        if (existing.user_id !== user.id) {
+            return new Response(
+                JSON.stringify({ error: "Not your link" }),
+                { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+        if (existing.link_type !== "flexible") {
+            return new Response(
+                JSON.stringify({ error: "Only flexible links use this endpoint" }),
+                { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+        if (existing.status === "active") {
+            // Idempotent — already active, just acknowledge.
+            return new Response(
+                JSON.stringify({ id: existing.id, short_code: existing.short_code, status: "active" }),
+                { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+        if (existing.status !== "draft") {
+            return new Response(
+                JSON.stringify({ error: `Cannot activate a ${existing.status} link` }),
+                { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+
+        // Verify the user has a usable default PM in the link's mode.
+        const mode = existing.is_test ? "test" : "live";
+        const now = new Date();
+        const { data: defaultPm } = await supabase
+            .from("payment_methods")
+            .select("id, exp_year, exp_month")
+            .eq("user_id", user.id)
+            .eq("mode", mode)
+            .eq("is_default", true)
+            .is("deleted_at", null)
+            .maybeSingle();
+        let hasUsablePm = false;
+        if (defaultPm) {
+            const yr = (defaultPm as { exp_year?: number | null }).exp_year ?? null;
+            const mo = (defaultPm as { exp_month?: number | null }).exp_month ?? null;
+            if (yr == null || mo == null) hasUsablePm = true;
+            else if (yr > now.getFullYear()) hasUsablePm = true;
+            else if (yr === now.getFullYear() && mo >= now.getMonth() + 1) hasUsablePm = true;
+        }
+        if (!hasUsablePm) {
+            return new Response(
+                JSON.stringify({ error: "No usable saved card found for this mode" }),
+                { status: 412, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+
+        const { error: updateErr } = await supabase
+            .from("sendmo_links")
+            .update({ status: "active", updated_at: new Date().toISOString() })
+            .eq("id", existing.id)
+            .eq("user_id", user.id);
+        if (updateErr) {
+            console.error("Activate update error:", updateErr);
+            return new Response(
+                JSON.stringify({ error: "Failed to activate link" }),
+                { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+
+        await supabase.from("link_state_events").insert({
+            link_id: existing.id,
+            event: "activated",
+            reason: "activated_with_existing_pm",
+            actor_user: user.id,
+            metadata: { payment_method_id: (defaultPm as { id: string }).id, mode },
+        });
+
+        return new Response(
+            JSON.stringify({ id: existing.id, short_code: existing.short_code, status: "active" }),
+            { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+    }
+
     if (req.method === "GET") {
         const code = url.searchParams.get("code");
         if (!code) {
