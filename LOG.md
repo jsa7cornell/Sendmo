@@ -12,6 +12,44 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-19] Onboarding step-advance race — `navigate()` vs `setData()` ordering (footgun)
+
+**Category:** fix | Onboarding | State-machine | Footgun
+**Cross-link:** commit `9037018` (the `flushSync` fix); [`RecipientFlowContext.tsx`](src/contexts/RecipientFlowContext.tsx) `tryAdvance`; [`stepRouting.ts`](src/lib/stepRouting.ts) `canAccessStep`; [`RecipientOnboarding.tsx`](src/pages/RecipientOnboarding.tsx) page-level guard at line ~80.
+
+**Symptom:** A user reports "I'm stuck on step N" — the URL stays at step N's slug despite the action that should advance the flow appearing to succeed. DB shows the action's server-side effect happened (a link was created, a payment authorized, etc). Edge function logs show the POST returned 2xx. The client keeps re-rendering the same step's UI as if the advance never fired. For the bug that surfaced this entry: jsa7 was stuck at `/onboarding/flexible/authorize` with the "Add your card" form rendered, despite the server having created 3 fresh flex links with `status='active'` over the past hour (auto-detected his saved Visa 4242 PM correctly each time). Every reload created another active link + a SetupIntent for it; the form kept showing because something was bouncing the URL back to `/authorize` after each advance.
+
+**Root cause:** `tryAdvance` in `RecipientFlowContext` did `setData(completedSteps += step)` and `navigate(stepUrl(next))` in that order. `navigate()` calls `history.pushState` **synchronously**; `setData()` queues an update for React's next render. So the URL flips to the new step's slug BEFORE `completedSteps` includes the just-completed step. On that interim render, `RecipientOnboarding`'s page-level guard reads:
+
+```
+canAccessStep(currentStep /* from URL — NEW */, completedSteps /* still OLD */, path)
+```
+
+For the flex `/authorize → /share` advance, `canAccessStep(23, [0,1,20,21], 'flexible')` returns `false` (step 22 not yet in the list), and the guard returns `<Navigate to={firstIncompleteUrl} replace />` → bounce back to `/authorize`. By the time the bounce lands, `setData` has committed (completedSteps now includes 22) so the user stays on `/authorize` — the URL never visibly transits through `/share`. The state machine looks correct, the DB looks correct, and yet the user is stuck.
+
+Most visible on the flex auto-skip path because `FlexPaymentStep`'s first useEffect calls `onContinue` within ~300ms when the server returns `status: 'active'`. With no card-form delay to mask it, the race fires cleanly every time.
+
+**Fix:** Wrap the `setData` call in `flushSync` from `react-dom`. Forces React to commit the state update before continuing, so `navigate()` runs with `completedSteps` already containing the just-completed step. Guard sees consistent state → no bounce.
+
+```ts
+import { flushSync } from "react-dom";
+...
+flushSync(() => {
+  setData((prev) => ({ ...prev, completedSteps: [...prev.completedSteps, step] }));
+});
+navigate(stepUrl(data.path, next));
+```
+
+**Generalizable rule for agents — any time `navigate()` is paired with `setState` in this codebase, audit the ordering.** If the destination URL has a state-derived guard (canAccessStep, RLS-shaped check, etc), the URL must not change before the state that the guard reads has committed. `flushSync` is the cheapest fix; deferring `navigate` via `useEffect` watching the state is the more architecturally pure option but a bigger refactor.
+
+**The bigger lesson — debugging order:** This bug took 30 minutes of "is your sessionStorage clear?" / "check the Network tab" before I queried the actual telemetry. Two queries — DB rows for jsa7's recent flex links + edge function logs for `/functions/v1/links` — would have surfaced the pattern (link successfully created as active AND a SetupIntent immediately created for it AND user still on the same URL = a state machine where the success path is firing but not sticking) within 2 minutes. **See PLAYBOOK Rule 20 (Telemetry-before-browser).**
+
+**Browser-verified:**
+  mcp-session: PENDING
+  variants-covered: PENDING — John will exercise the fresh flow once Vercel rebuild lands. Variants to check: (a) returning user with default PM → /authorize auto-skips to /share immediately (this is the bug we just fixed); (b) new user no PM → /authorize shows the card form and Submit advances to /share normally; (c) full-prepaid path advances 12→13 unchanged.
+
+---
+
 ### [2026-05-19] Dashboard rotate-URL — add post-action animation + confirmation
 
 **Category:** ship | UX | Dashboard | Pattern D Phase F

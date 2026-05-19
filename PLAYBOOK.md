@@ -327,6 +327,17 @@ When working as a Claude Code agent, you may be assigned one of these roles:
 
     **Sibling on AgentEnvoy:** PLAYBOOK Rule 29. Same empirical basis: agent confidence was the failure mode in 4 of 4 catchable bugs from the 2026-05-13 AgentEnvoy cluster. Cross-project proposal: [`agentenvoy/proposals/2026-05-13_claude-production-verification-infra_reviewed-2026-05-13_decided-2026-05-13.md`](../agentenvoy/proposals/2026-05-13_claude-production-verification-infra_reviewed-2026-05-13_decided-2026-05-13.md).
 
+20. **Telemetry before browser.** When a user reports "I'm stuck on / not seeing / something's not working" and the symptom touches a state machine, edge function, or auth surface, **query DB and edge-function logs in the first 1-2 turns**, before asking the user to inspect DevTools / Network / sessionStorage / localStorage. Concretely:
+    - **Supabase MCP connected?** Run the most relevant `SELECT` for the affected table(s). For onboarding flows: query `sendmo_links` / `shipments` / `payment_methods` filtered by the user's `user_id` and `created_at > now() - interval '1 hour'`. For payment flows: also pull `stripe_intents` and `transactions`.
+    - **`mcp__supabase__get_logs` available?** Pull `edge-function` logs — recent POST/GET status codes against the relevant function paths almost always tell you whether the client even made the call, whether the server returned 2xx/4xx/5xx, and at what cadence.
+    - **`event_logs` table** (`public.event_logs`) — search by `entity_id` / `entity_type` / `event_type ILIKE '%<surface>%'` for the affected flow. Edge functions log generously here.
+
+    Only after telemetry rules out server-side behavior should you fall back to "check your browser." Inverting this order — asking the user to clear storage + open DevTools as the first move — burns a lot of conversation context and consistently misses the actual cause when the actual cause is server-visible.
+
+    **Generalizable shape:** "system claims success, user reports failure" → **server telemetry first**. "system shows error, user reports error" → client inspection first. The first shape is the dangerous one — it's exactly the case where the user's mental model and the system's reality have diverged, and the divergence point is almost always visible in the logs/DB.
+
+    **Reference incident:** [LOG.md → 2026-05-19 navigate vs setData race entry](LOG.md). The symptom was "user stuck on `/onboarding/flexible/authorize`," and 30 minutes were spent on "clear sessionStorage / check DevTools" before the actual cause (`<Navigate>` bounce in the page guard) showed up clearly in a 5-second `SELECT` against `sendmo_links` + a 5-second `get_logs` call. The smoking-gun pattern (link created as `'active'` + immediate `POST /payment-methods` + user still on same URL) would have surfaced on turn 1 with telemetry-first.
+
 ## Vercel Deployment
 
 **Production URL**: https://sendmo.co (also https://sendmo.vercel.app)

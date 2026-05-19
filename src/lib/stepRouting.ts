@@ -161,6 +161,19 @@ export function isSlugValidForPath(slug: string, path: RecipientPath | null): bo
 
 // ─── Step Guard ─────────────────────────────────────────────
 
+// Load-bearing: read by the page-level guard in `RecipientOnboarding.tsx`
+// (`<Navigate to={firstIncompleteUrl(...)} replace />`). The guard fires on
+// every render where the URL's stepSlug doesn't match a completed-or-current
+// state, so this function MUST be checked against the latest committed
+// completedSteps — never a stale snapshot.
+//
+// Footgun: if a caller does `setData(completedSteps += step); navigate(stepUrl(next))`,
+// the URL changes synchronously (`history.pushState`) while setData is still
+// queued. The guard then runs with OLD completedSteps against NEW URL and
+// returns false → bounce. See LOG.md → 2026-05-19 "navigate vs setData race"
+// + PLAYBOOK Rule 20 "Telemetry before browser." Fix: wrap the setData in
+// `flushSync` from react-dom before calling navigate (see `tryAdvance` in
+// `RecipientFlowContext.tsx`).
 export function canAccessStep(step: number, completedSteps: number[], path: RecipientPath | null): boolean {
   if (step === 0) return true;
   const steps = stepsForPath(path);

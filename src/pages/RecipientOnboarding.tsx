@@ -74,6 +74,14 @@ export default function RecipientOnboarding() {
   // picker) is implicitly complete whenever the URL carries a valid pathSlug,
   // so we always pass `[0, ...]` to the guard rather than racing the URL-sync
   // effect that adds 0 to data.completedSteps.
+  //
+  // If this bounce fires unexpectedly (user reports being "stuck" on a step
+  // despite the server confirming the step's action succeeded), audit any
+  // place `navigate(...)` is paired with `setData(...)` for completedSteps —
+  // navigate is synchronous (history.pushState) but setData is queued, so the
+  // URL flips before completedSteps commits and this guard sees inconsistent
+  // state. Fix: wrap the setData in `flushSync` before `navigate`. See LOG.md
+  // → 2026-05-19 "navigate vs setData race" + PLAYBOOK Rule 20.
   const effectiveCompleted = data.completedSteps.includes(0)
     ? data.completedSteps
     : [0, ...data.completedSteps];
