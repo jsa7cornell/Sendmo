@@ -140,6 +140,34 @@ export default function FlexPaymentStep({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [linkId, session?.access_token]);
 
+  // Step 1b: if a linkId was passed in (returning user mid-flow, or session-
+  // storage rehydrate after a previous attempt activated the link), check
+  // its current status. If 'active' already (PM exists, webhook landed,
+  // initial_status='auto' previously promoted it), skip the SetupIntent
+  // step entirely and continue. Without this, walking back into /authorize
+  // for an existing-active link re-renders the Stripe Elements form for a
+  // link that doesn't need card collection.
+  useEffect(() => {
+    if (!linkId) return;
+    if (!session?.access_token) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const status = await fetchLinkStatusById(linkId, session.access_token);
+        if (cancelled) return;
+        if (status.status === "active") {
+          if (status.short_code) setShortCode(status.short_code);
+          onContinue(linkId, status.short_code ?? shortCode ?? "");
+        }
+      } catch {
+        // Silent: if the status check fails, we fall through to the normal
+        // card-collection flow rather than blocking the user.
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linkId, session?.access_token]);
+
   // Step 2: once the link exists (as a draft), request a SetupIntent. Same
   // /payment-methods endpoint the Dashboard "Add a card" modal uses.
   useEffect(() => {
