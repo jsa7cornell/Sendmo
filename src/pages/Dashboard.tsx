@@ -373,6 +373,10 @@ export default function Dashboard() {
   // URL rotation
   const [rotating, setRotating] = useState(false);
   const [rotateError, setRotateError] = useState<string | null>(null);
+  // Post-action feedback. `rotateSuccess` triggers the inline confirmation
+  // message; auto-dismisses after 3s. Mirrors the existing `copied` pattern
+  // (line ~179) so we don't introduce a new toast primitive.
+  const [rotateSuccess, setRotateSuccess] = useState(false);
   async function handleRotate() {
     if (!link || !session?.access_token) return;
     if (!window.confirm("Rotate this link's URL? The old URL will stop working immediately and senders with the old link will see an error.")) {
@@ -380,10 +384,13 @@ export default function Dashboard() {
     }
     setRotating(true);
     setRotateError(null);
+    setRotateSuccess(false);
     try {
       const result = await rotateLinkUrl(link.id, session.access_token);
       // Update local state to the new short_code; refetch links list
       setLink({ ...link, short_code: result.short_code, id: result.id });
+      setRotateSuccess(true);
+      setTimeout(() => setRotateSuccess(false), 3000);
     } catch (err) {
       setRotateError(err instanceof Error ? err.message : "Rotate failed");
     } finally {
@@ -588,13 +595,44 @@ export default function Dashboard() {
               </div>
             ) : link && shortUrl ? (
               <>
-                <div className="flex items-center gap-2 bg-muted/50 rounded-xl px-3 py-2.5 mb-4">
-                  <span className="text-sm font-mono text-foreground flex-1 truncate">{shortUrl}</span>
+                <div className="flex items-center gap-2 bg-muted/50 rounded-xl px-3 py-2.5 mb-3">
+                  {/* `key={shortUrl}` forces a remount on rotate so the new
+                      code fades + pulses in (Pattern D Phase F feedback). */}
+                  <AnimatePresence mode="wait">
+                    <motion.span
+                      key={shortUrl}
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1, scale: [1, 1.02, 1] }}
+                      exit={{ opacity: 0 }}
+                      transition={{ duration: 0.4, ease: "easeOut" }}
+                      className="text-sm font-mono text-foreground flex-1 truncate"
+                    >
+                      {shortUrl}
+                    </motion.span>
+                  </AnimatePresence>
                   <Button variant="ghost" size="sm" onClick={handleCopy} className="rounded-lg gap-1.5 shrink-0">
                     <Copy className="w-3.5 h-3.5" />
                     {copied ? "Copied!" : "Copy"}
                   </Button>
                 </div>
+
+                {/* Inline post-rotate confirmation. Auto-dismisses after 3s
+                    (handleRotate sets the timer). Uses success token from the
+                    design system; mirrors the `copied` "Copied!" pattern. */}
+                <AnimatePresence>
+                  {rotateSuccess && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -4 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -4 }}
+                      transition={{ duration: 0.3, ease: "easeOut" }}
+                      className="flex items-center gap-1.5 mb-2 text-[11px] text-success"
+                    >
+                      <CheckCircle2 className="w-3 h-3 shrink-0" />
+                      <span>URL rotated — the old link is now disabled.</span>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
 
                 {link.recipient_address && (
                   <div className="bg-muted/30 rounded-xl px-3 py-2.5 mb-3 flex items-start gap-2">

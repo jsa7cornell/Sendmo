@@ -12,6 +12,35 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-19] Dashboard rotate-URL — add post-action animation + confirmation
+
+**Category:** ship | UX | Dashboard | Pattern D Phase F
+**Cross-link:** [PAYMENTS.md](PAYMENTS.md) §3 (flex-link lifecycle — rotate is the safety primitive when a link is over-shared/leaked) | [proposals/2026-05-16_flex-payment-pattern-d-execution_reviewed-2026-05-16_decided-2026-05-18.md](proposals/2026-05-16_flex-payment-pattern-d-execution_reviewed-2026-05-16_decided-2026-05-18.md) (commit `69ac58b` introduced the rotate affordance)
+
+**Problem:** The "Rotate URL" button on the Dashboard called `rotateLinkUrl` and silently swapped the displayed `short_code`. No visual feedback meant users weren't sure the action worked — same pixel weight before and after. The pre-rotate `window.confirm` stayed, but post-rotate feedback was missing.
+
+**Fix (Dashboard.tsx-scoped, no new primitives):**
+- `handleRotate` now sets a new `rotateSuccess` state on success and clears it via `setTimeout(..., 3000)`. Mirrors the existing `copied` / "Copied!" pattern at line ~179 (same setTimeout shape, same state-flag idiom) so we don't introduce a toast library.
+- The `short_code` display `<span>` is wrapped in `<AnimatePresence mode="wait">` with `key={shortUrl}`. On rotate, the old span exits (fade out) and the new one mounts with a 400ms `opacity 0→1` + `scale [1, 1.02, 1]` pulse — matches the price-update animation idiom called out in PLAYBOOK §Design System (`animate={{ scale: [1, 1.02, 1] }}`).
+- A new inline confirmation row renders below the URL box while `rotateSuccess` is true: `CheckCircle2` icon + "URL rotated — the old link is now disabled." in `text-success` (`--success: 142 71% 45%`, already a Tailwind utility, used elsewhere in the codebase for the same semantic). Wrapped in `AnimatePresence` so it slides in/out (`y: -4 → 0`, 300ms).
+- Pre-rotate `window.confirm` is unchanged. `rotateError` rendering is unchanged. Existing `rotating` button-text state is unchanged.
+
+**Why this shape:** PLAYBOOK §Design System lists Framer Motion + `animate: { scale: [1, 1.02, 1] }` as the established price-update pattern. Re-using it for the rotated short_code keeps the visual vocabulary consistent. No toast library was introduced — Dashboard.tsx had no toast pattern, and Rule 6 ("prefer simple extensible code") argues against inventing one for a single post-action message when the inline `Copied!`/`AnimatePresence` pattern already exists in this file.
+
+**Files touched:**
+- [`src/pages/Dashboard.tsx`](src/pages/Dashboard.tsx) — `CheckCircle2` was already imported; added `rotateSuccess` state + setTimeout in `handleRotate`; wrapped the short_code span in `AnimatePresence`/`motion.span`; added the confirmation row below the URL box. ~30 net lines added.
+
+**Browser-verified:**
+  mcp-session: PENDING
+  variants-covered: PENDING
+  reason: Fully exercising the rotation animation requires an authenticated dashboard session with a recipient that has an active flex link (Pattern D requires a saved PM via SetupIntent + `payment_method.attached` webhook landing). Spinning that up from scratch in a Playwright MCP session was outside the budget for this task. Static checks that passed: `npx tsc --noEmit` clean; `npx vite build` clean (1.77s, no warnings related to changed code); the static-built page loads to the dashboard route without runtime React errors (Supabase env-var error in the preview build is expected — `.env.local` not bundled). John to exercise interactively before merge: rotate his own flex link, confirm (a) old short_code fades out and new one pulses in, (b) "URL rotated — the old link is now disabled." appears for ~3s then dismisses, (c) old URL returns 410 (already tested by Pattern D rotation tests in commit `69ac58b`).
+
+**Two things I noticed about the rotate flow (out of scope — flagging only):**
+- `handleRotate` updates `link.id` from the result, but the rotation contract returns the *same* link id (only `short_code` changes — the row id is stable). Setting `id: result.id` is harmless but slightly misleading. Not worth fixing here.
+- The Links tab grouped view (`allLinks` / `linksWithChildren`) is NOT refetched after rotation. If the rotated link also appears in the Links tab, that view will show the old short_code until the page reloads. Worth a WISHLIST entry.
+
+---
+
 ### [2026-05-19] Sender star scale recalibrated — 1$ below $10
 
 **Category:** fix | UX | sender flow
