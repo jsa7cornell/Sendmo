@@ -107,8 +107,10 @@ export default function FlexPaymentStep({
   }, [initialLinkId, linkId]);
 
   // Step 1: ensure a link row exists. If parent passed linkId, reuse it.
-  // Otherwise create with initial_status='auto' — the server checks for a
-  // usable PM and either returns 'active' (skip SI) or 'draft' (proceed).
+  // Always create the link as a draft when there's no linkId — the user
+  // must explicitly confirm the payment method (saved or new) before the
+  // link activates. This preserves the payment-step UX rather than
+  // auto-bouncing returning users past it.
   useEffect(() => {
     if (linkId) return;
     if (!session?.access_token) {
@@ -119,49 +121,16 @@ export default function FlexPaymentStep({
     (async () => {
       try {
         const result = await createFlexLink(
-          { ...input, initial_status: "auto" },
+          { ...input, initial_status: "draft" },
           session.access_token,
         );
         if (cancelled) return;
         setLinkId(result.id);
         setShortCode(result.short_code);
         onLinkCreated?.(result.id, result.short_code);
-        if (result.status === "active") {
-          // Returning user with a usable saved PM — server already activated
-          // the link. Skip the card form entirely.
-          onContinue(result.id, result.short_code);
-        }
       } catch (err) {
         if (cancelled) return;
         setLinkError(err instanceof Error ? err.message : "Failed to create link");
-      }
-    })();
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [linkId, session?.access_token]);
-
-  // Step 1b: if a linkId was passed in (returning user mid-flow, or session-
-  // storage rehydrate after a previous attempt activated the link), check
-  // its current status. If 'active' already (PM exists, webhook landed,
-  // initial_status='auto' previously promoted it), skip the SetupIntent
-  // step entirely and continue. Without this, walking back into /authorize
-  // for an existing-active link re-renders the Stripe Elements form for a
-  // link that doesn't need card collection.
-  useEffect(() => {
-    if (!linkId) return;
-    if (!session?.access_token) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const status = await fetchLinkStatusById(linkId, session.access_token);
-        if (cancelled) return;
-        if (status.status === "active") {
-          if (status.short_code) setShortCode(status.short_code);
-          onContinue(linkId, status.short_code ?? shortCode ?? "");
-        }
-      } catch {
-        // Silent: if the status check fails, we fall through to the normal
-        // card-collection flow rather than blocking the user.
       }
     })();
     return () => { cancelled = true; };
