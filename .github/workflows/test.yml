@@ -60,7 +60,10 @@ jobs:
         # global-setup authenticates against the live project.
         VITE_SUPABASE_URL: "https://fkxykvzsqdjzhurntgah.supabase.co"
         VITE_SUPABASE_ANON_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZreHlrdnpzcWRqemh1cm50Z2FoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAwNjk0NDMsImV4cCI6MjA4NTY0NTQ0M30.6iTUkaum2WylRnH5yEbYivuuo0hVfu8O3ZYoeKssBBU"
-        VITE_STRIPE_PUBLISHABLE_KEY: "pk_test_e2e_placeholder"
+        # No Stripe key needed: the authed /links/new spec asserts the "Add your
+        # card" heading, which renders without Stripe Elements. If the spec is
+        # ever extended to drive the card form, add a real pk_test_ key as
+        # VITE_STRIPE_PUBLISHABLE_KEY_TEST (the name stripeClient.ts reads).
         E2E_TEST_USER_EMAIL: ${{ secrets.E2E_TEST_USER_EMAIL }}
         E2E_TEST_USER_PASSWORD: ${{ secrets.E2E_TEST_USER_PASSWORD }}
 
