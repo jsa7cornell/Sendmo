@@ -12,6 +12,26 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-20] Phone-gate e2e walkthrough — and the effect-deps bug it caught
+
+**Category:** test | fix | Payments
+**Cross-link:** commit `44e292f`. `tests/e2e/phone-gate.spec.ts`, `src/components/recipient/RecipientStepFullShipping.tsx`. Closes the "Browser-verified: PENDING" debt on the phone work.
+
+**Why:** the phone gates twice shipped green on unit tests alone (`d2dde62`, `b1e6715`) — no browser-level proof the gate actually *blocks navigation*. Playwright e2e was always capable of this (15 specs exist, `onboarding.spec.ts` walks the full-label flow); the blocker was overstated. The dev server needs `VITE_SUPABASE_*` — but those are *publishable* (public) values, so a minimal `.env.local` boots it; e2e mocks every Edge Function, so no real secrets are needed.
+
+**Added:** `tests/e2e/phone-gate.spec.ts` — 2 real-browser tests, every Edge Function mocked: (1) onboarding step 1, a blank destination phone blocks "Continue" and a valid one advances; (2) step 10, `canFetchRates` only fires a `/rates` request once the origin phone is present (verified by *counting* intercepted requests — a precise gate signal).
+
+**Bug the e2e caught:** `RecipientStepFullShipping`'s rate-fetch effect listed `originVerified/Street, destVerified/Street, dims, weight, pkgType` as its re-trigger values — **but not the phone.** After the finding-2 fix made `canFetchRates` require a phone, a user who filled dimensions/weight *before* the phone was stranded: the gate opened but no listed dependency changed, so the effect never re-ran and rates never loaded. Fix: `originPhone`/`destPhone` added to the derived rate-triggering values + the effect dep array. **Same drift class as the whole audit** — `canFetchRates` gained a phone requirement; a consumer that mirrors its inputs didn't. Unit tests would not have caught this (it's a `useEffect` dependency-array omission); the e2e did on its first real run.
+
+**Generalizable rule:** when a predicate like `canFetchRates` gains an input, every `useEffect` that gates on that predicate must add the same input to its dependency array — or the predicate silently goes stale. A green e2e that exercises the *new* input in an unusual fill-order is the cheapest guard.
+
+**Browser-verified:**
+  mcp-session: `tests/e2e/phone-gate.spec.ts` — 2/2 pass headless (chromium). variants-covered: onboarding step-1 destination-phone gate (blank blocks / valid advances); step-10 origin-phone gate (rates fetch suppressed without phone, fires with it).
+
+**Follow-up:** `tests/e2e/onboarding.spec.ts` is currently red on a stale `/Ship from/i` locator (step 10's heading is now "Origin address") — pre-existing, unrelated to the phone work. Flagged separately.
+
+---
+
 ### [2026-05-20] Phone-required flow audit — closed the coverage gaps a fresh-eyes review found
 
 **Category:** fix | Payments | Audit
