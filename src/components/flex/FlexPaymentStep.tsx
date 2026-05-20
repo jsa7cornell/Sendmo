@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { Elements, PaymentElement, useStripe, useElements } from "@stripe/react-stripe-js";
-import { CreditCard, ArrowLeft, Loader2, Shield, Info, CheckCircle2 } from "lucide-react";
+import { CreditCard, ArrowLeft, Loader2, Shield, Info, CheckCircle2, MapPin } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/contexts/AuthContext";
@@ -12,6 +12,7 @@ import {
   createFlexLink,
   createSetupIntent,
   fetchLinkStatusById,
+  updateFlexLink,
   type CreateLinkParams,
 } from "@/lib/api";
 
@@ -89,6 +90,11 @@ interface Props {
   showCostEstimate?: boolean;
   onContinue: (linkId: string, shortCode: string) => void;
   onBack: () => void;
+  // Onboarding-only: jump back to the destination (step 1) or shipping
+  // preferences (step 20) step to edit them. Omitted by the dashboard
+  // +New Link flow, which has no such steps — the Edit links then hide.
+  onEditDestination?: () => void;
+  onEditShipping?: () => void;
 }
 
 export default function FlexPaymentStep({
@@ -98,6 +104,8 @@ export default function FlexPaymentStep({
   showCostEstimate = false,
   onContinue,
   onBack,
+  onEditDestination,
+  onEditShipping,
 }: Props) {
   const { session, liveMode } = useAuth();
   const estimate = getEstimate(input);
@@ -213,6 +221,34 @@ export default function FlexPaymentStep({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [linkId, session?.access_token]);
 
+  // Step 1b: if the user returned to this step with a draft link already
+  // created (they clicked Edit/Back from here and may have changed the
+  // destination or shipping preferences), sync the draft link with the
+  // current input so it activates with the corrected values. A first-time
+  // visitor mounts with no link, so this is skipped — the effect above
+  // creates the link instead.
+  const returnedWithLink = useRef(initialLinkId != null).current;
+  const draftSyncedRef = useRef(false);
+  useEffect(() => {
+    if (!returnedWithLink || draftSyncedRef.current) return;
+    if (!initialLinkId || !session?.access_token) return;
+    draftSyncedRef.current = true;
+    updateFlexLink(
+      initialLinkId,
+      {
+        recipient_address: input.recipient_address,
+        speed_preference: input.speed_preference,
+        preferred_carrier: input.preferred_carrier,
+        price_cap_dollars: input.price_cap_dollars,
+        size_hint: input.size_hint,
+      },
+      session.access_token,
+    ).catch(() => {
+      /* Best-effort — if the sync fails the link keeps its last-saved values. */
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [returnedWithLink, initialLinkId, session?.access_token]);
+
   // Step 2: once the link exists AND we know the user wants to enter a new
   // card (no saved PM, or they explicitly clicked "Use a different card"),
   // request a SetupIntent. Same /payment-methods endpoint the Dashboard
@@ -267,19 +303,76 @@ export default function FlexPaymentStep({
         </p>
       </div>
 
+      {showCostEstimate && (
+        /* Destination summary — lets the recipient confirm and edit where
+           their shipments will be delivered before saving a card. */
+        <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <MapPin className="w-4 h-4 text-primary" />
+              <h3 className="text-sm font-semibold text-foreground">Delivering to</h3>
+            </div>
+            {onEditDestination && (
+              <button
+                type="button"
+                onClick={onEditDestination}
+                className="text-xs text-primary hover:underline"
+              >
+                Edit
+              </button>
+            )}
+          </div>
+          <div className="text-sm space-y-0.5">
+            {input.recipient_address.name && (
+              <p className="font-medium text-foreground">{input.recipient_address.name}</p>
+            )}
+            <p className="text-muted-foreground">{input.recipient_address.street1}</p>
+            <p className="text-muted-foreground">
+              {input.recipient_address.city}, {input.recipient_address.state} {input.recipient_address.zip}
+            </p>
+            {input.recipient_address.phone && (
+              <p className="text-muted-foreground">{input.recipient_address.phone}</p>
+            )}
+          </div>
+        </div>
+      )}
+
       {showCostEstimate ? (
         /* Estimated cost range — informational only under Pattern D */
         <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
-          <h3 className="text-sm font-semibold text-foreground mb-3">Estimated shipping cost (per shipment)</h3>
-          <div className="text-center mb-4">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold text-foreground">Estimated shipping cost (per shipment)</h3>
+            {onEditShipping && (
+              <button
+                type="button"
+                onClick={onEditShipping}
+                className="text-xs text-primary hover:underline"
+              >
+                Edit
+              </button>
+            )}
+          </div>
+          <div className="mb-4">
             <motion.div
               animate={{ scale: [1, 1.02, 1] }}
               transition={{ duration: 0.3 }}
-              className="text-3xl font-bold text-primary"
+              className="flex items-start justify-center gap-3"
             >
-              {formatCents(estimate.low)} – {formatCents(estimate.high)}
+              <div className="flex-1 text-center">
+                <div className="text-3xl font-bold text-primary leading-tight">{formatCents(estimate.low)}</div>
+                <p className="text-[11px] text-muted-foreground mt-1 leading-tight">
+                  Shorter / smaller package
+                </p>
+              </div>
+              <div className="text-2xl font-bold text-muted-foreground/40 pt-1.5">–</div>
+              <div className="flex-1 text-center">
+                <div className="text-3xl font-bold text-primary leading-tight">{formatCents(estimate.high)}</div>
+                <p className="text-[11px] text-muted-foreground mt-1 leading-tight">
+                  For large, heavy and long shipments
+                </p>
+              </div>
             </motion.div>
-            <p className="text-xs text-muted-foreground mt-1">
+            <p className="text-xs text-muted-foreground text-center mt-3">
               {estimate.days} business days
             </p>
           </div>

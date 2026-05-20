@@ -220,6 +220,8 @@ export default function RecipientOnboarding() {
                 onUpdate={updateData}
                 onContinue={() => tryAdvance(22)}
                 onBack={goBack}
+                onEditDestination={() => goToStep(1)}
+                onEditShipping={() => goToStep(20)}
               />
             )}
 

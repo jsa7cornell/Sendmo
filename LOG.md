@@ -12,6 +12,30 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-20] Phone-required flow audit — closed the coverage gaps a fresh-eyes review found
+
+**Category:** fix | Payments | Audit
+**Cross-link:** commit `b15245c`. Acts on [`proposals/2026-05-20_phone-required-flow-audit.md`](proposals/2026-05-20_phone-required-flow-audit.md). Follows the `d2dde62` + `b1e6715` phone regressions.
+
+**Why the audit:** after two phone bugs escaped in a row (`d2dde62` — phone missing from the request type; `b1e6715` — `LinksEditor` never gated phone), an independent read-only review was commissioned. The phone work spanned ~15 files across multiple sessions, unit-tested per-component, with no pass that enumerated *every* flow reaching a phone-requiring endpoint. The audit found the pattern had repeated.
+
+**Findings fixed (1, 2, 3, 4, 6):**
+- **1 + 6 — `rates` Edge Function had no server-side phone validation.** The phone is baked into the EasyPost shipment created inside `rates`; the `labels` `/buy` call reuses that shipment, so `rates` is the one server gate before a carrier sees the address — and it validated phone zero times while `links` POST/PATCH did. Same "one endpoint gated, sibling not" divergence as `b1e6715`, one layer down. Added `isUsablePhone` checks on both addresses; lifted the duplicated server validator into `supabase/functions/_shared/phone.ts` so `links` + `rates` share one implementation and cannot drift.
+- **3 — `LabelTest` (`/label-test`) dropped phone end-to-end.** `getRates`/`purchaseLabel` payloads omitted it → FedEx/UPS labels failed, USPS wrote NULL-phone rows. Threaded phone into both payloads + added a `verifyAddresses` gate.
+- **2 — `canFetchRates` omitted the phone check** the step-10 gate has → a phone-less address let `fetchRates` run and surfaced the raw `addressToApi: incomplete address` string. Added the check.
+- **4 — `senderState` `STORAGE_VERSION` 1→2** so pre-phone v1 `localStorage` payloads are discarded on load instead of rehydrating a phone-less sender address.
+
+**Not bugs (verified clean):** `SenderStepPackage` already gates phone correctly (the audit gap there was *test coverage*, now added); migration 025; format-as-you-type; autocomplete phone-preservation. Finding 7 (`recipient_address_complete` checks street only) is a documented deliberate tradeoff — left as-is.
+
+**Generalizable rule:** when a server requirement lands, audit *every* client path AND every server endpoint in the call chain — not just the obvious one. `links` got the gate; `rates`, `LabelTest`, and `canFetchRates` were siblings on the same requirement that didn't. One shared validator per side (`src/lib/phone.ts`, `supabase/functions/_shared/phone.ts`) is the structural fix against drift.
+
+**Tests:** `canFetchRates` phone gate (4) + `SenderStepPackage` phone gate (3, was untested). 342 unit tests pass, tsc + build clean.
+
+**Browser-verified:**
+  mcp-session: PENDING — `rates` 400 path verifiable by direct API call once deployed; the client gates (`canFetchRates`, `LabelTest`) are unit-pinned. John to confirm: full-label rate fetch with a phone-less address shows an inline error (not the raw string), and `/label-test` completes a label end-to-end.
+
+---
+
 ### [2026-05-20] Admin debug panel could flash for non-admins after an account switch
 
 **Category:** fix | Auth | Security-adjacent
@@ -48,6 +72,25 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 **Browser-verified:**
   n/a-category: migration
   n/a-reason: grant-only DDL; no rendered surface or wire-shape consumer. The sole caller uses the service-role key, which the revoke does not affect.
+
+---
+
+### [2026-05-20] Flex authorize step — price helper text, destination summary, edit affordances + Back-button dead-end fix
+
+**Category:** fix | feat | UX
+**Cross-link:** `src/components/flex/FlexPaymentStep.tsx`, `src/components/recipient/RecipientStepFlexPayment.tsx`, `src/pages/RecipientOnboarding.tsx`, `src/contexts/RecipientFlowContext.tsx`. Done concurrently with a separate session's phone-collection fix — independent surfaces, no overlap.
+
+**What:** Three changes to the flex onboarding "Add your card" step (step 22):
+1. **Price estimate helper text.** The `$low – $high` range was a single line. Now split into two captioned columns — low end labelled *"Shorter / smaller package"*, high end *"For large, heavy and long shipments"* — so recipients understand what drives the spread.
+2. **Destination summary card.** New "Delivering to" card above the cost estimate showing name / street / city-state-zip / phone from `input.recipient_address`. The page previously never showed *where* shipments would go.
+3. **Edit affordances + Back-button fix.** "Edit" links on the destination card (→ step 1) and the cost card (→ step 20 preferences), wired via `goToStep`. New optional `onEditDestination` / `onEditShipping` props on the shared `FlexPaymentStep`; the dashboard `/links/new` flow omits them so the links hide there.
+
+**Back-button dead-end (the bug):** `goBack` from step 22 went to step 21 (verify). For a just-verified user the verify screen immediately renders its "Email verified" state and auto-advances on a 1s timer straight back to 22 — so "Back" was a silent no-op. Fix: `goBack` now skips the verify step on the way back when `email_verified` is set, symmetric with the forward skip already in `tryAdvance`. Applied to both flex (step 21) and full-label (step 11). Back from step 22 now lands on step 20 (preferences).
+
+**Draft-link sync (correctness):** the draft flex link is created at step 22 on first arrival, holding a snapshot of the destination/prefs. If the user edits and returns, `FlexPaymentStep` skips re-creation (linkId persists in sessionStorage) — so a `updateFlexLink` PATCH-on-return syncs the draft link with the corrected input. Gated by a `returnedWithLink` ref to mounts where the link already existed (a first-time visitor mounts with no link → creation path runs instead). Best-effort: tolerated on failure.
+
+**Browser-verified:**
+  mcp-session: PENDING — local dev server can't boot (no `.env.local`; only `.env.example` present, so `createClient` throws on undefined `VITE_SUPABASE_*` and the app renders an empty root). `tsc -b` clean; `eslint` clean on all four changed files (the 3 errors in `RecipientFlowContext.tsx` — `directionRef.current` render-access + the context-hook export — are pre-existing). John to verify on a Vercel preview / live: (a) price captions render, (b) destination card shows the address, (c) Edit links jump to steps 1/20 and Continue returns to 22 with synced data, (d) Back from 22 lands on preferences, not the verify screen.
 
 ---
 

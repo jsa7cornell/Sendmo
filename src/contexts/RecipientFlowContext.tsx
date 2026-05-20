@@ -310,13 +310,23 @@ export function RecipientFlowProvider({ children }: { children: React.ReactNode 
 
   const goBack = useCallback(() => {
     directionRef.current = "backward";
-    const prev = prevStep(currentStep, data.path);
+    let prev = prevStep(currentStep, data.path);
+    // Skip the verify step on the way back when the email is already
+    // confirmed — symmetric with the forward skip in tryAdvance. Landing on
+    // the verify screen would just show its "Email verified" state and
+    // auto-advance the user straight back here, making Back a dead-end.
+    if (prev === 21 && data.email_verified && data.path === "flexible") {
+      prev = prevStep(21, data.path);
+    }
+    if (prev === 11 && data.email_verified && data.path === "full_label") {
+      prev = prevStep(11, data.path);
+    }
     if (prev !== null) {
       navigate(stepUrl(data.path, prev));
     } else {
       navigate("/onboarding");
     }
-  }, [navigate, currentStep, data.path]);
+  }, [navigate, currentStep, data.path, data.email_verified]);
 
   const goToStep = useCallback((step: number) => {
     if (!canAccessStep(step, data.completedSteps, data.path) && step !== currentStep) return;

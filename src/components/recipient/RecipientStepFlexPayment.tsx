@@ -11,9 +11,18 @@ interface Props {
   onUpdate: (partial: Partial<RecipientFlowState>) => void;
   onContinue: () => void;
   onBack: () => void;
+  onEditDestination: () => void;
+  onEditShipping: () => void;
 }
 
-export default function RecipientStepFlexPayment({ state, onUpdate, onContinue, onBack }: Props) {
+export default function RecipientStepFlexPayment({
+  state,
+  onUpdate,
+  onContinue,
+  onBack,
+  onEditDestination,
+  onEditShipping,
+}: Props) {
   const input: FlexPaymentInput = {
     recipient_address: {
       name: state.destinationAddress.name,
@@ -42,6 +51,8 @@ export default function RecipientStepFlexPayment({ state, onUpdate, onContinue, 
         onContinue();
       }}
       onBack={onBack}
+      onEditDestination={onEditDestination}
+      onEditShipping={onEditShipping}
     />
   );
 }

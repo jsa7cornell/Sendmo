@@ -385,14 +385,18 @@ interface ShippingConfig {
 - Validation: requires `state.email_verified === true`
 
 #### Step 22: Payment & Activation (Flexible Link)
-**Component**: `RecipientStepPayment.tsx` -- Step ID: `22`
+**Component**: `RecipientStepFlexPayment.tsx` → `FlexPaymentStep.tsx` -- Step ID: `22`
 
-- **Estimated cost summary**: cost range ($X - $Y) with hold amount explanation
+> **NOTE (2026-05-20):** the hold / insurance-toggle / SendMo-Balance content below is pre-Pattern-D and stale — the current step saves a card via a Stripe SetupIntent (no hold) and charges the actual shipping cost per shipment, off-session. The section needs a full Pattern-D rewrite (out of scope for the 2026-05-20 UX pass).
+
+- **Destination summary** ("Delivering to" card): name / street / city-state-zip / phone, with an **Edit** link → step 1
+- **Estimated cost summary**: per-shipment cost range, low and high shown as captioned columns ("Shorter / smaller package" / "For large, heavy and long shipments"); **Edit** link → step 20 (preferences)
 - **Payment form** (tabbed: Credit Card / SendMo Balance)
 - **Insurance toggle** (3-option segmented: Off / $100 coverage / $300 coverage)
   - Insurance costs: none=$0, $100=+$3, $300=+$5
   - Dynamically updates cost range and hold amount
 - **CTA**: "Add payment & activate label link"
+- **Back**: returns to step 20 (preferences); the verify step (21) is skipped on the way back when the email is already confirmed — landing there would auto-advance straight back here, making Back a dead-end
 
 **Hold Calculation**:
 ```
