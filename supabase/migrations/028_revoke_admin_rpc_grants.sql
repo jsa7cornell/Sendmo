@@ -13,10 +13,16 @@
 -- migration — only the anon and authenticated grants are revoked. The labels
 -- Edge Function will continue to work exactly as before.
 --
--- The anon + authenticated grant was added automatically by Supabase (default
--- behaviour for CREATE FUNCTION without an explicit REVOKE) and then carried
--- forward by migration 025 GRANT. It was never intentionally needed — no
--- browser client or JWT-authenticated path ever called this RPC.
+-- CREATE FUNCTION grants EXECUTE to the PUBLIC pseudo-role by default, and
+-- anon / authenticated INHERIT from PUBLIC — so revoking those two named
+-- roles does nothing while PUBLIC still holds the grant. Migration 025 also
+-- added explicit anon/authenticated GRANTs on top. This migration revokes
+-- all three (anon, authenticated, PUBLIC). It was never intentionally needed
+-- — no browser client or JWT-authenticated path ever called this RPC.
+--
+-- NOTE: the first apply (2026-05-20) revoked only `anon, authenticated` and
+-- left PUBLIC, so the advisor stayed flagged. The `, public` below is the
+-- correction; re-running is safe — REVOKE of an absent grant is a no-op.
 --
 -- ── Why set_admin_active_mode is NOT revoked here ───────────────────────────
 -- set_admin_active_mode is called from the browser (src/contexts/AuthContext.tsx:174)
@@ -41,7 +47,7 @@
 --   FROM   information_schema.routine_privileges
 --   WHERE  routine_schema = 'public'
 --     AND  routine_name   = 'admin_insert_shipment';
--- Expect: service_role rows only (no anon, no authenticated).
+-- Expect: postgres + service_role only (no anon, no authenticated, no PUBLIC).
 
 BEGIN;
 
@@ -51,6 +57,6 @@ REVOKE EXECUTE ON FUNCTION public.admin_insert_shipment(
     TEXT, TEXT, TEXT, TEXT, TEXT, TEXT,
     INTEGER, INTEGER, NUMERIC, NUMERIC, NUMERIC, NUMERIC,
     BOOLEAN, DATE, TEXT, TEXT
-) FROM anon, authenticated;
+) FROM anon, authenticated, public;
 
 COMMIT;
