@@ -12,6 +12,23 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-20] E2e phone coverage extended — /label-test + an authenticated-spec harness
+
+**Category:** test | Payments
+**Cross-link:** commit `310fd55`. `tests/e2e/phone-gate.spec.ts`, `tests/e2e/global-setup.ts`, `playwright.config.ts`.
+
+**`/label-test` (audit finding 3):** new e2e — a blank phone is blocked at "Get Rates", and by intercepting the `/rates` request body it asserts a valid phone is actually threaded into `from_address`/`to_address` (the payload-drop the audit found). Public route, no auth — runs now.
+
+**`/links/new` authenticated harness:** the dashboard flow is behind `ProtectedRoute`, and SendMo had no Playwright auth harness. Added `tests/e2e/global-setup.ts` — it mints a real Supabase session for a dedicated e2e test user via the GoTrue password grant and writes it as a Playwright `storageState` file (`playwright/.auth/user.json`, gitignored — it holds a real token). `playwright.config.ts` gained `globalSetup`. The authed spec asserts a blank phone blocks "Continue to payment" and a valid phone reaches the "Add your card" step.
+
+**Graceful degradation:** with no `E2E_TEST_USER_EMAIL`/`E2E_TEST_USER_PASSWORD` set, `global-setup` is a no-op and the authed `describe` skips itself — local runs and CI without the secret stay green (verified: 3 pass, 1 skip).
+
+**Setup still owed (one-time, human-only — agents never handle the password):** create a dedicated Supabase user (dashboard → Auth → Users → Add user, auto-confirm), put `E2E_TEST_USER_EMAIL`/`PASSWORD` in `.env.local` + CI secrets. Until then the `/links/new` e2e is written-but-skipped. The `storageState` localStorage format (`sb-<ref>-auth-token` = `JSON.stringify(session)`) is the supabase-js v2 convention — to be confirmed against the live session on first authed run.
+
+**Note:** `.env.local` was created this session with the *public* publishable values (Supabase URL + anon key) so the Vite dev server boots for Playwright — gitignored via `*.local`, no real secrets.
+
+---
+
 ### [2026-05-20] Phone-gate e2e walkthrough — and the effect-deps bug it caught
 
 **Category:** test | fix | Payments
