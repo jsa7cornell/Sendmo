@@ -23,13 +23,16 @@ const DEFAULT_COUNTRY = "US" as const;
  *   "4086790449"      → "(408) 679-0449"
  *   "+442079460958"   → "+44 20 7946 0958"
  *
- * `previous` is the field's prior value. When the new input is SHORTER than
- * the previous (the user is deleting), we pass it through raw — reformatting
- * on delete re-inserts separators and traps the cursor ("can't backspace
- * past the space"). Next keystroke reformats normally.
+ * `isDeletion` should be true when the change came from a Backspace/Delete
+ * (the caller reads it off `InputEvent.inputType`). On deletion we pass the
+ * input through raw — reformatting on delete re-inserts separators and traps
+ * the cursor ("can't backspace past the space"). Typing AND pasting both
+ * format (a pasted intl number replacing a US one still formats correctly —
+ * the earlier length-based heuristic mis-classified a shorter paste as a
+ * deletion).
  */
-export function formatPhoneAsYouType(input: string, previous: string = ""): string {
-  if (input.length < previous.length) return input;
+export function formatPhoneAsYouType(input: string, isDeletion: boolean = false): string {
+  if (isDeletion) return input;
   return new AsYouType(DEFAULT_COUNTRY).input(input);
 }
 

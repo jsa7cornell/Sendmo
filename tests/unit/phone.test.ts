@@ -15,11 +15,19 @@ describe("phone — formatPhoneAsYouType", () => {
     expect(formatted).toContain("20");
   });
 
-  it("passes input through raw when the user is deleting (shorter than previous)", () => {
+  it("passes input through raw when the change is a deletion", () => {
     // Reformatting on delete re-inserts separators and traps the cursor —
-    // a shorter new value means a deletion, so return it untouched.
-    expect(formatPhoneAsYouType("(408) 679", "(408) 679-0")).toBe("(408) 679");
-    expect(formatPhoneAsYouType("", "(408")).toBe("");
+    // isDeletion=true returns the input untouched.
+    expect(formatPhoneAsYouType("(408)", true)).toBe("(408)");
+    expect(formatPhoneAsYouType("(408", true)).toBe("(408");
+  });
+
+  it("formats a pasted number even when it is shorter than the prior value", () => {
+    // A shorter paste (e.g. intl number over a US one) is NOT a deletion —
+    // isDeletion=false → it still formats. The old length-based heuristic
+    // mis-classified this case.
+    const formatted = formatPhoneAsYouType("+442079460958", false);
+    expect(formatted.startsWith("+44")).toBe(true);
   });
 
   it("handles empty input", () => {

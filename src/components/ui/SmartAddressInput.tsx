@@ -377,10 +377,14 @@ export default function SmartAddressInput({ label, value, onChange, error, nameL
                     inputMode="tel"
                     autoComplete="tel"
                     value={value.phone ?? ""}
-                    onChange={(e) => onChange({
-                        ...value,
-                        phone: formatPhoneAsYouType(e.target.value, value.phone ?? ""),
-                    })}
+                    onChange={(e) => {
+                        // inputType tells us delete vs type/paste. Deletions
+                        // pass through raw so reformatting doesn't trap the
+                        // cursor on a separator; typing + paste both format.
+                        const inputType = (e.nativeEvent as InputEvent).inputType ?? "";
+                        const isDeletion = inputType.startsWith("delete");
+                        onChange({ ...value, phone: formatPhoneAsYouType(e.target.value, isDeletion) });
+                    }}
                     placeholder="(•••) •••-••••"
                     className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary transition-colors placeholder:text-muted-foreground"
                 />
