@@ -1,43 +1,33 @@
 import { test, expect } from "@playwright/test";
 
-test.describe("Admin page", () => {
+// The hardcoded "2026" PIN gate was removed 2026-05-11 (PLAYBOOK → "Admin
+// Mode"). /admin is now gated by requireAdmin() server-side + useAuth().isAdmin
+// client-side: signed-out users bounce to /login, signed-in non-admins see an
+// "Admin access required" screen.
+//
+// This mocked spec covers only the signed-out gate — the one branch reachable
+// without a real session. Exercising the reporting page itself needs an
+// admin-role session (global-setup mints a generic test user, not an admin),
+// so that remains a tracked coverage gap (PLAYBOOK → "E2e Testing").
+
+test.describe("Admin page — auth gate", () => {
   test.beforeEach(async ({ page }) => {
-    // Mock the admin-report Edge Function so the page renders without real data
+    // Keep admin-report inert in case anything reaches it.
     await page.route("**/functions/v1/admin-report**", (route) =>
       route.fulfill({
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({ data: [] }),
-      })
+      }),
     );
   });
 
-  test("shows PIN gate before auth", async ({ page }) => {
+  test("signed-out users are redirected from /admin to /login", async ({ page }) => {
     await page.goto("/admin");
 
-    await expect(
-      page.getByRole("heading", { name: /Admin Access/i })
-    ).toBeVisible();
-    await expect(page.getByPlaceholder("••••")).toBeVisible();
-  });
-
-  test("wrong PIN shows error", async ({ page }) => {
-    await page.goto("/admin");
-
-    await page.getByPlaceholder("••••").fill("0000");
-    await page.getByRole("button", { name: /Enter/i }).click();
-    await expect(page.getByText("Incorrect PIN")).toBeVisible();
-  });
-
-  test("correct PIN shows reporting page", async ({ page }) => {
-    await page.goto("/admin");
-
-    await page.getByPlaceholder("••••").fill("2026");
-    await page.getByRole("button", { name: /Enter/i }).click();
-
-    // Should show the admin reporting header
-    await expect(
-      page.getByRole("heading", { name: /Admin \/ Reporting/i })
-    ).toBeVisible();
+    // Admin.tsx renders <Navigate to="/login?redirectTo=/admin" /> when there
+    // is no session.
+    await expect(page).toHaveURL(/\/login/);
+    await expect(page.getByRole("heading", { name: /Sign in/i })).toBeVisible();
   });
 });

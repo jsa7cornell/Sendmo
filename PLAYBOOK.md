@@ -404,14 +404,15 @@ npm run test:e2e          # playwright tests
 - `tests/e2e/global-setup.ts` mints a real Supabase session for a dedicated test user (GoTrue password grant) → `playwright/.auth/user.json` (gitignored — it holds a real token).
 - Requires `E2E_TEST_USER_EMAIL` / `E2E_TEST_USER_PASSWORD` in `.env.local` + CI secrets. Absent → `global-setup` is a no-op and authed `describe`s skip themselves; the suite stays green. Pattern: the `/links/new` describe in `phone-gate.spec.ts`.
 
-### Suite health & known gaps (snapshot 2026-05-20)
+### Suite health & known gaps (snapshot 2026-05-20, post-de-rot)
 
-The suite has accumulated **locator drift** — at this date roughly half the specs are red (stale selectors, not real bugs). A dedicated de-rot pass is a tracked follow-up. Triage:
+The locator-drift de-rot pass is **complete** — the mocked e2e suite is green (38 passed / 6 skipped / 0 failed). Triage:
 
-- **Green / trustworthy:** `phone-gate.spec.ts`, `onboarding.spec.ts` (de-rotted 2026-05-20), `home.spec.ts`, and others.
-- **Stale-locator de-rot owed:** `full-label-flow.spec.ts` (overlaps `onboarding.spec.ts` — consolidate the two), `auth.spec.ts`, `label-flow.spec.ts`, `admin.spec.ts`, `tracking-lifecycle-states.spec.ts`, `sender-flow.spec.ts`, `not-found.spec.ts`.
-- **Not rot — leave alone:** `url-step-routing.spec.ts` (churn from in-progress `feat/url-step-routing` work); `buy_label_debug.spec.ts` + `playwright_verify.spec.ts` (hit real services — not part of the mocked suite).
-- **Coverage gaps:** the OTP → payment → label tail of full-label onboarding (needs OTP interception); the authed `/links/new` flow runs only once the test user is configured.
+- **Green / trustworthy:** the full mocked suite — `phone-gate`, `onboarding` (now also carries the consolidated full-label coverage: validation gates, Magic Guestimator, back-nav), `auth`, `auth-section-and-flex-otp`, `admin`, `not-found`, `label-flow`, `sender-flow`, `tracking-lifecycle-states`, `tracking-anonymous-payment-gating`, `home`.
+- **Deleted:** `full-label-flow.spec.ts` — overlapped `onboarding.spec.ts`; unique coverage was moved there, then it was removed.
+- **Not part of the mocked suite — leave alone:** `url-step-routing.spec.ts` (churn from in-progress `feat/url-step-routing` work); `buy_label_debug.spec.ts`, `playwright_verify.spec.ts`, `cors_verify.spec.ts` (hit real services).
+- **Honestly skipped:** `sender-flow` valid-link tests (need `SENDMO_TEST_LINK_CODE`); the authed `/links/new` + `tracking-anonymous-payment-gating` describes (need `E2E_TEST_USER_*` / real services).
+- **Coverage gaps:** the OTP → payment → label tail of full-label onboarding (needs OTP interception); `/admin`'s reporting page (needs an admin-role session, not just any authed user); `/label-test`'s label step is broken against the live backend — the `labels` function now requires `payment_intent_id` (see LOG 2026-05-20).
 
 **Rule:** a red e2e spec is worse than none — people stop trusting the suite. When you touch a flow, fix or honestly scope its spec; never leave it red.
 

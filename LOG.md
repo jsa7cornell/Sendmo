@@ -12,6 +12,26 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-20] E2e suite de-rot — assigned stale-locator specs now green
+
+**Category:** test
+**Cross-link:** `PLAYBOOK.md` → "E2e Testing (Playwright)". Continues the [de-rot started](#) earlier 2026-05-20. Specs: `tests/e2e/{auth,not-found,admin,tracking-lifecycle-states,label-flow,sender-flow,onboarding}.spec.ts` + `auth-section-and-flex-otp.spec.ts`; `full-label-flow.spec.ts` deleted.
+
+**Result:** the mocked e2e suite is now **38 passed / 6 skipped / 0 failed** (was ~half red). All skips are honestly scoped (sender-flow valid-link x2 needs `SENDMO_TEST_LINK_CODE`; tracking-anonymous-payment-gating x3 + phone-gate `/links/new` x1 need real services / `E2E_TEST_USER_*`).
+
+**Per-spec:**
+- **`full-label-flow.spec.ts` → deleted; coverage consolidated into `onboarding.spec.ts`.** It overlapped the (canonical, de-rotted) `onboarding.spec.ts`, was unmocked, and was doubly rotted (stale `you@example.com` email locator + never filled the now-required phone field). Five unique tests were moved over, de-rotted, and mocked: Step 1 empty-Continue validation, Step 1 invalid-email, Step 10 empty-Continue validation, the Magic Guestimator auto-fill, and Step 10→1 back-navigation. Added a `guestimate` Edge Function mock + `gotoStep10()` helper.
+- **`admin.spec.ts` → re-scoped.** It tested the hardcoded `2026` PIN gate, removed 2026-05-11. Re-scoped to the one branch a mocked spec can reach: signed-out `/admin` → redirect to `/login`. The reporting page itself needs an admin-role session (global-setup mints a generic user) — a tracked coverage gap.
+- **`auth.spec.ts`** — login page was redesigned (Google sign-in added; "Send magic link" → "Email me a link + code"). Re-pointed to role-based locators.
+- **`not-found.spec.ts`** — 404 heading is "Lost in transit", not "NotFound".
+- **`tracking-lifecycle-states.spec.ts`** — `/in transit/i` was a strict-mode violation (matched the h1 hero *and* the "In Transit" progress label); `.rounded-full.bg-primary` bled into the Tracking-History card. Fixed with heading-role locators + scoping the dot count to the Progress card.
+- **`sender-flow.spec.ts`** — `/didn't work|not found/i` matched both the error h2 and its detail paragraph (strict-mode violation). Targeted the h2; added a `links` Edge Function mock so the unknown-code path is offline.
+- **`auth-section-and-flex-otp.spec.ts`** (outside the assigned list, fixed anyway — identical rot class) — the Option A auth redesign (`e9cb74b`) added a header "John Anderson" identity button that collided with the identity-pill locator. Scoped to the pill `<p>`.
+
+**Real finding — `/label-test` label creation is broken against the live backend.** The old unmocked `label-flow.spec.ts` failed at the label step with `Missing required field: payment_intent_id`. `LabelTest.tsx`'s `purchaseLabel()` posts to the `labels` Edge Function without a `payment_intent_id`, which the function now requires (Pattern D payment integration). `/label-test`'s label step predates that integration and was never updated. The new mocked `label-flow.spec.ts` stubs `labels`, so it cannot catch this (by design — it tests frontend rendering); the real-service `buy_label_debug.spec.ts` would. **Needs John's call:** either `/label-test` should thread a test `payment_intent_id`, or the `labels` function needs a no-payment test path, or the tool's label step is retired.
+
+---
+
 ### [2026-05-20] Admin debug panel broken for all shipments + remaining `profileLoaded` gates
 
 **Category:** fix | Admin | Auth | Edge Functions
