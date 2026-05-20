@@ -11,6 +11,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { updateFlexLink } from "@/lib/api";
 import type { AddressInput, SpeedTier } from "@/lib/types";
 import { cn, emptyAddress } from "@/lib/utils";
+import { isUsablePhone } from "@/lib/phone";
 
 export interface FlexFormValue {
   address: AddressInput;
@@ -58,6 +59,12 @@ export default function LinksEditor({ mode, initialValue, linkId }: Props) {
     !!value.address.city &&
     !!value.address.state &&
     !!value.address.zip;
+  // Phone is a hard requirement — the links Edge Function 400s without a
+  // usable phone (FedEx/UPS PHONENUMBEREMPTY). The onboarding flow gates this
+  // in useRecipientFlow.getValidationErrors step 1; the dashboard /links/new
+  // flow must gate it here too, or the failure surfaces as an ugly server
+  // error on the "Add your card" step instead of an inline field error.
+  const phoneOk = isUsablePhone(value.address.phone);
 
   const errors: string[] = [];
   if (tried && !value.address.verified) {
@@ -67,10 +74,13 @@ export default function LinksEditor({ mode, initialValue, linkId }: Props) {
       "The selected address is missing details (street, city, state, or ZIP). Please re-pick it from the dropdown.",
     );
   }
+  if (tried && !phoneOk) {
+    errors.push("Add a phone number for the delivery address — the shipping carriers require it");
+  }
 
   function handleContinueToPayment() {
     setTried(true);
-    if (!value.address.verified || !addressComplete) return;
+    if (!value.address.verified || !addressComplete || !phoneOk) return;
     if (!session?.access_token) {
       setError("You're signed out — please sign in again.");
       return;
@@ -81,7 +91,7 @@ export default function LinksEditor({ mode, initialValue, linkId }: Props) {
 
   async function handleEditSubmit() {
     setTried(true);
-    if (!value.address.verified || !addressComplete) return;
+    if (!value.address.verified || !addressComplete || !phoneOk) return;
     if (!session?.access_token) {
       setError("You're signed out — please sign in again.");
       return;
