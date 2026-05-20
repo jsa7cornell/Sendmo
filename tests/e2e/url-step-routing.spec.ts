@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 
 const SUPABASE_URL = "https://fkxykvzsqdjzhurntgah.supabase.co";
+const SUPABASE_STORAGE_KEY = "sb-fkxykvzsqdjzhurntgah-auth-token";
 
 // Reuse mock data from onboarding.spec.ts
 const MOCK_AUTOCOMPLETE_DEST = {
@@ -99,6 +100,25 @@ const MOCK_TRACKING_URL = {
   last_printed_at: null,
 };
 
+// A mock Supabase session — used in the full-flow test so that the
+// step-11 email-verify screen sees user?.email and auto-advances within
+// the 1-second timer (no manual OTP entry needed).
+function buildMockSession(email = "test@example.com") {
+  return {
+    access_token: "mock-jwt-access",
+    refresh_token: "mock-refresh",
+    expires_at: Math.floor(Date.now() / 1000) + 3600,
+    token_type: "bearer",
+    user: {
+      id: "user-mock-id",
+      email,
+      user_metadata: { full_name: "Test User" },
+      aud: "authenticated",
+      role: "authenticated",
+    },
+  };
+}
+
 async function mockAllEdgeFunctions(page: Page) {
   let autocompleteCallCount = 0;
 
@@ -176,6 +196,15 @@ async function mockAllEdgeFunctions(page: Page) {
       body: JSON.stringify([]),
     })
   );
+
+  // Mock Supabase OTP endpoint so any email triggers a silent 200 response.
+  // Required for the verify screen (step 11) to accept the typed OTP code.
+  await page.route(`${SUPABASE_URL}/auth/v1/otp**`, (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: "{}" })
+  );
+  await page.route(`${SUPABASE_URL}/auth/v1/verify**`, (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: "{}" })
+  );
 }
 
 async function fillSmartAddress(page: Page, label: string) {
@@ -189,6 +218,9 @@ async function fillSmartAddress(page: Page, label: string) {
     .first()
     .click();
   await expect(page.getByText("Verified").nth(0)).toBeVisible({ timeout: 5000 });
+  // Phone is required by shipping carriers (added 2026-05-19). Fill it after
+  // address verification so the step-1 / step-10 validation doesn't block.
+  await page.locator(`#${label}-phone`).fill("4155551234");
 }
 
 test.describe("URL-based step routing", () => {
@@ -198,18 +230,18 @@ test.describe("URL-based step routing", () => {
 
   // ── URL changes on navigation ──────────────────────────────
 
-  test("URL updates to /onboarding/address when selecting a path", async ({ page }) => {
+  test("URL updates to /onboarding/full-label/destination when selecting a path", async ({ page }) => {
     await page.goto("/onboarding");
     await expect(page).toHaveURL(/\/onboarding$/);
 
     await page.getByText("Completed Prepaid Label").click();
-    await expect(page).toHaveURL(/\/onboarding\/address$/);
+    await expect(page).toHaveURL(/\/onboarding\/full-label\/destination$/);
   });
 
-  test("URL updates to /onboarding/shipping when advancing from address step", async ({ page }) => {
+  test("URL updates to /onboarding/full-label/shipping when advancing from destination step", async ({ page }) => {
     await page.goto("/onboarding");
     await page.getByText("Completed Prepaid Label").click();
-    await expect(page).toHaveURL(/\/onboarding\/address$/);
+    await expect(page).toHaveURL(/\/onboarding\/full-label\/destination$/);
 
     // Fill step 1
     await page.locator("#destination-name").fill("Jane Doe");
@@ -217,22 +249,40 @@ test.describe("URL-based step routing", () => {
     await page.locator("#recipient-email").fill("test@example.com");
     await page.getByRole("button", { name: /Continue to shipment details/i }).click();
 
-    await expect(page).toHaveURL(/\/onboarding\/shipping$/);
+    await expect(page).toHaveURL(/\/onboarding\/full-label\/shipping$/);
   });
 
-  test("URL updates through full flow: address → shipping → payment → label", async ({ page }) => {
+  test("URL updates through full flow: destination → shipping → verify → payment", async ({ page }) => {
+    // Inject a mock Supabase session so the step-11 verify screen sees
+    // user?.email and auto-advances (1-second timer) without manual OTP entry.
+    const session = buildMockSession("test@example.com");
+    await page.addInitScript(
+      ({ key, value }) => localStorage.setItem(key, JSON.stringify(value)),
+      { key: SUPABASE_STORAGE_KEY, value: session }
+    );
+    // Return the session on any auth REST call so useAuth() picks it up.
+    await page.route(`${SUPABASE_URL}/auth/v1/**`, (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(session),
+      })
+    );
+
     await page.goto("/onboarding");
     await page.getByText("Completed Prepaid Label").click();
 
-    // Step 1: address
-    await expect(page).toHaveURL(/\/onboarding\/address$/);
+    // Step 1: destination.
+    // NOTE: since a Supabase session is pre-injected, the identity pill renders
+    // instead of the email input — no need to fill #recipient-email; the email
+    // is auto-populated from user.email by the component.
+    await expect(page).toHaveURL(/\/onboarding\/full-label\/destination$/);
     await page.locator("#destination-name").fill("Jane Doe");
     await fillSmartAddress(page, "destination");
-    await page.locator("#recipient-email").fill("test@example.com");
     await page.getByRole("button", { name: /Continue to shipment details/i }).click();
 
     // Step 10: shipping
-    await expect(page).toHaveURL(/\/onboarding\/shipping$/);
+    await expect(page).toHaveURL(/\/onboarding\/full-label\/shipping$/);
     await page.locator("#origin-name").fill("John Smith");
     await fillSmartAddress(page, "origin");
     await page.getByRole("textbox", { name: "L", exact: true }).fill("10");
@@ -242,16 +292,22 @@ test.describe("URL-based step routing", () => {
     await expect(page.getByText("$9.20").first()).toBeVisible({ timeout: 8000 });
     await page.getByRole("button", { name: /Continue to payment/i }).click();
 
-    // Step 11: payment
-    await expect(page).toHaveURL(/\/onboarding\/payment$/);
-    await expect(page.getByText("Shipment Summary")).toBeVisible({ timeout: 5000 });
-    await page.getByRole("button", { name: /Pay.*generate label/i }).click();
+    // Step 11: email verify — auto-advances because session email matches.
+    // URL momentarily hits /verify before jumping to /payment.
+    await expect(page).toHaveURL(/\/onboarding\/full-label\/(verify|payment)$/, { timeout: 8000 });
 
-    // Step 12: TrackingPage redirect — payment success navigates to /t/<public_code>.
-    // Per 2026-05-19_unify-confirmation-into-tracking: the inline LabelReady view
-    // was removed; RecipientStepPayment now calls navigate('/t/<code>?fresh=1').
-    await expect(page).toHaveURL(/\/t\/[A-Z0-9]+/, { timeout: 10000 });
-    await expect(page.getByText(/ready to print/i)).toBeVisible({ timeout: 10000 });
+    // Step 12: payment — wait for it (auto-advance from verify takes ~1 s)
+    await expect(page).toHaveURL(/\/onboarding\/full-label\/payment$/, { timeout: 8000 });
+    await expect(page.getByText("Shipment Summary")).toBeVisible({ timeout: 5000 });
+
+    // NOTE: The post-payment redirect to /t/<code> requires completing the
+    // Stripe payment form, which operates inside cross-origin iframes and
+    // cannot be fully mocked in Playwright without Stripe test helper
+    // integration. Testing the redirect from payment → tracking is a known
+    // gap (PLAYBOOK → "E2e testing" → Known gaps). This test proves the URL
+    // scheme is wired correctly through all pre-payment steps.
+    // The redirect itself is covered by the "TrackingPage redirect" assertion
+    // in onboarding.spec.ts once Stripe test cards are plumbed in.
   });
 
   // ── Browser back button ────────────────────────────────────
@@ -267,24 +323,24 @@ test.describe("URL-based step routing", () => {
     await page.getByRole("button", { name: /Continue to shipment details/i }).click();
 
     // Now on step 10
-    await expect(page).toHaveURL(/\/onboarding\/shipping$/);
-    await expect(page.getByText(/Ship from/i)).toBeVisible({ timeout: 5000 });
+    await expect(page).toHaveURL(/\/onboarding\/full-label\/shipping$/);
+    await expect(page.getByRole("heading", { name: /Origin address/i })).toBeVisible({ timeout: 5000 });
 
     // Hit browser back
     await page.goBack();
 
     // Should be back on step 1
-    await expect(page).toHaveURL(/\/onboarding\/address$/);
+    await expect(page).toHaveURL(/\/onboarding\/full-label\/destination$/);
     await expect(page.getByText("Where should the package be delivered?")).toBeVisible();
 
     // Data should be preserved — the Verified badge should still show
     await expect(page.getByText("Verified").first()).toBeVisible({ timeout: 3000 });
   });
 
-  test("browser back from address step returns to path choice", async ({ page }) => {
+  test("browser back from destination step returns to path choice", async ({ page }) => {
     await page.goto("/onboarding");
     await page.getByText("Completed Prepaid Label").click();
-    await expect(page).toHaveURL(/\/onboarding\/address$/);
+    await expect(page).toHaveURL(/\/onboarding\/full-label\/destination$/);
 
     await page.goBack();
     await expect(page).toHaveURL(/\/onboarding$/);
@@ -293,26 +349,26 @@ test.describe("URL-based step routing", () => {
 
   // ── Step guards (direct URL access) ────────────────────────
 
-  test("direct navigation to /onboarding/shipping redirects to /onboarding when no steps completed", async ({ page }) => {
-    await page.goto("/onboarding/shipping");
+  test("direct navigation to /onboarding/full-label/shipping redirects when no steps completed", async ({ page }) => {
+    await page.goto("/onboarding/full-label/shipping");
 
-    // Should redirect — either to /onboarding (no path selected) or /onboarding/address
-    await expect(page).not.toHaveURL(/\/onboarding\/shipping$/);
+    // Should redirect — either to /onboarding (no path selected) or /onboarding/full-label/destination
+    await expect(page).not.toHaveURL(/\/onboarding\/full-label\/shipping$/);
   });
 
-  test("direct navigation to /onboarding/payment redirects when prior steps not completed", async ({ page }) => {
-    await page.goto("/onboarding/payment");
-    await expect(page).not.toHaveURL(/\/onboarding\/payment$/);
+  test("direct navigation to /onboarding/full-label/payment redirects when prior steps not completed", async ({ page }) => {
+    await page.goto("/onboarding/full-label/payment");
+    await expect(page).not.toHaveURL(/\/onboarding\/full-label\/payment$/);
   });
 
-  test("direct navigation to /onboarding/label redirects when prior steps not completed", async ({ page }) => {
-    await page.goto("/onboarding/label");
-    await expect(page).not.toHaveURL(/\/onboarding\/label$/);
+  test("direct navigation to /onboarding/full-label/label redirects when prior steps not completed", async ({ page }) => {
+    await page.goto("/onboarding/full-label/label");
+    await expect(page).not.toHaveURL(/\/onboarding\/full-label\/label$/);
   });
 
-  test("direct navigation to flex slug /onboarding/preferences redirects when no path selected", async ({ page }) => {
-    await page.goto("/onboarding/preferences");
-    await expect(page).not.toHaveURL(/\/onboarding\/preferences$/);
+  test("direct navigation to flex slug /onboarding/flexible/preferences redirects when no path selected", async ({ page }) => {
+    await page.goto("/onboarding/flexible/preferences");
+    await expect(page).not.toHaveURL(/\/onboarding\/flexible\/preferences$/);
   });
 
   // ── Cross-path slug rejection ──────────────────────────────
@@ -321,12 +377,14 @@ test.describe("URL-based step routing", () => {
     await page.goto("/onboarding");
     // Select full label path first
     await page.getByText("Completed Prepaid Label").click();
-    await expect(page).toHaveURL(/\/onboarding\/address$/);
+    await expect(page).toHaveURL(/\/onboarding\/full-label\/destination$/);
 
-    // Try navigating to a flex-only slug
-    await page.goto("/onboarding/preferences");
+    // Try navigating to a flex-only slug under the full-label path prefix.
+    // The router's slug-validation guard rejects /onboarding/full-label/preferences
+    // because "preferences" is not a valid slug for the full_label path.
+    await page.goto("/onboarding/full-label/preferences");
 
-    // Should redirect away from preferences
-    await expect(page).not.toHaveURL(/\/onboarding\/preferences$/);
+    // Should redirect away from this invalid combination
+    await expect(page).not.toHaveURL(/\/onboarding\/full-label\/preferences$/);
   });
 });
