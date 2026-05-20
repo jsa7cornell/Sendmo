@@ -82,7 +82,7 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
   variants-covered: [test-mode full-label purchase via real PaymentIntent]
   `tsc` clean.
 
-**TESTING.md:** `/label-test` now has a 5-step flow with a payment step — `TESTING.md` (now on `main`) updated to match in this same change.
+**TESTING.md:** no change needed — `TESTING.md` is a high-level test-infra map with no per-route flow detail, and its one `/label-test` reference (line 41) already documents the payment step + the `VITE_STRIPE_PUBLISHABLE_KEY_TEST` requirement.
 
 ---
 
