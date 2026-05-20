@@ -26,7 +26,7 @@ interface Props {
 
 // ─── Parse a formatted address string into components ────────
 
-function parseDescriptionToComponents(description: string): Omit<AddressInput, "name" | "verified" | "place_id"> {
+function parseDescriptionToComponents(description: string): Omit<AddressInput, "name" | "phone" | "verified" | "place_id"> {
     // Format is typically: "123 Main St, City, State ZIP, USA"
     const withoutCountry = description.replace(/, USA$/, "").replace(/, United States$/, "");
     const parts = withoutCountry.split(", ");
@@ -186,6 +186,7 @@ export default function SmartAddressInput({ label, value, onChange, error, nameL
             setIsVerified(complete);
             onChange({
                 name: value.name,
+                phone: value.phone,
                 ...components,
                 verified: complete,
                 place_id: prediction.place_id,
@@ -197,6 +198,7 @@ export default function SmartAddressInput({ label, value, onChange, error, nameL
             setIsVerified(false);
             onChange({
                 name: value.name,
+                phone: value.phone,
                 ...fallbackComponents,
                 verified: false,
                 place_id: prediction.place_id,
@@ -227,7 +229,7 @@ export default function SmartAddressInput({ label, value, onChange, error, nameL
         setIsVerified(false);
         setQuery("");
         setPredictions([]);
-        onChange({ name: value.name, street: "", city: "", state: "", zip: "", verified: false });
+        onChange({ name: value.name, phone: value.phone, street: "", city: "", state: "", zip: "", verified: false });
         setTimeout(() => inputRef.current?.focus(), 0);
     }
 
@@ -361,6 +363,23 @@ export default function SmartAddressInput({ label, value, onChange, error, nameL
                 {!isVerified && query.length > 5 && !hasError && predictions.length > 0 && (
                     <p className="mt-1 text-xs text-muted-foreground">Select an address from the dropdown to verify ✓</p>
                 )}
+            </div>
+
+            {/* ── Phone (required for FedEx/UPS) ─────────────── */}
+            <div>
+                <label htmlFor={`${label}-phone`} className="text-sm font-medium text-foreground">
+                    Phone number <span className="font-normal text-muted-foreground">(required for FedEx/UPS deliveries)</span>
+                </label>
+                <input
+                    id={`${label}-phone`}
+                    type="tel"
+                    inputMode="tel"
+                    autoComplete="tel"
+                    value={value.phone}
+                    onChange={(e) => onChange({ ...value, phone: e.target.value })}
+                    placeholder="(555) 555-0100"
+                    className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary transition-colors placeholder:text-muted-foreground"
+                />
             </div>
         </div>
     );

@@ -169,6 +169,11 @@ export interface AddressInput {
     city: string;
     state: string;
     zip: string;
+    // Phone is required across all forms (added 2026-05-19 after FedEx
+    // rejected labels with PHONENUMBEREMPTY). USPS doesn't require it,
+    // but FedEx/UPS do — collecting it universally avoids the awkward
+    // "you can't pick FedEx because you didn't enter a phone" UX.
+    phone: string;
     verified?: boolean;   // true when user selected from Google Places dropdown
     place_id?: string;    // Google Places place_id for the selected location
 }

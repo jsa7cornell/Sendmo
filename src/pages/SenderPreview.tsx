@@ -11,6 +11,7 @@ import MagicGuestimator from "@/components/recipient/MagicGuestimator";
 import { formatCents } from "@/lib/api";
 import type { LinkData } from "@/lib/api";
 import type { AddressInput, ShippingRate, GuestimatorResult } from "@/lib/types";
+import { emptyAddress } from "@/lib/utils";
 
 // ─── Mock data ──────────────────────────────────────────────
 
@@ -117,7 +118,7 @@ export default function SenderPreview() {
 
 function HappyPathDemo({ link, rates }: { link: LinkData; rates: ShippingRate[] }) {
   const [step, setStep] = useState<"address" | "package" | "rates" | "done">("address");
-  const [address, setAddress] = useState<AddressInput>({ name: "", street: "", city: "", state: "", zip: "" });
+  const [address, setAddress] = useState<AddressInput>(emptyAddress());
   const [selectedRate, setSelectedRate] = useState<ShippingRate | null>(null);
 
   const speed = speedInfo(link.preferred_speed);

@@ -21,6 +21,7 @@ interface LoadedRow {
     city: string;
     state: string;
     zip: string;
+    phone: string | null;
     is_verified: boolean;
   } | null;
 }
@@ -43,7 +44,7 @@ export default function LinksEdit() {
         .select(`
           id, status, preferred_speed, preferred_carrier, max_price_cents, size_hint,
           recipient_address:addresses!recipient_address_id (
-            name, street1, street2, city, state, zip, is_verified
+            name, street1, street2, city, state, zip, phone, is_verified
           )
         `)
         .eq("id", id)
@@ -74,6 +75,7 @@ export default function LinksEdit() {
           city: addr.city,
           state: addr.state,
           zip: addr.zip,
+          phone: addr.phone || "",
           verified: !!addr.is_verified,
         } : defaultFlexValue().address,
         speed_preference: (row.preferred_speed as SpeedTier) || "standard",

@@ -49,7 +49,7 @@ serve(async (req: Request) => {
                     .select(`
                         status, link_type,
                         recipient_address:addresses!recipient_address_id (
-                            name, street1, street2, city, state, zip, country
+                            name, street1, street2, city, state, zip, country, phone
                         )
                     `)
                     .eq("short_code", link_short_code)
@@ -57,6 +57,7 @@ serve(async (req: Request) => {
                 const addr = link?.recipient_address as unknown as {
                     name: string; street1: string; street2: string | null;
                     city: string; state: string; zip: string; country: string | null;
+                    phone: string | null;
                 } | null;
                 if (link && link.status === "active" && link.link_type === "flexible") {
                     if (!addr?.street1) {
@@ -76,6 +77,9 @@ serve(async (req: Request) => {
                         state: addr.state,
                         zip: addr.zip,
                         country: addr.country ?? "US",
+                        // Phone required for FedEx/UPS (2026-05-19). Pulled from the
+                        // recipient address row so the rate call carries it.
+                        phone: addr.phone ?? undefined,
                     };
                 }
             }

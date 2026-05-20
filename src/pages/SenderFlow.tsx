@@ -154,7 +154,9 @@ export default function SenderFlow() {
         selectedRate.id,
         senderAddress,
         // to_address is resolved server-side from link_short_code; pass a stub.
-        { name: linkData.recipient_name || "Recipient", street: "", city: linkData.recipient_city || "", state: linkData.recipient_state || "", zip: linkData.recipient_zip || "" },
+        // (addressToApi is skipped entirely when link.short_code is set, so the
+        // stub's phone is never read — present only to satisfy AddressInput.)
+        { name: linkData.recipient_name || "Recipient", street: "", city: linkData.recipient_city || "", state: linkData.recipient_state || "", zip: linkData.recipient_zip || "", phone: "" },
         false,
         {
           sender_email: shareContact && senderEmail ? senderEmail : (senderEmail || undefined),

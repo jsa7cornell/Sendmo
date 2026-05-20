@@ -16,10 +16,10 @@ export default function LinksNew() {
 
     (async () => {
       const [{ data: profile }, { data: recentAddr }] = await Promise.all([
-        supabase.from("profiles").select("email, full_name").eq("id", user.id).single(),
+        supabase.from("profiles").select("email, full_name, phone").eq("id", user.id).single(),
         supabase
           .from("addresses")
-          .select("name, street1, street2, city, state, zip, is_verified")
+          .select("name, street1, street2, city, state, zip, phone, is_verified")
           .eq("user_id", user.id)
           .order("created_at", { ascending: false })
           .limit(1)
@@ -43,6 +43,7 @@ export default function LinksNew() {
           city: recentAddr.city,
           state: recentAddr.state,
           zip: recentAddr.zip,
+          phone: recentAddr.phone || profile?.phone || "",
           verified: !!recentAddr.is_verified,
         };
       } else if (profile?.full_name) {

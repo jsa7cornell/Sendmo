@@ -158,7 +158,7 @@ serve(async (req: Request) => {
                 .select(`
                     id, short_code, user_id, status, link_type, max_price_cents, is_test,
                     recipient_address:addresses!recipient_address_id (
-                        name, street1, street2, city, state, zip, country
+                        name, street1, street2, city, state, zip, country, phone
                     )
                 `)
                 .eq("short_code", link_short_code)
@@ -187,6 +187,7 @@ serve(async (req: Request) => {
             const recipientAddr = link.recipient_address as unknown as {
                 name: string; street1: string; street2: string | null;
                 city: string; state: string; zip: string; country: string | null;
+                phone: string | null;
             } | null;
             if (!recipientAddr || !recipientAddr.street1) {
                 return new Response(
@@ -202,6 +203,7 @@ serve(async (req: Request) => {
                 state: recipientAddr.state,
                 zip: recipientAddr.zip,
                 country: recipientAddr.country ?? "US",
+                phone: recipientAddr.phone ?? undefined,
             };
             // Resolve recipient_email server-side (never returned to client).
             const { data: prof } = await supabase
@@ -794,8 +796,17 @@ serve(async (req: Request) => {
                 }
             }
 
+            // Friendly rewrite for the FedEx/UPS phone-required rejection.
+            // New links always have a phone now (required at creation, 2026-05-19),
+            // but links created before that can still hit this. EasyPost surfaces
+            // it as PHONENUMBEREMPTY / "phone number is empty" — translate to an
+            // actionable message instead of the raw carrier string.
+            const isPhoneError = /phone\s*number|phonenumberempty/i.test(errorMsg);
+            const friendlyMsg = isPhoneError
+                ? "This shipment needs a phone number — FedEx and UPS require one for delivery. If you're shipping on a link created before phone numbers were required, ask the link owner to update their delivery address, or choose a USPS option."
+                : errorMsg;
             return new Response(
-                JSON.stringify({ error: errorMsg, refunded: !!verifiedPaymentIntent }),
+                JSON.stringify({ error: friendlyMsg, refunded: !!verifiedPaymentIntent }),
                 { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
             );
         }
@@ -852,6 +863,7 @@ serve(async (req: Request) => {
                     p_from_state: from_address.state,
                     p_from_zip: from_address.zip,
                     p_from_country: from_address.country ?? 'US',
+                    p_from_phone: from_address.phone ?? null,
                     p_to_name: to_address.name,
                     p_to_street1: to_address.street1,
                     p_to_street2: to_address.street2 ?? null,
@@ -859,6 +871,7 @@ serve(async (req: Request) => {
                     p_to_state: to_address.state,
                     p_to_zip: to_address.zip,
                     p_to_country: to_address.country ?? 'US',
+                    p_to_phone: to_address.phone ?? null,
                     p_carrier: carrier,
                     p_service: service,
                     p_tracking_number: trackingNumber,

@@ -115,7 +115,7 @@ export const SPEED_TIER_COLORS: Record<SpeedTier, { bg: string; border: string; 
 import type { AddressInput } from "./types";
 
 export const emptyAddress = (): AddressInput => ({
-  name: "", street: "", city: "", state: "", zip: "",
+  name: "", street: "", city: "", state: "", zip: "", phone: "",
 });
 
 // ─── Carrier Tracking URL ───────────────────────────────────

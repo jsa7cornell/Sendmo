@@ -36,7 +36,7 @@ describe("senderState helpers", () => {
     });
 
     it("round-trips sender address + email", () => {
-      const addr = { name: "Jane", street: "1 A St", city: "SF", state: "CA", zip: "94107" };
+      const addr = { name: "Jane", street: "1 A St", city: "SF", state: "CA", zip: "94107", phone: "4155550100" };
       saveSender(addr, "jane@example.com");
       const loaded = loadSavedSender();
       expect(loaded).not.toBeNull();

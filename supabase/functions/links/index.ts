@@ -515,10 +515,20 @@ serve(async (req: Request) => {
             startStatus = "active";
         }
 
-        // Validate required fields
+        // Validate required fields. Phone is required as of 2026-05-19 — FedEx
+        // and UPS reject label purchases without it (PHONENUMBEREMPTY). Server
+        // enforces independently of the client form (Rule 5 — client-side
+        // validation is UX only). 10-digit minimum after stripping non-digits.
         if (!recipient_address?.street1 || !recipient_address?.city || !recipient_address?.state || !recipient_address?.zip) {
             return new Response(
                 JSON.stringify({ error: "Missing required recipient address fields" }),
+                { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+        const recipientPhoneDigits = String(recipient_address?.phone ?? "").replace(/\D/g, "");
+        if (recipientPhoneDigits.length < 10) {
+            return new Response(
+                JSON.stringify({ error: "A phone number is required for the delivery address — FedEx and UPS require it for delivery." }),
                 { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
             );
         }
@@ -535,6 +545,7 @@ serve(async (req: Request) => {
                 state: recipient_address.state,
                 zip: recipient_address.zip,
                 country: "US",
+                phone: recipient_address.phone,
                 is_verified: recipient_address.verified || false,
             })
             .select("id")
@@ -658,7 +669,7 @@ serve(async (req: Request) => {
             .select(`
                 id, user_id, status, recipient_address_id,
                 recipient_address:addresses!recipient_address_id (
-                    id, name, street1, street2, city, state, zip
+                    id, name, street1, street2, city, state, zip, phone
                 )
             `)
             .eq("id", linkId)
@@ -731,10 +742,20 @@ serve(async (req: Request) => {
             const city = typeof addr.city === "string" ? addr.city : "";
             const state = typeof addr.state === "string" ? addr.state : "";
             const zip = typeof addr.zip === "string" ? addr.zip : "";
+            const phone = typeof addr.phone === "string" ? addr.phone : "";
 
             if (!street1 || !city || !state || !zip) {
                 return new Response(
                     JSON.stringify({ error: "Missing required recipient address fields" }),
+                    { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+            // Phone required only when recipient_address is in the PATCH payload
+            // (editing the address). Edits that don't touch the address — price
+            // cap, speed, etc. — skip this block entirely and aren't gated.
+            if (phone.replace(/\D/g, "").length < 10) {
+                return new Response(
+                    JSON.stringify({ error: "A phone number is required for the delivery address — FedEx and UPS require it for delivery." }),
                     { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
                 );
             }
@@ -749,7 +770,8 @@ serve(async (req: Request) => {
                 && norm(cur.street2 ?? "") === norm(addr.street2 ?? "")
                 && norm(cur.city) === norm(city)
                 && norm(cur.state) === norm(state)
-                && norm(cur.zip) === norm(zip);
+                && norm(cur.zip) === norm(zip)
+                && norm((cur as { phone?: string }).phone ?? "") === norm(phone);
 
             if (!unchanged) {
                 const { data: newAddr, error: addrError } = await supabase
@@ -763,6 +785,7 @@ serve(async (req: Request) => {
                         state,
                         zip,
                         country: "US",
+                        phone,
                         is_verified: addr.verified === true,
                     })
                     .select("id")

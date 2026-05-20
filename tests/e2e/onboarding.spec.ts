@@ -213,6 +213,9 @@ async function fillSmartAddress(page: Page, label: string) {
     .click();
   // Wait for the "Verified" badge to appear
   await expect(page.getByText("Verified").nth(0)).toBeVisible({ timeout: 5000 });
+  // Phone is required (2026-05-19 — FedEx/UPS PHONENUMBEREMPTY fix). Fill it
+  // so form validation doesn't block the Continue button.
+  await page.locator(`#${label}-phone`).fill("4155550100");
 }
 
 test.describe("Onboarding — Full Prepaid Label flow", () => {

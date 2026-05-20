@@ -19,6 +19,7 @@ export default function LinkSharePreview() {
               city: "Brooklyn",
               state: "NY",
               zip: "11201",
+              phone: "7185550100",
               verified: true,
             },
           }}

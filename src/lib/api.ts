@@ -61,13 +61,14 @@ interface RatesResponse {
 }
 
 export function addressToApi(addr: AddressInput) {
-  // Fail loudly at the boundary if street is missing — JSON.stringify
+  // Fail loudly at the boundary if a required field is missing — JSON.stringify
   // silently drops undefined keys, which previously masked an upstream
   // address-shape bug as a PostgREST "function not found" error (LOG
-  // 2026-05-12, launch blocker fix).
-  if (!addr.street || !addr.city || !addr.state || !addr.zip) {
+  // 2026-05-12, launch blocker fix). Phone became required 2026-05-19 to
+  // satisfy FedEx/UPS PHONENUMBEREMPTY rejections.
+  if (!addr.street || !addr.city || !addr.state || !addr.zip || !addr.phone) {
     throw new Error(
-      `addressToApi: incomplete address (street=${!!addr.street}, city=${!!addr.city}, state=${!!addr.state}, zip=${!!addr.zip})`
+      `addressToApi: incomplete address (street=${!!addr.street}, city=${!!addr.city}, state=${!!addr.state}, zip=${!!addr.zip}, phone=${!!addr.phone})`
     );
   }
   return {
@@ -76,6 +77,7 @@ export function addressToApi(addr: AddressInput) {
     state: addr.state,
     zip: addr.zip,
     name: addr.name || undefined,
+    phone: addr.phone,
   };
 }
 

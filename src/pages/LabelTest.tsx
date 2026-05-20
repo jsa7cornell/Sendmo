@@ -14,6 +14,7 @@ const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 import AddressFields from "@/components/ui/AddressFields";
 import type { AddressInput } from "@/lib/types";
+import { emptyAddress } from "@/lib/utils";
 
 // ... existing code ...
 // I will rewrite this to use multi_replace since I need to also add imports properly. I'll pass on this exact one and use a better chunk.
@@ -87,14 +88,9 @@ function serviceDisplayName(raw: string): string {
 }
 
 // ─── Helpers ─────────────────────────────────────────────────
-
-const emptyAddress = (): AddressInput => ({
-    name: "",
-    street: "",
-    city: "",
-    state: "",
-    zip: "",
-});
+// emptyAddress imported from @/lib/utils — single source of truth so a new
+// AddressInput field (e.g., `phone`, added 2026-05-19) only needs to change
+// one place. Deleted local duplicate that previously diverged.
 
 const defaultParcel = (): ParcelInput => ({
     length: "",
@@ -426,6 +422,7 @@ export default function LabelTest() {
             city: "San Francisco",
             state: "CA",
             zip: "94107",
+            phone: "4155550100",
             verified: true,
             place_id: "ChIJbTdNc3GIhYARvOaFQRiqlXc",
         });
@@ -435,6 +432,7 @@ export default function LabelTest() {
             city: "San Francisco",
             state: "CA",
             zip: "94105",
+            phone: "4155550142",
             verified: true,
             place_id: "ChIJV7gHPnyAhYARR7eXJGgumUY",
         });
