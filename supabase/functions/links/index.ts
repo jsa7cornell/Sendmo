@@ -1,6 +1,21 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import { isPossiblePhoneNumber } from "https://esm.sh/libphonenumber-js@1.13.2";
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
+
+// Phone is required on every recipient address — FedEx/UPS reject EasyPost
+// label purchases without one (PHONENUMBER.EMPTY). isPossiblePhoneNumber is
+// a length-plausibility check (US default; a leading '+' routes to the
+// international check) — matches the client-side isUsablePhone in src/lib/phone.ts.
+function isUsablePhone(input: unknown): boolean {
+    const s = String(input ?? "").trim();
+    if (!s) return false;
+    try {
+        return isPossiblePhoneNumber(s, "US");
+    } catch {
+        return false;
+    }
+}
 
 // ─── Short code generator ───────────────────────────────────
 const SAFE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
@@ -525,8 +540,7 @@ serve(async (req: Request) => {
                 { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
             );
         }
-        const recipientPhoneDigits = String(recipient_address?.phone ?? "").replace(/\D/g, "");
-        if (recipientPhoneDigits.length < 10) {
+        if (!isUsablePhone(recipient_address?.phone)) {
             return new Response(
                 JSON.stringify({ error: "We need a phone number for the delivery address — the shipping carriers require one to make the delivery." }),
                 { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -753,7 +767,7 @@ serve(async (req: Request) => {
             // Phone required only when recipient_address is in the PATCH payload
             // (editing the address). Edits that don't touch the address — price
             // cap, speed, etc. — skip this block entirely and aren't gated.
-            if (phone.replace(/\D/g, "").length < 10) {
+            if (!isUsablePhone(phone)) {
                 return new Response(
                     JSON.stringify({ error: "We need a phone number for the delivery address — the shipping carriers require one to make the delivery." }),
                     { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }

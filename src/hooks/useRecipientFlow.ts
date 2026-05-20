@@ -9,6 +9,7 @@ import type {
   LabelResult,
 } from "@/lib/types";
 import { emptyAddress } from "@/lib/utils";
+import { isUsablePhone } from "@/lib/phone";
 
 // ─── State Shape ────────────────────────────────────────────
 
@@ -130,20 +131,13 @@ export function stepToProgressIndex(step: number): number {
 
 // ─── Validation ─────────────────────────────────────────────
 
-// 10-digit minimum after stripping non-digits — matches AddressForm's
-// hasUsablePhone + the server-side check in links/index.ts. Phone is
-// required on every address because FedEx/UPS reject labels without one.
-function hasUsablePhone(phone: string | undefined | null): boolean {
-  return String(phone ?? "").replace(/\D/g, "").length >= 10;
-}
-
 export function getValidationErrors(state: RecipientFlowState, step: number): string[] {
   const errors: string[] = [];
 
   if (step === 1) {
     if (!state.destinationAddress.verified) errors.push("Destination address is required");
     else if (!state.destinationAddress.street) errors.push("Destination address is missing a street — please re-select it from the dropdown");
-    if (!hasUsablePhone(state.destinationAddress.phone)) errors.push("Add a phone number — the shipping carriers require it");
+    if (!isUsablePhone(state.destinationAddress.phone)) errors.push("Add a phone number — the shipping carriers require it");
     if (!state.email.trim()) errors.push("Email is required");
     else if (!/^.+@.+\..+$/.test(state.email.trim())) errors.push("Enter a valid email address");
   }
@@ -167,7 +161,7 @@ export function getValidationErrors(state: RecipientFlowState, step: number): st
     if (!state.originAddress.name) errors.push("Sender name is required");
     if (!state.originAddress.verified) errors.push("Origin address is required");
     else if (!state.originAddress.street) errors.push("Origin address is missing a street — please re-select it from the dropdown");
-    if (!hasUsablePhone(state.originAddress.phone)) errors.push("Add a phone number — the shipping carriers require it");
+    if (!isUsablePhone(state.originAddress.phone)) errors.push("Add a phone number — the shipping carriers require it");
 
     const l = parseFloat(state.dimensions.length);
     const w = parseFloat(state.dimensions.width);

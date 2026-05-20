@@ -5,6 +5,7 @@ import SmartAddressInput from "@/components/ui/SmartAddressInput";
 import MagicGuestimator from "@/components/recipient/MagicGuestimator";
 import type { LinkData } from "@/lib/api";
 import type { AddressInput, GuestimatorResult } from "@/lib/types";
+import { isUsablePhone } from "@/lib/phone";
 import type { SenderParcel, PackagingType } from "./senderState";
 
 interface Props {
@@ -54,9 +55,8 @@ export default function SenderStepPackage({
     const h = packaging === "envelope" ? 1 : parseFloat(height);  // envelope height defaults to 1in
     const wt = parseFloat(weightLbs);
     if (!senderAddress.street || !senderAddress.city || !senderAddress.state || !senderAddress.zip) return;
-    // Phone required — FedEx/UPS reject labels without it. 10-digit minimum.
-    // String(... ?? "") guards against sessionStorage state predating the field.
-    if (String(senderAddress.phone ?? "").replace(/\D/g, "").length < 10) return;
+    // Phone required — FedEx/UPS reject labels without it.
+    if (!isUsablePhone(senderAddress.phone)) return;
     if (!l || !w || !h || !wt) return;
 
     onSubmit({
@@ -68,7 +68,7 @@ export default function SenderStepPackage({
   }
 
   const addrIncomplete = tried && (!senderAddress.street || !senderAddress.city || !senderAddress.state || !senderAddress.zip);
-  const phoneIncomplete = tried && String(senderAddress.phone ?? "").replace(/\D/g, "").length < 10;
+  const phoneIncomplete = tried && !isUsablePhone(senderAddress.phone);
   const dimsIncomplete = tried && (!length || !width || (packaging !== "envelope" && !height) || !weightLbs);
   const recipient = linkData.recipient_name?.trim();
   const cityState = linkData.recipient_city && linkData.recipient_state

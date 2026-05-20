@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AddressInput } from "@/lib/types";
+import { formatPhoneAsYouType } from "@/lib/phone";
 
 // ─── Types ───────────────────────────────────────────────────
 
@@ -376,7 +377,10 @@ export default function SmartAddressInput({ label, value, onChange, error, nameL
                     inputMode="tel"
                     autoComplete="tel"
                     value={value.phone ?? ""}
-                    onChange={(e) => onChange({ ...value, phone: e.target.value })}
+                    onChange={(e) => onChange({
+                        ...value,
+                        phone: formatPhoneAsYouType(e.target.value, value.phone ?? ""),
+                    })}
                     placeholder="(•••) •••-••••"
                     className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary transition-colors placeholder:text-muted-foreground"
                 />
