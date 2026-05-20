@@ -14,10 +14,10 @@ import { useAuth, type AdminMode } from "@/contexts/AuthContext";
 //
 // Self-gates on isAdmin — renders nothing for non-admins.
 export default function AdminModeToolbar() {
-  const { isAdmin, adminActiveMode, setAdminActiveMode } = useAuth();
+  const { isAdmin, profileLoaded, adminActiveMode, setAdminActiveMode } = useAuth();
   const [pending, setPending] = useState<AdminMode | null>(null);
 
-  if (!isAdmin) return null;
+  if (!profileLoaded || !isAdmin) return null;
 
   const labels: Record<AdminMode, string> = {
     test: "Test",

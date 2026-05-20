@@ -42,7 +42,7 @@ type CancelTarget = {
 };
 
 export default function Admin() {
-    const { user, session, loading: authLoading, isAdmin } = useAuth();
+    const { user, session, loading: authLoading, isAdmin, profileLoaded } = useAuth();
     const [data, setData] = useState<ReportRow[]>([]);
     const [filteredData, setFilteredData] = useState<ReportRow[]>([]);
     const [loading, setLoading] = useState(true);
@@ -52,18 +52,22 @@ export default function Admin() {
     const [cancelTarget, setCancelTarget] = useState<CancelTarget | null>(null);
 
     useEffect(() => {
-        if (user && isAdmin && session) fetchReport();
-    }, [user, isAdmin, session]);
+        if (user && profileLoaded && isAdmin && session) fetchReport();
+    }, [user, profileLoaded, isAdmin, session]);
 
     useEffect(() => {
-        if (user && isAdmin) applyFilter(data, dateFilter, envFilter);
-    }, [user, isAdmin, data, dateFilter, envFilter]);
+        if (user && profileLoaded && isAdmin) applyFilter(data, dateFilter, envFilter);
+    }, [user, profileLoaded, isAdmin, data, dateFilter, envFilter]);
 
     // Wait for auth to resolve before deciding what to render.
     if (authLoading) return null;
 
     // Signed out → bounce to login with return path.
     if (!user) return <Navigate to="/login?redirectTo=/admin" replace />;
+
+    // Wait for profile to load before checking admin status — avoids flashing
+    // "Admin access required" during the stale window on an account switch.
+    if (!profileLoaded) return null;
 
     // Signed in but not an admin → friendly access-denied screen.
     if (!isAdmin) {
