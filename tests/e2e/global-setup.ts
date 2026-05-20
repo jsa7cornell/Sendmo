@@ -43,18 +43,29 @@ export default async function globalSetup(): Promise<void> {
   // Password grant against GoTrue. The dedicated test user has a password set
   // (the app's UI uses OTP, but the Email provider still accepts password
   // grant for a user that has one).
-  const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
-    method: "POST",
-    headers: { apikey: ANON_KEY, "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password }),
-  });
-  if (!res.ok) {
-    throw new Error(
-      `[e2e global-setup] password login failed (HTTP ${res.status}). ` +
-        `Confirm the test user exists and the password is correct. Response: ${await res.text()}`,
+  //
+  // A failure here degrades to "no auth state" — the authed specs skip, the
+  // rest of the e2e run proceeds. global-setup must never abort the whole
+  // suite (e.g. CI pointing VITE_SUPABASE_URL at a non-real host). Loud
+  // enough to spot in logs.
+  let session: unknown;
+  try {
+    const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
+      method: "POST",
+      headers: { apikey: ANON_KEY, "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+    if (!res.ok) {
+      throw new Error(`password login failed (HTTP ${res.status}): ${await res.text()}`);
+    }
+    session = await res.json();
+  } catch (err) {
+    console.error(
+      "[e2e global-setup] could not authenticate the test user — authed specs will SKIP. " +
+        `Cause: ${err instanceof Error ? err.message : String(err)}`,
     );
+    return;
   }
-  const session = await res.json();
 
   // supabase-js v2 persists the session under sb-<ref>-auth-token as a JSON
   // string; seeding that localStorage entry makes the app start authenticated.
