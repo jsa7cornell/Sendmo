@@ -2,6 +2,15 @@ import { defineConfig, devices } from '@playwright/test';
 
 export default defineConfig({
     testDir: './tests/e2e',
+    // Real-service specs hit live EasyPost / Stripe / Edge Functions instead
+    // of the page.route mocks — excluded from the default run so
+    // `npm run test:e2e`, `/runtest`, and CI stay fully mocked. Run them
+    // deliberately, e.g. `npx playwright test tests/e2e/buy_label_debug.spec.ts`.
+    testIgnore: [
+        '**/buy_label_debug.spec.ts',
+        '**/playwright_verify.spec.ts',
+        '**/cors_verify.spec.ts',
+    ],
     // Mints an authenticated storage state for authed specs (no-op without
     // E2E_TEST_USER_* — see tests/e2e/global-setup.ts).
     globalSetup: './tests/e2e/global-setup.ts',
