@@ -119,13 +119,19 @@ export default function RecipientStepAddress({
   // who were already signed in when this step mounted.
   useEffect(() => {
     if (!user || !wasNullOnMount.current || autoAdvanceFiredRef.current) return;
-    const { street, city, state, zip } = address;
-    if (!street || !city || !state || !zip) return;
+    // Gate on the FULL step-1 validation, not a hand-picked subset of address
+    // fields. `errors` is the same getValidationErrors output tryAdvance
+    // checks — so the auto-advance only fires when tryAdvance will actually
+    // succeed. Previously this checked street/city/state/zip only; when the
+    // phone requirement landed (2026-05-19) an OAuth return with no phone
+    // would fire the auto-advance, tryAdvance(1) would silently reject, and
+    // the "Continuing…" spinner spun forever.
+    if (errors.length > 0) return;
     autoAdvanceFiredRef.current = true;
     setAutoAdvancing(true);
     const timer = setTimeout(onContinue, 2000);
     return () => clearTimeout(timer);
-  }, [user, address, onContinue]);
+  }, [user, errors, onContinue]);
 
   const displayName = user?.user_metadata?.full_name as string | undefined;
   const avatarInitial = (displayName || user?.email || "?")[0].toUpperCase();
