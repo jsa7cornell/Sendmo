@@ -72,6 +72,7 @@ serve(async (req: Request) => {
                     is_live,
                     payment_method,
                     refund_status,
+                    easypost_refund_status,
                     refund_submitted_at,
                     cancelled_at,
                     created_at,

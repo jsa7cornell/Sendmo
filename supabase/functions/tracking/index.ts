@@ -231,6 +231,13 @@ serve(async (req: Request) => {
                   idempotency_key: `refund_${shipment.easypost_shipment_id}_user_cancel`,
                   liveMode: !shipment.is_test,
                 });
+                // Persist the EP confirmation to easypost_refund_status
+                // (migration 030) so the admin dashboard shows 'refunded'
+                // immediately, before Stripe's charge.refunded webhook lands.
+                await supabase
+                  .from("shipments")
+                  .update({ easypost_refund_status: "refunded" })
+                  .eq("id", shipment.id);
                 log({
                   event_type: "cancel.stripe_refund_initiated",
                   source: "tracking",
@@ -264,9 +271,11 @@ serve(async (req: Request) => {
               }
             } else {
               // Comp shipment — no Stripe call. Just close out.
+              // Write both columns: refund_status (Stripe side) and
+              // easypost_refund_status (carrier/EP side, migration 030).
               await supabase
                 .from("shipments")
-                .update({ refund_status: "not_applicable" })
+                .update({ refund_status: "not_applicable", easypost_refund_status: "refunded" })
                 .eq("id", shipment.id);
               shipment.refund_status = "not_applicable";
               log({
@@ -280,9 +289,12 @@ serve(async (req: Request) => {
             }
           } else if (epRefundStatus === "rejected") {
             // Carrier rejected the void (label was scanned). Terminal state.
+            // Write both columns — easypost_refund_status (migration 030) and
+            // refund_status — so the admin dashboard shows 'rejected' on both
+            // the EasyPost column and the Stripe-side column simultaneously.
             await supabase
               .from("shipments")
-              .update({ refund_status: "rejected" })
+              .update({ refund_status: "rejected", easypost_refund_status: "rejected" })
               .eq("id", shipment.id);
             shipment.refund_status = "rejected";
             log({

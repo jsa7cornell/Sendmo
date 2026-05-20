@@ -347,11 +347,23 @@ serve(async (req: Request) => {
         // 500 → tracking page rendered "now is not defined". Restored.
         const now = new Date().toISOString();
 
+        // easypost_refund_status (migration 030) — EasyPost-side void status.
+        // Snapshot the EP status at void time so the admin dashboard can show
+        // the carrier ground truth immediately, without waiting for a page view
+        // on /t/<code> or a refund.successful webhook push.
+        // For comp / pre-Stripe labels (no PI, resolved to 'not_applicable'),
+        // we write the same value to both columns for consistency.
+        const epRefundStatusForDb: string =
+            epRefundStatus === "rejected" ? "rejected"
+            : !shipment.stripe_payment_intent_id ? "not_applicable"
+            : epRefundStatus || "submitted";
+
         const { error: updateError } = await supabase
             .from("shipments")
             .update({
                 status: "cancelled",
                 refund_status: refundStatusToWrite,
+                easypost_refund_status: epRefundStatusForDb,
                 refund_submitted_at: now,
                 cancelled_at: now,
                 carrier_refund_id: carrierRefundId,

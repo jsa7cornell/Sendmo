@@ -3,6 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { log } from "../_shared/logger.ts";
 import { dispatchNotifications } from "../_shared/notifications.ts";
+import { createRefund } from "../_shared/stripe.ts";
 
 /**
  * Webhook handler for EasyPost tracker updates.
@@ -161,7 +162,154 @@ serve(async (req: Request) => {
     const description = body.description || "";
     const result = body.result || {};
 
-    // Only handle tracker.updated events
+    // ── EasyPost refund.successful event (migration 030) ────────────────────
+    //
+    // EasyPost fires `refund.successful` when a non-instantaneous carrier
+    // refund completes (e.g. USPS takes up to 15 days). The event's `result`
+    // object is a Shipment — result.refund_status will be 'refunded'.
+    // Confirmed via EasyPost docs: https://docs.easypost.com/docs/events
+    //
+    // This push path eliminates the page-view dependency of the tracking/
+    // index.ts lazy-poll for anyone watching a voided label from the admin
+    // dashboard. WISHLIST "Cron-poll for stale refund_status='submitted'"
+    // remains a separate follow-up for orphaned shipments nobody visits.
+    //
+    // HMAC verification is already done above — the same shared secret covers
+    // all EasyPost event types. If the secret is unset (skipped), we continue
+    // (same behaviour as for tracker.updated — rollout-safe).
+    if (description === "refund.successful") {
+      const supabase = getSupabase();
+      // result.id is the EasyPost Shipment ID for the refunded shipment.
+      const epShipmentId: string | undefined = result.id;
+      if (!epShipmentId) {
+        log({
+          event_type: "webhook.easypost_refund_no_shipment_id",
+          severity: "warn",
+          source: "webhook",
+          properties: { description, result_keys: Object.keys(result) },
+        });
+        return new Response(JSON.stringify({ ok: true, skipped: true }), {
+          status: 200,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      // Look up the shipment by EasyPost shipment ID.
+      const { data: refundShipment, error: refundFetchErr } = await supabase
+        .from("shipments")
+        .select("id, public_code, refund_status, easypost_refund_status, stripe_payment_intent_id, is_test")
+        .eq("easypost_shipment_id", epShipmentId)
+        .maybeSingle();
+
+      if (refundFetchErr || !refundShipment) {
+        log({
+          event_type: "webhook.easypost_refund_shipment_not_found",
+          severity: "warn",
+          source: "webhook",
+          properties: { easypost_shipment_id: epShipmentId },
+        });
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      // Idempotency: store webhook event.
+      const refundEventId = body.id || `ep_refund_${epShipmentId}_${Date.now()}`;
+      const { error: refundDupeErr } = await supabase.from("webhook_events").insert({
+        source: "easypost",
+        event_id: refundEventId,
+        event_type: "refund.successful",
+        payload: body,
+      });
+      if (refundDupeErr?.code === "23505") {
+        return new Response(JSON.stringify({ ok: true, duplicate: true }), {
+          status: 200,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      // Persist easypost_refund_status = 'refunded' (migration 030).
+      // This is the carrier confirmation that EasyPost has credited SendMo's
+      // account — separate from the Stripe customer refund on refund_status.
+      const refundUpdateFields: Record<string, unknown> = {
+        easypost_refund_status: "refunded",
+      };
+
+      if (refundShipment.stripe_payment_intent_id) {
+        // Stripe-paid shipment: fire the customer refund now (same logic as
+        // tracking/index.ts lazy-poll — idempotency key prevents double-refunds).
+        try {
+          await createRefund({
+            payment_intent_id: refundShipment.stripe_payment_intent_id,
+            reason: "requested_by_customer",
+            metadata: {
+              shipment_id: refundShipment.id,
+              public_code: refundShipment.public_code,
+              trigger: "easypost_refund_webhook",
+            },
+            idempotency_key: `refund_${epShipmentId}_user_cancel`,
+            liveMode: !refundShipment.is_test,
+          });
+          // Leave refund_status='submitted' — stripe-webhook advances it to
+          // 'refunded' when charge.refunded fires. Only update EP column here.
+          log({
+            event_type: "cancel.stripe_refund_initiated",
+            source: "webhook",
+            severity: "info",
+            entity_type: "shipment",
+            entity_id: refundShipment.id,
+            properties: {
+              payment_intent_id: refundShipment.stripe_payment_intent_id,
+              trigger: "easypost_refund_webhook",
+            },
+          });
+        } catch (stripeErr) {
+          const msg = stripeErr instanceof Error ? stripeErr.message : String(stripeErr);
+          log({
+            event_type: "cancel.stripe_refund_failed",
+            source: "webhook",
+            severity: "error",
+            entity_type: "shipment",
+            entity_id: refundShipment.id,
+            properties: {
+              error_message: msg,
+              payment_intent_id: refundShipment.stripe_payment_intent_id,
+              trigger: "easypost_refund_webhook",
+            },
+          });
+          // Still persist easypost_refund_status. The Stripe retry will happen
+          // on the next tracking page view (tracking/index.ts lazy-poll path).
+        }
+      } else {
+        // Comp / pre-Stripe shipment: no money to move, just close out.
+        refundUpdateFields.refund_status = "not_applicable";
+      }
+
+      await supabase
+        .from("shipments")
+        .update(refundUpdateFields)
+        .eq("id", refundShipment.id);
+
+      log({
+        event_type: "webhook.easypost_refund_confirmed",
+        severity: "info",
+        source: "webhook",
+        entity_type: "shipment",
+        entity_id: refundShipment.id,
+        properties: {
+          easypost_shipment_id: epShipmentId,
+          had_stripe_pi: !!refundShipment.stripe_payment_intent_id,
+        },
+      });
+
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // Only handle tracker.updated events (other events are silently acked).
     if (description !== "tracker.updated") {
       return new Response(JSON.stringify({ ok: true, skipped: true }), {
         status: 200,
