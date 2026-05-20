@@ -66,7 +66,7 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 **Graceful degradation:** with no `E2E_TEST_USER_EMAIL`/`E2E_TEST_USER_PASSWORD` set, `global-setup` is a no-op and the authed `describe` skips itself — local runs and CI without the secret stay green (verified: 3 pass, 1 skip).
 
-**Setup still owed (one-time, human-only — agents never handle the password):** create a dedicated Supabase user (dashboard → Auth → Users → Add user, auto-confirm), put `E2E_TEST_USER_EMAIL`/`PASSWORD` in `.env.local` + CI secrets. Until then the `/links/new` e2e is written-but-skipped. The `storageState` localStorage format (`sb-<ref>-auth-token` = `JSON.stringify(session)`) is the supabase-js v2 convention — to be confirmed against the live session on first authed run.
+**Verified 2026-05-20:** the dedicated Supabase test user (`testerjohnanderson+testharness@gmail.com`) was created and `E2E_TEST_USER_EMAIL`/`PASSWORD` set in `.env.local`. The authed `/links/new` e2e now passes — `global-setup` authenticates via the password grant and the `storageState` format (`sb-<ref>-auth-token` = `JSON.stringify(session)`) is confirmed correct against supabase-js 2.97 (the seeded session is picked up; `ProtectedRoute` does not bounce to login). Full `phone-gate.spec.ts` run: **4/4 pass.** Still owed: add `E2E_TEST_USER_EMAIL`/`PASSWORD` to CI secrets so the authed spec runs in CI too (until then it skips there — suite stays green).
 
 **Note:** `.env.local` was created this session with the *public* publishable values (Supabase URL + anon key) so the Vite dev server boots for Playwright — gitignored via `*.local`, no real secrets.
 
