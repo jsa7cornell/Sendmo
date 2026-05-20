@@ -12,6 +12,29 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-19] "Continuing…" spinner stuck after Google OAuth return — auto-advance guard drift
+
+**Category:** fix | Onboarding | OAuth | Footgun
+**Cross-link:** commit `1990473`. Surfaced by the phone-required change (entry below).
+
+**Symptom:** After a Google OAuth login, the destination step (`RecipientStepAddress`) shows a `Continuing…` spinner by the user's name that never resolves. Reproduced by John.
+
+**Root cause:** `RecipientStepAddress` has an auto-advance convenience — for a returning user who signs in via OAuth with a complete address, it shows `Continuing…` and 2s later calls `onContinue()` (→ `tryAdvance(1)`). The guard checked `street/city/state/zip` — a **hand-picked subset** of step-1's requirements. When the phone requirement landed (2026-05-19), step-1 validation gained a phone check that the auto-advance guard didn't know about. So: OAuth return → address complete, phone empty → auto-advance fires → `Continuing…` → `tryAdvance(1)` silently rejects (phone missing) → no advance → `autoAdvancing` never resets → spinner spins forever. `autoAdvanceFiredRef` is latched, so typing the phone afterward can't re-trigger it.
+
+**Fix:** Gate the auto-advance on `errors.length === 0` — `errors` is the same `getValidationErrors(state, 1)` output `tryAdvance` itself checks. The auto-advance now fires *only* when `tryAdvance` will succeed, so it cannot get stuck. Self-maintaining — any future step-1 required field is respected automatically.
+
+**Generalizable rule:** an auto-advance / auto-submit guard MUST check the *same* validation the submit runs — never a hand-copied subset of fields. The two drift the moment someone adds a required field to one and not the other. If the submit uses `getValidationErrors`, the guard uses `getValidationErrors` (or its `errors` output) too.
+
+**Browser-verified:**
+  mcp-session: Playwright against https://sendmo.co/onboarding/flexible/destination (bundle `index-o29JA0nI.js`), 2026-05-20T03:43Z
+  variants-covered:
+    - {anonymous user — no auto-advance, no stuck spinner, page interactive} ✓
+  not-covered (needs Google OAuth — not drivable in Playwright; John to confirm):
+    - {OAuth return with phone present → auto-advances cleanly to step 20}
+    - {OAuth return with phone missing → no spinner, user fills phone + Continue}
+
+---
+
 ### [2026-05-19] Phone field — format-as-you-type + international support
 
 **Category:** ship | Address forms | Dependency
