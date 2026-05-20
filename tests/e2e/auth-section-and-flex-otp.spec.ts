@@ -195,10 +195,12 @@ test.describe("Step 1 auth section — returning signed-in user", () => {
 
     await page.goto("/onboarding/full-label/destination");
 
-    // Identity pill: avatar initial visible
-    await expect(page.getByText("J")).toBeVisible();
-    // Name visible
-    await expect(page.getByText("John Anderson")).toBeVisible();
+    // Identity pill: avatar initial visible. exact:true so "J" matches only
+    // the single-letter avatar, not every element containing the letter j.
+    await expect(page.getByText("J", { exact: true })).toBeVisible();
+    // Name visible in the pill. A bare getByText("John Anderson") is a
+    // strict-mode violation — it also matches the header identity button.
+    await expect(page.locator("p").filter({ hasText: "John Anderson" })).toBeVisible();
     // Email visible
     await expect(page.getByText("john@example.com")).toBeVisible();
     // Checkmark aria-label
@@ -220,7 +222,9 @@ test.describe("Step 1 auth section — returning signed-in user", () => {
 
     await page.goto("/onboarding/flexible/destination");
 
-    await expect(page.getByText("John Anderson")).toBeVisible();
+    // Name in the pill — scoped to <p> so it doesn't collide with the header
+    // identity button that also reads "John Anderson".
+    await expect(page.locator("p").filter({ hasText: "John Anderson" })).toBeVisible();
     await expect(page.getByRole("button", { name: /Continue with Google/i })).not.toBeVisible();
     await expect(page.getByPlaceholder("Email address")).not.toBeVisible();
   });

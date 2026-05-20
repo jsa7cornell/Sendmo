@@ -13,6 +13,7 @@
 ## Claude-Specific Notes
 
 - **Skills** live in `../.claude/skills/` — check for relevant skills before creating documents.
+- **Testing:** `TESTING.md` is the one-page map of all four test layers (unit / integration / e2e / browser-verify) — read it before any test work.
 - **Session end protocol**: propose updates to LOG.md or PLAYBOOK.md for anything new discovered. If nothing changed, say "No doc updates needed this session."
 
 ## Agent-Agnostic Note
@@ -21,4 +22,4 @@ This harness exists because Claude looks for `CLAUDE.md` automatically. The actu
 
 ---
 
-*Last updated: 2026-03-30*
+*Last updated: 2026-05-20 — added TESTING.md pointer.*

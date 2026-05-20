@@ -140,17 +140,22 @@ test.describe("TrackingPage — lifecycle state rendering", () => {
     });
     await page.goto("/t/TESTLC1");
 
-    // State hero headline — "in transit"
-    await expect(page.getByText(/in transit/i)).toBeVisible({ timeout: 10000 });
+    // State hero headline — match the h1. A bare /in transit/i is a
+    // strict-mode violation: it also hits the "In Transit" progress-step label.
+    await expect(
+      page.getByRole("heading", { level: 1, name: /in transit/i }),
+    ).toBeVisible({ timeout: 10000 });
 
-    // Lifecycle progress card (heading "Progress")
-    await expect(page.getByText(/progress/i).first()).toBeVisible();
+    // Lifecycle progress card
+    const progressCard = page.getByRole("heading", { name: "Progress" }).locator("..");
+    await expect(progressCard).toBeVisible();
 
-    // At least one completed step in the timeline (primary-colored dot).
-    // The timeline renders step dots as div.rounded-full.bg-primary.text-white
-    // when completed. We look for at least one such element.
-    const doneDots = page.locator(".rounded-full.bg-primary");
-    await expect(doneDots.first()).toBeVisible();
+    // At least one completed step dot. Scope the dot match to the Progress
+    // card — unscoped, .rounded-full.bg-primary also catches the first
+    // Tracking-History event dot, which lives in a different card.
+    await expect(
+      progressCard.locator(".rounded-full.bg-primary").first(),
+    ).toBeVisible();
 
     // "Need help" link
     await expect(
@@ -177,17 +182,20 @@ test.describe("TrackingPage — lifecycle state rendering", () => {
     });
     await page.goto("/t/TESTLC1");
 
-    // State hero headline — "delivered"
-    await expect(page.getByText(/delivered/i).first()).toBeVisible({ timeout: 10000 });
+    // State hero headline — match the h1.
+    await expect(
+      page.getByRole("heading", { level: 1, name: /delivered/i }),
+    ).toBeVisible({ timeout: 10000 });
 
-    // Lifecycle progress card
-    await expect(page.getByText(/progress/i).first()).toBeVisible();
-
-    // All four TIMELINE_STEPS are complete — four primary-colored dots.
+    // Lifecycle progress card — all four TIMELINE_STEPS complete.
     // TIMELINE_STEPS = ["label_created", "in_transit", "out_for_delivery", "delivered"]
-    // Each completed step renders a div with bg-primary. We assert at least 4.
-    const doneDots = page.locator(".rounded-full.bg-primary");
-    await expect(doneDots).toHaveCount(4, { timeout: 5000 });
+    // Scope the completed-dot count to the Progress card; unscoped it also
+    // catches the Tracking-History event dot, which lives in a different card.
+    const progressCard = page.getByRole("heading", { name: "Progress" }).locator("..");
+    await expect(progressCard).toBeVisible();
+    await expect(progressCard.locator(".rounded-full.bg-primary")).toHaveCount(4, {
+      timeout: 5000,
+    });
 
     // "Need help" link
     await expect(

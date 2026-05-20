@@ -105,6 +105,19 @@ const MOCK_TRACKING = {
   last_printed_at: null,
 };
 
+/** Magic Guestimator response — high confidence so no advisory note renders. */
+const MOCK_GUESTIMATE = {
+  itemName: "Laptop",
+  packaging: "box" as const,
+  length_in: 15,
+  width_in: 10,
+  height_in: 3,
+  weight_lbs: 5,
+  speedHint: "standard" as const,
+  confidence: "high" as const,
+  notes: "",
+};
+
 /**
  * Set up route interception for all Supabase Edge Function calls.
  * We track autocomplete call count to serve destination vs origin responses.
@@ -176,6 +189,15 @@ async function mockAllEdgeFunctions(page: Page) {
     })
   );
 
+  // Mock the Magic Guestimator AI estimate
+  await page.route(`${SUPABASE_URL}/functions/v1/guestimate`, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(MOCK_GUESTIMATE),
+    })
+  );
+
   // Mock tracking endpoint — TrackingPage calls this after the post-payment redirect.
   // Route is keyed by public_code from MOCK_LABEL so the redirect lands correctly.
   await page.route(`${SUPABASE_URL}/functions/v1/tracking*`, (route) =>
@@ -216,6 +238,17 @@ async function fillSmartAddress(page: Page, label: string) {
   // Phone is required (2026-05-19 — FedEx/UPS PHONENUMBEREMPTY fix). Fill it
   // so form validation doesn't block the Continue button.
   await page.locator(`#${label}-phone`).fill("4155550100");
+}
+
+/** Drive Step 0 → Step 1 → Step 10, leaving the page on the shipment-details step. */
+async function gotoStep10(page: Page) {
+  await page.goto("/onboarding");
+  await page.getByText("Completed Prepaid Label").click();
+  await page.locator("#destination-name").fill("Jane Doe");
+  await fillSmartAddress(page, "destination");
+  await page.locator("#recipient-email").fill("test@example.com");
+  await page.getByRole("button", { name: /Continue to shipment details/i }).click();
+  await expect(page.locator("#origin-name")).toBeVisible({ timeout: 5000 });
 }
 
 test.describe("Onboarding — Full Prepaid Label flow", () => {
@@ -303,5 +336,90 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
       page.getByRole("heading", { name: /Confirm your email/i }),
     ).toBeVisible({ timeout: 5000 });
     await expect(page.getByText(/6-digit code/i).first()).toBeVisible();
+  });
+
+  // ── Validation gates (consolidated from the retired full-label-flow.spec) ──
+
+  test("Step 1: an empty Continue is blocked and lists validation errors", async ({
+    page,
+  }) => {
+    await page.goto("/onboarding");
+    await page.getByText("Completed Prepaid Label").click();
+
+    // Continue with nothing filled in.
+    await page
+      .getByRole("button", { name: /Continue to shipment details/i })
+      .click();
+
+    // Validation summary + specific errors render; the step does not advance.
+    await expect(page.getByText("Please fix the following:")).toBeVisible();
+    await expect(page.getByText("Destination address is required")).toBeVisible();
+    await expect(page.getByText("Email is required")).toBeVisible();
+    await expect(page.locator("#origin-name")).not.toBeVisible();
+  });
+
+  test("Step 1: an invalid email is rejected", async ({ page }) => {
+    await page.goto("/onboarding");
+    await page.getByText("Completed Prepaid Label").click();
+
+    await page.locator("#recipient-email").fill("notanemail");
+    await page
+      .getByRole("button", { name: /Continue to shipment details/i })
+      .click();
+
+    await expect(page.getByText("Enter a valid email address")).toBeVisible();
+  });
+
+  test("Step 10: an empty Continue is blocked and lists validation errors", async ({
+    page,
+  }) => {
+    await gotoStep10(page);
+
+    // Continue to payment with no origin address / dimensions / weight.
+    await page.getByRole("button", { name: /Continue to payment/i }).click();
+
+    await expect(page.getByText("Please fix the following:")).toBeVisible();
+    // "Origin address is required" renders both inline and in the summary list
+    // — .first() is enough to prove the error surfaced.
+    await expect(page.getByText("Origin address is required").first()).toBeVisible();
+    await expect(page.getByText("Length is required")).toBeVisible();
+  });
+
+  test("Step 10: the Magic Guestimator auto-fills package dimensions", async ({
+    page,
+  }) => {
+    await gotoStep10(page);
+
+    await expect(
+      page.getByRole("heading", { name: "Magic Guestimator" }),
+    ).toBeVisible();
+
+    // The Guestimator's textarea is the only multiline input on the step.
+    await page.locator("textarea").fill("a laptop");
+    await page.getByRole("button", { name: /I'm Feeling Lucky/i }).click();
+
+    // Success confirmation + the L dimension populated from MOCK_GUESTIMATE.
+    await expect(
+      page.getByText(/Auto-filled packaging, dimensions/i),
+    ).toBeVisible({ timeout: 8000 });
+    await expect(
+      page.getByRole("textbox", { name: "L", exact: true }),
+    ).toHaveValue("15");
+  });
+
+  test("Back navigation: Step 10 → Step 1 keeps the entered data", async ({
+    page,
+  }) => {
+    await gotoStep10(page);
+
+    await page.getByRole("button", { name: "Back", exact: true }).click();
+
+    // Back on Step 1, with the verified destination address still in place.
+    await expect(
+      page.getByRole("heading", {
+        name: /Where should the package be delivered/i,
+      }),
+    ).toBeVisible();
+    await expect(page.getByText("Verified").first()).toBeVisible();
   });
 });
