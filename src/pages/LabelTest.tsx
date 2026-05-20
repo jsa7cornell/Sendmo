@@ -15,6 +15,7 @@ const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 import AddressFields from "@/components/ui/AddressFields";
 import type { AddressInput } from "@/lib/types";
 import { emptyAddress } from "@/lib/utils";
+import { isUsablePhone } from "@/lib/phone";
 
 // ... existing code ...
 // I will rewrite this to use multi_replace since I need to also add imports properly. I'll pass on this exact one and use a better chunk.
@@ -187,6 +188,21 @@ export default function LabelTest() {
             return;
         }
 
+        // ── Client-side check: phone required on both addresses ──
+        // The rates Edge Function 400s without a usable phone (it bakes the
+        // phone into the EasyPost shipment FedEx/UPS validate at /buy). Block
+        // here so the dev sees a clear message, not a server error two steps on.
+        if (!isUsablePhone(fromAddr.phone)) {
+            setError("The From address needs a phone number — shipping carriers require one.");
+            setLoading(false);
+            return;
+        }
+        if (!isUsablePhone(toAddr.phone)) {
+            setError("The To address needs a phone number — shipping carriers require one.");
+            setLoading(false);
+            return;
+        }
+
         // ── Client-side check: sender and recipient cannot be the same address ──
         const normalize = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
         const fromKey = [fromAddr.street, fromAddr.city, fromAddr.state, fromAddr.zip].map(normalize).join("|");
@@ -299,8 +315,12 @@ export default function LabelTest() {
                 },
                 body: JSON.stringify({
                     live_mode: liveMode,
-                    from_address: verifiedAddresses?.from_address,
-                    to_address: verifiedAddresses?.to_address,
+                    // Phone is user-entered, not address-verification output, so
+                    // it isn't in verifiedAddresses — merge it back from the raw
+                    // input. rates bakes it into the EasyPost shipment and 400s
+                    // without it.
+                    from_address: { ...verifiedAddresses?.from_address, phone: fromAddr.phone },
+                    to_address: { ...verifiedAddresses?.to_address, phone: toAddr.phone },
                     parcel: {
                         length: parseFloat(parcel.length),
                         width: parseFloat(parcel.width),
@@ -363,7 +383,8 @@ export default function LabelTest() {
                         city: fromAddr.city,
                         state: fromAddr.state,
                         zip: fromAddr.zip,
-                        country: "US"
+                        country: "US",
+                        phone: fromAddr.phone,
                     },
                     to_address: {
                         name: toAddr.name,
@@ -371,7 +392,8 @@ export default function LabelTest() {
                         city: toAddr.city,
                         state: toAddr.state,
                         zip: toAddr.zip,
-                        country: "US"
+                        country: "US",
+                        phone: toAddr.phone,
                     },
                     parcel: {
                         length_in: parseFloat(parcel.length || "0"),

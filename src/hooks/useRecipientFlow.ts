@@ -198,6 +198,12 @@ export function getTotalPriceCents(state: RecipientFlowState): number {
 export function canFetchRates(state: RecipientFlowState): boolean {
   if (!state.originAddress.verified || !state.originAddress.street) return false;
   if (!state.destinationAddress.verified || !state.destinationAddress.street) return false;
+  // Phone gates the rate fetch too. fetchRates → addressToApi throws without a
+  // phone on either address; gating here keeps that raw "incomplete address"
+  // string from reaching the user instead of an inline field error. Mirrors
+  // the step-10 / step-1 validation in getValidationErrors.
+  if (!isUsablePhone(state.originAddress.phone)) return false;
+  if (!isUsablePhone(state.destinationAddress.phone)) return false;
   const l = parseFloat(state.dimensions.length);
   const w = parseFloat(state.dimensions.width);
   const h = parseFloat(state.dimensions.height);

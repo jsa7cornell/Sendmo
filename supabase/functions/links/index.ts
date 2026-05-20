@@ -1,21 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
-import { isPossiblePhoneNumber } from "https://esm.sh/libphonenumber-js@1.13.2";
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
-
-// Phone is required on every recipient address — FedEx/UPS reject EasyPost
-// label purchases without one (PHONENUMBER.EMPTY). isPossiblePhoneNumber is
-// a length-plausibility check (US default; a leading '+' routes to the
-// international check) — matches the client-side isUsablePhone in src/lib/phone.ts.
-function isUsablePhone(input: unknown): boolean {
-    const s = String(input ?? "").trim();
-    if (!s) return false;
-    try {
-        return isPossiblePhoneNumber(s, "US");
-    } catch {
-        return false;
-    }
-}
+import { isUsablePhone } from "../_shared/phone.ts";
 
 // ─── Short code generator ───────────────────────────────────
 const SAFE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";

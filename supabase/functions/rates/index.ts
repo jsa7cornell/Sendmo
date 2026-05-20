@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { log } from "../_shared/logger.ts";
+import { isUsablePhone } from "../_shared/phone.ts";
 
 const MARKUP_MULTIPLIER = 1.15;
 const MARKUP_FLAT_CENTS = 100; // $1.00 flat fee on top of the percentage markup
@@ -83,6 +84,27 @@ serve(async (req: Request) => {
                     };
                 }
             }
+        }
+
+        // Phone is required on BOTH addresses (2026-05-19). The phone is baked
+        // into the EasyPost shipment created right here — and the labels /buy
+        // call reuses this exact shipment — so this is the one server-side gate
+        // before a carrier ever sees the address. FedEx/UPS reject /buy with
+        // PHONENUMBEREMPTY otherwise. Validated independently of the client
+        // (Rule 5); the links Edge Function POST/PATCH apply the same check via
+        // the shared isUsablePhone. See 2026-05-20_phone-required-flow-audit.md
+        // finding 1 — `links` had this gate, `rates` did not.
+        if (!isUsablePhone(from_address?.phone)) {
+            return new Response(
+                JSON.stringify({ error: "The sender address is missing a phone number — shipping carriers require one to generate a label." }),
+                { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+        if (!isUsablePhone(to_address?.phone)) {
+            return new Response(
+                JSON.stringify({ error: "The delivery address is missing a phone number — shipping carriers require one to generate a label." }),
+                { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
         }
 
         const isLive = live_mode === true;

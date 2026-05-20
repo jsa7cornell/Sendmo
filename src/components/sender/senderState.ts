@@ -28,8 +28,15 @@ export interface SenderParcel {
 
 // localStorage versioning per author-response non-blocking nit. Bump VERSION
 // when the shape changes; reads tolerate version mismatch by returning null.
+//
+// v2 (2026-05-19): `phone` became a required field on AddressInput. A v1
+// payload saved before that change has a senderAddress with no `phone` key —
+// rehydrating it would seed a phone-less address into the sender flow. The
+// version bump makes loadSavedSender discard those stale entries so the user
+// re-enters (and the form collects) a phone. See finding 4,
+// 2026-05-20_phone-required-flow-audit.md.
 const STORAGE_KEY = "sendmo:sender:v1";
-const STORAGE_VERSION = 1;
+const STORAGE_VERSION = 2;
 
 interface StoredSender {
   version: number;
