@@ -153,7 +153,6 @@ export default function AdminDebugPanel({ publicCode }: Props) {
                   <Row label="easypost_shipment_id" value={payload.identifiers.easypost_shipment_id} mono multiline />
                   <Row label="easypost_tracker_id" value={payload.identifiers.easypost_tracker_id} mono multiline />
                   <Row label="stripe_payment_intent_id" value={payload.identifiers.stripe_payment_intent_id} mono multiline />
-                  <Row label="stripe_customer_id" value={payload.identifiers.stripe_customer_id} mono multiline />
                   <Row label="cancel_token" value={payload.identifiers.cancel_token ?? "—"} mono />
                   <Row label="carrier_refund_id" value={payload.identifiers.carrier_refund_id} mono multiline />
                 </dl>

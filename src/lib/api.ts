@@ -247,7 +247,6 @@ export interface AdminTrackingPayload {
     easypost_shipment_id: string | null;
     easypost_tracker_id: string | null;
     stripe_payment_intent_id: string | null;
-    stripe_customer_id: string | null;
     cancel_token: string | null;  // defanged ("••••• abcd") or null
     carrier_refund_id: string | null;
   };
