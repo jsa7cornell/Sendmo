@@ -12,6 +12,15 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-20] Fixed stale Stripe publishable-key var name in env template + PLAYBOOK
+
+**Category:** docs
+**Cross-link:** `.env.example`, `PLAYBOOK.md` → "Environment Variables". Loader of record: `src/lib/stripeClient.ts` (`getStripeForMode`).
+
+`.env.example` and PLAYBOOK.md both documented a suffixless `VITE_STRIPE_PUBLISHABLE_KEY`, but no code reads that name — `stripeClient.ts` reads the mode-aware `VITE_STRIPE_PUBLISHABLE_KEY_TEST` / `_LIVE`. The stale name cost a debugging round-trip 2026-05-20: a dev set the wrong var and the Stripe card form silently failed to render. Replaced both with the `_TEST` + `_LIVE` pair. Pure docs/template change, no runtime code. (Decided proposal files still reference the old name in historical context — left as-is, frozen institutional memory.)
+
+---
+
 ### [2026-05-20] E2e suite de-rot — assigned stale-locator specs now green
 
 **Category:** test
