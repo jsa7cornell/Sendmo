@@ -230,6 +230,7 @@ Each card has 4 bullet points explaining the path.
 
 - Freeform address input with auto-verification (mock: length > 15 chars; production: EasyPost API)
 - Green verified badge with CheckCircle2 icon
+- **Phone number** -- required (added 2026-05-19). FedEx and UPS reject EasyPost label purchases without a phone on both shipper and recipient addresses (`PHONENUMBER.EMPTY`); USPS doesn't. Collected on every address via `SmartAddressInput`. 10-digit minimum (digits-only count). Server re-validates in the `links` Edge Function — client-side is UX only.
 - Email input for verification in next step
 - **Validation**: Red borders + "Required" labels + summary block above button
 - **Button**: "Continue to shipping preferences"
@@ -285,7 +286,7 @@ final = base x carrier_multiplier (1.0-1.8) + insurance ($2.50 if selected)
 ```
 **Production**: Replace with EasyPost Rate API.
 
-**Validation**: Ship from address, all dimensions, weight, shipping method, computed price -- all required. Summary block lists up to 6 issues.
+**Validation**: Ship from address (incl. phone number — required 2026-05-19, see Step 1), all dimensions, weight, shipping method, computed price -- all required. Summary block lists up to 6 issues.
 
 #### Step 11: Confirm Your Email (Full Label)
 **Component**: `RecipientStepEmailVerifySupabase.tsx` -- Step ID: `11` (inserted 2026-05-11)
