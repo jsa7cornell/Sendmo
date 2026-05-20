@@ -46,6 +46,24 @@ jobs:
         VITE_SUPABASE_URL: "http://localhost:54321"
         VITE_SUPABASE_ANON_KEY: "mock_anon_key"
 
+    - name: Run Authed E2E (real Supabase — phone-gate authed spec only)
+      # The auth harness (tests/e2e/global-setup.ts) logs the dedicated test
+      # user in against REAL GoTrue, so this step needs real Supabase values.
+      # Scoped via -g "authed" to just the authed spec, so the mocked suite
+      # above (which runs against the localhost mock) is untouched. Non-blocking
+      # like the suite above, until the e2e de-rot makes the suite green.
+      run: npx playwright test tests/e2e/phone-gate.spec.ts -g "authed" --project=chromium || true
+      continue-on-error: true
+      env:
+        # Publishable (public) Supabase values — safe to hardcode; the anon key
+        # ships in every browser bundle. Real values are required because
+        # global-setup authenticates against the live project.
+        VITE_SUPABASE_URL: "https://fkxykvzsqdjzhurntgah.supabase.co"
+        VITE_SUPABASE_ANON_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZreHlrdnpzcWRqemh1cm50Z2FoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAwNjk0NDMsImV4cCI6MjA4NTY0NTQ0M30.6iTUkaum2WylRnH5yEbYivuuo0hVfu8O3ZYoeKssBBU"
+        VITE_STRIPE_PUBLISHABLE_KEY: "pk_test_e2e_placeholder"
+        E2E_TEST_USER_EMAIL: ${{ secrets.E2E_TEST_USER_EMAIL }}
+        E2E_TEST_USER_PASSWORD: ${{ secrets.E2E_TEST_USER_PASSWORD }}
+
     - name: Upload Playwright Report
       uses: actions/upload-artifact@v4
       if: always()
