@@ -12,6 +12,23 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-20] Job 1 — Pattern D flex payment flow verified end-to-end (the go-live gate)
+
+**Category:** verification | Payments | Pattern D | Go-live
+**Cross-link:** [proposals/2026-05-19_payments-golive-followups-handoff.md](proposals/2026-05-19_payments-golive-followups-handoff.md) Job 1 | the 2026-05-18 Pattern D execution entry (its `Browser-verified:` block had been `PENDING` since Pattern D shipped) | [PAYMENTS.md](PAYMENTS.md)
+
+**What:** John ran the payments-handoff Job 1 scenarios (F1–F4) end-to-end in test mode — **all passed.** Per the handoff definitions:
+- **F1** — create a funded flex link → link `active`, `is_funded=true`, saved PM attached.
+- **F2** — anonymous sender uses the link, ships via **FedEx**, off_session charge succeeds, label generated with **no `PHONENUMBER.EMPTY`** — confirms Pattern D's money-path *and* the 2026-05-19 phone-required work against a real carrier purchase.
+- **F3** — forced card decline → friendly sender error, recipient decline-recovery email, link flips Inactive.
+- **F4** — recipient reactivates via the email deep link → adds a card → link returns Active.
+
+**Why it matters:** Pattern D shipped 2026-05-18 but its money-path had never been exercised — this was *the* gate before live mode. The 2026-05-18 Pattern D LOG entry's `Browser-verified: PENDING` block is now satisfied by this run. With Job 1 and Job 2 (admin-panel + admin-RPC bugs, both fixed 2026-05-20) closed, the **only remaining go-live work is Job 3 — live-mode infrastructure** (Stripe + EasyPost live keys, live webhook config, one live smoke test).
+
+**Verified by:** John — manual end-to-end browser run, test mode, 2026-05-20.
+
+---
+
 ### [2026-05-20] E2e suite de-rot — assigned stale-locator specs now green
 
 **Category:** test
