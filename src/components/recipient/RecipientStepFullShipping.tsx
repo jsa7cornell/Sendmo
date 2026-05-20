@@ -62,10 +62,17 @@ export default function RecipientStepFullShipping({
   liveModeRef.current = liveMode;
 
   // ── Rate-triggering values (only these should cause a re-fetch) ──
+  // Phone is included: canFetchRates() requires a usable phone on both
+  // addresses (FedEx/UPS PHONENUMBEREMPTY), so a phone change can flip the
+  // gate open/closed and MUST re-run the fetch effect. Omitting it stranded
+  // users who filled dimensions/weight before adding the phone — the gate
+  // opened but nothing re-evaluated it. See 2026-05-20 phone-flow audit.
   const originVerified = state.originAddress.verified;
   const originStreet = state.originAddress.street;
+  const originPhone = state.originAddress.phone;
   const destVerified = state.destinationAddress.verified;
   const destStreet = state.destinationAddress.street;
+  const destPhone = state.destinationAddress.phone;
   const dimL = state.dimensions.length;
   const dimW = state.dimensions.width;
   const dimH = state.dimensions.height;
@@ -129,7 +136,7 @@ export default function RecipientStepFullShipping({
     };
     // Only re-trigger when actual package/address values change — NOT when rates/selectedRate update
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [originVerified, originStreet, destVerified, destStreet, dimL, dimW, dimH, wtLbs, wtOz, pkgType]);
+  }, [originVerified, originStreet, originPhone, destVerified, destStreet, destPhone, dimL, dimW, dimH, wtLbs, wtOz, pkgType]);
 
   // ── Guestimator handler ───────────────────────────────────
 
