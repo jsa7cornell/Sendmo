@@ -379,6 +379,42 @@ npm run test              # unit tests
 npm run test:e2e          # playwright tests
 ```
 
+## E2e Testing (Playwright)
+
+> Convention established 2026-05-20. Specs live in `tests/e2e/*.spec.ts`; config in `playwright.config.ts`.
+
+### How specs are organized
+
+- **Default axis — by user flow.** One spec per flow/surface: `onboarding.spec.ts`, `sender-flow.spec.ts`, `admin.spec.ts`, `tracking-*.spec.ts`. A new test goes in the spec for the flow it exercises.
+- **Exception — cross-cutting regression specs.** A *small, named* set of specs may be organized by a load-bearing invariant that spans flows — **only** when that invariant is proven-fragile. The bar: spans ≥3 flows AND has a real regression history. Current (only) example: `phone-gate.spec.ts` — the phone requirement broke 4× across 4 surfaces, so one spec proves the gates hold everywhere. Don't add by-concern specs casually.
+- **No mega-spec.** Playwright parallelizes by file; one giant spec is slow and hides failures.
+
+### Writing specs
+
+- **Mock every Edge Function** via `page.route` — no real EasyPost/Stripe/Google/DB traffic. Reference pattern: `mockEdgeFunctions` in `phone-gate.spec.ts`.
+- **Stable locators only** — ids (`#origin-name`), roles + accessible names. Never match incidental copy: a `/Ship from/i` text match silently rotted when a heading was reworded.
+- Naming: `<flow>.spec.ts`, kebab-case.
+
+### Local setup
+
+- `.env.local` (gitignored via `*.local`) needs `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY` — both publishable/public — so the Vite dev server boots. `npx playwright test` starts the server itself.
+
+### Authenticated specs
+
+- `tests/e2e/global-setup.ts` mints a real Supabase session for a dedicated test user (GoTrue password grant) → `playwright/.auth/user.json` (gitignored — it holds a real token).
+- Requires `E2E_TEST_USER_EMAIL` / `E2E_TEST_USER_PASSWORD` in `.env.local` + CI secrets. Absent → `global-setup` is a no-op and authed `describe`s skip themselves; the suite stays green. Pattern: the `/links/new` describe in `phone-gate.spec.ts`.
+
+### Suite health & known gaps (snapshot 2026-05-20)
+
+The suite has accumulated **locator drift** — at this date roughly half the specs are red (stale selectors, not real bugs). A dedicated de-rot pass is a tracked follow-up. Triage:
+
+- **Green / trustworthy:** `phone-gate.spec.ts`, `onboarding.spec.ts` (de-rotted 2026-05-20), `home.spec.ts`, and others.
+- **Stale-locator de-rot owed:** `full-label-flow.spec.ts` (overlaps `onboarding.spec.ts` — consolidate the two), `auth.spec.ts`, `label-flow.spec.ts`, `admin.spec.ts`, `tracking-lifecycle-states.spec.ts`, `sender-flow.spec.ts`, `not-found.spec.ts`.
+- **Not rot — leave alone:** `url-step-routing.spec.ts` (churn from in-progress `feat/url-step-routing` work); `buy_label_debug.spec.ts` + `playwright_verify.spec.ts` (hit real services — not part of the mocked suite).
+- **Coverage gaps:** the OTP → payment → label tail of full-label onboarding (needs OTP interception); the authed `/links/new` flow runs only once the test user is configured.
+
+**Rule:** a red e2e spec is worse than none — people stop trusting the suite. When you touch a flow, fix or honestly scope its spec; never leave it red.
+
 ## EasyPost Test Data
 
 Use these for development (they always work in test mode):

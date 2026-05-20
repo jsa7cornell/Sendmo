@@ -38,6 +38,23 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ---
 
+### [2026-05-20] E2e convention + suite de-rot started — the suite was ~half red
+
+**Category:** test | docs | Process
+**Cross-link:** `PLAYBOOK.md` → "E2e Testing (Playwright)". `tests/e2e/onboarding.spec.ts`.
+
+**Trigger:** the question "why is the spec called `phone-gate.spec.ts` — should it be broader?" surfaced that the e2e suite had no written organizing convention, and a full run showed it was **~half red — 29 failed / 29 passed / 6 skipped.**
+
+**Convention (new PLAYBOOK section):** specs are organized **by user flow** (the existing implicit convention, now explicit). A small, named set of **cross-cutting regression specs** is allowed for proven-fragile invariants that span ≥3 flows — `phone-gate.spec.ts` is the one current example, justified (the phone gate broke 4×). No mega-spec. Plus: mock every Edge Function, stable locators only (ids/roles, never incidental copy), the auth-harness setup, and a triage of current suite health.
+
+**Root cause of the rot:** locator drift. Tests matched rendered copy (`/Ship from/i`) and step assumptions that silently went stale as the UI evolved — nothing failed loudly until a full run. Most of the 29 failures are stale selectors, not real bugs.
+
+**De-rotted this session:** `onboarding.spec.ts` — fixed the stale `/Ship from/i` step-10 marker (→ `#origin-name`), and discovered the full-label flow gained an OTP email-verification step the test predated (it expected payment where verification renders). Honestly re-scoped the test to "Step 0 → 1 → 10 → reaches email verification" (green) rather than half-fix it; the OTP → payment → label tail is a tracked coverage gap.
+
+**Still owed (tracked in PLAYBOOK):** stale-locator de-rot of `full-label-flow.spec.ts` (redundant with `onboarding.spec.ts` — consolidate), `auth.spec.ts`, `label-flow.spec.ts`, `admin.spec.ts`, `tracking-lifecycle-states.spec.ts`, `sender-flow.spec.ts`, `not-found.spec.ts`. `url-step-routing.spec.ts` failures are churn from concurrent `feat/url-step-routing` work — not rot.
+
+---
+
 ### [2026-05-20] E2e phone coverage extended — /label-test + an authenticated-spec harness
 
 **Category:** test | Payments

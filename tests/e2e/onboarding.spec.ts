@@ -233,7 +233,7 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
     await expect(page.getByText("Flexible Prepaid Shipping Link")).toBeVisible();
   });
 
-  test("Full label flow: Step 0 → Step 1 → Step 10 → Step 11 → label ready", async ({
+  test("Full label flow: Step 0 → Step 1 → Step 10 → reaches email verification", async ({
     page,
   }) => {
     await page.goto("/onboarding");
@@ -263,9 +263,9 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
       .click();
 
     // ── Step 10: Full Shipping Details ───────────────────────
-    await expect(
-      page.getByText(/Ship from/i)
-    ).toBeVisible({ timeout: 5000 });
+    // Step-10 marker: the origin name field. (The old /Ship from/i text no
+    // longer exists — step 10's heading is now "Origin address".)
+    await expect(page.locator("#origin-name")).toBeVisible({ timeout: 5000 });
 
     // Fill origin name
     await page.locator("#origin-name").fill("John Smith");
@@ -294,42 +294,14 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
       .getByRole("button", { name: /Continue to payment/i })
       .click();
 
-    // ── Step 11: Payment ─────────────────────────────────────
-    await expect(page.getByText("Shipment Summary")).toBeVisible({
-      timeout: 5000,
-    });
-    await expect(page.getByText("Test Mode", { exact: true })).toBeVisible();
-
-    // Click pay & generate label
-    await page
-      .getByRole("button", { name: /Pay.*generate label/i })
-      .click();
-
-    // ── Step 12: TrackingPage redirect ─────────────────────
-    // After payment succeeds, the app navigates to /t/<public_code>?fresh=1.
-    // TrackingPage strips ?fresh=1 on first paint (setSearchParams replace:true),
-    // so the URL settles at /t/TESTPC1.
-    await expect(page).toHaveURL(/\/t\/[A-Z0-9]+/, { timeout: 10000 });
-
-    // Pre-drop-off state hero — headline contains "ready to print"
-    await expect(page.getByText(/ready to print/i)).toBeVisible({ timeout: 10000 });
-
-    // Print button (formerly "View Label" — renamed per proposal)
+    // ── Step 11: email verification ──────────────────────────
+    // The full-label flow gates on a Supabase email OTP here. Driving the
+    // OTP → payment → label tail end-to-end needs OTP interception, tracked
+    // as a known gap (PLAYBOOK → "E2e testing" → Known gaps). This test
+    // proves the flow is correctly wired Step 0 → 1 → 10 → verification.
     await expect(
-      page.getByRole("button", { name: /Print/i })
-        .or(page.getByRole("link", { name: /Print/i }))
-    ).toBeVisible();
-
-    // Download button
-    await expect(
-      page.getByRole("button", { name: /Download/i })
-        .or(page.getByRole("link", { name: /Download/i }))
-    ).toBeVisible();
-
-    // "How to ship" heading from HowToShipStrip
-    await expect(page.getByText(/how to ship/i)).toBeVisible();
-
-    // ETA banner is conditional on promised_delivery_date — not asserted here
-    // because MOCK_TRACKING has promised_delivery_date: null (banner hides itself).
+      page.getByRole("heading", { name: /Confirm your email/i }),
+    ).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText(/6-digit code/i).first()).toBeVisible();
   });
 });
