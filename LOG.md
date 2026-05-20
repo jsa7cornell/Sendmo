@@ -12,6 +12,43 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-20] Admin dashboard accuracy audit — 3 fixes + cancelled-label reconciliation
+
+**Category:** fix | Admin | Reporting | Data accuracy
+**Cross-link:** commit `1a43580`. WISHLIST launch-blocker "admin_insert_shipment RPC fails" (the persistence bug, already `[x]`).
+
+**Trigger:** before go-live, the `/admin` Shipments dashboard was audited for accuracy — it is how cancelled labels get tracked, and an inaccurate view there is a money-leak surface.
+
+**Reconciliation:** the 4 cancelled live shipments (`NEC7J3E`, `RA2W2NG`, `RPSAZXG`, `ECWHJES`) were manually batch-inserted 2026-05-13 to remediate the persistence bug. `1Z13J52C0333598579` is `ECWHJES` — it appeared "missing" from an earlier cancelled-shipment query purely because it was cancelled (05-20 03:42) *after* that query ran. No real discrepancy; the dashboard shows all 4 correctly (Cancelled status, Voided button, "Not Eligible" refund badge, margin "—").
+
+**Three accuracy bugs fixed:**
+1. **Date column** used `link.created_at`, not `shipment.created_at` — misleading for a flex link reused across multiple shipments over time. Now `sh.created_at || link.created_at`.
+2. **`is_test` guessed from email patterns** (`email.includes("test")`) for links with no shipments — violated PLAYBOOK Rule 14 and could misclassify a real customer (e.g. `testerjohn@realcompany.com`) as test, hiding them from the Production view. Now reads `sendmo_links.is_test` from the DB (`is_test` added to the `admin-report` SELECT).
+3. **Cancelled shipments inflated "Total Label Cost"** in the summary bar — voided labels' `rate_cents` counted with no matching revenue, making margin look worse than reality. Summary now excludes cancelled rows.
+
+**Data-hygiene item (not a code bug — John to run):** 5 live shipments have a stale `sendmo_links.is_test=true` (links predate the `is_test` column; the shipment rows are correct so the dashboard displays fine). Optional `UPDATE sendmo_links SET is_test=false` on link ids `837c56b3`, `76bb7a73`, `43cdb743`, `52c0ed43`, `ea1b099a` — SELECT-verify first.
+
+**Browser-verified:**
+  n/a-category: internal-tooling
+  n/a-reason: admin dashboard — needs an admin auth session + live prod data; not drivable by the mocked e2e suite. `tsc` clean. John verifies on `/admin`.
+
+---
+
+### [2026-05-20] Test-infra hardening — e2e cost-safety, stale spec, .env.example
+
+**Category:** chore | Testing | CI | Footgun
+**Cross-link:** commits `33d88e8` (config + env), `222dc7e` (spec).
+
+**The cost-safety footgun:** `playwright.config.ts` had no `testIgnore`, so `npm run test:e2e`, the `/runtest` skill, and CI actually ran *every* spec in `tests/e2e/` — including `buy_label_debug.spec.ts` and `playwright_verify.spec.ts`, which drive real EasyPost label buys via `/label-test` (and `cors_verify.spec.ts`, which hits live edge functions). TESTING.md claimed the default run was a safe mocked suite; the config did not enforce it. **Fixed:** `testIgnore` now excludes those 3 real-service specs, so the everyday e2e command is fully mocked and free of real API calls. Run the real-service specs deliberately by path.
+
+**Stale spec:** `tests/e2e/url-step-routing.spec.ts` asserted the pre-rework flat onboarding URLs (`/onboarding/address`, `/shipping`, `/payment`, `/preferences`) — 6 tests failed against the current path-prefixed scheme (`/onboarding/full-label/destination`, `/onboarding/flexible/preferences`, etc.). Reworked: all slugs updated, phone field added to the address-fill helper, OTP mocks added, `"Ship from"` heading drift → `"Origin address"`. The full-flow test now stops at `/payment` — completing a Stripe payment needs card entry in cross-origin iframes Playwright cannot mock without Stripe's test-helper integration (documented gap). All 10 tests green.
+
+**`.env.example`** corrected to the mode-suffixed variable names the code actually reads (`VITE_STRIPE_PUBLISHABLE_KEY_TEST`/`_LIVE`, `STRIPE_SECRET_KEY_TEST`/`_LIVE`, `STRIPE_WEBHOOK_SECRET_TEST`/`_LIVE`) and the EasyPost test/live key split (`EASYPOST_TEST_API_KEY` + `EASYPOST_API_KEY`) — the old suffixless names would silently misconfigure a fresh setup.
+
+**Known remaining e2e failure:** `label-flow.spec.ts` full-flow-to-completion likely hits the same Stripe-iframe wall — flagged as test-debt.
+
+---
+
 ### [2026-05-20] Job 1 — Pattern D flex payment flow verified end-to-end (the go-live gate)
 
 **Category:** verification | Payments | Pattern D | Go-live
