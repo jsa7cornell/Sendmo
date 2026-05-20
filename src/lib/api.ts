@@ -384,6 +384,10 @@ export interface CreateLinkParams {
     city: string;
     state: string;
     zip: string;
+    // Required since 2026-05-19 — the links Edge Function 400s without it
+    // (FedEx/UPS need a phone on the delivery address). Every caller must
+    // pass it through from the collected AddressInput.phone.
+    phone: string;
     verified?: boolean;
   };
   speed_preference: string;
@@ -472,6 +476,9 @@ export interface UpdateLinkParams {
     city: string;
     state: string;
     zip: string;
+    // Required when recipient_address is present — the PATCH handler 400s
+    // without it (FedEx/UPS phone requirement, 2026-05-19).
+    phone: string;
     verified?: boolean;
   };
   speed_preference?: string;
