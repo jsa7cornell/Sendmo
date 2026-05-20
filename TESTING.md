@@ -38,11 +38,16 @@ you mean to.
 - **Runner:** Playwright (`playwright.config.ts`), real Chromium. The dev server (`npm run dev`, port 5173) is started automatically.
 - **The mocked suite (default):** every Supabase Edge Function call is intercepted with `page.route` — no real EasyPost/Stripe/Google/DB traffic. This is the suite you keep green.
 - **Real-service specs (NOT part of the mocked suite):** `buy_label_debug.spec.ts`, `playwright_verify.spec.ts`, `cors_verify.spec.ts` hit live services — run them deliberately, not in the everyday check.
-- **Setup:** needs a `.env.local` with `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY` (both public) so the dev server boots. `tests/e2e/global-setup.ts` mints a real auth session **only if** `E2E_TEST_USER_EMAIL` / `E2E_TEST_USER_PASSWORD` are set — absent them, authed specs skip themselves and the suite stays green.
-- **Conventions (authoritative):** `PLAYBOOK.md` → **"E2e Testing (Playwright)"** — how specs are organized (by user flow), the stable-locator rule, the mock-everything rule, and the current suite-health snapshot. Read it before adding or fixing an e2e spec.
+- **Setup:** `.env.local` needs `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY` (both publishable/public) so the dev server boots — the mocked suite needs nothing more. Browser-verifying a **Stripe surface** (the payment step, `/label-test`) additionally needs a real `VITE_STRIPE_PUBLISHABLE_KEY_TEST` (`pk_test_…`, also publishable).
+- **Authed specs:** `tests/e2e/global-setup.ts` mints a real session from a dedicated test user. `E2E_TEST_USER_EMAIL` / `E2E_TEST_USER_PASSWORD` are configured in `.env.local` + CI secrets, so the authed `/links/new` phone-gate spec runs (and passes) in CI; absent them, authed specs skip themselves and the suite stays green. Test-user setup is documented in `global-setup.ts`'s header comment.
+- **Conventions (authoritative):** `PLAYBOOK.md` → **"E2e Testing (Playwright)"** — how specs are organized (by user flow, with `phone-gate.spec.ts` as the one named cross-cutting regression spec), the stable-locator rule, the mock-everything rule, and the current suite-health snapshot. Read it before adding or fixing an e2e spec.
 
 ### 4. Manual browser verification
 - For any fix touching a rendered surface (`src/components/`, `src/pages/`, `supabase/functions/`), `PLAYBOOK.md` Rule 19 requires verifying the fix in a real browser before writing the `LOG.md` entry (the `Browser-verified:` block).
+
+## Continuous integration
+
+`.github/workflows/test.yml` ("Provide Tests") runs on every push and PR to `main`: ESLint (non-blocking), `tsc -b`, unit tests, the mocked e2e suite, and a scoped authed-e2e step (real Supabase — the `/links/new` phone-gate spec). `tsc` + unit are **blocking**. The **e2e steps are currently non-blocking** (`continue-on-error`) — a deliberate state while the suite is stabilised; once it's reliably green they should be made blocking.
 
 ## Helper skills (slash commands, in `.claude/commands/`)
 
