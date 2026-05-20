@@ -12,6 +12,45 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-20] Admin debug panel could flash for non-admins after an account switch
+
+**Category:** fix | Auth | Security-adjacent
+**Cross-link:** commit `1289c6d`. [`src/contexts/AuthContext.tsx`](src/contexts/AuthContext.tsx), [`src/pages/TrackingPage.tsx`](src/pages/TrackingPage.tsx). Job 2a from the payments go-live handoff.
+
+**Symptom:** `AdminDebugPanel` on the public tracking page `/t/<code>` could briefly render for a non-admin user during the window right after an account switch (an admin signs out, a different non-admin signs in).
+
+**Root cause:** `isAdmin` in `AuthContext` was not reset synchronously when `user.id` changed. `onAuthStateChange` ran `setUser(...)` immediately but only cleared `isAdmin` inside the async `ensureProfile` round-trip. Between the new user landing and that fetch resolving, the *previous* admin's `isAdmin=true` coexisted with the *new* user's identity → the admin UI shell rendered. The server (`requireAdmin`) still rejected the data fetch, so **no data leaked** — a visual flash only, not an exposure.
+
+**Fix (two layers):**
+- **Layer 1 — synchronous reset:** `setUser` now uses the functional-updater form to compare `prev.id` vs `next.id`; when they differ (account switch *or* sign-out), `setIsAdmin(false)` + `setProfileLoaded(false)` fire in the same React flush as the user-state update. No window where stale admin state coexists with a different identity. The old sign-out-only `setIsAdmin(false)` was folded in — sign-out is just the `next === null` case of an id change.
+- **Layer 2 — `profileLoaded` gate:** new boolean on `AuthContext`, `false` until `ensureProfile` resolves for the current user. `TrackingPage` gates the panel on `profileLoaded && isAdmin` — nothing admin-only renders on indeterminate state.
+
+**Generalizable rule:** admin-only UI must gate on `profileLoaded && isAdmin`, never `isAdmin` alone — an unqualified `isAdmin` can be stale across an identity change. Two other spots carry the same latent pattern (not security issues — server enforcement intact): `AdminModeToolbar.tsx` and `Admin.tsx`'s `fetchReport` effect; tighten with the same prefix when convenient.
+
+**Browser-verified:**
+  mcp-session: PENDING — the admin→non-admin account-switch race is not Playwright-drivable (needs two real accounts + the timing window). `tsc` + `vite build` clean. John to verify: switch from an admin account to a non-admin account while on a `/t/<code>` page and confirm the debug panel never flashes.
+
+---
+
+### [2026-05-20] Migration 028 — revoke anon/authenticated EXECUTE on `admin_insert_shipment`
+
+**Category:** chore | DB | Security
+**Cross-link:** `supabase/migrations/028_revoke_admin_rpc_grants.sql`, commit `4436dd6`. Job 2b from the payments go-live handoff; pairs with migration 027.
+
+**What:** The security advisor flagged `admin_insert_shipment` and `set_admin_active_mode` as SECURITY DEFINER functions executable by `anon`/`authenticated` via `/rest/v1/rpc/…`. Migration 028 closes the first one.
+
+**Investigation:** `admin_insert_shipment` has exactly one caller — `supabase/functions/labels/index.ts:849` — which uses a client built with `SUPABASE_SERVICE_ROLE_KEY` (role `service_role`, unaffected by an anon/authenticated revoke). Migration 025 had explicitly `GRANT EXECUTE … TO anon, authenticated` — dead weight; no JWT/anon path ever called it. **Safe to revoke.** `set_admin_active_mode` is **excluded** — it is called from the browser (`AuthContext.tsx`) with a user JWT (role `authenticated`), so that grant is load-bearing; migration 022 already locked it to `authenticated` only (no `anon` grant exists).
+
+**Migration:** `REVOKE EXECUTE ON FUNCTION public.admin_insert_shipment(<31-arg signature>) FROM anon, authenticated` — signature matches migration 025's canonical 31-param definition exactly. `service_role`/`postgres` grants untouched.
+
+**Status:** Committed to the repo — **not applied.** John applies it via the Supabase SQL Editor (Rule 0.5 — agents don't run prod DDL), then re-runs the advisor. The file carries its own post-apply verification query.
+
+**Browser-verified:**
+  n/a-category: migration
+  n/a-reason: grant-only DDL; no rendered surface or wire-shape consumer. The sole caller uses the service-role key, which the revoke does not affect.
+
+---
+
 ### [2026-05-20] Flex link creation still 400ing — `LinksEditor` never gated the phone
 
 **Category:** fix | Payments | Regression | Gotcha
