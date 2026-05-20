@@ -528,7 +528,7 @@ serve(async (req: Request) => {
         const recipientPhoneDigits = String(recipient_address?.phone ?? "").replace(/\D/g, "");
         if (recipientPhoneDigits.length < 10) {
             return new Response(
-                JSON.stringify({ error: "A phone number is required for the delivery address — FedEx and UPS require it for delivery." }),
+                JSON.stringify({ error: "We need a phone number for the delivery address — the shipping carriers require one to make the delivery." }),
                 { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
             );
         }
@@ -755,7 +755,7 @@ serve(async (req: Request) => {
             // cap, speed, etc. — skip this block entirely and aren't gated.
             if (phone.replace(/\D/g, "").length < 10) {
                 return new Response(
-                    JSON.stringify({ error: "A phone number is required for the delivery address — FedEx and UPS require it for delivery." }),
+                    JSON.stringify({ error: "We need a phone number for the delivery address — the shipping carriers require one to make the delivery." }),
                     { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
                 );
             }

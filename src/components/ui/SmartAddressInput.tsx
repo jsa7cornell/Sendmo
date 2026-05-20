@@ -368,7 +368,7 @@ export default function SmartAddressInput({ label, value, onChange, error, nameL
             {/* ── Phone (required for FedEx/UPS) ─────────────── */}
             <div>
                 <label htmlFor={`${label}-phone`} className="text-sm font-medium text-foreground">
-                    Phone number <span className="font-normal text-muted-foreground">(required for FedEx/UPS deliveries)</span>
+                    Phone number <span className="font-normal text-muted-foreground">(the shipping carriers insist on it — not us!)</span>
                 </label>
                 <input
                     id={`${label}-phone`}

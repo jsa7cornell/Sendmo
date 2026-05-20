@@ -189,7 +189,7 @@ export default function SenderStepPackage({
             <p className="font-medium">Please fix these before continuing:</p>
             <ul className="list-disc list-inside text-xs">
               {addrIncomplete && <li>Complete sender address</li>}
-              {phoneIncomplete && <li>Phone number (required for FedEx/UPS delivery)</li>}
+              {phoneIncomplete && <li>Phone number — the shipping carriers require it</li>}
               {tried && !length && <li>Length</li>}
               {tried && !width && <li>Width</li>}
               {tried && packaging !== "envelope" && !height && <li>Height</li>}

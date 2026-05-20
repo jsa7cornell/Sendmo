@@ -143,7 +143,7 @@ export function getValidationErrors(state: RecipientFlowState, step: number): st
   if (step === 1) {
     if (!state.destinationAddress.verified) errors.push("Destination address is required");
     else if (!state.destinationAddress.street) errors.push("Destination address is missing a street — please re-select it from the dropdown");
-    if (!hasUsablePhone(state.destinationAddress.phone)) errors.push("A phone number is required (FedEx and UPS require it for delivery)");
+    if (!hasUsablePhone(state.destinationAddress.phone)) errors.push("Add a phone number — the shipping carriers require it");
     if (!state.email.trim()) errors.push("Email is required");
     else if (!/^.+@.+\..+$/.test(state.email.trim())) errors.push("Enter a valid email address");
   }
@@ -167,7 +167,7 @@ export function getValidationErrors(state: RecipientFlowState, step: number): st
     if (!state.originAddress.name) errors.push("Sender name is required");
     if (!state.originAddress.verified) errors.push("Origin address is required");
     else if (!state.originAddress.street) errors.push("Origin address is missing a street — please re-select it from the dropdown");
-    if (!hasUsablePhone(state.originAddress.phone)) errors.push("A phone number is required (FedEx and UPS require it for delivery)");
+    if (!hasUsablePhone(state.originAddress.phone)) errors.push("Add a phone number — the shipping carriers require it");
 
     const l = parseFloat(state.dimensions.length);
     const w = parseFloat(state.dimensions.width);

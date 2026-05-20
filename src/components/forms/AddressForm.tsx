@@ -22,7 +22,7 @@ function hasUsablePhone(phone: string | undefined | null): boolean {
 
 export default function AddressForm({ value, tried, onChange }: Props) {
   const phoneError = tried && !hasUsablePhone(value.phone)
-    ? "FedEx and UPS require a phone number for delivery (USPS doesn't, but it's required for any link that might use FedEx or UPS)."
+    ? "We need a phone number here — the shipping carriers require one to make the delivery (not our rule, theirs!)."
     : undefined;
   return (
     <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
