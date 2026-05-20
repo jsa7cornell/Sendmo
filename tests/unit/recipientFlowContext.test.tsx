@@ -73,6 +73,7 @@ function StepDisplay() {
               city: "SF",
               state: "CA",
               zip: "94105",
+              phone: "4155550100",
               verified: true,
             },
             email: "test@test.com",

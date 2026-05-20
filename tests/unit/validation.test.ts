@@ -33,6 +33,7 @@ const verifiedAddr = () => ({
   city: "San Francisco",
   state: "CA",
   zip: "94107",
+  phone: "4155550100",
   verified: true,
 });
 

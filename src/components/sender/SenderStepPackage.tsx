@@ -54,6 +54,8 @@ export default function SenderStepPackage({
     const h = packaging === "envelope" ? 1 : parseFloat(height);  // envelope height defaults to 1in
     const wt = parseFloat(weightLbs);
     if (!senderAddress.street || !senderAddress.city || !senderAddress.state || !senderAddress.zip) return;
+    // Phone required — FedEx/UPS reject labels without it. 10-digit minimum.
+    if (senderAddress.phone.replace(/\D/g, "").length < 10) return;
     if (!l || !w || !h || !wt) return;
 
     onSubmit({
@@ -65,6 +67,7 @@ export default function SenderStepPackage({
   }
 
   const addrIncomplete = tried && (!senderAddress.street || !senderAddress.city || !senderAddress.state || !senderAddress.zip);
+  const phoneIncomplete = tried && senderAddress.phone.replace(/\D/g, "").length < 10;
   const dimsIncomplete = tried && (!length || !width || (packaging !== "envelope" && !height) || !weightLbs);
   const recipient = linkData.recipient_name?.trim();
   const cityState = linkData.recipient_city && linkData.recipient_state
@@ -180,11 +183,12 @@ export default function SenderStepPackage({
             className={`w-full rounded-xl border ${tried && !weightLbs ? "border-destructive" : "border-border"} bg-background px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary`} />
         </div>
 
-        {(addrIncomplete || dimsIncomplete) && (
+        {(addrIncomplete || phoneIncomplete || dimsIncomplete) && (
           <div className="rounded-xl border border-destructive/50 bg-destructive/5 px-4 py-3 text-sm text-destructive space-y-1">
             <p className="font-medium">Please fix these before continuing:</p>
             <ul className="list-disc list-inside text-xs">
               {addrIncomplete && <li>Complete sender address</li>}
+              {phoneIncomplete && <li>Phone number (required for FedEx/UPS delivery)</li>}
               {tried && !length && <li>Length</li>}
               {tried && !width && <li>Width</li>}
               {tried && packaging !== "envelope" && !height && <li>Height</li>}
