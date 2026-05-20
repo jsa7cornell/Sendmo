@@ -13,6 +13,7 @@ const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 // ─── Types ───────────────────────────────────────────────────
 
 import AddressFields from "@/components/ui/AddressFields";
+import StripePaymentForm from "@/components/recipient/StripePaymentForm";
 import type { AddressInput } from "@/lib/types";
 import { emptyAddress } from "@/lib/utils";
 import { isUsablePhone } from "@/lib/phone";
@@ -162,7 +163,10 @@ export default function LabelTest() {
     const [rates, setRates] = useState<Rate[]>([]);
     const [rateMessages, setRateMessages] = useState<string[]>([]);
 
-    // State 4 – Label
+    // State 4 – Payment
+    const [selectedRate, setSelectedRate] = useState<Rate | null>(null);
+
+    // State 5 – Label
     const [labelResult, setLabelResult] = useState<LabelResult | null>(null);
 
     // ─── API calls ─────────────────────────────────────────────
@@ -349,77 +353,59 @@ export default function LabelTest() {
         }
     }
 
-    async function purchaseLabel(rate: Rate) {
-        setStep(4);
-        setLoading(true);
-        setError(null);
-        try {
-            // Data needed by Edge function to construct mock records
-            const mockDataPayload = {
-                email: "test_label_generator@example.com",
-                from_name: fromAddr.name || "Test User",
-                to_name: toAddr.name || "Test Recipient",
-                rate_cents: (rate.display_price * 100),
-                weight_oz: (parseInt(parcel.weightLbs || "0", 10) * 16) + parseInt(parcel.weightOz || "0", 10),
-                length_in: parseFloat(parcel.length || "0"),
-                width_in: parseFloat(parcel.width || "0"),
-                height_in: parseFloat(parcel.height || "0"),
-            };
-
-            const res = await fetch(`${BASE_URL}/functions/v1/labels`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    "X-Session-ID": sessionId,
-                    "Authorization": `Bearer ${ANON_KEY}`
+    // Buys the EasyPost label. Called by StripePaymentForm.onSuccess once a
+    // real test-mode PaymentIntent has been created + confirmed — the labels
+    // Edge Function (Pattern D) requires payment_intent_id and verifies it is
+    // succeeded with metadata.easypost_shipment_id matching this shipment.
+    // Throws on failure so StripePaymentForm surfaces the error inline on the
+    // payment step (the card was already charged at that point).
+    async function purchaseLabel(rate: Rate, paymentIntentId: string) {
+        const res = await fetch(`${BASE_URL}/functions/v1/labels`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "X-Session-ID": sessionId,
+                "Authorization": `Bearer ${ANON_KEY}`
+            },
+            body: JSON.stringify({
+                live_mode: liveMode,
+                easypost_shipment_id: rate.easypost_shipment_id,
+                easypost_rate_id: rate.easypost_rate_id,
+                from_address: {
+                    name: fromAddr.name,
+                    street1: fromAddr.street,
+                    city: fromAddr.city,
+                    state: fromAddr.state,
+                    zip: fromAddr.zip,
+                    country: "US",
+                    phone: fromAddr.phone,
                 },
-                body: JSON.stringify({
-                    live_mode: liveMode,
-                    easypost_shipment_id: rate.easypost_shipment_id,
-                    easypost_rate_id: rate.easypost_rate_id,
-                    from_address: {
-                        name: fromAddr.name,
-                        street1: fromAddr.street,
-                        city: fromAddr.city,
-                        state: fromAddr.state,
-                        zip: fromAddr.zip,
-                        country: "US",
-                        phone: fromAddr.phone,
-                    },
-                    to_address: {
-                        name: toAddr.name,
-                        street1: toAddr.street,
-                        city: toAddr.city,
-                        state: toAddr.state,
-                        zip: toAddr.zip,
-                        country: "US",
-                        phone: toAddr.phone,
-                    },
-                    parcel: {
-                        length_in: parseFloat(parcel.length || "0"),
-                        width_in: parseFloat(parcel.width || "0"),
-                        height_in: parseFloat(parcel.height || "0"),
-                        weight_oz: (parseInt(parcel.weightLbs || "0", 10) * 16) + parseInt(parcel.weightOz || "0", 10),
-                    },
-                    display_price_cents: Math.round(rate.display_price * 100),
-                    mock_data: mockDataPayload,
-                }),
-            });
-            if (!res.ok) {
-                const body = await res.json().catch(() => ({}));
-                throw new Error(body.error || `Label creation failed (${res.status})`);
-            }
-            const data = await res.json();
-            setLabelResult(data);
-
-            // DB persistence is now handled entirely within the `labels` Edge Function.
-            // Both live and test labels are recorded, and is_test/is_live flags are applied automatically.
-
-        } catch (err: unknown) {
-            setError(`${err instanceof Error ? err.message : "Label creation failed"} (Session ID: ${sessionId})`);
-        } finally {
-            setLoading(false);
+                to_address: {
+                    name: toAddr.name,
+                    street1: toAddr.street,
+                    city: toAddr.city,
+                    state: toAddr.state,
+                    zip: toAddr.zip,
+                    country: "US",
+                    phone: toAddr.phone,
+                },
+                parcel: {
+                    length_in: parseFloat(parcel.length || "0"),
+                    width_in: parseFloat(parcel.width || "0"),
+                    height_in: parseFloat(parcel.height || "0"),
+                    weight_oz: (parseInt(parcel.weightLbs || "0", 10) * 16) + parseInt(parcel.weightOz || "0", 10),
+                },
+                display_price_cents: Math.round(rate.display_price * 100),
+                payment_intent_id: paymentIntentId,
+            }),
+        });
+        if (!res.ok) {
+            const body = await res.json().catch(() => ({}));
+            throw new Error(`${body.error || `Label creation failed (${res.status})`} (Session ID: ${sessionId})`);
         }
+        const data = await res.json();
+        setLabelResult(data);
+        setStep(5);
     }
 
     function startOver() {
@@ -431,6 +417,7 @@ export default function LabelTest() {
         setParcel(defaultParcel());
         setRates([]);
         setRateMessages([]);
+        setSelectedRate(null);
         setLabelResult(null);
         setError(null);
     }
@@ -475,7 +462,7 @@ export default function LabelTest() {
 
     // ─── Step indicator ────────────────────────────────────────
 
-    const steps = ["Addresses", "Package", "Rates", "Label"];
+    const steps = ["Addresses", "Package", "Rates", "Payment", "Label"];
 
     // ─── Carrier restrictions from verified address ────────────
     const toAddr_uspsOnly = !!(verifiedAddresses?.to_address as any)?.usps_only;
@@ -886,7 +873,11 @@ export default function LabelTest() {
                                                     </motion.span>
                                                     <Button
                                                         size="sm"
-                                                        onClick={() => purchaseLabel(rate)}
+                                                        onClick={() => {
+                                                            setError(null);
+                                                            setSelectedRate(rate);
+                                                            setStep(4);
+                                                        }}
                                                         className="rounded-xl shadow-sm"
                                                     >
                                                         Select
@@ -900,10 +891,52 @@ export default function LabelTest() {
                         </motion.div>
                     )}
 
-                    {/* ─── STATE 4: Label Ready ───────────────────────── */}
-                    {step === 4 && (
+                    {/* ─── STATE 4: Payment ───────────────────────────── */}
+                    {step === 4 && selectedRate && (
                         <motion.div
                             key="step4"
+                            variants={stepVariants}
+                            initial="initial"
+                            animate="animate"
+                            exit="exit"
+                            transition={{ duration: 0.25 }}
+                            className="space-y-4"
+                        >
+                            <div className="bg-card rounded-2xl border border-border shadow-sm p-5 space-y-3">
+                                <div className="flex items-center justify-between">
+                                    <h2 className="text-lg font-semibold">Payment</h2>
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => setStep(3)}
+                                        className="rounded-xl text-xs"
+                                    >
+                                        Back
+                                    </Button>
+                                </div>
+                                <p className="text-sm text-muted-foreground">
+                                    {carrierDisplayName(selectedRate.carrier)} ·{" "}
+                                    {serviceDisplayName(selectedRate.service)} · $
+                                    {selectedRate.display_price.toFixed(2)}
+                                </p>
+                            </div>
+
+                            <StripePaymentForm
+                                totalCents={Math.round(selectedRate.display_price * 100)}
+                                easypostShipmentId={selectedRate.easypost_shipment_id}
+                                liveMode={liveMode}
+                                receiptEmail="test_label_generator@example.com"
+                                onSuccess={(paymentIntentId) =>
+                                    purchaseLabel(selectedRate, paymentIntentId)
+                                }
+                            />
+                        </motion.div>
+                    )}
+
+                    {/* ─── STATE 5: Label Ready ───────────────────────── */}
+                    {step === 5 && (
+                        <motion.div
+                            key="step5"
                             variants={stepVariants}
                             initial="initial"
                             animate="animate"
