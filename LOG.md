@@ -12,6 +12,26 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-19] Phone field — format-as-you-type + international support
+
+**Category:** ship | Address forms | Dependency
+**Cross-link:** commits `9d9b55b`, `ef48637`. Follow-up to the phone-required entry below.
+
+**What:** The phone field now formats as the user types (`4086790449` → `(408) 679-0449`) and accepts international numbers (a leading `+` formats per detected country — `+44…` → `+44 20 7946 0958`). No country dropdown — `+`-prefix only (John's call; fits SendMo's US-shipping focus).
+
+**Dependency:** added `libphonenumber-js` (Google's libphonenumber, JS port). Hand-rolled international phone formatting is a known rabbit hole; the library is the canonical, extensible tool — adding it satisfies Rule 6 (standard, not a one-off). New `src/lib/phone.ts` wraps it: `formatPhoneAsYouType` (AsYouType) + `isUsablePhone` (`isPossiblePhoneNumber`). All client validators + the `links` Edge Function (imports from esm.sh, Deno-compatible) use `isUsablePhone` — replaces the rigid 10-US-digit count so valid intl numbers aren't rejected.
+
+**Gotcha — delete detection.** First cut used "new value shorter than previous" to detect a deletion (to skip reformatting, which otherwise traps the cursor on a separator). Browser-verify caught it: a **paste** of a shorter number over a longer one (intl over US) is shorter → mis-classified as a deletion → never formatted. Fix: read `InputEvent.inputType` instead — `delete*` → passthrough; `insertText`/`insertFromPaste` → format. **Generalizable:** to tell typing/paste from deletion in an onChange handler, use `e.nativeEvent.inputType`, not value-length diffing.
+
+**Browser-verified:**
+  mcp-session: Playwright against https://sendmo.co/onboarding/flexible/destination (bundle `index-Dbi_GZ2b.js`), 2026-05-20T03:38Z
+  variants-covered:
+    - {type US digits → progressive (408) 679-0449 format} ✓
+    - {backspace ×3 → clean deletion, no separator re-trap} ✓
+    - {paste +442079460958 → +44 20 7946 0958 (international)} ✓
+
+---
+
 ### [2026-05-19] Phone numbers required on every address (FedEx/UPS PHONENUMBEREMPTY)
 
 **Category:** fix | ship | Address forms | Carrier integration | Edge Functions | Migration
