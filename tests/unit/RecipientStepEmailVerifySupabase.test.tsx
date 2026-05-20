@@ -112,7 +112,13 @@ describe("RecipientStepEmailVerifySupabase", () => {
     for (let i = 0; i < 6; i++) {
       await user.type(screen.getByLabelText(`Digit ${i + 1}`), String(i + 1));
     }
-    await user.click(screen.getByRole("button", { name: /Verify and continue/i }));
+    // The Verify button is disabled until all 6 digit setStates commit. Wait
+    // for it to be enabled before clicking — otherwise a click that lands on
+    // the still-disabled button is a no-op and the test flakes (the 6th-digit
+    // re-render races the click).
+    const verifyBtn = screen.getByRole("button", { name: /Verify and continue/i });
+    await waitFor(() => expect(verifyBtn).toBeEnabled());
+    await user.click(verifyBtn);
 
     await waitFor(() => {
       expect(mockVerifyOtp).toHaveBeenCalledWith({
@@ -134,7 +140,12 @@ describe("RecipientStepEmailVerifySupabase", () => {
     for (let i = 0; i < 6; i++) {
       await user.type(screen.getByLabelText(`Digit ${i + 1}`), "1");
     }
-    await user.click(screen.getByRole("button", { name: /Verify and continue/i }));
+    // Wait for the Verify button to enable (all 6 digit setStates committed)
+    // before clicking — clicking a still-disabled button is a no-op and the
+    // test flakes. See sibling test above.
+    const verifyBtn = screen.getByRole("button", { name: /Verify and continue/i });
+    await waitFor(() => expect(verifyBtn).toBeEnabled());
+    await user.click(verifyBtn);
     await waitFor(() => expect(screen.getByText(/Token has expired/i)).toBeInTheDocument());
   });
 
