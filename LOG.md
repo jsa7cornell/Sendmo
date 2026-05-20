@@ -247,7 +247,35 @@ variants-covered: 4 lifecycle states × 3 viewer roles ; existing F3 family pres
 
 ---
 
+### [2026-05-19] Flex payment step — saved-card row + `/links/:id/activate` (supersedes the #14 auto-skip)
+
+**Category:** ship | Payments | Pattern D | UX
+**Cross-link:** commits `d8d8bfa`, `927ece5`, `066d527`. Supersedes the auto-skip half of the [2026-05-18 LinksEditor inline-SetupIntent entry](#) below.
+
+**The arc.** The #14 work (below) shipped an auto-skip: a returning user with a usable saved PM had their flex link created `'active'` server-side and was bounced straight past the payment step to the LinkShareCard. John tested it and rejected it — *"it skips through the payment step altogether"*. The intent was never "skip the step"; it was "show the payment step **with my saved card as the option to confirm**." Initial design Q ("Skip Step 2 entirely") was read too literally.
+
+**What landed (final state):**
+- **Reverted the auto-skip** (`927ece5`): `FlexPaymentStep` always creates the link `initial_status: 'draft'` and always renders the payment step. Removed the Step-1 `status==='active'` skip and the `d8d8bfa` "existing active linkId" skip.
+- **Saved-card row** (`066d527`): on mount `FlexPaymentStep` fetches the user's default PM in the link's mode (RLS-scoped `payment_methods` select). If a non-expired one exists, it renders a native card row — "Visa ending in 4242 · Expires 12/2028 · Primary card on file" — with an **"Activate link with Visa ending 4242"** button, plus an "Or use a different card" toggle that expands the existing Stripe Elements `SetupIntent` form. The saved-card row is **our own DB data rendered natively** — no Stripe iframe. Step 2's `SetupIntent` is now gated on `useNewCard` so returning users don't burn one.
+- **New server endpoint** `POST /functions/v1/links/:id/activate` (`links/index.ts`): auth'd; verifies link ownership + `draft` status (idempotent on `active`); re-checks a usable default PM exists in the link's mode (mirrors `is_funded`); flips `status → active` + writes a `link_state_events` `activated` row. No Stripe call — the PM is already attached from a prior SetupIntent; the link just needs its status flipped. 412 when no usable PM, 409 on a non-draft/non-active link.
+
+**Architecture note:** activation never touches Stripe. The off_session charge against the saved PM still happens later in the `labels` Edge Function when a sender actually ships. `/links/:id/activate` is purely a DB status flip.
+
+**Browser-verified:**
+  mcp-session: deployed-bundle checks (endpoint 401-gates unauthenticated; bundle carries the saved-card JSX + activate call) + John exercised the saved-card → Activate path live and reached the LinkShareCard.
+  variants-covered: [returning user w/ default PM → saved-card row + Activate, "use a different card" → Stripe Elements expands, no-PM user → Stripe Elements directly]
+
+---
+
 ### [2026-05-18] LinksEditor `/links/new` — inline SetupIntent (Pattern D follow-up)
+
+> **⚠️ PARTIALLY SUPERSEDED 2026-05-19.** The "returning users skip Step 2
+> entirely" auto-skip described below was reverted — it bounced returning
+> users past the payment step without letting them see/confirm their card.
+> Replaced by the saved-card row + `/links/:id/activate` endpoint — see the
+> **[2026-05-19] Flex payment step — saved-card row** entry above. The
+> `<FlexPaymentStep>` extraction + 2-step LinksEditor wizard below are still
+> accurate; only the auto-skip half changed.
 
 **Category:** ship | Payments | Pattern D
 **Cross-link:** [PAYMENTS.md](PAYMENTS.md) §7 item 5 | [proposals/2026-05-16_flex-payment-pattern-d-execution_reviewed-2026-05-16_decided-2026-05-18.md](proposals/2026-05-16_flex-payment-pattern-d-execution_reviewed-2026-05-16_decided-2026-05-18.md) (Pattern D)
