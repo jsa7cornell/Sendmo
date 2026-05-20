@@ -189,6 +189,8 @@ Superseded proposals (preserved for institutional memory):
 
 ## 7. Open items / known gaps
 
+> **Go-live status (2026-05-19):** the flex money-path (off_session charge, decline-recovery email, reactivation) has **not been verified end-to-end** since Pattern D shipped, and the FedEx phone fix has not been confirmed against a real purchase. Live-mode Stripe/EasyPost keys + webhook subscriptions are not yet configured. Full punch-list + go-live infra checklist: [`proposals/2026-05-19_payments-golive-followups-handoff.md`](proposals/2026-05-19_payments-golive-followups-handoff.md).
+
 10 follow-ups in WISHLIST under "Added 2026-05-18 — Pattern D follow-ups". Highest-value items:
 
 1. **ZDA verification at SetupIntent save (Pattern D')** — flip on if telemetry shows decline-rate issues

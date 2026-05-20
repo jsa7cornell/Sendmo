@@ -12,6 +12,27 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-19] Security advisor — dropped 7 dead Prisma/NextAuth tables (migration 026)
+
+**Category:** chore | DB | Security
+**Cross-link:** `supabase/migrations/026_drop_legacy_prisma_tables.sql`, commit `e1e3c82`. Follow-up cleanup (view + functions) tracked in migration 027 (separate session).
+
+**Trigger:** Supabase emailed a security advisory — 2 CRITICALs on the SendMo project. `get_advisors` showed 8 ERROR-level findings: `rls_disabled_in_public` ×7 + `sensitive_columns_exposed` ×1.
+
+**Root cause:** 7 PascalCase tables (`User`, `Account`, `Session`, `Address`, `Request`, `Event`, `Notification`) — dead leftovers from the pre-Supabase **Prisma/NextAuth backend**. In `public` with RLS off → readable/writable with the anon key. `Account` carried NextAuth `access_token`/`refresh_token` columns (the "sensitive data" flag — empty, so nothing actually leaked, but the table existing + RLS-off was the latent exposure).
+
+**Investigation before the drop:** 6 tables empty; `Address` (PascalCase, distinct from the live `addresses`) had 4 rows — all Feb-2026 Prisma-era test data (`cuid` IDs, `231 Canyon Dr` EasyPost test verifications, `userId=null` orphans). No FKs from live tables, no dependent views, **zero codebase references** (no `@prisma` imports, no `.from("User")`). Confirmed dead.
+
+**Fix:** migration 026 `DROP TABLE … CASCADE` on all 7 (CASCADE clears NextAuth's intra-set FKs; nothing external affected). Applied by John via the Supabase SQL Editor. Verified post-apply: the 7 tables are gone and the advisor shows **zero `rls_disabled_in_public` errors** (was 7) and no `Account` `sensitive_columns_exposed`.
+
+**Still open (migration 027, spawned separately):** 1 ERROR (`security_definer_view` on `user_wallet_balance`) + WARNs (`function_search_path_mutable` ×2, `handle_new_user` anon-executable). Deliberately deferred from 027: the `admin_insert_shipment` / `set_admin_active_mode` anon-grant WARNs — those need confirming whether the labels Edge Function calls the RPC with the service-role key before the grant can be safely dropped (tracked in the payments handoff). The 3 `rls_enabled_no_policy` INFO findings (`event_logs`, `notification_contacts`, `notifications_log`) are **not vulnerabilities** — RLS-on + no-policy = deny-all to anon/authenticated, correct for service-role-written tables.
+
+**Browser-verified:**
+  n/a-category: migration
+  n/a-reason: schema-only DROP of unused tables; no rendered surface or wire-shape consumer. Verified via post-apply `information_schema` query + advisor re-run.
+
+---
+
 ### [2026-05-19] "Continuing…" spinner stuck after Google OAuth return — auto-advance guard drift
 
 **Category:** fix | Onboarding | OAuth | Footgun

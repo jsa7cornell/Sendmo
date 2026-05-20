@@ -1,5 +1,12 @@
 # Handoff — Pattern D verification + follow-ups
 
+> **⚠️ SUPERSEDED 2026-05-19** by [`2026-05-19_payments-golive-followups-handoff.md`](2026-05-19_payments-golive-followups-handoff.md).
+> The Pattern D verification steps F1–F6 below were only partly run; the
+> outstanding ones are carried forward as Job 1 of the new handoff. Several
+> follow-ups here shipped on 2026-05-19 (LinksEditor inline SetupIntent,
+> tracking unification, etc. — see LOG.md). Read the new handoff first; keep
+> this one for the verification-step detail + debugging cheat-sheet.
+
 > Paste the body below into a fresh Claude Code session at `~/AI Brain/sendmo/`. Pattern D shipped 2026-05-18 (commit `69ac58b`); the migration was applied manually by John. This handoff covers what still needs to happen.
 
 ---
