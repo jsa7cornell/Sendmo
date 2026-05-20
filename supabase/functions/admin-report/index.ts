@@ -57,6 +57,7 @@ serve(async (req: Request) => {
                 link_type,
                 status,
                 created_at,
+                is_test,
                 profiles ( email ),
                 shipments (
                     id,

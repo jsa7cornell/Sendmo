@@ -116,7 +116,11 @@ export default function Admin() {
                 const emailStr = (email || "").toLowerCase();
 
                 if (shs.length === 0) {
-                    const isTestEmail = emailStr.includes("test") || emailStr.includes("example.com");
+                    // is_test comes from the DB (sendmo_links.is_test), never client heuristics.
+                    // Per PLAYBOOK Rule 14: the server sets this; the email pattern check is
+                    // unreliable and was violating rule 14. Links without shipments fall back
+                    // to the link-level is_test flag.
+                    const linkIsTest = link.is_test ?? true; // default true = fail-safe
                     rows.push({
                         created_at: link.created_at,
                         link_id: link.short_code,
@@ -136,8 +140,8 @@ export default function Admin() {
                         label_url: null,
                         refund_status: "none",
                         shipment_created_at: link.created_at,
-                        is_test: isTestEmail,
-                        is_live: !isTestEmail,
+                        is_test: linkIsTest,
+                        is_live: !linkIsTest,
                         sender_name: null,
                         recipient_name: null,
                     });
@@ -173,7 +177,11 @@ export default function Admin() {
 
 
                         rows.push({
-                            created_at: link.created_at,
+                            // Use shipment creation date, not link creation date.
+                            // A flex link can be reused across multiple shipments at different times;
+                            // the "Date" column should reflect when the label was bought, not when
+                            // the link was originally created.
+                            created_at: sh.created_at || link.created_at,
                             link_id: link.short_code,
                             link_type: link.link_type,
                             link_status: link.status,
@@ -313,9 +321,14 @@ export default function Admin() {
         return null;
     };
 
-    // Summaries
-    const totalCollected = filteredData.reduce((sum, r) => sum + (r.collected_cents || 0), 0);
-    const totalLabelCost = filteredData.reduce((sum, r) => sum + (r.label_cost_cents || 0) + (r.insurance_cost_cents || 0), 0);
+    // Summaries — exclude cancelled shipments from cost/margin.
+    // Cancelled labels were voided with the carrier (EasyPost absorbs the cost for pre-Stripe
+    // labels with no Stripe PI; Stripe refund handles post-Phase-E ones). Counting their
+    // rate_cents as a "label cost" in the summary bar inflates costs without a matching
+    // revenue entry, which makes the margin look worse than it really is.
+    const activeRows = filteredData.filter(r => r.shipment_status !== "cancelled");
+    const totalCollected = activeRows.reduce((sum, r) => sum + (r.collected_cents || 0), 0);
+    const totalLabelCost = activeRows.reduce((sum, r) => sum + (r.label_cost_cents || 0) + (r.insurance_cost_cents || 0), 0);
     const totalMargin = totalCollected - totalLabelCost;
 
     return (

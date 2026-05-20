@@ -325,7 +325,11 @@ serve(async (req: Request) => {
         //
         // Decision table after a successful (non-rejected) EasyPost void:
         //   epRefundStatus='rejected'  → 'rejected'         (already-scanned label)
-        //   no Stripe PI              → 'not_applicable'   (comp; final state)
+        //   no Stripe PI              → 'not_applicable'   (comp shipments OR pre-Stripe "card"
+        //                                                   labels that predate Phase E — no
+        //                                                   Stripe charge was made, so nothing to
+        //                                                   Stripe-refund; final state regardless
+        //                                                   of what EasyPost's epRefundStatus says)
         //   has Stripe PI             → 'submitted'        (Phase E happy path)
         let refundStatusToWrite: string;
         if (epRefundStatus === "rejected") {
