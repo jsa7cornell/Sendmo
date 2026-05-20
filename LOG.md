@@ -12,6 +12,39 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-19] Phone numbers required on every address (FedEx/UPS PHONENUMBEREMPTY)
+
+**Category:** fix | ship | Address forms | Carrier integration | Edge Functions | Migration
+**Cross-link:** commits `9635058` (core change), `9ec006d` (client validation gating), `4883777` (null-safe crash fix); migration `025_admin_insert_shipment_phone.sql`. Fresh-eyes mini-review run before implementation — 5 blocking findings, all incorporated.
+
+**Problem:** FedEx and UPS reject EasyPost label purchases without a phone number on both shipper and recipient addresses (`PHONENUMBEREMPTY`); USPS doesn't require it. SendMo's `addresses` table had a nullable `phone` column and the `AddressInput` type had no phone field at all — **no form anywhere collected a phone.** Any flex link routed to FedEx failed at the `/labels` call. Reproed on link `4eRwtdVffe`.
+
+**Audit (per John's "triple-check for escape hatches" ask):** `AddressForm` → `SmartAddressInput` is the single shared address-entry component; every form uses it. The only paths that create `addresses` rows: `links` Edge Function (POST + PATCH), the `admin_insert_shipment` RPC, and `test-db-insert` (test fixture). No admin/profile/settings surface writes addresses. So fixing `SmartAddressInput` + the two server paths covers 100% of address creation.
+
+**What landed:**
+- **Client:** `AddressInput.phone` is now a required string. `SmartAddressInput` renders a required `tel` phone field below the address; all `onChange` paths preserve phone across autocomplete-pick / reset (was getting wiped). `AddressForm` shows a 10-digit-minimum validation error. `addressToApi` includes phone + fails loud if missing. `emptyAddress()` seeds `phone:""` — two duplicate local `emptyAddress` definitions (LabelTest, SenderPreview) deleted in favor of the canonical one (Rule 6). Prefill paths pull phone from saved address / profile.
+- **Step-advance gating:** `getValidationErrors` step 1 (destination) + step 10 (full-label origin) require a 10-digit phone; `SenderStepPackage` gates its Continue + lists the missing phone. *(This was a follow-up — the field rendered but didn't block advance until `9ec006d`; caught in browser-verify.)*
+- **Server:** `links` POST validates + persists recipient phone (400 if <10 digits); PATCH validates phone **only when `recipient_address` is in the payload** (price-cap-only edits aren't gated). `rates` pulls phone from the recipient address row for the flex `to_address`. `labels` pulls recipient phone for flex, passes `p_from_phone`/`p_to_phone` to the RPC, and rewrites the raw EasyPost `PHONENUMBEREMPTY` error into an actionable message for legacy links.
+- **Migration 025:** appends `p_from_phone` + `p_to_phone` (`DEFAULT NULL`) to `admin_insert_shipment`. **Zero-downtime by design** — trailing params + `DEFAULT NULL` + the RPC being called with *named* params means old and new labels-fn both resolve against the 31-param function, so migration/Edge-Function deploy order doesn't matter. Explicit `DROP` of the exact 29-arg signature first (per the migration-018/019 overload-collision footgun). Applied to prod via Supabase dashboard; verified `pg_proc` shows exactly 1 row, `pronargs=31`.
+
+**Runtime-shape footgun (caught in browser-verify, fixed in `4883777`):** `AddressInput.phone` is a required string in the *type*, but state objects rehydrated from `sessionStorage` (`sendmo:recipient_flow:v1`, `sendmo:sender:v1`) created before this change have no `phone` key — `undefined` at runtime. `hasUsablePhone` called `.replace` directly → `TypeError: Cannot read properties of undefined`. Fix: `String(phone ?? "")` guards everywhere a deserialized phone is touched. **Generalizable:** a non-optional TS field does NOT guarantee runtime presence for anything that round-trips through `JSON.parse` (sessionStorage, localStorage, API responses). Guard deserialized data at the boundary.
+
+**Scope decision (John):** historical addresses are NOT backfilled — links created before this change (incl. `4eRwtdVffe`) fail FedEx/UPS until the owner edits the address. The `labels` function gives those a clear message, and USPS still works for them.
+
+**Browser-verified:**
+  mcp-session: Playwright against https://sendmo.co/onboarding/flexible/destination (bundle `index-DQdpDjRp.js`), 2026-05-20T02:18Z
+  variants-covered:
+    - {phone field renders — tel input, label "Phone number (required for FedEx/UPS deliveries)", placed below address} ✓
+    - {empty phone → Continue blocked, "A phone number is required" surfaces in the step error list} ✓
+    - {valid phone entered → phone error clears on next validate; unrelated address error correctly remains} ✓
+    - {no runtime console errors after the null-safe fix — prior bundle threw TypeError on the same click} ✓
+  not-covered (needs authed session + live shipment — owed to John):
+    - full flex flow: create link with phone → sender ships via FedEx → label purchase succeeds end-to-end
+    - admin_insert_shipment actually persisting phone on the addresses rows
+    - the EasyPost FedEx buy clearing PHONENUMBEREMPTY with phone present
+
+---
+
 ### [2026-05-19] Onboarding step-advance race — `navigate()` vs `setData()` ordering (footgun)
 
 **Category:** fix | Onboarding | State-machine | Footgun
