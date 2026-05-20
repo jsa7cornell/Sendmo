@@ -382,6 +382,8 @@ npm run test:e2e          # playwright tests
 ## E2e Testing (Playwright)
 
 > Convention established 2026-05-20. Specs live in `tests/e2e/*.spec.ts`; config in `playwright.config.ts`.
+>
+> **Full test-infra map:** [`TESTING.md`](TESTING.md) — all four test layers (unit / integration / e2e / browser-verify), the run commands, and which ones hit real services. This section below remains the authoritative source for **e2e conventions** specifically.
 
 ### How specs are organized
 
