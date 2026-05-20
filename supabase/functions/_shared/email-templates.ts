@@ -103,7 +103,7 @@ export function labelConfirmationEmail(params: {
   const amountRow = priceDisplay ? summaryRow("Amount", priceDisplay) : "";
 
   return {
-    subject: "Your shipping label is ready — SendMo",
+    subject: "A label was printed using your prepaid link — SendMo",
     html: layout(`
       <h2 style="margin:0 0 8px;font-size:20px;font-weight:600;color:#111827;">Label created!</h2>
       <p style="margin:0 0 24px;font-size:14px;color:${GRAY_600};line-height:1.5;">

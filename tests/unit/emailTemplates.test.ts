@@ -43,9 +43,9 @@ describe("labelConfirmationEmail", () => {
     trackingUrl: "https://sendmo.co/t/ABC1234",
   };
 
-  it("subject references the shipping label", () => {
+  it("subject matches the prepaid link copy", () => {
     const result = labelConfirmationEmail(baseParams);
-    expect(result.subject).toContain("shipping label");
+    expect(result.subject).toContain("A label was printed using your prepaid link");
   });
 
   it("embeds public code, carrier tracking number, carrier, and ETA", () => {
