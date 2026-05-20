@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 
@@ -103,19 +103,27 @@ describe("RecipientStepEmailVerifySupabase", () => {
     expect(screen.getByRole("button", { name: /Verify and continue/i })).toBeInTheDocument();
   });
 
+  // Fill all 6 OTP digit inputs. Uses fireEvent.change (synchronous, no
+  // focus management) rather than userEvent.type — the latter juggles focus
+  // across the 6 auto-advancing inputs and that race made this test flaky in
+  // CI (the Verify button stayed disabled because not all 6 setStates had
+  // committed when the assertion ran). fireEvent.change commits each digit
+  // deterministically.
+  function fillOtp(code: string) {
+    for (let i = 0; i < code.length; i++) {
+      fireEvent.change(screen.getByLabelText(`Digit ${i + 1}`), {
+        target: { value: code[i] },
+      });
+    }
+  }
+
   it("calls supabase.auth.verifyOtp with the typed code and marks verified", async () => {
     const onUpdate = vi.fn();
     const user = userEvent.setup();
     renderStep({ onUpdate });
     await waitFor(() => screen.getByLabelText("Digit 1"));
 
-    for (let i = 0; i < 6; i++) {
-      await user.type(screen.getByLabelText(`Digit ${i + 1}`), String(i + 1));
-    }
-    // The Verify button is disabled until all 6 digit setStates commit. Wait
-    // for it to be enabled before clicking — otherwise a click that lands on
-    // the still-disabled button is a no-op and the test flakes (the 6th-digit
-    // re-render races the click).
+    fillOtp("123456");
     const verifyBtn = screen.getByRole("button", { name: /Verify and continue/i });
     await waitFor(() => expect(verifyBtn).toBeEnabled());
     await user.click(verifyBtn);
@@ -137,12 +145,8 @@ describe("RecipientStepEmailVerifySupabase", () => {
     const user = userEvent.setup();
     renderStep({});
     await waitFor(() => screen.getByLabelText("Digit 1"));
-    for (let i = 0; i < 6; i++) {
-      await user.type(screen.getByLabelText(`Digit ${i + 1}`), "1");
-    }
-    // Wait for the Verify button to enable (all 6 digit setStates committed)
-    // before clicking — clicking a still-disabled button is a no-op and the
-    // test flakes. See sibling test above.
+
+    fillOtp("111111");
     const verifyBtn = screen.getByRole("button", { name: /Verify and continue/i });
     await waitFor(() => expect(verifyBtn).toBeEnabled());
     await user.click(verifyBtn);

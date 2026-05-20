@@ -66,7 +66,30 @@ describe("Step 1 validation", () => {
     expect(errors).toContain("Enter a valid email address");
   });
 
-  it("passes when address verified and email valid", () => {
+  it("errors when phone is missing", () => {
+    // FedEx/UPS reject labels without a phone — step 1 must require it.
+    const errors = getValidationErrors(
+      makeState({
+        destinationAddress: { ...verifiedAddr(), phone: "" },
+        email: "test@example.com",
+      }),
+      1,
+    );
+    expect(errors.some((e) => /phone number/i.test(e))).toBe(true);
+  });
+
+  it("errors when phone is too short to be a real number", () => {
+    const errors = getValidationErrors(
+      makeState({
+        destinationAddress: { ...verifiedAddr(), phone: "12345" },
+        email: "test@example.com",
+      }),
+      1,
+    );
+    expect(errors.some((e) => /phone number/i.test(e))).toBe(true);
+  });
+
+  it("passes when address verified, phone present, and email valid", () => {
     const errors = getValidationErrors(
       makeState({ destinationAddress: verifiedAddr(), email: "test@example.com" }),
       1,
@@ -124,6 +147,20 @@ describe("Step 10 validation", () => {
       10,
     );
     expect(errors).toContain("Select a shipping method");
+  });
+
+  it("errors when origin phone is missing", () => {
+    // FedEx/UPS require a phone on the shipper address too, not just recipient.
+    const errors = getValidationErrors(
+      makeState({
+        originAddress: { ...verifiedAddr(), phone: "" },
+        dimensions: { length: "10", width: "10", height: "10" },
+        weight: { lbs: "5", oz: "0" },
+        selectedRate: mockRate,
+      }),
+      10,
+    );
+    expect(errors.some((e) => /phone number/i.test(e))).toBe(true);
   });
 
   it("passes when all fields valid", () => {
