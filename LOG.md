@@ -12,6 +12,39 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-20] Flex link creation still 400ing — `LinksEditor` never gated the phone
+
+**Category:** fix | Payments | Regression | Gotcha
+**Cross-link:** commit `b1e6715`. Follow-on to `d2dde62` (same root requirement, different gap). `tests/unit/LinksEditor.test.tsx` added.
+
+**Symptom:** After `d2dde62` shipped, John reported a user *"inputted a phone number but then got this error later on"* — the `links` Edge Function still returned `POST /links → 400` (3 hits at 13:29 UTC, version 42).
+
+**Telemetry first (Rule 20):** `get_logs edge-function` showed the 3 fresh 400s; the `addresses` table had no matching new row (validation 400s *before* the address insert). `d2dde62` was confirmed deployed (prod bundle `index-SyekgKK3.js`, origin/main past `d2dde62`); the `CreateLinkParams` type, all 3 callers, and every `SmartAddressInput` `onChange` path correctly carry `phone`. So the wiring was intact — the gap was elsewhere.
+
+**Root cause:** `LinksEditor` (the dashboard `/links/new` create + edit flow) only validated address-verified + address-complete before advancing. **Phone was never in its `errors` array and never gated `handleContinueToPayment` / `handleEditSubmit`.** The onboarding flow gates phone at step 1 (`useRecipientFlow.getValidationErrors`); the dashboard flow did not. A user with a missing or *incomplete* phone (e.g. a half-typed number) sailed past the details step → `FlexPaymentStep` called `createFlexLink` with the bad phone → server 400 → the failure surfaced as a raw *"We need a phone number…"* server error on the "Add your card" step with no card form. `AddressForm` showed the inline phone error, but nothing *blocked* the step transition.
+
+**Fix:** `LinksEditor` now computes `phoneOk = isUsablePhone(value.address.phone)`, pushes a phone error into the `errors` summary when `tried`, and both `handleContinueToPayment` and `handleEditSubmit` gate on `phoneOk`. Mirrors the onboarding flow exactly — extends the existing `errors` + `tried` pattern, no new construct (Rule 6).
+
+**Generalizable rule:** a multi-step form where one step posts to a server that validates field X **must** validate X in the *step-transition guard*, not just render an inline error. Two flows reaching the same endpoint (`FlexPaymentStep` → `createFlexLink`) must apply the same gate — onboarding gated phone, the dashboard flow didn't, and the divergence shipped green. When adding a server requirement, audit *every* client path to that endpoint.
+
+**Tests:** `tests/unit/LinksEditor.test.tsx` — 5 regression tests: missing phone and incomplete phone both block the create→payment transition; a valid phone advances; missing phone blocks the edit submit; a valid phone calls `updateFlexLink`.
+
+**Browser-verified:**
+  mcp-session: PENDING — needs an authed walk through dashboard `/links/new` with (a) blank phone and (b) valid phone. 335 unit tests pass, tsc clean; the 5 new tests pin the gating logic. John to confirm the inline error blocks Step 2 and a valid phone reaches the card form.
+
+---
+
+### [2026-05-20] Migration 027 (security-advisor cleanup) committed to the repo
+
+**Category:** chore | DB | Security
+**Cross-link:** `supabase/migrations/027_security_advisor_cleanup.sql`, rode along in commit `b1e6715`. Follow-up to migration 026.
+
+**What:** The security-advisor follow-up migration (written by a separate spawned session) was pre-staged and got carried into `b1e6715`. It fixes 1 ERROR + 4 WARNs: (1) `user_wallet_balance` view → `security_invoker = on` (was SECURITY DEFINER, leaking all users' balances — though it has zero readers today); (2) pins `search_path` on `_gen_crockford_base32` + `block_transaction_mutations`; (3) `REVOKE EXECUTE` on `handle_new_user()` from anon/authenticated/public (removes the unintended RPC surface — the trigger fires regardless).
+
+**Status:** Committed as a file only — **not applied.** Supabase migrations don't auto-apply, and `supabase/migrations/**` does not trigger the edge-function deploy action, so the push is inert. John applies it via the SQL Editor when ready; the file carries its own post-migration verification queries. `admin_insert_shipment` / `set_admin_active_mode` grants intentionally left out of scope (could break label creation / admin toolbar) — tracked in the payments handoff.
+
+---
+
 ### [2026-05-20] Flex link creation was 400ing — phone not in the createFlexLink contract
 
 **Category:** fix | Payments | Regression | Gotcha
