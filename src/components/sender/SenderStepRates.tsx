@@ -38,8 +38,12 @@ export default function SenderStepRates({
       <div className="space-y-5">
         <div className="bg-destructive/10 border border-destructive/30 rounded-2xl p-6 text-center">
           <AlertCircle className="w-8 h-8 text-destructive mx-auto mb-3" />
-          <h2 className="text-lg font-bold text-foreground mb-2">Rates are playing hide and seek</h2>
-          <p className="text-sm text-muted-foreground mb-4">We couldn't reach the shipping carriers right now. It's probably them, not you.</p>
+          <h2 className="text-lg font-bold text-foreground mb-2">We couldn't get shipping rates</h2>
+          {/* Surface the actual server error — it's often actionable (e.g. the
+              link's delivery address is missing a phone). A hardcoded generic
+              message hid a fixable config problem behind "it's probably the
+              carriers." See LOG 2026-05-20 sender-flow rates-error entry. */}
+          <p className="text-sm text-muted-foreground mb-4">{error}</p>
           <div className="flex gap-3 justify-center">
             <Button variant="outline" onClick={onBack} className="rounded-xl">
               <ArrowLeft className="w-4 h-4 mr-1" /> Edit details

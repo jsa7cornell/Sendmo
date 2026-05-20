@@ -269,3 +269,94 @@ test.describe("phone gate — dashboard /links/new (authed)", () => {
     await expect(page.getByRole("heading", { name: /Add your card/i })).toBeVisible({ timeout: 8000 });
   });
 });
+
+test.describe("phone gate — sender flow on a phoneless link", () => {
+  // Regression: a flex link whose stored delivery address has no phone (it was
+  // created before phone became mandatory). The rates Edge Function correctly
+  // rejects it with a clear 400 — but SenderStepRates used to bury EVERY error
+  // under a hardcoded "Rates are playing hide and seek / it's probably them,
+  // not you", hiding a fixable config problem behind a carrier-outage excuse.
+  // The creation-side gates above never caught this because the link already
+  // existed. See LOG 2026-05-20 sender-flow rates-error entry.
+  const CODE = "e2ePHONELESS";
+
+  // The exact link-aware message the rates fn returns when the delivery
+  // address resolved from a link_short_code has no phone.
+  const PHONE_MSG =
+    "This shipping link's delivery address doesn't have a phone number, " +
+    "which the carriers require. The person who created this link needs to " +
+    "add one (from their SendMo dashboard) before you can ship.";
+
+  test.beforeEach(async ({ page }) => {
+    await mockEdgeFunctions(page);
+    // The link resolves as a healthy, fundable flex link — the ONLY defect is
+    // the phoneless delivery address, which only surfaces server-side at /rates.
+    await page.route(`${SUPABASE_URL}/functions/v1/links**`, (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          id: "lnk_e2e_phoneless",
+          short_code: CODE,
+          link_type: "flexible",
+          status: "active",
+          max_price_cents: 10000,
+          preferred_speed: "standard",
+          preferred_carrier: null,
+          size_hint: null,
+          notes: null,
+          recipient_city: "Santa Clara",
+          recipient_state: "CA",
+          recipient_zip: "95050",
+          recipient_name: "Suzie",
+          recipient_address_complete: true,
+          is_funded: true,
+        }),
+      }),
+    );
+    // rates rejects the phoneless delivery address with the link-aware 400.
+    await page.route(`${SUPABASE_URL}/functions/v1/rates`, (route) =>
+      route.fulfill({
+        status: 400,
+        contentType: "application/json",
+        body: JSON.stringify({ error: PHONE_MSG }),
+      }),
+    );
+  });
+
+  test("the rates step shows the specific phone error, not the generic 'hide and seek'", async ({ page }) => {
+    await page.goto(`/s/${CODE}`);
+
+    // Intro → Package step. The sender address field is unique to the package
+    // step, so it's the stable signal that we've advanced.
+    await page.getByRole("button", { name: /Get Started/i }).click();
+    const senderAddress = page.locator('[id="Sender address-address"]');
+    await expect(senderAddress).toBeVisible({ timeout: 8000 });
+
+    // Fill the sender address (the id carries a space — attribute selector,
+    // not a #id selector).
+    await senderAddress.fill("388 Townsend");
+    const option = page.locator("button", { hasText: /Townsend/i }).first();
+    await expect(option).toBeVisible({ timeout: 5000 });
+    await option.click();
+    await expect(page.getByText("Verified").first()).toBeVisible({ timeout: 5000 });
+    await page.locator('[id="Sender address-phone"]').fill("4155550100");
+
+    // Package dimensions + weight.
+    await page.getByPlaceholder("Length").fill("10");
+    await page.getByPlaceholder("Width").fill("10");
+    await page.getByPlaceholder("Height").fill("10");
+    await page.getByPlaceholder("e.g. 5").fill("5");
+
+    // Request rates → the mocked 400 fires.
+    await page.getByRole("button", { name: /See shipping options/i }).click();
+
+    // The real, actionable server message must be on screen…
+    await expect(
+      page.getByText(/delivery address doesn't have a phone number/i),
+    ).toBeVisible({ timeout: 8000 });
+    // …and the old hardcoded generic copy must NOT be.
+    await expect(page.getByText(/playing hide and seek/i)).not.toBeVisible();
+    await expect(page.getByText(/probably them, not you/i)).not.toBeVisible();
+  });
+});

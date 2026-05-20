@@ -32,6 +32,60 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ---
 
+### [2026-05-20] Sender-flow rate errors were unreadable — phoneless flex link → generic "hide and seek"
+
+**Category:** fix | Sender Flow | Edge Functions | Telemetry
+**Cross-link:** `proposals/2026-05-20_phone-required-flow-audit.md` (the phone-required work this is a gap in). `tests/e2e/phone-gate.spec.ts`.
+
+**Symptom:** a sender on flex link `/s/4eRwtdVffe` hit "Rates are playing hide and seek — we couldn't reach the shipping carriers right now. It's probably them, not you." at the rates step.
+
+**Diagnosis (telemetry-first, Rule 20):** the link's stored delivery address (`addresses.d05f7989`, created 2026-05-19 21:08) has `phone: null`. The `rates` Edge Function resolves the delivery address from the link, fails the `isUsablePhone` gate, and **correctly** returns `400` (edge logs: `POST | 400 | /rates`). The link itself is fine — created just before phone numbers became mandatory on link creation. **8 active flex links** currently share this (phoneless delivery address; query: join `sendmo_links`→`addresses` where `phone is null`).
+
+**Three compounding bugs — all fixed:**
+
+1. **`SenderStepRates.tsx` swallowed the real error.** Its error branch rendered a hardcoded "Rates are playing hide and seek / it's probably them, not you" for *every* error — actively misleading here (it's not the carriers, it's a fixable missing phone). Fixed: headline → neutral "We couldn't get shipping rates"; body now renders the actual server `error` string (which `SenderFlow.handleFetchRates` already captured into `ratesError` — the message just never reached the screen).
+
+2. **`rates/index.ts` logged nothing on guard failures.** Every early `return` (missing fields, incomplete address, missing phone ×2, missing EasyPost key) and the outer `catch` skipped `log()` — only the EasyPost-shipment-error path logged. So a sender failure left **zero `event_logs` rows**; Rule-20 telemetry-first debugging came up blank. Fixed: added a `logRateError(reason, severity, extra)` helper, called on every non-success exit → a `rate.error` row now exists for each.
+
+3. **The phone error didn't say whose problem it was.** When `link_short_code` is set, the delivery address is the *link's* — so a missing phone is the link owner's to fix. The `to_address` phone 400 is now link-aware: "This shipping link's delivery address doesn't have a phone number… The person who created this link needs to add one (from their SendMo dashboard) before you can ship." Non-link callers (e.g. `/label-test`) keep the generic wording.
+
+**Testing gap closed.** `phone-gate.spec.ts` (from the 2026-05-20 phone audit) covered the *creation-side* gates — onboarding, `/links/new`, `/label-test` — but never a sender *consuming* a flex link that already had a phoneless address, so this slipped through. Added a `phone gate — sender flow on a phoneless link` describe: walks `/s/<code>` → package step → mocks `rates` 400 → asserts the specific message renders and the old generic copy is gone. The test is regression-proof: the pre-fix error block hardcoded the generic strings and never referenced `{error}`, so it cannot pass on the old code.
+
+**Data backfill (done 2026-05-20):** all 8 affected links turned out to be John's own test links (`is_test = true`, owned by `jsa7cornell@gmail.com` / `testerjohnanderson@gmail.com`). Their delivery addresses were backfilled with the standard test phone `4155550100` via a targeted `UPDATE` on the 8 `addresses` rows by id (run by John in the Supabase SQL editor — the MCP connection is read-only). Post-backfill check: **0** active flex links remain phoneless. Since `links` POST/PATCH now require a phone, no new phoneless links can be created — so no dashboard-nudge feature is needed.
+
+**Browser-verified:**
+  spec: tests/e2e/phone-gate.spec.ts
+  variants-covered: [sender flow, flex link with a phoneless delivery address — rates 400 surfaces the specific link-owner message; generic "hide and seek" copy confirmed gone]
+  `tsc` clean. `rates/index.ts` (Deno) deploys via the push-to-main Edge Function CI auto-deploy; changes are additive `log()` calls + one message string (no Deno toolchain locally to `deno check`).
+
+---
+
+### [2026-05-20] `/label-test` re-fixed — threads a real test-mode PaymentIntent (Pattern D)
+
+**Category:** fix | LabelTest | Payments | Edge Functions
+**Cross-link:** [`PAYMENTS.md`](PAYMENTS.md) §1 (full-label flow). Bug surfaced by the e2e de-rot effort (LOG entry on branch `claude/inspiring-ishizaka-e574a2`).
+
+**Bug:** `/label-test`'s `purchaseLabel()` POSTed to the `labels` Edge Function with no `payment_intent_id`. Since the Pattern D payment integration (2026-05-18), the full-label branch of `labels` *requires* one — the call 400'd with `Missing required field: payment_intent_id`. `/label-test`'s label step predated the payment integration and was never updated.
+
+**Fix (tool-side only — `labels` was NOT weakened):** `LabelTest.tsx` now threads a real Stripe **test-mode** PaymentIntent through the flow, exercising the genuine payment→label pipeline. Reuses the existing `<StripePaymentForm>` component (the same one the real recipient full-label flow uses) rather than inventing a bespoke path (PLAYBOOK Rule 6):
+- New step 4 "Payment" inserted between Rates and Label (flow is now 5 steps). Selecting a rate stores it and advances to the payment step.
+- `<StripePaymentForm>` creates the PI via the `payments` Edge Function, mounts Stripe Elements, confirms the card, and hands the `payment_intent_id` to `purchaseLabel(rate, paymentIntentId)`, which calls `labels` with it.
+- `purchaseLabel` now throws on failure so `StripePaymentForm` surfaces label errors inline on the payment step (the card is already charged there). Dropped the dead `mock_data` payload (`labels` never read it).
+- Test-mode by default; the existing `liveMode` toggle is passed through unchanged.
+
+**Gotcha — worktree env:** `.env.local` is gitignored, so a fresh git worktree has none → the dev server renders blank (`createClient(undefined,…)` throws at module load). Also, `src/lib/stripeClient.ts` reads `VITE_STRIPE_PUBLISHABLE_KEY_TEST`/`_LIVE`, but `.env.example` only documents the suffixless `VITE_STRIPE_PUBLISHABLE_KEY` — a real `pk_test_…` must be set under the `_TEST` name for the card form to render.
+
+**Dev-mode quirk (not fixed — pre-existing, out of scope):** React StrictMode double-invokes `StripePaymentForm`'s effect, firing two concurrent `payments` calls with the same Stripe idempotency key; the second can 500 with "another in-progress request using this Idempotent Key". Dev-only (StrictMode does not double-invoke in production builds) and affects the real full-label flow identically. Harmless — the first call caches the PI and the form renders.
+
+**Browser-verified:**
+  mcp-session: Playwright MCP walked `/label-test` end-to-end on the dev server — addresses → package → rates → payment (Stripe test card `4242 4242 4242 4242`) → label. `labels` POST returned 200 with request body `payment_intent_id: pi_2TZDirxS6gsndgF31u8YgShl`; response minted a real EasyPost label (tracking `9434600208303113035067`, USPS GroundAdvantage, `public_code YS1BTWD`).
+  variants-covered: [test-mode full-label purchase via real PaymentIntent]
+  `tsc` clean.
+
+**TESTING.md:** `/label-test` now has a 5-step flow with a payment step — `TESTING.md` (now on `main`) updated to match in this same change.
+
+---
+
 ### [2026-05-20] Admin debug panel broken for all shipments + remaining `profileLoaded` gates
 
 **Category:** fix | Admin | Auth | Edge Functions

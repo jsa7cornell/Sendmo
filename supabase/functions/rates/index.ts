@@ -22,10 +22,31 @@ serve(async (req: Request) => {
 
     const sessionId = req.headers.get("x-session-id") || "unknown";
 
+    // Emit a rate.error event_logs row for any non-success exit. The early
+    // guard returns + the outer catch were previously silent — a sender
+    // failure left no telemetry at all, so Rule-20 telemetry-first debugging
+    // came up blank. See LOG 2026-05-20 sender-flow rates-error entry.
+    const logRateError = (
+        reason: string,
+        severity: "warn" | "error",
+        extra: Record<string, unknown> = {},
+    ) => {
+        log({
+            event_type: "rate.error",
+            session_id: sessionId,
+            severity,
+            entity_type: "rate",
+            properties: { reason, ...extra },
+        });
+    };
+
     try {
         const { from_address, to_address: bodyToAddress, parcel, live_mode, preferred_carrier, preferred_speed, max_price_cents, link_short_code } = await req.json();
 
         if (!from_address || !bodyToAddress || !parcel) {
+            logRateError("missing_required_fields", "warn", {
+                has_from: !!from_address, has_to: !!bodyToAddress, has_parcel: !!parcel,
+            });
             return new Response(
                 JSON.stringify({ error: "Missing required fields: from_address, to_address, parcel" }),
                 { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -65,6 +86,9 @@ serve(async (req: Request) => {
                         // The link was created with an incomplete address (no street).
                         // Return a clear error so the sender sees it immediately rather
                         // than getting a cryptic EasyPost/FedEx rejection.
+                        logRateError("link_address_incomplete", "warn", {
+                            link_short_code: link_short_code ?? null,
+                        });
                         return new Response(
                             JSON.stringify({ error: "This link's delivery address is incomplete — it's missing a street. The person who set up this link needs to update their delivery address before you can ship." }),
                             { status: 422, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -95,14 +119,32 @@ serve(async (req: Request) => {
         // the shared isUsablePhone. See 2026-05-20_phone-required-flow-audit.md
         // finding 1 — `links` had this gate, `rates` did not.
         if (!isUsablePhone(from_address?.phone)) {
+            logRateError("from_address_missing_phone", "warn", {
+                from_zip: from_address?.zip ?? null,
+                link_short_code: link_short_code ?? null,
+            });
             return new Response(
                 JSON.stringify({ error: "The sender address is missing a phone number — shipping carriers require one to generate a label." }),
                 { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
             );
         }
         if (!isUsablePhone(to_address?.phone)) {
+            // When a link_short_code is present the to_address was resolved from
+            // the link's stored delivery address — so a missing phone is the
+            // link owner's to fix, not the sender's. Point them at the owner
+            // (mirrors the incomplete-address message above). The generic
+            // wording is kept for non-link callers (e.g. /label-test).
+            const linkCase = !!link_short_code;
+            const msg = linkCase
+                ? "This shipping link's delivery address doesn't have a phone number, which the carriers require. The person who created this link needs to add one (from their SendMo dashboard) before you can ship."
+                : "The delivery address is missing a phone number — shipping carriers require one to generate a label.";
+            logRateError("to_address_missing_phone", "warn", {
+                from_zip: from_address?.zip ?? null,
+                to_zip: to_address?.zip ?? null,
+                link_short_code: link_short_code ?? null,
+            });
             return new Response(
-                JSON.stringify({ error: "The delivery address is missing a phone number — shipping carriers require one to generate a label." }),
+                JSON.stringify({ error: msg }),
                 { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
             );
         }
@@ -110,6 +152,7 @@ serve(async (req: Request) => {
         const isLive = live_mode === true;
         const apiKey = Deno.env.get(isLive ? "EASYPOST_API_KEY" : "EASYPOST_TEST_API_KEY");
         if (!apiKey) {
+            logRateError("easypost_key_missing", "error", { live_mode: isLive });
             return new Response(
                 JSON.stringify({ error: `EasyPost ${isLive ? 'Live' : 'Test'} API key not configured` }),
                 { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -307,6 +350,9 @@ serve(async (req: Request) => {
         );
     } catch (err) {
         console.error(`[Session ${sessionId}] Rates error:`, err);
+        logRateError("unhandled_exception", "error", {
+            error_message: err instanceof Error ? err.message : String(err),
+        });
         return new Response(
             JSON.stringify({ error: "Internal server error" }),
             { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
