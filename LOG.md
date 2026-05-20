@@ -12,6 +12,24 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-20] Flex link creation was 400ing — phone not in the createFlexLink contract
+
+**Category:** fix | Payments | Regression | Gotcha
+**Cross-link:** commit `d2dde62`. Regression from `9635058` (phone-required work).
+
+**Symptom:** The flex onboarding "Add your card" step (step 22) rendered only the red server error *"We need a phone number for the delivery address…"* — no Stripe card form. John reported it 2026-05-20.
+
+**Root cause:** `9635058` added server-side phone validation to the `links` Edge Function (POST + PATCH 400 without a usable recipient phone) — but did **not** add `phone` to the client request type `CreateLinkParams.recipient_address` (nor `UpdateLinkParams`). All 3 caller sites — `RecipientStepFlexPayment` (onboarding), `LinksEditor` create-mode `flexInput`, `LinksEditor` edit-mode `updateFlexLink` — hand-build a `recipient_address` object; with no `phone` in the type, none included it. So every `createFlexLink`/`updateFlexLink` call shipped a phone-less payload → server 400 → **flex link creation fully broken since `9635058` deployed.** The full-label flow was unaffected — it routes addresses through `addressToApi`, which *was* updated.
+
+**Fix:** `phone: string` (required, non-optional) added to both `CreateLinkParams.recipient_address` and `UpdateLinkParams.recipient_address`; all 3 caller sites pass `<address>.phone`. Making the field *required in the type* means the compiler now forces every caller — the structural guard that should have been there from the start.
+
+**Generalizable rule:** when server-side validation starts requiring a field, the **client request type must require it in the same change**. Then `tsc` fails every caller that omits it. Updating the validation alone (or only `addressToApi`, missing the hand-built `createFlexLink` payload) leaves a silent gap that ships green and breaks at runtime. Server contract + client request type move together.
+
+**Browser-verified:**
+  mcp-session: PENDING — needs an authed walk through flex onboarding to the "Add your card" step. tsc clean + 330 unit tests pass; the type is now non-optional so all callers are compiler-checked. John to confirm the card form renders.
+
+---
+
 ### [2026-05-19] Security advisor — dropped 7 dead Prisma/NextAuth tables (migration 026)
 
 **Category:** chore | DB | Security
