@@ -12,6 +12,32 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-20] Admin debug panel broken for all shipments + remaining `profileLoaded` gates
+
+**Category:** fix | Admin | Auth | Edge Functions
+**Cross-link:** commits `3e835fc` (auth gates) + `a72c094` (tracking-admin fix). Closes the two follow-ups noted in the [2026-05-20 stale-`isAdmin` entry](#) (`1289c6d`); root-causes a separate admin-panel bug John hit while testing.
+
+**Task A — `AdminModeToolbar` + `Admin.tsx` now gate on `profileLoaded`.** `1289c6d` added `profileLoaded` to `AuthContext` and flagged two spots still gating on bare `isAdmin` (stale for a moment across an account switch). Fixed: `AdminModeToolbar`'s guard is now `!profileLoaded || !isAdmin`; `Admin.tsx` adds `profileLoaded` to both `useEffect` deps/conditions plus a `if (!profileLoaded) return null` guard before the access-denied screen (no "Admin access required" flash on indeterminate state). No behaviour change for normal use.
+
+**Task B — `tracking-admin` "Shipment not found" was a phantom column, not missing data.** John hit "Couldn't load admin data — Shipment not found" on the admin debug panel of `/t/J7JHTY2` even though the public tracking page rendered that shipment fully.
+
+**Root cause:** `tracking-admin/index.ts` requested `stripe_customer_id` in its PostgREST `SELECT` on `shipments` — **a column that has never existed in the schema.** PostgREST returns a schema-cache error on every such call; the function's `shipErr || !shipment` guard treats any error as "not found" → 404 with the "Shipment not found" body. The public `tracking` function doesn't select that column, so it resolves the same shipment fine. Edge logs confirmed `tracking?code=J7JHTY2` → 200 vs `tracking-admin?code=J7JHTY2` → 404. The `shipments` row for J7JHTY2 is healthy (`id 94c82220-…`, `is_test: true`, `link_id` FK resolves). **This affected every `tracking-admin` call for every public_code — the admin debug panel has been broken since it shipped.**
+
+**Fix:** dropped `stripe_customer_id` from the `shipmentSelect` array + `identifiers` response in `tracking-admin/index.ts`, from `AdminTrackingPayload` in `src/lib/api.ts`, and from the `<Row>` in `AdminDebugPanel.tsx`.
+
+**Generalizable rule:** a PostgREST `.select()` naming a non-existent column fails the *entire* query; an `err || !row` guard then masks it as a missing row. When two endpoints disagree on whether a row exists, diff their `select` column lists first (Rule 20 — telemetry confirmed it here).
+
+**Follow-up (out of scope):** the `stripe_customer_id` select implies someone wanted the Stripe customer surfaced in the panel — it is not a `shipments` column (the customer lives on the recipient's `profiles` row). Re-add via a join if admins want it.
+
+**Browser-verified:**
+  mcp-session: PENDING
+  variants-covered: PENDING —
+    - Task B deploys via the push-to-main Edge Function CI auto-deploy (`9755da1`); John confirms the admin debug panel loads on `/t/J7JHTY2` once the deploy lands.
+    - Task A is an admin→non-admin account-switch race (two real accounts + timing window, not Playwright-drivable); John confirms no regression on a normal `/admin` load + `AdminModeToolbar` render.
+  `tsc` + `vite build` clean for both commits.
+
+---
+
 ### [2026-05-20] E2e phone coverage extended — /label-test + an authenticated-spec harness
 
 **Category:** test | Payments
