@@ -190,7 +190,7 @@ function isTerminalStatus(status: string): boolean {
 export default function TrackingPage() {
   const { code } = useParams<{ code: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { user, isAdmin } = useAuth();
+  const { user, isAdmin, profileLoaded } = useAuth();
   const navigate = useNavigate();
 
   // ?fresh=1 → just landed here from the sender/recipient flow's Confirm.
@@ -876,8 +876,12 @@ export default function TrackingPage() {
               {/* Admin-only inline debug panel (Ask 4, decided 2026-05-13).
                   Replaces the earlier AdminAffordanceFooter stub. Collapsible,
                   lazy-fetches on first expand via the role-gated
-                  tracking-admin edge function. */}
-              {isAdmin && <AdminDebugPanel publicCode={data.public_code} />}
+                  tracking-admin edge function.
+                  Layer 2 guard: profileLoaded must be true so the panel never
+                  flashes during the stale-state window after an account switch
+                  (isAdmin could still be true from the previous admin session
+                  while ensureProfile hasn't resolved for the new user yet). */}
+              {profileLoaded && isAdmin && <AdminDebugPanel publicCode={data.public_code} />}
             </div>
           );
         })()}

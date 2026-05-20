@@ -9,6 +9,13 @@ interface AuthContextValue {
   session: Session | null;
   loading: boolean;
   isAdmin: boolean;
+  /**
+   * True once the current user's profile/role has been fetched and resolved.
+   * False on initial load and during the window between a user change and the
+   * ensureProfile async call completing. Gate admin-only UI on
+   * `profileLoaded && isAdmin` to avoid stale-state flashes on account switch.
+   */
+  profileLoaded: boolean;
   /** Admin toolbar state from profiles.admin_active_mode. 'test' for non-admins. */
   adminActiveMode: AdminMode;
   /** Calls set_admin_active_mode() RPC. No-op for non-admins. */
@@ -29,6 +36,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
+  // profileLoaded: false until ensureProfile has resolved for the current user.
+  // Resets to false synchronously whenever user.id changes so admin-only UI
+  // cannot flash stale state during the account-switch window.
+  const [profileLoaded, setProfileLoaded] = useState(false);
   const [adminActiveMode, setAdminActiveModeState] = useState<AdminMode>("test");
 
   // Ensure profile row exists and is populated from OAuth metadata.
@@ -61,12 +72,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
       setIsAdmin(false);
       setAdminActiveModeState("test");
+      setProfileLoaded(true);
       return;
     }
 
     setIsAdmin(data.role === "admin");
     const mode = (data.admin_active_mode as AdminMode | null) ?? "test";
     setAdminActiveModeState(mode === "live_comp" || mode === "live_charge" ? mode : "test");
+    setProfileLoaded(true);
 
     const update: Record<string, string> = {};
     if (fullName && !data.full_name) update.full_name = fullName;
@@ -97,11 +110,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, s) => {
       setSession(s);
-      setUser(s?.user ?? null);
+      setUser((prev) => {
+        const next = s?.user ?? null;
+        // Layer 1 — synchronous reset: if user.id changes (including sign-out
+        // or account switch), clear isAdmin and profileLoaded immediately so
+        // no stale admin state coexists with a different user's identity. Both
+        // resets happen in the same React flush as the user state update.
+        if (prev?.id !== next?.id) {
+          setIsAdmin(false);
+          setProfileLoaded(false);
+        }
+        return next;
+      });
       setLoading(false);
 
       if (!s?.user) {
-        setIsAdmin(false);
         return;
       }
 
@@ -177,7 +200,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <AuthContext.Provider value={{
-      user, session, loading, isAdmin,
+      user, session, loading, isAdmin, profileLoaded,
       adminActiveMode, setAdminActiveMode, liveMode, compMode,
       signIn, signInWithGoogle, signOut,
     }}>
