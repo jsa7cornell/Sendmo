@@ -55,7 +55,8 @@ export default function SenderStepPackage({
     const wt = parseFloat(weightLbs);
     if (!senderAddress.street || !senderAddress.city || !senderAddress.state || !senderAddress.zip) return;
     // Phone required — FedEx/UPS reject labels without it. 10-digit minimum.
-    if (senderAddress.phone.replace(/\D/g, "").length < 10) return;
+    // String(... ?? "") guards against sessionStorage state predating the field.
+    if (String(senderAddress.phone ?? "").replace(/\D/g, "").length < 10) return;
     if (!l || !w || !h || !wt) return;
 
     onSubmit({
@@ -67,7 +68,7 @@ export default function SenderStepPackage({
   }
 
   const addrIncomplete = tried && (!senderAddress.street || !senderAddress.city || !senderAddress.state || !senderAddress.zip);
-  const phoneIncomplete = tried && senderAddress.phone.replace(/\D/g, "").length < 10;
+  const phoneIncomplete = tried && String(senderAddress.phone ?? "").replace(/\D/g, "").length < 10;
   const dimsIncomplete = tried && (!length || !width || (packaging !== "envelope" && !height) || !weightLbs);
   const recipient = linkData.recipient_name?.trim();
   const cityState = linkData.recipient_city && linkData.recipient_state

@@ -375,7 +375,7 @@ export default function SmartAddressInput({ label, value, onChange, error, nameL
                     type="tel"
                     inputMode="tel"
                     autoComplete="tel"
-                    value={value.phone}
+                    value={value.phone ?? ""}
                     onChange={(e) => onChange({ ...value, phone: e.target.value })}
                     placeholder="(555) 555-0100"
                     className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary transition-colors placeholder:text-muted-foreground"

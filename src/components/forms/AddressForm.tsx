@@ -11,8 +11,13 @@ interface Props {
 // regex on purpose — carriers (EasyPost passes to FedEx/UPS/USPS) accept
 // loosely-formatted US phones; we just need a real US-shaped number that
 // won't trip PHONENUMBEREMPTY at label-purchase time.
-function hasUsablePhone(phone: string): boolean {
-  return phone.replace(/\D/g, "").length >= 10;
+//
+// String(phone ?? "") guard: AddressInput.phone is a required string in the
+// type, but state objects rehydrated from sessionStorage that predate the
+// 2026-05-19 phone field have no `phone` key — undefined at runtime. Without
+// the guard, `.replace` throws and crashes the form.
+function hasUsablePhone(phone: string | undefined | null): boolean {
+  return String(phone ?? "").replace(/\D/g, "").length >= 10;
 }
 
 export default function AddressForm({ value, tried, onChange }: Props) {
