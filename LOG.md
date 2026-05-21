@@ -12,6 +12,31 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-21] EasyPost webhook STATUS_MAP gaps — no EasyPost event was ever processed
+
+**Category:** fix | EasyPost | Webhooks | Edge Functions
+**Cross-link:** commit `366d1eb`. WISHLIST "Register EasyPost webhook URL" (confirmed closed) / "EasyPost refund webhook wiring". Follows the EasyPost refund status entry (`280de8b`).
+
+**Symptom:** `webhook_events` had **zero `source='easypost'` rows** (89 rows, all Stripe). `event_logs` had 5 × `webhook.easypost_unknown_status` (latest 2026-05-20 05:07). EasyPost *was* delivering events to `/functions/v1/webhooks` — nothing was being processed. Push-based tracking has been dead since launch; the `tracking/index.ts` lazy-poll (pulls EasyPost on `/t/<code>` views) silently masked it.
+
+**Root cause — three bugs in `STATUS_MAP` (`webhooks/index.ts`):**
+1. **`pre_transit` missing.** EasyPost fires `pre_transit` on every label creation. With no map entry it hit the `!shipmentStatus` guard and bailed before the `webhook_events` insert. 4 of the 5 prod `unknown_status` events.
+2. **`cancelled` missing.** Fires when a label is voided at the carrier. The 5th prod event (`1Z13J52C0333598579`, the Phase-A UPS label).
+3. **`return_to_sender` mapped to `"returned"`** — not a valid `shipments.status` CHECK value (valid: `label_created, in_transit, out_for_delivery, delivered, return_to_sender, cancelled`). Latent — any real return-to-sender webhook would have thrown a constraint violation. Companion fix: the link-lifecycle terminal-status check also compared against `"returned"`.
+
+**Fix:** add `pre_transit → label_created` and `cancelled → cancelled`; correct `return_to_sender`; fix the terminal-status guard; document the full EasyPost status taxonomy in a comment. `tsc -b` + `vite build` clean.
+
+**`refund.successful` handler (`280de8b`) — not affected:** it matches `description === "refund.successful"` on a separate path before the `STATUS_MAP` lookup. `easypost_refund_status` column confirmed live in prod.
+
+**Generalizable:** a status/enum map that silently drops unmapped values must wire its "unknown" branch to telemetry from day one — this map *did* (`webhook.easypost_unknown_status`), and that telemetry is exactly what root-caused it. The real failure was nobody reading the telemetry for ~5 weeks.
+
+**Outstanding (John):** set `EASYPOST_WEBHOOK_HMAC_SECRET` as a Supabase function secret matching the EasyPost dashboard webhook signing secret — verification is currently skipped (events accepted unsigned).
+
+**Browser-verified:**
+  mcp-session: PENDING — post-deploy, confirm an EasyPost `tracker.updated` now produces a `webhook_events` row with `source='easypost'` and no new `webhook.easypost_unknown_status` for `pre_transit`/`cancelled`. Root cause verified against the 5 real prod `unknown_status` payloads (`pre_transit` ×4 / `cancelled` ×1).
+
+---
+
 ### [2026-05-20] EasyPost refund status — stored, webhook-fed, surfaced in a two-tab admin dashboard
 
 **Category:** feat | Admin | Edge Functions | Payments | Migration
