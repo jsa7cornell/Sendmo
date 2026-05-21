@@ -12,6 +12,28 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-20] EasyPost refund status — stored, webhook-fed, surfaced in a two-tab admin dashboard
+
+**Category:** feat | Admin | Edge Functions | Payments | Migration
+**Cross-link:** commits `86b3dfa` (migration 030), `280de8b` (edge functions), `09fe6e5` (admin UI). WISHLIST "EasyPost refund webhook wiring". Builds on the admin dashboard accuracy audit (`1a43580`).
+
+**Why:** cancelled labels are a money-leak surface — when SendMo voids a label, the EasyPost carrier refund must complete for SendMo to recover the cost, but SendMo had no stored, queryable EasyPost-side status. `cancel-label` only snapshotted it into an `event_logs` row once at void time; confirming a refund landed meant manually checking the EasyPost dashboard.
+
+**What shipped:**
+- **Migration 030** — `shipments.easypost_refund_status TEXT` (nullable). Distinct from the existing Stripe-side `refund_status`: `easypost_refund_status` tracks whether EasyPost has credited SendMo; `refund_status` tracks the customer's Stripe refund. Applied to prod.
+- **Three-path freshness:** `cancel-label` snapshots the EasyPost status at void time; `tracking`'s existing `/t/<code>` lazy-poll persists the resolved status; `webhooks` gained a handler for the EasyPost **`refund.successful`** event (confirmed real — fires when a non-instantaneous carrier refund, e.g. USPS up to 15 days, completes). The webhook reuses the lazy-poll's Stripe refund idempotency key (`refund_<epShipmentId>_user_cancel`), so there is no double-refund across paths.
+- **`/admin` restructured into two tabs** — **Labels** (one row per real shipment; new **Source** column = Flex link / Full label from `sendmo_links.link_type`, and an **EasyPost Status** column showing the carrier ground truth — amber warning for a cancelled label whose refund EasyPost has not confirmed) and **Links** (one row per `sendmo_links` with a label count). A money-leak alert banner surfaces cancelled labels awaiting carrier confirmation. Mirrors `Dashboard.tsx`'s two-tab idiom (Rule 6); preserves the filters, search, summary bar, and the `1a43580` accuracy fixes.
+
+**Sequencing footgun (caught at apply time):** the edge functions write `easypost_refund_status` — if they deploy before migration 030 is applied, `cancel-label` and the admin report break (write/read of a missing column). Order is strict: migration applied first, then push. 030 was applied to prod and verified via `information_schema` before the push. (Separately: the first apply attempt failed with `relation "public.shipments" does not exist` — the Supabase SQL Editor was on the wrong project; `public.shipments` exists fine in the SendMo project `fkxykvzsqdjzhurntgah`.)
+
+**Still required (John):** in the EasyPost dashboard, add `refund.successful` to the webhook event subscription — the handler is wired but EasyPost will not send the event until subscribed. `EASYPOST_WEBHOOK_HMAC_SECRET` remains unset (webhook accepts unverified events — pre-existing, flagged in the 2026-05-20 live-readiness audit).
+
+**Browser-verified:**
+  n/a-category: internal-tooling
+  n/a-reason: `/admin` needs an admin auth session + live data — not Playwright-drivable. `tsc` + `vite build` clean; the `refund.successful` event name was confirmed against EasyPost's webhook docs. John verifies `/admin` (two tabs, Source + EasyPost Status columns, alert banner) post-deploy.
+
+---
+
 ### [2026-05-20] Admin dashboard accuracy audit — 3 fixes + cancelled-label reconciliation
 
 **Category:** fix | Admin | Reporting | Data accuracy
