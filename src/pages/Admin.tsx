@@ -235,7 +235,6 @@ export default function Admin() {
             for (const link of (rawData || [])) {
                 const email = Array.isArray(link.profiles) ? link.profiles[0]?.email : (link.profiles as any)?.email;
                 const shs = Array.isArray(link.shipments) ? link.shipments : (link.shipments ? [link.shipments] : []);
-                const emailStr = (email || "").toLowerCase();
 
                 if (shs.length === 0) {
                     // Links without shipments — use link-level is_test (PLAYBOOK Rule 14).
