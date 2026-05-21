@@ -12,6 +12,25 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-21] Rule 21 — verify the deploy after every push to `main`
+
+**Category:** process | infra | CI
+**Cross-link:** `PLAYBOOK.md` → Critical Rules → Rule 21. Sibling hook to Rule 19's `check-browser-verified.sh`.
+
+**Why:** on 2026-05-21 a `tsc -b` error sat red on Vercel + the "Provide Tests" CI workflow for ~18h across 5 pushes to `main` — nobody checked the deploy after pushing, so a broken production build went unnoticed for nearly a day.
+
+**What shipped:**
+- **PLAYBOOK Rule 21** — after any push to `main`, confirm the Vercel deploy *and* both GitHub Actions workflows ("Provide Tests", "Deploy Supabase Edge Functions") are green for *your* commit before calling the work done. CI takes ~12 min; wait for a conclusive result, never end on a pending/red run.
+- **Stop hook `scripts/claude-hooks/check-deploy-green.sh`** — when the working branch is `main`, queries GitHub check-runs (Actions) + commit statuses (Vercel registers as commit-status context `Vercel`, not a check-run) for the current HEAD and prints any red/pending result at session close. Advisory (exits 0), matching the Rule 19 hook's philosophy — blocking was rejected because a 12-min CI loop would be expensive and a genuinely unfixable red `main` would trap the agent. Registered in `.claude/settings.json` alongside the browser-verified hook.
+
+**Gotcha for future hook work:** Vercel's GitHub integration on this repo reports via the **commit Status API** (`/commits/{sha}/status`, context `Vercel`), *not* the Checks API. GitHub Actions report via the **Checks API** (`/commits/{sha}/check-runs`). A status check that only reads check-runs misses Vercel entirely — query both.
+
+**Browser-verified:**
+  n/a-category: infra
+  n/a-reason: process rule + a Stop hook script; no DOM or wire-shape consumer. Hook verified by running it against the current green HEAD (silent exit 0) and the known-red commit `05b3f31` (correctly classified both "Lint, Unit, and E2E Tests" and "Vercel" as RED).
+
+---
+
 ### [2026-05-21] EasyPost webhook STATUS_MAP gaps — no EasyPost event was ever processed
 
 **Category:** fix | EasyPost | Webhooks | Edge Functions

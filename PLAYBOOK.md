@@ -338,6 +338,16 @@ When working as a Claude Code agent, you may be assigned one of these roles:
 
     **Reference incident:** [LOG.md → 2026-05-19 navigate vs setData race entry](LOG.md). The symptom was "user stuck on `/onboarding/flexible/authorize`," and 30 minutes were spent on "clear sessionStorage / check DevTools" before the actual cause (`<Navigate>` bounce in the page guard) showed up clearly in a 5-second `SELECT` against `sendmo_links` + a 5-second `get_logs` call. The smoking-gun pattern (link created as `'active'` + immediate `POST /payment-methods` + user still on same URL) would have surfaced on turn 1 with telemetry-first.
 
+21. **ALWAYS verify the deploy after pushing to `main`.** Every push to `main` triggers a production deploy (Vercel) and CI workflows. A push is **not "done"** until those are confirmed green — a red deploy is a production failure, not a finished task. After any push to `main`:
+    - **Vercel** — confirm the production build at https://sendmo.co went live. Vercel's result is mirrored as a GitHub commit status (context `Vercel`) on the pushed SHA, so it shows up in the checks below.
+    - **GitHub Actions** — run `gh run list --branch main --limit 5` and confirm the workflows for *your* commit are green: **"Provide Tests"** (lint / `tsc -b` / unit / e2e — note a `tsc -b` failure also breaks the Vercel build) and **"Deploy Supabase Edge Functions"** (only runs when `supabase/functions/**` changed).
+    - CI takes ~12 min. Wait for a **conclusive** result — `gh run watch <run-id>` or re-check — rather than ending the session on a still-running run. A pending run is not a green run.
+    - If anything is red — a `tsc -b` error, a failed edge-function deploy, a red Vercel build — the work is **not** done. Fix forward immediately. Do not end the session on a red `main`.
+
+    **Reference incident:** 2026-05-21 — a `tsc -b` error sat red on Vercel + CI for ~18h across 5 pushes because no agent verified the deploy after pushing.
+
+    **Mechanical enforcement:** the `Stop` hook `scripts/claude-hooks/check-deploy-green.sh` (registered in `.claude/settings.json`) queries the GitHub check-runs + commit statuses for the current `main` HEAD at session close and prints any red/pending result. Advisory — exits 0 — but a red or pending result means Rule 21 is not yet satisfied.
+
 ## Vercel Deployment
 
 **Production URL**: https://sendmo.co (also https://sendmo.vercel.app)
