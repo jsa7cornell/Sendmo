@@ -27,11 +27,37 @@ import { createRefund } from "../_shared/stripe.ts";
  * in the Stripe proposal).
  */
 
+// Maps EasyPost tracker.status values to SendMo shipment.status values.
+//
+// EasyPost status taxonomy (from docs.easypost.com/docs/trackers):
+//   pre_transit   — label created, not yet picked up by carrier
+//   in_transit    — carrier has the package
+//   out_for_delivery — on the delivery vehicle
+//   delivered     — confirmed delivery
+//   available_for_pickup — held at facility
+//   return_to_sender — being returned
+//   failure       — delivery failed (non-terminal in EasyPost; may recover)
+//   error         — tracking error / unknown carrier response
+//   cancelled     — tracker cancelled (usually because the label was voided)
+//   unknown       — no tracking info yet / unrecognised
+//
+// "pre_transit" and "cancelled" were the missing values producing
+// webhook.easypost_unknown_status events — all 5 prod instances were one
+// of these two. Fix: map them explicitly. pre_transit → label_created
+// (no status change, but we record the event). cancelled → cancelled
+// (only appears on voided labels; the shipment's refund_status is the
+// authoritative refund signal — this just marks it carrier-cancelled).
+//
+// Statuses not in the map (available_for_pickup, failure, error, unknown)
+// are skipped via the !shipmentStatus guard — we log them as
+// webhook.easypost_unknown_status so gaps surface in telemetry.
 const STATUS_MAP: Record<string, string> = {
+  pre_transit: "label_created",      // label exists; carrier hasn't scanned yet
   in_transit: "in_transit",
-  out_for_delivery: "in_transit",
+  out_for_delivery: "in_transit",    // sub-state of in_transit for SendMo
   delivered: "delivered",
-  return_to_sender: "returned",
+  return_to_sender: "return_to_sender", // DB constraint value; was "returned" (pre-existing bug)
+  cancelled: "cancelled",            // label voided at carrier level
 };
 
 // EasyPost statuses that trigger notifications
@@ -410,7 +436,7 @@ serve(async (req: Request) => {
     // (delivered / returned) AND no other non-terminal shipment exists on
     // the same link, flip sendmo_links.status from 'in_use' → 'completed'.
     // Per decided proposal label-cancel-and-change (migration 020).
-    if (shipmentStatus === "delivered" || shipmentStatus === "returned") {
+    if (shipmentStatus === "delivered" || shipmentStatus === "return_to_sender") {
       const { data: shipLink } = await supabase
         .from("shipments")
         .select("link_id")
