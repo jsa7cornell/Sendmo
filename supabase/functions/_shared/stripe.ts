@@ -97,9 +97,18 @@ async function stripeRequest<T = Record<string, unknown>>(
     if (!res.ok) {
         const err = data?.error;
         const msg = err?.message || `Stripe ${path} ${res.status}`;
-        const e = new Error(msg) as Error & { stripeCode?: string; stripeType?: string };
+        const e = new Error(msg) as Error & {
+            stripeCode?: string;
+            stripeType?: string;
+            stripeDeclineCode?: string;
+        };
         e.stripeCode = err?.code;
         e.stripeType = err?.type;
+        // Capture decline_code so callers can distinguish e.g. a Radar-block
+        // fraud decline (decline_code='fraudulent') from a generic card decline.
+        // The authoritative Radar-block signal is the charge's outcome.type
+        // (see retrieveCharge); this is a synchronous hint for the Edge fn caller.
+        e.stripeDeclineCode = err?.decline_code;
         throw e;
     }
     return data as T;
@@ -126,6 +135,21 @@ export interface PaymentIntent {
     capture_method: "automatic" | "manual";
 }
 
+// Stripe `shipping` block — fed to PaymentIntents as a fraud signal for
+// Radar (proposal 2026-05-21 payments-risk-intelligence, B2). Optional.
+export interface ShippingDetails {
+    name: string;
+    phone?: string;
+    address: {
+        line1: string;
+        line2?: string;
+        city?: string;
+        state?: string;
+        postal_code?: string;
+        country?: string;
+    };
+}
+
 export function createPaymentIntent(params: {
     amount_cents: number;
     currency?: string;
@@ -137,6 +161,7 @@ export function createPaymentIntent(params: {
     // charges. Used by flex_hold so we can charge overage carrier adjustments
     // (master proposal §3.7) without a re-prompt.
     setup_future_usage?: "off_session" | "on_session";
+    shipping?: ShippingDetails;
     idempotency_key: string;
     liveMode: boolean;
 }): Promise<PaymentIntent> {
@@ -150,6 +175,7 @@ export function createPaymentIntent(params: {
             automatic_payment_methods: { enabled: true, allow_redirects: "never" },
             metadata: params.metadata,
             receipt_email: params.receipt_email,
+            ...(params.shipping ? { shipping: params.shipping } : {}),
             // When set, PaymentElement renders saved PMs for this Customer as
             // the top option (with an inline "use a different card" fallback).
             // Omitted → bare new-card form, current behavior.
@@ -168,6 +194,39 @@ export function retrievePaymentIntent(
     liveMode: boolean,
 ): Promise<PaymentIntent> {
     return stripeRequest<PaymentIntent>(`/payment_intents/${encodeURIComponent(id)}`, {
+        method: "GET",
+        liveMode,
+    });
+}
+
+// ─── Charges (B4 — used to read outcome.type for Radar-block detection) ─
+
+export interface ChargeOutcome {
+    // 'blocked' = Stripe Radar (or your custom rules) blocked the charge.
+    // 'issuer_declined' = the cardholder's bank declined.
+    // Other values: 'authorized', 'manual_review', 'invalid'.
+    type?: "authorized" | "manual_review" | "issuer_declined" | "blocked" | "invalid";
+    network_status?: string;
+    reason?: string | null;
+    risk_level?: string;
+    risk_score?: number;
+    seller_message?: string | null;
+}
+
+export interface Charge {
+    id: string;
+    object: "charge";
+    status: "pending" | "succeeded" | "failed";
+    outcome?: ChargeOutcome | null;
+    payment_intent?: string | null;
+    metadata?: Record<string, string>;
+}
+
+export function retrieveCharge(
+    id: string,
+    liveMode: boolean,
+): Promise<Charge> {
+    return stripeRequest<Charge>(`/charges/${encodeURIComponent(id)}`, {
         method: "GET",
         liveMode,
     });
@@ -223,6 +282,7 @@ export function createOffSessionShipmentPI(params: {
     customer: string;
     payment_method: string;
     metadata: Record<string, string>;
+    shipping?: ShippingDetails;
     idempotency_key: string;
     liveMode: boolean;
 }): Promise<PaymentIntent> {
@@ -238,6 +298,7 @@ export function createOffSessionShipmentPI(params: {
             confirm: true,
             // NB: no automatic_payment_methods. See helper-level comment.
             metadata: params.metadata,
+            ...(params.shipping ? { shipping: params.shipping } : {}),
         },
         idempotencyKey: params.idempotency_key,
         liveMode: params.liveMode,

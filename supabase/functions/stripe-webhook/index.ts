@@ -2,9 +2,9 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { log } from "../_shared/logger.ts";
-import { verifyAndParseWebhook } from "../_shared/stripe.ts";
+import { verifyAndParseWebhook, retrieveCharge } from "../_shared/stripe.ts";
 import { sendEmail } from "../_shared/resend.ts";
-import { paymentDeclinedReactivateEmail } from "../_shared/email-templates.ts";
+import { paymentDeclinedReactivateEmail, radarBlockedPayerEmail } from "../_shared/email-templates.ts";
 
 // POST /stripe-webhook
 //
@@ -403,13 +403,123 @@ serve(async (req: Request) => {
                 // the dedup gate stops duplicate emails.
                 if (source === "flex_shipment" && link_id) {
                     try {
+                        // ── B4: detect a Stripe Radar block before the existing
+                        // decline-recovery path. Authoritative signal is the
+                        // failed charge's outcome.type === 'blocked' (Radar/your
+                        // rules), distinct from 'issuer_declined' (real card
+                        // decline). Fetched per-failure; failed flex PIs are
+                        // rare so the cost is negligible. On any fetch failure
+                        // we conservatively fall through to the decline path —
+                        // a wrongly-sent decline email beats a wrongly-skipped
+                        // one for an actual decline.
+                        let radarBlocked = false;
+                        const latestChargeId = (pi as { latest_charge?: string }).latest_charge;
+                        if (latestChargeId) {
+                            try {
+                                const ch = await retrieveCharge(latestChargeId, liveMode);
+                                radarBlocked = ch.outcome?.type === "blocked";
+                            } catch (chErr) {
+                                log({
+                                    event_type: "stripe.radar_check_failed",
+                                    severity: "warn",
+                                    entity_type: "payment_intent",
+                                    entity_id: piId,
+                                    properties: {
+                                        error_message: chErr instanceof Error ? chErr.message : String(chErr),
+                                        latest_charge: latestChargeId,
+                                    },
+                                });
+                            }
+                        }
+
                         const { data: link } = await supabase
                             .from("sendmo_links")
                             .select("id, short_code, user_id, last_decline_email_at, profile:profiles!user_id(email)")
                             .eq("id", link_id)
                             .maybeSingle();
 
-                        if (link) {
+                        // ── B4: Radar-block branch — NOT a card decline. ────
+                        // Do NOT send the decline-recovery email; do NOT write
+                        // charge_failed or flip the link Inactive (the payer's
+                        // card is fine). Write radar_blocked, log for SendMo
+                        // visibility, gently notify the payer (O7 — every block).
+                        if (!link && radarBlocked) {
+                            // Defensive log — link_id from metadata didn't
+                            // resolve, so we can't write the radar_blocked
+                            // event or notify the payer. Shouldn't happen
+                            // (link_id is set by labels/ from a resolved
+                            // sendmo_links row) but make it observable.
+                            log({
+                                event_type: "stripe.radar_blocked_no_link",
+                                severity: "warn",
+                                entity_type: "payment_intent",
+                                entity_id: piId,
+                                properties: { link_id, mode, decline_code: failureCode },
+                            });
+                        }
+
+                        if (link && radarBlocked) {
+                            await supabase.from("link_state_events").insert({
+                                link_id: link.id,
+                                event: "radar_blocked",
+                                // reason is the human-readable category; the
+                                // Stripe last_payment_error.code goes in
+                                // metadata so the audit row is unambiguous
+                                // (review N-3 — failureCode is typically
+                                // 'card_declined' and reads identically to
+                                // a real decline if used as the reason).
+                                reason: "radar_block",
+                                metadata: {
+                                    stripe_intent_id: piId,
+                                    mode,
+                                    last_payment_error_code: failureCode,
+                                },
+                            });
+                            const payerEmail =
+                                (link as { profile?: { email?: string } | null }).profile?.email ?? null;
+                            if (payerEmail) {
+                                const tpl = radarBlockedPayerEmail({
+                                    linkId: link.id,
+                                    shortCode: (link as { short_code: string }).short_code,
+                                });
+                                const acRb = new AbortController();
+                                const tidRb = setTimeout(() => acRb.abort(), 5000);
+                                try {
+                                    await sendEmail({
+                                        to: payerEmail, subject: tpl.subject, html: tpl.html,
+                                        signal: acRb.signal,
+                                    });
+                                    clearTimeout(tidRb);
+                                } catch (sendErr) {
+                                    clearTimeout(tidRb);
+                                    log({
+                                        event_type: "stripe.radar_block_email_failed",
+                                        severity: "error",
+                                        entity_type: "sendmo_link",
+                                        entity_id: link.id,
+                                        properties: {
+                                            error_message: sendErr instanceof Error ? sendErr.message : String(sendErr),
+                                            recipient: payerEmail,
+                                        },
+                                    });
+                                }
+                            }
+                            log({
+                                event_type: "stripe.radar_blocked",
+                                severity: "warn",
+                                entity_type: "payment_intent",
+                                entity_id: piId,
+                                properties: {
+                                    link_id: link.id,
+                                    short_code: (link as { short_code: string }).short_code,
+                                    mode,
+                                    decline_code: failureCode,
+                                    payer_email: payerEmail,
+                                },
+                            });
+                        }
+
+                        if (link && !radarBlocked) {
                             // Audit row — always written regardless of email outcome
                             await supabase.from("link_state_events").insert({
                                 link_id: link.id,

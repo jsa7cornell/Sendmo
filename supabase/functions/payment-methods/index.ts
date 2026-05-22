@@ -138,10 +138,58 @@ serve(async (req: Request) => {
             );
 
             const idempotencyKey = `seti_create:${caller.userId}:${mode}:retry-${retryN}`;
+
+            // ─── B5 PM-add breaker (proposal 2026-05-21, decided 2026-05-22) ──
+            // Cap how many SetupIntents (card-adds) one account creates in
+            // a rolling 24h. A normal user adds 1–3 cards ever; a card-tester
+            // creates dozens — wide gap. Stripe's idempotent SetupIntent
+            // retries (same idempotency_key) are pre-deduped by Stripe, so
+            // this counts distinct setup-intent rows per (user, mode) per day.
+            //
+            // Counts all setup-intent rows regardless of status — i.e. counts
+            // ATTEMPTS, not completions. Slightly tighter than counting only
+            // succeeded ones: a legitimate user who abandons 4 SetupIntents
+            // would hit the breaker on a 5th attempt the same day. Defensible
+            // (card-testers also burn SetupIntents through failures), and a
+            // false positive is recoverable via support. If complaints emerge,
+            // tighten by filtering to `status IN ('succeeded','requires_action',
+            // 'requires_payment_method')` — review N-5.
+            const PM_ADD_LIMIT_PER_DAY = 5;
+            const dayAgoIso = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+            const { count: recentSetupCount } = await caller.supabase
+                .from("stripe_intents")
+                .select("id", { count: "exact", head: true })
+                .eq("user_id", caller.userId)
+                .eq("intent_kind", "setup")
+                .eq("mode", mode)
+                .gte("created_at", dayAgoIso);
+            if ((recentSetupCount ?? 0) >= PM_ADD_LIMIT_PER_DAY) {
+                log({
+                    event_type: "velocity.limit_hit",
+                    session_id: sessionId,
+                    severity: "warn",
+                    entity_type: "user",
+                    entity_id: caller.userId,
+                    properties: {
+                        layer: "pm_add",
+                        window: "daily",
+                        limit: PM_ADD_LIMIT_PER_DAY,
+                        count: recentSetupCount,
+                        mode,
+                    },
+                });
+                return jsonResponse(
+                    { error: "You've added several cards recently. Please contact support if you need to add another." },
+                    429,
+                );
+            }
+
             const seti = await createSetupIntent({
                 customer: customerId,
                 metadata: {
                     sendmo_user_id: caller.userId,
+                    // txn_kind — Radar/Fraud-Teams discriminator (B2).
+                    txn_kind: "setup",
                     mode,
                 },
                 idempotency_key: idempotencyKey,

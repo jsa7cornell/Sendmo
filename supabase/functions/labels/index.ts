@@ -3,7 +3,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { log } from "../_shared/logger.ts";
 import { sendEmail } from "../_shared/resend.ts";
-import { labelConfirmationEmail } from "../_shared/email-templates.ts";
+import { labelConfirmationEmail, budgetReachedEmail } from "../_shared/email-templates.ts";
+import { checkAccountBudget } from "../_shared/budget.ts";
 import {
     retrievePaymentIntent,
     createRefund,
@@ -56,6 +57,11 @@ serve(async (req: Request) => {
     }
 
     const sessionId = req.headers.get("x-session-id") || "unknown";
+    // Sender IP — used for the flex rate-limit key and as a Radar metadata
+    // signal on the off_session charge (B2). Computed once at handler scope.
+    const senderIp = req.headers.get("x-forwarded-for")?.split(",")[0].trim()
+        ?? req.headers.get("x-real-ip")
+        ?? "unknown";
 
     try {
         const {
@@ -93,10 +99,7 @@ serve(async (req: Request) => {
         // needs anonymous-URL rate limiting. Only the flex sender-confirm
         // path (link_short_code present, no JWT, no comp) is hit here.
         if (link_short_code && !comp) {
-            const ip = req.headers.get("x-forwarded-for")?.split(",")[0].trim()
-                ?? req.headers.get("x-real-ip")
-                ?? "unknown";
-            const rateKey = `${ip}:${link_short_code}`;
+            const rateKey = `${senderIp}:${link_short_code}`;
             if (isFlexRateLimited(rateKey, Date.now())) {
                 log({
                     event_type: "label.flex_rate_limited",
@@ -104,7 +107,7 @@ serve(async (req: Request) => {
                     severity: "warn",
                     entity_type: "label",
                     entity_id: easypost_shipment_id,
-                    properties: { ip, link_short_code },
+                    properties: { ip: senderIp, link_short_code },
                 });
                 return new Response(
                     JSON.stringify({ error: "Too many attempts. Please wait a moment and try again." }),
@@ -489,6 +492,69 @@ serve(async (req: Request) => {
                 );
             }
 
+            // ─── B5 Account Budget check (proposal 2026-05-21, decided 2026-05-22) ──
+            // Refuse the charge if it would breach the account holder's daily
+            // or weekly spending budget. Runs BEFORE createOffSessionShipmentPI
+            // so a refusal never leaves a charged-but-no-label race. Fails open
+            // on a DB error (budget is a backstop; per-shipment cap + Radar
+            // still apply).
+            const budgetCheck = await checkAccountBudget(
+                supabase, resolvedLink.user_id, linkMode, display_price_cents,
+            );
+            if (!budgetCheck.ok) {
+                log({
+                    event_type: "velocity.limit_hit",
+                    session_id: sessionId,
+                    severity: "warn",
+                    entity_type: "sendmo_link",
+                    entity_id: resolvedLink.id,
+                    properties: {
+                        layer: "account_budget",
+                        window: budgetCheck.window,
+                        limit_cents: budgetCheck.limit_cents,
+                        spent_cents: budgetCheck.spent_cents,
+                        attempted_cents: budgetCheck.attempted_cents,
+                        user_id: resolvedLink.user_id,
+                        mode: linkMode,
+                        link_short_code: resolvedLink.short_code,
+                    },
+                });
+                // Notify the account holder (fire-and-forget, 5s timeout).
+                if (recipient_email) {
+                    const acBud = new AbortController();
+                    const tidBud = setTimeout(() => acBud.abort(), 5000);
+                    try {
+                        const tpl = budgetReachedEmail({
+                            window: budgetCheck.window!,
+                            limitCents: budgetCheck.limit_cents!,
+                        });
+                        await sendEmail({
+                            to: recipient_email, subject: tpl.subject, html: tpl.html,
+                            signal: acBud.signal,
+                        });
+                        clearTimeout(tidBud);
+                    } catch (sendErr) {
+                        clearTimeout(tidBud);
+                        log({
+                            event_type: "velocity.budget_email_failed",
+                            session_id: sessionId,
+                            severity: "error",
+                            entity_type: "sendmo_link",
+                            entity_id: resolvedLink.id,
+                            properties: {
+                                error_message: sendErr instanceof Error ? sendErr.message : String(sendErr),
+                            },
+                        });
+                    }
+                }
+                return new Response(
+                    JSON.stringify({
+                        error: "This link has reached its spending limit. The link owner needs to contact SendMo to raise it.",
+                    }),
+                    { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+
             // Create fresh off_session PI for the actual rate. Sender's IP
             // is the natural idempotency key partition; we also include the
             // EasyPost shipment id so retries from the same client are safe.
@@ -501,11 +567,36 @@ serve(async (req: Request) => {
                     metadata: {
                         source: "flex_shipment",
                         intent_role: "shipment",
+                        // txn_kind — Radar/Fraud-Teams discriminator (B2).
+                        txn_kind: "mit_flex",
                         link_id: resolvedLink.id,
+                        link_type: "flexible",
                         sendmo_user_id: resolvedLink.user_id,
                         easypost_shipment_id,
                         link_short_code: resolvedLink.short_code,
+                        // sender_ip — the anonymous sender is invisible to Radar
+                        // on an MIT; pass it explicitly for later Fraud-Teams rules.
+                        sender_ip: senderIp,
+                        ...(sender_email ? { sender_email: String(sender_email) } : {}),
+                        ...(recipient_email ? { recipient_email: String(recipient_email) } : {}),
                     },
+                    // shipping — destination address as a Radar signal (B2).
+                    ...(to_address?.street1
+                        ? {
+                            shipping: {
+                                name: String(to_address.name ?? ""),
+                                ...(to_address.phone ? { phone: String(to_address.phone) } : {}),
+                                address: {
+                                    line1: String(to_address.street1),
+                                    ...(to_address.street2 ? { line2: String(to_address.street2) } : {}),
+                                    city: to_address.city ? String(to_address.city) : undefined,
+                                    state: to_address.state ? String(to_address.state) : undefined,
+                                    postal_code: to_address.zip ? String(to_address.zip) : undefined,
+                                    country: to_address.country ? String(to_address.country) : undefined,
+                                },
+                            },
+                        }
+                        : {}),
                     idempotency_key: idempotencyKey,
                     liveMode: isLive,
                 });
@@ -567,14 +658,62 @@ serve(async (req: Request) => {
                     );
                 }
             } catch (err) {
-                // Stripe API errors (card_declined, insufficient_funds, etc.)
-                // throw out of createOffSessionShipmentPI. The webhook
-                // payment_intent.payment_failed fires from Stripe's side and
-                // handles the recipient decline email. We just return the
-                // friendly error to the sender.
-                const errAny = err as { stripeCode?: string; message?: string };
+                // Stripe API errors (card_declined, insufficient_funds, Radar
+                // blocks, etc.) throw out of createOffSessionShipmentPI. The
+                // webhook payment_intent.payment_failed fires from Stripe's
+                // side and handles the canonical routing (decline-recovery
+                // email, OR — per B4 — Radar-block branch via
+                // retrieveCharge(outcome.type)).
+                //
+                // Here we return a friendly sender-facing message — and we
+                // pick distinct copy for a likely Radar block vs a genuine
+                // decline, because the two have different downstream state:
+                //   decline    → link goes Inactive, recipient emailed to
+                //                update card
+                //   Radar block → link stays Active (the recipient's card is
+                //                fine); the recipient is gently notified that
+                //                a charge was blocked as suspicious (O7).
+                // So telling a Radar-blocked sender "the link's been
+                // deactivated" is wrong — it isn't.
+                //
+                // 'fraudulent' is the decline_code Stripe surfaces when Radar
+                // blocks (or when the issuer suspects fraud). The authoritative
+                // signal is the charge's outcome.type ('blocked' vs
+                // 'issuer_declined') and the webhook is the source of truth
+                // for downstream state. This decline_code is a fast synchronous
+                // hint that aligns the sender message with the webhook's
+                // upcoming decision (B-1 from the review).
+                const errAny = err as {
+                    stripeCode?: string;
+                    stripeType?: string;
+                    stripeDeclineCode?: string;
+                    message?: string;
+                };
                 const msg = errAny.message ?? "Payment failed";
-                console.error(`[Session ${sessionId}] [labels] flex off_session error:`, msg, errAny.stripeCode);
+                const isLikelyRadarBlock = errAny.stripeDeclineCode === "fraudulent";
+                console.error(`[Session ${sessionId}] [labels] flex off_session error:`, msg, errAny.stripeCode, errAny.stripeDeclineCode);
+                if (isLikelyRadarBlock) {
+                    log({
+                        event_type: "label.flex_radar_blocked",
+                        session_id: sessionId,
+                        severity: "warn",
+                        entity_type: "label",
+                        entity_id: easypost_shipment_id,
+                        properties: {
+                            link_short_code,
+                            error_message: msg,
+                            stripe_code: errAny.stripeCode ?? null,
+                            decline_code: errAny.stripeDeclineCode ?? null,
+                            live_mode: isLive,
+                        },
+                    });
+                    return new Response(
+                        JSON.stringify({
+                            error: "This payment was declined by our fraud protection. The link owner has been notified.",
+                        }),
+                        { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                    );
+                }
                 log({
                     event_type: "label.flex_off_session_error",
                     session_id: sessionId,
@@ -585,6 +724,7 @@ serve(async (req: Request) => {
                         link_short_code,
                         error_message: msg,
                         stripe_code: errAny.stripeCode ?? null,
+                        decline_code: errAny.stripeDeclineCode ?? null,
                         live_mode: isLive,
                     },
                 });

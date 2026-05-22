@@ -12,6 +12,67 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-22] Payments risk-intelligence — implementation shipped
+
+**Category:** ship | Payments | Risk
+**Cross-link:** decided proposal [2026-05-21_payments-risk-intelligence_reviewed-2026-05-22_decided-2026-05-22.md](proposals/2026-05-21_payments-risk-intelligence_reviewed-2026-05-22_decided-2026-05-22.md) | execution plan `~/.claude/plans/pure-gliding-babbage.md` | LOG entry "[2026-05-22] Payments risk-intelligence proposal — decided" below | independent fresh-eyes code review verdict `approve-with-changes`, 2 blocking findings addressed before this push.
+
+**What shipped:**
+- **Migration 031** (`031_payments_risk_intelligence.sql`) — B6 (`sendmo_links.max_price_cents` default $100→$50), B5 schema (`profiles.daily_budget_cents`/`weekly_budget_cents` defaults $200/$500, `set_account_budget` RPC SECURITY DEFINER + admin-role check, column-level `REVOKE UPDATE` on the budget columns so a user can't self-raise via the "Users can update own profile" RLS policy), B4 (`link_state_events` CHECK enum gains `radar_blocked`).
+- **B2 — Radar metadata** across all three intent types: `txn_kind` (`mit_flex` / `cit_full_label` / `setup`), `link_type`, `sender_ip`, `sender_email` / `recipient_email`. Stripe-level `shipping` param wired on the flex off_session PI (destination address from the resolved link); deferred for the full-label PI (no destination in the request body; Radar is already strong on-session — review B-2).
+- **B5 — Account Budget enforcement.** `_shared/budget.ts` `checkAccountBudget` sums `transactions` charge rows per `(user_id, mode)` over rolling 24h/7d. Called BEFORE PI creation in `labels/` (flex) and `payments/` (full-label, only when authenticated). PM-add breaker (5/day) in `payment-methods/`. On breach: refuse 402, log `velocity.limit_hit`, email the account holder via new `budgetReachedEmail`. Fails open on DB error (the per-shipment cap and Radar still apply).
+- **B4 — Radar-block handling.** `retrieveCharge` + `Charge`/`ChargeOutcome` interfaces in `_shared/stripe.ts`. In `stripe-webhook/`'s `payment_intent.payment_failed` handler, for `source='flex_shipment'`: fetch the latest charge, check `outcome.type === 'blocked'`. If blocked → distinct routing — write `radar_blocked` `link_state_events` row, notify the payer via `radarBlockedPayerEmail` (O7 — every block, gentle wording), log `stripe.radar_blocked` (severity `warn`, SendMo visibility); DO NOT send the decline-recovery email; DO NOT flip the link Inactive. Otherwise → existing decline-recovery path unchanged. Conservative fallback (couldn't fetch charge) → treat as decline. Synchronous hint in `labels/` (`decline_code='fraudulent'`) picks the distinct sender-facing fraud message + logs `label.flex_radar_blocked` (review B-1).
+- **`stripeRequest`** now captures `decline_code` (`stripeDeclineCode`) so Edge fn callers can hint sender-facing messaging without an extra Stripe round-trip.
+
+**Review (independent fresh-eyes pass, 2026-05-22):** verdict `approve-with-changes`. Both blocking findings fixed before this push: B-1 (Radar-block sender message was wrongly identical to the decline message; `label.flex_radar_blocked` wasn't emitted) → fixed via `stripeDeclineCode==='fraudulent'` hint; B-2 (`payments/` didn't pass `shipping`) → documented as deferred with explicit comment. Nits N-2, N-3, N-5 taken: webhook now logs `stripe.radar_blocked_no_link` for the rare missing-link case; `radar_blocked` audit row uses `reason='radar_block'` with `last_payment_error_code` in metadata; PM-add breaker comment clarifies the counts-attempts-not-completions choice.
+
+**Out of scope this push (fast-follows, documented):**
+- Admin.tsx UI for `set_account_budget` — the RPC is the secure primitive and works without a UI (callable from Supabase Studio or `supabase.rpc`). Plan called it "minimal admin UI ... a later enhancement."
+- B2 `shipping` on the full-label PI — would need a mid-flow EasyPost shipment lookup.
+- Integration tests for `checkAccountBudget` + e2e for B5/B4 — owed per plan §Verification.
+- B1 (Stripe Dashboard config) — John, ~1 hr.
+
+**Deploy-order note (important):** the edge functions reference the new `profiles.daily_budget_cents`/`weekly_budget_cents` columns and the new `link_state_events.radar_blocked` enum value. **Apply migration 031 promptly** — code-deploy auto-runs on push-to-main but the migration is applied manually. In the gap: budget reads fail open (no enforcement, backstop only — the per-shipment cap and Radar still apply), but a Radar-block `link_state_events` insert would violate the CHECK and silently drop (caught as `flex_decline_handler_error`).
+
+**Browser-verified:**
+  mcp-session: PENDING
+  variants-covered: PENDING —
+    - Code auto-deploys via push-to-main Edge Function CI.
+    - End-to-end verification is gated on migration 031 being applied. Verification covers: a flex link forced past the budget surfaces the contact-us refusal + `velocity.limit_hit` log + the budget-hit email; PM-add breaker triggers after 5 SetupIntents/day for one user; Stripe test card `4100 0000 0000 0019` (Radar-block) on a flex charge → sender sees the distinct fraud-protection message, `label.flex_radar_blocked` logged, `radar_blocked` link_state_event written, decline-recovery email NOT sent, link NOT flipped Inactive, payer receives the gentle Radar-block email.
+  `npx tsc -b` clean post-fixes.
+
+---
+
+### [2026-05-22] Payments risk-intelligence proposal — decided
+
+**Category:** decision | Payments | Risk
+**Cross-link:** [proposals/2026-05-21_payments-risk-intelligence_reviewed-2026-05-22_decided-2026-05-22.md](proposals/2026-05-21_payments-risk-intelligence_reviewed-2026-05-22_decided-2026-05-22.md) | supersedes the standalone "spend-cap / e-brake" item in [proposals/2026-05-19_payments-golive-followups-handoff.md](proposals/2026-05-19_payments-golive-followups-handoff.md) Job 4 | [PAYMENTS.md](PAYMENTS.md) §7
+
+**What:** the Job 4 "spend-cap / e-brake" follow-up was triaged, grew into a full payment risk-intelligence proposal, fresh-eyes reviewed (verdict `needs-rework`, 3 blocking findings), reworked, and **decided 2026-05-22.** Scopes risk intelligence to SendMo's three charge contexts — PM-add (SetupIntent), flex off_session charge (2a), full-label on-session charge (2b).
+
+**Before-launch plan (~3–3.5 days code + Dashboard config) — not yet implemented:**
+- **B1** — configure built-in Stripe Radar (recommended block rules + card-testing protection).
+- **B2** — feed Radar metadata (`txn_kind`, `link_id`, emails, sender IP, `shipping`) on all three intent types.
+- **B4** — Radar scores the **payer** automatically on every charge; build the distinct **Radar-block handling branch** (≠ card decline; must NOT flip the link Inactive) + `label.flex_radar_blocked` logging + SendMo notification + payer notification.
+- **B5** — **Account Budget**: one per-account spending limit, **$200/day + $500/week**, admin-raised (no self-serve), counts all charges (2a + 2b); plus a per-account PM-add breaker. Tunable config; every trip logs `velocity.limit_hit`; budget check runs *before* PI creation.
+- **B6** — default per-shipment cap `max_price_cents` **$100 → $50**.
+
+**Key decisions:**
+- Chargeback Protection — **dropped** (requires a Stripe Checkout migration; SendMo is on Elements; never covers the flex MIT path).
+- Radar at the flex charge **scores the payer, not the sender** — the 2026-05-21 draft's sender-side Radar Session technique was wrong (a Radar Session attaches to the PaymentMethod, created at the recipient's SetupIntent); caught by the fresh-eyes review (finding B-1).
+- Velocity — collapsed from a per-link/per-card hierarchy to **one per-account Account Budget**.
+- ZDA / Pattern D′ — **kept telemetry-gated**; revisit ~2 weeks post-launch with the decline-rate query (PAYMENTS.md §4).
+- Radar for Fraud Teams — **deferred**; launch on built-in, add at volume.
+- Signup CAPTCHA / Turnstile — **parked to WISHLIST** (no signup friction wanted).
+
+**Fast-follow / deferred:** sender-email capture, decline-burst soft-lock, light admin review surface, disposable-email block, signup-rate limit (fast-follow); per-card fingerprint spend cap (the anti-farm escalation), chargeback-evidence packet automation, nightly PM-validation cron, 30-day expiry email (deferred / volume-gated).
+
+**Why it matters:** establishes SendMo's payment fraud/abuse posture before live mode. Load-bearing insight: at the flex charge Radar sees only the payer, not the anonymous sender — so SendMo's own controls (Account Budget + per-shipment cap) carry the sender-side risk. The anti-bot-farm defense is "make a farmed account unable to move money" (Radar at PM-add + per-account economics + PM-add breaker), not blocking signups.
+
+**Next:** implementation is a separate session — no code was written this session.
+
+---
+
 ### [2026-05-21] Rule 21 — verify the deploy after every push to `main`
 
 **Category:** process | infra | CI

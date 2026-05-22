@@ -2,6 +2,9 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { log } from "../_shared/logger.ts";
+import { sendEmail } from "../_shared/resend.ts";
+import { budgetReachedEmail } from "../_shared/email-templates.ts";
+import { checkAccountBudget } from "../_shared/budget.ts";
 import {
     createPaymentIntent,
     createCustomerSession,
@@ -151,15 +154,76 @@ serve(async (req: Request) => {
             ? `pi_create_${body.easypost_shipment_id}_${customerForPi}`
             : `pi_create_${body.easypost_shipment_id}`;
 
+        // ─── B5 Account Budget check (proposal 2026-05-21, decided 2026-05-22) ──
+        // Only enforced when there's an account to budget. Anonymous full-label
+        // payers fall through (Radar still applies on-session).
+        if (resolvedUserId && sbAdmin) {
+            const bcMode: "live" | "test" = isLive ? "live" : "test";
+            const budgetCheck = await checkAccountBudget(
+                sbAdmin, resolvedUserId, bcMode, amount_cents,
+            );
+            if (!budgetCheck.ok) {
+                log({
+                    event_type: "velocity.limit_hit",
+                    session_id: sessionId,
+                    severity: "warn",
+                    entity_type: "payment_intent",
+                    properties: {
+                        layer: "account_budget",
+                        window: budgetCheck.window,
+                        limit_cents: budgetCheck.limit_cents,
+                        spent_cents: budgetCheck.spent_cents,
+                        attempted_cents: budgetCheck.attempted_cents,
+                        user_id: resolvedUserId,
+                        mode: bcMode,
+                        source: "sendmo_full_label",
+                    },
+                });
+                // Notify the account holder (fire-and-forget, 5s timeout).
+                if (body.receipt_email) {
+                    const acBud = new AbortController();
+                    const tidBud = setTimeout(() => acBud.abort(), 5000);
+                    try {
+                        const tpl = budgetReachedEmail({
+                            window: budgetCheck.window!,
+                            limitCents: budgetCheck.limit_cents!,
+                        });
+                        await sendEmail({
+                            to: body.receipt_email, subject: tpl.subject, html: tpl.html,
+                            signal: acBud.signal,
+                        });
+                        clearTimeout(tidBud);
+                    } catch {
+                        clearTimeout(tidBud);
+                        // Swallow — email is best-effort.
+                    }
+                }
+                return jsonResponse(
+                    { error: "This account has reached its spending limit. Contact SendMo to raise it." },
+                    402,
+                );
+            }
+        }
+
         const pi = await createPaymentIntent({
             amount_cents,
             currency: "usd",
             capture_method: "automatic",
             customer: customerForPi,
+            // NB: `shipping` (Stripe's destination-address Radar signal) is
+            // NOT passed on the full-label PI in v1. The destination address
+            // isn't in this request body (`payments/` only gets
+            // easypost_shipment_id), and Radar is already strong on 2b
+            // (on-session — Stripe Elements captures full device fingerprint).
+            // Deferred as a fast-follow per the B2 review (finding 2): if
+            // Fraud Teams custom rules want the destination signal later,
+            // fetch the address via the EasyPost shipment lookup.
             metadata: {
                 easypost_shipment_id: body.easypost_shipment_id,
                 session_id: sessionId,
                 source: "sendmo_full_label",
+                // txn_kind — Radar/Fraud-Teams discriminator (B2).
+                txn_kind: "cit_full_label",
                 intent_role: "shipment",
                 // sendmo_user_id is the key the stripe-webhook resolver reads
                 // (resolveIdsFromMetadata in stripe-webhook/index.ts).

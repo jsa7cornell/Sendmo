@@ -264,3 +264,59 @@ export function paymentDeclinedReactivateEmail(params: {
     `),
   };
 }
+
+// ─── B5: Account-Budget-reached (proposal 2026-05-21, decided 2026-05-22) ───
+// Sent to the account holder when an attempted charge would breach their
+// daily or weekly spending budget. Admin-raise only — no self-serve.
+export function budgetReachedEmail(params: {
+  window: "daily" | "weekly";
+  limitCents: number;
+  dashboardOrigin?: string;
+}): { subject: string; html: string } {
+  const origin = (params.dashboardOrigin || "https://sendmo.co").replace(/\/$/, "");
+  const limitDollars = (params.limitCents / 100).toFixed(2);
+  const periodLabel = params.window === "daily" ? "daily" : "weekly";
+  return {
+    subject: `Your SendMo account reached its ${periodLabel} spending limit`,
+    html: layout(`
+      <h2 style="margin:0 0 8px;font-size:20px;font-weight:600;color:#111827;">${periodLabel.charAt(0).toUpperCase()}${periodLabel.slice(1)} spending limit reached</h2>
+      <p style="margin:0 0 16px;font-size:14px;color:${GRAY_600};line-height:1.5;">
+        A recent charge to your SendMo account would have exceeded your ${periodLabel} spending limit of <strong>$${limitDollars}</strong>. The charge was not processed.
+      </p>
+      <p style="margin:0 0 16px;font-size:14px;color:${GRAY_600};line-height:1.5;">
+        If you need a higher limit, reply to this email and we'll raise it for you. This guardrail protects your account from runaway charges; we tune it case by case rather than auto-raising.
+      </p>
+      <p style="margin:0;font-size:12px;color:${GRAY_400};text-align:center;">
+        <a href="${origin}/dashboard" style="color:${BRAND_BLUE};text-decoration:none;">Open your dashboard</a>
+      </p>
+    `),
+  };
+}
+
+// ─── B4: Radar-blocked-charge notification to the payer (O7) ────────
+// Sent on every Stripe Radar block of a flex off_session charge. Gentle:
+// the payer's card is fine; a sender on their link was flagged. They may
+// want to rotate or cancel the link if it's been shared somewhere bad.
+export function radarBlockedPayerEmail(params: {
+  linkId: string;
+  shortCode: string;
+  dashboardOrigin?: string;
+}): { subject: string; html: string } {
+  const origin = (params.dashboardOrigin || "https://sendmo.co").replace(/\/$/, "");
+  const dashUrl = `${origin}/dashboard`;
+  return {
+    subject: "A charge on your SendMo link was blocked as suspicious",
+    html: layout(`
+      <h2 style="margin:0 0 8px;font-size:20px;font-weight:600;color:#111827;">A charge on your link was blocked</h2>
+      <p style="margin:0 0 16px;font-size:14px;color:${GRAY_600};line-height:1.5;">
+        Stripe's fraud detection blocked a recent attempt to use your SendMo link <code>sendmo.co/s/${params.shortCode}</code>. <strong>Your card is fine and no money was charged.</strong> No action is required.
+      </p>
+      <p style="margin:0 0 16px;font-size:14px;color:${GRAY_600};line-height:1.5;">
+        We're letting you know in case you'd like to review where your link is shared — if it's been posted somewhere public and you're seeing repeated blocks, you can rotate or cancel the link from your dashboard.
+      </p>
+      <div style="text-align:center;margin:24px 0;">
+        <a href="${dashUrl}" style="display:inline-block;background-color:${BRAND_BLUE};color:#ffffff;font-size:14px;font-weight:600;text-decoration:none;padding:12px 32px;border-radius:8px;">Open dashboard</a>
+      </div>
+    `),
+  };
+}
