@@ -12,6 +12,27 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-22] Payments risk-intel — docs + Admin Account-Budget UI (fast-follow)
+
+**Category:** docs | ship | Payments | Risk
+**Cross-link:** prior 2026-05-22 entries (proposal decided + implementation shipped) | handoff [proposals/2026-05-22_payments-risk-intel-followups-handoff.md](proposals/2026-05-22_payments-risk-intel-followups-handoff.md) | PAYMENTS.md §10 (new)
+
+**What:**
+- **PAYMENTS.md updated** — new **§10 Risk intelligence (2026-05-22)** documents the three controls (Account Budget, PM-add breaker, Radar-block branch), the data contract, new `event_logs` event_types, and what's deferred. **§9 NEVER-do list** gained two entries (don't bypass `checkAccountBudget`; don't treat a Radar block as a card decline). "Last meaningful change" header refreshed.
+- **Handoff doc written** for the next agent picking up payments — covers the deploy-order check on migration 031, four Jobs (Admin UI shipped now; tests; full-label `shipping`; B1 Dashboard config), Stripe test card `4100 0000 0000 0019` for Radar testing, and cross-cutting context.
+- **Admin Account-Budget UI shipped** (`src/pages/Admin.tsx`) — minimal collapsible "Set Account Budget" tool on `/admin`. Three inputs (target_user_id UUID, daily $, weekly $), Submit, inline status message. Calls the `set_account_budget` RPC. Admin no longer needs Supabase Studio to set per-account budgets.
+
+**Browser-verified:**
+  mcp-session: PENDING
+  variants-covered: PENDING — admin opens `/admin`, expands "Set Account Budget", enters a target user_id + daily/weekly amounts, clicks Set → success message; entering invalid values surfaces the RPC's RAISE message. `npx tsc -b` clean.
+
+**Remaining fast-follows** (per handoff §Jobs):
+- Tests for B5/B4 (integration on `checkAccountBudget` + e2e for the budget-breach and Radar-block paths).
+- `shipping` on the full-label PI (needs an EasyPost shipment lookup; Radar is already strong on 2b — low priority).
+- B1 — John, Stripe Dashboard config (~1 hr).
+
+---
+
 ### [2026-05-22] Payments risk-intelligence — implementation shipped
 
 **Category:** ship | Payments | Risk

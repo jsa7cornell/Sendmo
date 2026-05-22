@@ -1,10 +1,11 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, type FormEvent } from "react";
 import { Navigate, useSearchParams } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import CancelLabelModal from "@/components/CancelLabelModal";
 import { Ban, Package, Link2, AlertTriangle } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
+import { supabase } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -165,6 +166,48 @@ export default function Admin() {
     const [envFilter, setEnvFilter] = useState<"all" | "production" | "test">("production");
     const [search, setSearch] = useState("");
     const [cancelTarget, setCancelTarget] = useState<CancelTarget | null>(null);
+
+    // Account-Budget admin tool (fast-follow of the 2026-05-22 risk-intel
+    // proposal). Minimal form — Admin pastes a target user_id + daily/weekly
+    // dollar amounts and the set_account_budget RPC (admin-gated, SECURITY
+    // DEFINER, migration 031) updates profiles.daily/weekly_budget_cents.
+    const [budgetTargetId, setBudgetTargetId] = useState("");
+    const [budgetDaily, setBudgetDaily] = useState("");
+    const [budgetWeekly, setBudgetWeekly] = useState("");
+    const [budgetBusy, setBudgetBusy] = useState(false);
+    const [budgetMsg, setBudgetMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+
+    async function handleSetBudget(e: FormEvent) {
+        e.preventDefault();
+        setBudgetMsg(null);
+        const dailyDollars = parseFloat(budgetDaily);
+        const weeklyDollars = parseFloat(budgetWeekly);
+        if (!budgetTargetId.trim() || isNaN(dailyDollars) || isNaN(weeklyDollars)) {
+            setBudgetMsg({ kind: "err", text: "Need a target_user_id (UUID) and numeric daily + weekly amounts." });
+            return;
+        }
+        const dailyCents = Math.round(dailyDollars * 100);
+        const weeklyCents = Math.round(weeklyDollars * 100);
+        if (dailyCents < 0 || weeklyCents < 0) {
+            setBudgetMsg({ kind: "err", text: "Amounts must be non-negative." });
+            return;
+        }
+        setBudgetBusy(true);
+        const { error: rpcErr } = await supabase.rpc("set_account_budget", {
+            target_user_id: budgetTargetId.trim(),
+            daily_cents: dailyCents,
+            weekly_cents: weeklyCents,
+        });
+        setBudgetBusy(false);
+        if (rpcErr) {
+            setBudgetMsg({ kind: "err", text: rpcErr.message });
+        } else {
+            setBudgetMsg({
+                kind: "ok",
+                text: `Set $${dailyDollars.toFixed(2)}/day · $${weeklyDollars.toFixed(2)}/week for ${budgetTargetId.trim().slice(0, 8)}…`,
+            });
+        }
+    }
 
     // Two-tab pattern — mirrors Dashboard.tsx (PLAYBOOK Rule 6).
     const tabParam = searchParams.get("tab");
@@ -507,6 +550,60 @@ export default function Admin() {
                                 </p>
                             </div>
                         )}
+
+                        {/* Set Account Budget — minimal admin tool (2026-05-22 risk-intel) */}
+                        <details className="bg-white rounded-xl shadow-sm border">
+                            <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-foreground select-none">
+                                Set Account Budget
+                            </summary>
+                            <form onSubmit={handleSetBudget} className="px-4 pb-4 flex flex-col sm:flex-row gap-2 items-stretch sm:items-end">
+                                <div className="flex flex-col gap-1 flex-1 min-w-[280px]">
+                                    <label className="text-[10px] uppercase tracking-wider text-muted-foreground">target_user_id (UUID)</label>
+                                    <input
+                                        type="text"
+                                        value={budgetTargetId}
+                                        onChange={e => setBudgetTargetId(e.target.value)}
+                                        placeholder="00000000-0000-0000-0000-000000000000"
+                                        className="border rounded-md px-3 py-1.5 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-primary"
+                                    />
+                                </div>
+                                <div className="flex flex-col gap-1 w-32">
+                                    <label className="text-[10px] uppercase tracking-wider text-muted-foreground">daily ($)</label>
+                                    <input
+                                        type="number"
+                                        step="0.01"
+                                        min="0"
+                                        value={budgetDaily}
+                                        onChange={e => setBudgetDaily(e.target.value)}
+                                        placeholder="200"
+                                        className="border rounded-md px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-primary"
+                                    />
+                                </div>
+                                <div className="flex flex-col gap-1 w-32">
+                                    <label className="text-[10px] uppercase tracking-wider text-muted-foreground">weekly ($)</label>
+                                    <input
+                                        type="number"
+                                        step="0.01"
+                                        min="0"
+                                        value={budgetWeekly}
+                                        onChange={e => setBudgetWeekly(e.target.value)}
+                                        placeholder="500"
+                                        className="border rounded-md px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-primary"
+                                    />
+                                </div>
+                                <Button type="submit" disabled={budgetBusy} className="rounded-md">
+                                    {budgetBusy ? "Setting…" : "Set"}
+                                </Button>
+                                {budgetMsg && (
+                                    <p className={cn(
+                                        "text-xs sm:ml-3 self-center",
+                                        budgetMsg.kind === "ok" ? "text-green-700" : "text-red-600"
+                                    )}>
+                                        {budgetMsg.text}
+                                    </p>
+                                )}
+                            </form>
+                        </details>
 
                         {/* Tabs — Labels default, Links second (mirrors Dashboard.tsx pattern). */}
                         <div className="flex items-center gap-1 border-b border-border">

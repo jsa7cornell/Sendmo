@@ -2,7 +2,7 @@
 
 > **Read this first** when working on anything that touches Stripe, recipient cards, sender charges, refunds, or flex-link lifecycle. This is the operational reference; the canonical decision history lives in `proposals/`.
 
-> **Last meaningful change:** 2026-05-18 — Pattern D pivot (commit `69ac58b`).
+> **Last meaningful change:** 2026-05-22 — Payments risk-intelligence v1 shipped (Account Budget + Radar-block handling + Radar metadata + per-shipment cap default $100→$50). See §10 below and decided proposal `proposals/2026-05-21_payments-risk-intelligence_reviewed-2026-05-22_decided-2026-05-22.md`.
 
 ---
 
@@ -233,3 +233,78 @@ If any of these aren't subscribed in production, Pattern D's lifecycle handlers 
 - **Don't add `automatic_payment_methods` to off_session PIs.** Stripe rejects the combination with `payment_method` + `confirm: true`.
 - **Don't write to `transactions` outside of `stripe-webhook/`.** Append-only ledger; webhook is sole writer (Rule 16). The labels function used to write `comp_grant` rows; that's the lone exception, fully gated by admin auth.
 - **Don't bypass the cap check in `labels/`.** `display_price_cents` is server-derived from EasyPost rate and compared to `link.max_price_cents`. Never trust the client value.
+- **Don't bypass `checkAccountBudget()` in `labels/` or `payments/`.** The Account Budget (proposal 2026-05-21, §10 below) is the per-account cumulative spend ceiling. It runs *before* `createOffSessionShipmentPI` / `createPaymentIntent` so a refusal never leaves a charged-but-no-label race. The RPC `set_account_budget` (admin-only) is the only sanctioned way to raise it — column-level `REVOKE UPDATE` prevents self-raise.
+- **Don't treat a Stripe Radar block as a card decline in `stripe-webhook/`.** A `payment_intent.payment_failed` whose latest charge has `outcome.type === 'blocked'` is Radar (not the issuer). The payer's card is fine; do NOT send the decline-recovery email, do NOT flip the link Inactive, do NOT write a `charge_failed` `link_state_events` row. Use the `radar_blocked` branch instead. See §10.
+
+---
+
+## 10. Risk intelligence (2026-05-22) — Account Budget + Radar handling
+
+Shipped 2026-05-22, commit `397530c`. Decided proposal: `proposals/2026-05-21_payments-risk-intelligence_reviewed-2026-05-22_decided-2026-05-22.md`. Read the proposal for full design rationale; this section is the operational summary.
+
+### 10.1 The three controls
+
+1. **Account Budget** (per-account $/day + $/week cumulative spend).
+2. **Per-account PM-add breaker** (5 SetupIntents/user/day).
+3. **Radar-block branch** (Stripe Radar block ≠ card decline; distinct downstream state).
+
+Plus B2 — Radar metadata fed on every PaymentIntent / SetupIntent (`txn_kind`, `link_type`, `sender_ip`, `sender_email`, `recipient_email`; `shipping` on the flex off_session PI).
+
+### 10.2 Account Budget
+
+| Item | Value |
+|---|---|
+| Storage | `profiles.daily_budget_cents` / `weekly_budget_cents` (NOT NULL, defaults 20000 / 50000) |
+| Defaults | $200/day, $500/week (per account, per mode summed separately) |
+| Enforcer | `supabase/functions/_shared/budget.ts` `checkAccountBudget()` — sums `transactions` charge rows over rolling 24h/7d |
+| Call sites | `labels/index.ts` (flex 2a, against `link.user_id`); `payments/index.ts` (full-label 2b, only when authenticated payer) |
+| Ordering | Runs **before** `createOffSessionShipmentPI` / `createPaymentIntent` — never after — so a refusal can't leave a charged-but-no-label race |
+| Failure mode | Fails *open* on DB error (per-shipment cap + Radar still apply) |
+| On breach | 402 to caller with "contact us" copy; `velocity.limit_hit` event log; `budgetReachedEmail` to the account holder |
+| Raising | Admin-only via `set_account_budget(target_user_id, daily_cents, weekly_cents)` RPC (SECURITY DEFINER + role check); column-level `REVOKE UPDATE` prevents self-raise |
+
+**No self-serve raise** — admin contact path only, by design.
+
+### 10.3 PM-add breaker
+
+`supabase/functions/payment-methods/index.ts` — before `createSetupIntent`, counts `stripe_intents` rows with `intent_kind='setup'` for `(user_id, mode)` in the trailing 24h. Limit constant `PM_ADD_LIMIT_PER_DAY = 5`. Counts *attempts* (creations), not completions — slightly tighter than counting only succeeded SetupIntents. On breach: 429 + `velocity.limit_hit` (`layer:'pm_add'`).
+
+### 10.4 Radar-block handling
+
+Stripe Radar blocks surface as a `payment_intent.payment_failed` with the failed charge's `outcome.type === 'blocked'`. **This is NOT a card decline** — the payer's card is fine; the *sender* (anonymous at 2a) looked fraudulent.
+
+`stripe-webhook/index.ts` distinguishes by fetching the failed PI's latest charge via `retrieveCharge(latest_charge)` and inspecting `outcome.type`. Two branches:
+
+| Outcome | Branch |
+|---|---|
+| `'blocked'` (Radar) | Write `radar_blocked` `link_state_events` row; notify payer via `radarBlockedPayerEmail` (O7 — gentle, every block); log `stripe.radar_blocked` (severity `warn`). **DO NOT** send decline email; **DO NOT** flip link Inactive; **DO NOT** write `charge_failed`. |
+| anything else (issuer decline, etc.) | Existing decline-recovery path: `charge_failed` event + decline-recovery email (with per-link/day dedup). |
+
+`labels/index.ts` uses a synchronous hint — when `createOffSessionShipmentPI` throws with `decline_code === 'fraudulent'`, the sender sees the distinct fraud-protection message and `label.flex_radar_blocked` is logged.
+
+**Fallback:** if the charge can't be fetched, the webhook conservatively treats the failure as a decline (wrongly-sent decline email beats wrongly-skipped one).
+
+**Test card:** Stripe `4100 0000 0000 0019` triggers a Radar block in test mode.
+
+### 10.5 New `event_logs` event types (free TEXT, no enum migration)
+
+| Event | Emitted from | When |
+|---|---|---|
+| `velocity.limit_hit` | `labels/`, `payments/`, `payment-methods/` | Budget or PM-add breach. `properties.layer` ∈ `{account_budget, pm_add}`. |
+| `velocity.budget_email_failed` | `labels/`, `payments/` | Budget-hit email send failed (logged for replay) |
+| `label.flex_radar_blocked` | `labels/` | Synchronous Radar-block hint at the off_session call |
+| `stripe.radar_blocked` | `stripe-webhook/` | Authoritative Radar block at the webhook (severity `warn`) |
+| `stripe.radar_check_failed` | `stripe-webhook/` | `retrieveCharge` failed; conservative fall-through |
+| `stripe.radar_block_email_failed` | `stripe-webhook/` | Payer notification email failed |
+| `stripe.radar_blocked_no_link` | `stripe-webhook/` | Defensive: `link_id` from metadata didn't resolve |
+
+### 10.6 New `link_state_events.event` value
+
+- `radar_blocked` — added via migration 031, distinguishes from `charge_failed`. `reason='radar_block'`; `metadata.last_payment_error_code` carries the Stripe code (typically `'card_declined'`, which would read identically if used as `reason`).
+
+### 10.7 What was deferred / fast-follow
+
+- **Admin UI for `set_account_budget`** — the RPC works (Supabase Studio / `supabase.rpc('set_account_budget', …)`). A minimal Admin.tsx control is the lead fast-follow.
+- **`shipping` on the full-label PI** — `payments/` only gets `easypost_shipment_id`; would need a mid-flow EasyPost lookup. Radar at 2b is already strong on-session; low-value.
+- **Integration tests for `checkAccountBudget`** + **e2e for B5/B4.**
+- **B1 — Stripe Dashboard config** (John, ~1 hr — recommended block rules + card-testing protection).
