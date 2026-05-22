@@ -132,3 +132,10 @@ verify_jwt = false
 [functions.ingest]
 enabled = true
 verify_jwt = false
+
+# Admin one-shot reconciliation — backfills shipments.easypost_refund_status
+# from EasyPost for cancelled shipments where it's NULL. Admin-gated inside
+# the function via requireAdmin (validates JWT + profiles.role='admin').
+[functions.backfill-refund-status]
+enabled = true
+verify_jwt = true
