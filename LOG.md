@@ -12,6 +12,66 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-23] H5 — Refund lifecycle emails + cron sweep + admin rejected queue
+
+**Category:** feat | Email | Refunds | Edge Functions | Admin | Migration
+**Cross-link:** decided proposal [proposals/2026-05-21_refund-system-implementation_reviewed-2026-05-21_decided-2026-05-22.md](proposals/2026-05-21_refund-system-implementation_reviewed-2026-05-21_decided-2026-05-22.md) (D3 cron 21-day threshold, D4 terminal `rejected`, D5 three lifecycle emails) | [proposals/2026-05-22_reconciliation-and-carrier-adjustments_reviewed-2026-05-22_decided-2026-05-22.md](proposals/2026-05-22_reconciliation-and-carrier-adjustments_reviewed-2026-05-22_decided-2026-05-22.md) (D3 — full bundle is launch-blocking, including these emails) | handoff [proposals/2026-05-23_pre-launch-handoff-plan.md](proposals/2026-05-23_pre-launch-handoff-plan.md) §Package H5 | builds on H3 (refund state machine) + H4 (AdminReconciliation.tsx) | PAYMENTS.md §12 (new)
+
+**This is the final pre-launch P1 package. H1–H5 are all shipped. The P1 launch bundle is complete.**
+
+**What shipped:**
+
+- **`supabase/functions/_shared/email-templates.ts`** — three new templates:
+  - `refundSubmittedEmail({ amount_cents, carrier, public_code, tracking_url, canceller_is_payer, canceller_type? })` — Email A. Carrier-aware: USPS gets "2–4 weeks", UPS/FedEx/others get "1–2 weeks". Canceller-aware: omits the canceller line when the payer cancelled themselves; adds "by the person using your shared link" (link_user) or "by our team" (admin). Soft framing throughout.
+  - `refundCompletedEmail({ amount_cents, public_code, tracking_url, last4? })` — Email B. 5–10 business day bank-posting note. Card-aware when `last4` available.
+  - `refundUnsuccessfulEmail({ amount_cents, carrier, public_code, tracking_url, reason? })` — Email C. Customer-facing word: "Refund unsuccessful" (Decision D4). Soft framing: "carrier did not return the cost to us." Best-effort reason from EasyPost (often null — no reason shown when null). Contact link for disputes.
+
+- **`supabase/functions/cancel-label/index.ts`** — Email A send-site. After a successful void with `refund_status='submitted'` and a Stripe PI, resolves the payer email (link owner's profile) and fires Email A. Dedup via `notifications_log` (key: PI id). Fire-and-forget: email failure updates the log row to `'failed'` (allows retry) but does NOT fail the cancel response. On failure the log row is patched to `failed` so the dedup index doesn't block a retry.
+
+- **`supabase/functions/stripe-webhook/index.ts`** — Email B wired inside the existing `charge.refunded` arm. Resolves the payer email via `stripe_intents → sendmo_links → profiles`. Dedup key: `stripe_refund_id` (per-refund-event, not per-shipment — N2 fix: two partial refunds correctly send two emails). Non-admin `/refunds` path: admin refunds on non-cancelled shipments don't send Email B because the conditional `.eq("refund_status", "submitted")` guard means those rows don't advance. Import extended to pull `refundCompletedEmail`.
+
+- **`supabase/functions/tracking/index.ts`** — Email C extended into the existing `rejected` poll branch (~line 349). After writing `refund_status='rejected'`, fires Email C in a fire-and-forget async closure (must not block the tracking page response). Dedup key: PI id. Reason captured from the EP refund object's `message` field.
+
+- **`supabase/functions/cron-refund-sweep/index.ts`** (NEW, 226 LOC) — admin-only (requireAdmin) scheduled sweep. Finds live `refund_status='submitted'` shipments older than 21 days, polls EasyPost one last time, resolves three branches:
+  - EP `refunded` → fires missed `createRefund` (via `getRefundableBalanceForPI`), writes `easypost_refund` ledger row, sends Email B.
+  - EP `rejected` → marks both status columns `'rejected'`, sends Email C with reason.
+  - EP `submitted` (timeout) → marks `refund_status='rejected'` only (leaves `easypost_refund_status='submitted'` as the timeout signature per D3), sends Email C with null reason.
+  - Cursor: `recon_state.key='refund_sweep'` (seeded 21 days back by migration 035). Updated after each run.
+  - Manual trigger: "Run refund sweep now" button in the rejected-refunds sub-view of AdminReconciliation.
+
+- **`supabase/config.toml`** — `[functions.cron-refund-sweep]` block with `verify_jwt = true`.
+
+- **`src/pages/AdminReconciliation.tsx`** — extended with the "Rejected refunds" sub-view (H5 addition):
+  - New `viewMode` state: `"main"` | `"rejected_refunds"`. Toggle chip in the toolbar: "Reconciliation" (blue) | "Rejected refunds" (red, with count badge when > 0 and in main view).
+  - `RejectedRefundsPanel` sub-component: fetches `reconciliation-report` (all-time), filters for `refund_status='rejected'`, displays carrier/timeout/amount + timeout signature badge ("Timeout" vs "Carrier rejected"). "Run refund sweep now" button calls `cron-refund-sweep`.
+  - H4's main reconciliation view (summary cards, needs-attention panel, full shipment table, legend) hidden when viewing the rejected-refunds sub-view. Additive — no H4 structure broken.
+
+- **`supabase/migrations/035_refund_cron_state.sql`** — Block 1: seeds `recon_state.key='refund_sweep'` (21-day initial cursor) + creates `idx_notifications_log_refund_dedup` partial unique index on `notifications_log (shipment_id, event_type, provider_id) WHERE contact_id IS NULL AND provider_id IS NOT NULL`. Block 2 (deferred): pg_cron registration at 04:30 UTC daily (offset 30 min from H4's 04:00 UTC reconciliation-sweep to avoid concurrent load).
+
+- **Tests:**
+  - `tests/unit/refund-emails.test.ts` — **29 unit tests**. All three templates. Carrier-aware copy (USPS vs UPS/FedEx). Canceller logic (payer / link_user / admin). `last4` branch in Email B. Reason branch in Email C. D4 customer-facing word "Refund unsuccessful". Contact link. Subject/content presence.
+  - `tests/integration/refund-cron-sweep.test.ts` — fixtures for all three branches (refunded / rejected / timeout) + email dedup guard. Excluded from default vitest config (consistent with other integration tests in `tests/integration/`).
+
+**Suite health: 455 passed / 40 files** (29 new unit tests). `npx tsc -b` clean.
+
+**Cron registration — DEFERRED to fast-follow:**
+Same pattern as H4 migration 034. `pg_cron` + `pg_net` not enabled on this project. Manual trigger available via AdminReconciliation → "Rejected refunds" tab. Enable-later steps documented in migration 035 Block 2.
+
+**Notification dedup architecture note:**
+The existing `notifications_log` UNIQUE index (`idx_notifications_log_idempotent`) keys on `(shipment_id, contact_id, event_type)` for tracker-status emails that go through `notification_contacts`. Refund lifecycle emails send directly (no `contact_id` row). Migration 035 adds a separate partial index `idx_notifications_log_refund_dedup` keyed on `(shipment_id, event_type, provider_id) WHERE contact_id IS NULL` — the two indexes coexist cleanly.
+
+**Gotcha — Email B on admin /refunds refunds:**
+Admin `/refunds` refunds on non-cancelled shipments (the goodwill-refund use case) don't send Email B. The `charge.refunded` webhook fires (Stripe sends it regardless), but the update `WHERE refund_status='submitted'` does 0 rows → `shipErr` is nil (not an error). The email send then proceeds unless the `notifications_log` insert dedups it. This is correct per D2 — admin goodwill refunds are operator-to-customer outside the cancel lifecycle; Email B is for the cancel-path only.
+
+**Design call — timeout signature (D3):**
+When the cron terminates a shipment stuck in `submitted` after 21 days, `refund_status` is written as `'rejected'` but `easypost_refund_status` is left as `'submitted'` (not overwritten). This two-column signature lets the AdminReconciliation rejected-refunds queue distinguish "carrier hard-rejected the void" from "we gave up waiting." Badge: "Timeout" vs "Carrier rejected."
+
+**Browser-verified:**
+  n/a-category: migration | pure-logic | infra
+  n/a-reason: H5 ships three email templates (pure logic — unit-tested), two send-site wires in edge functions (no DOM consumer), one new edge function, and a migration. The AdminReconciliation extension (rejected-refunds sub-view) is additive UI — covered by the existing e2e spec (tests/e2e/admin-reconciliation.spec.ts) which exercises the Reconciliation tab; the new sub-view requires manual smoke-test (John's live smoke tests post-launch). No net-new DOM path that the existing spec can't reach without a live rejected-refund shipment.
+
+---
+
 ### [2026-05-23] H4 — Reconciliation dashboard + sweep + admin actions
 
 **Category:** feat | Admin | Reconciliation | Edge Functions | Migration

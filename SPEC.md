@@ -847,6 +847,26 @@ Full operational reference: [PAYMENTS.md §11](PAYMENTS.md#11-carrier-adjustment
 
 ---
 
+## 13.5 Refund Lifecycle Emails + Cron Sweep (H5)
+
+Three customer-facing emails fire at `refund_status` transitions. Sent via Resend with `notifications_log` dedup (migration 035 partial index `idx_notifications_log_refund_dedup`).
+
+| Email | Trigger | Carrier-aware | Send-site |
+|---|---|---|---|
+| A — "Refund submitted" | `refund_status → submitted` | Yes (USPS 2–4w / UPS+FedEx 1–2w) | `cancel-label/index.ts` |
+| B — "Refund issued" | `refund_status → refunded` (charge.refunded webhook) | No | `stripe-webhook/index.ts` |
+| C — "Refund unsuccessful" | `refund_status → rejected` | No | `tracking/index.ts` poll + `cron-refund-sweep` |
+
+**Customer-facing word for rejected state: "Refund unsuccessful"** (Decision D4 — `rejected` enum value is internal; customers never see it).
+
+**Cron sweep** (`cron-refund-sweep/index.ts`): finds `submitted` shipments older than 21 days, polls EasyPost, resolves. Timeout signature: `refund_status='rejected'` + `easypost_refund_status='submitted'` (still-submitted EP status distinguishes a timeout from a hard carrier rejection). Cron registration deferred (same fast-follow as H4). Admin trigger: AdminReconciliation → "Rejected refunds" sub-view.
+
+**Admin queue**: `src/pages/AdminReconciliation.tsx` "Rejected refunds" chip shows all `refund_status='rejected'` shipments as a manual queue. Distinguishes timeout vs. carrier-rejected via the `easypost_refund_status` timeout signature.
+
+Full operational reference: [PAYMENTS.md §12](PAYMENTS.md#12-refund-lifecycle-emails--cron-sweep-h5).
+
+---
+
 ## 14. Security Requirements
 
 - **HTTPS** enforced on all routes

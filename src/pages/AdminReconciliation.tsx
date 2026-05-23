@@ -19,7 +19,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { Link } from "react-router-dom";
-import { AlertTriangle, RefreshCw, FileText } from "lucide-react";
+import { AlertTriangle, RefreshCw, FileText, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
@@ -145,6 +145,169 @@ function ReconStatusBadge({ status }: { status: ReconRow["recon_status"] }) {
 
 // ─── Main component ────────────────────────────────────────────────────────────
 
+// ─── Rejected refunds sub-view ────────────────────────────────────────────────
+// H5 addition — shows all refund_status='rejected' shipments as a manual queue.
+// Triggered by the "Rejected refunds" filter chip in the toolbar.
+
+interface RejectedRefundRow {
+  id: string;
+  public_code: string;
+  carrier: string | null;
+  rate_cents: number | null;
+  refund_submitted_at: string | null;
+  cancelled_at: string | null;
+  easypost_refund_status: string | null; // 'rejected' | 'submitted' (timeout signature)
+  is_test: boolean;
+}
+
+function RejectedRefundsPanel({ session }: { session: { access_token: string } | null }) {
+  const [rows, setRows] = useState<RejectedRefundRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [sweepBusy, setSweepBusy] = useState(false);
+  const [sweepMsg, setSweepMsg] = useState<string | null>(null);
+
+  const BASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
+
+  useEffect(() => {
+    if (!session) return;
+    setLoading(true);
+    // Fetch from reconciliation-report, then filter client-side.
+    // This reuses the existing admin endpoint rather than adding a new one.
+    const params = new URLSearchParams({ start_date: "2020-01-01", end_date: new Date().toISOString().slice(0, 10) });
+    fetch(`${BASE_URL}/functions/v1/reconciliation-report?${params}`, {
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+        "Content-Type": "application/json",
+      },
+    })
+      .then((r) => r.json())
+      .then((json) => {
+        // Filter for rejected-refund shipments from the rows array.
+        const rejected = (json.rows ?? [])
+          .filter((r: ReconRow) => r.refund_status === "rejected")
+          .map((r: ReconRow) => ({
+            id: r.shipment_id,
+            public_code: r.shipment_public,
+            carrier: r.carrier,
+            rate_cents: r.refunded_to_customer_cents < 0 ? Math.abs(r.refunded_to_customer_cents) : r.paid_cents,
+            refund_submitted_at: null, // not in ReconRow; use cancelled_at as proxy
+            cancelled_at: r.cancelled_at,
+            easypost_refund_status: r.easypost_refund_status,
+            is_test: r.is_test,
+          }));
+        setRows(rejected);
+      })
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : "Failed to load"))
+      .finally(() => setLoading(false));
+  }, [session, BASE_URL]);
+
+  async function runRefundSweep() {
+    if (!session) return;
+    setSweepBusy(true);
+    setSweepMsg(null);
+    try {
+      const res = await fetch(`${BASE_URL}/functions/v1/cron-refund-sweep`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({}),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || `Failed (${res.status})`);
+      setSweepMsg(
+        `Sweep complete — ${json.processed} scanned, ${json.refunded} recovered, ${json.rejected} rejected, ${json.timed_out} timed out, ${json.errors} errors.`
+      );
+    } catch (err: unknown) {
+      setSweepMsg(err instanceof Error ? err.message : "Sweep failed");
+    } finally {
+      setSweepBusy(false);
+    }
+  }
+
+  if (loading) return <div className="py-8 text-center text-muted-foreground text-sm">Loading rejected refunds…</div>;
+  if (error) return <div className="bg-red-50 text-red-600 p-4 rounded-xl border border-red-200 text-sm">Error: {error}</div>;
+
+  return (
+    <div className="space-y-4">
+      {/* Header */}
+      <div className="flex items-center gap-3">
+        <XCircle className="h-4 w-4 text-red-500" />
+        <h2 className="text-sm font-bold">Rejected refunds — manual queue</h2>
+        <span className="bg-red-100 text-red-700 rounded-full px-2 py-0.5 text-xs font-bold">{rows.length}</span>
+        <span className="flex-1" />
+        <Button
+          variant="outline"
+          size="sm"
+          className="rounded-xl text-xs"
+          onClick={runRefundSweep}
+          disabled={sweepBusy}
+        >
+          <RefreshCw className={cn("h-3.5 w-3.5 mr-1.5", sweepBusy && "animate-spin")} />
+          {sweepBusy ? "Running…" : "Run refund sweep now"}
+        </Button>
+      </div>
+      {sweepMsg && <p className="text-xs text-muted-foreground px-1">{sweepMsg}</p>}
+
+      {rows.length === 0 ? (
+        <div className="bg-card rounded-xl border border-border p-8 text-center">
+          <p className="text-sm text-green-600 font-semibold">No rejected refunds — all clear</p>
+          <p className="text-xs text-muted-foreground mt-1">When EasyPost rejects a void or a refund times out, it appears here.</p>
+        </div>
+      ) : (
+        <div className="bg-card rounded-xl border border-red-200 overflow-hidden shadow-sm">
+          <p className="px-4 py-2.5 text-xs text-muted-foreground border-b border-border">
+            These shipments had their void rejected by the carrier, or timed out after 21 days. Check EasyPost for details and follow up with the customer if needed.
+          </p>
+          <div className="divide-y divide-border">
+            {rows.map((row) => {
+              const isTimeout = row.easypost_refund_status === "submitted"; // timeout signature
+              return (
+                <div key={row.id} className="px-4 py-3 flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-lg flex-none flex items-center justify-center bg-red-50 text-base">
+                    {isTimeout ? "⏱" : "🚫"}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-bold">
+                      <Link to={`/admin/shipments/${row.public_code}`} className="text-primary hover:underline">
+                        {row.public_code}
+                      </Link>
+                      {row.is_test && (
+                        <Badge variant="outline" className="ml-1.5 text-[10px] py-0 px-1 border-amber-300 text-amber-700 bg-amber-50">Test</Badge>
+                      )}
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {row.carrier ?? "Unknown carrier"} ·{" "}
+                      {row.rate_cents != null ? `$${(row.rate_cents / 100).toFixed(2)}` : "—"} ·{" "}
+                      <span className={cn("font-semibold", isTimeout ? "text-amber-700" : "text-red-600")}>
+                        {isTimeout ? "Timed out after 21 days" : "Hard rejected by carrier"}
+                      </span>
+                    </p>
+                  </div>
+                  <div className="flex-none">
+                    <Badge className={cn(
+                      "text-[11px] py-0.5 px-2",
+                      isTimeout
+                        ? "bg-amber-100 text-amber-800 border border-amber-200 hover:bg-amber-100"
+                        : "bg-red-100 text-red-700 border border-red-200 hover:bg-red-100"
+                    )}>
+                      {isTimeout ? "Timeout" : "Carrier rejected"}
+                    </Badge>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Main component ────────────────────────────────────────────────────────────
+
 interface AdminReconciliationProps {
   session: { access_token: string } | null;
 }
@@ -158,6 +321,8 @@ export default function AdminReconciliation({ session }: AdminReconciliationProp
 
   // Date filter — default last 30 days matching the Labels tab.
   const [dateRange, setDateRange] = useState<"7days" | "30days" | "all">("30days");
+  // H5 — view mode: 'main' | 'rejected_refunds'
+  const [viewMode, setViewMode] = useState<"main" | "rejected_refunds">("main");
 
   const getDateParams = useCallback(() => {
     const end = new Date();
@@ -284,10 +449,53 @@ export default function AdminReconciliation({ session }: AdminReconciliationProp
 
   const { summary, needs_attention, rows } = data ?? { summary: null, needs_attention: [], rows: [] };
 
+  // ── Rejected refunds count (for the chip badge) ──────────────────────────
+  const rejectedCount = data?.rows?.filter((r) => r.refund_status === "rejected").length ?? 0;
+
   return (
     <div className="space-y-6">
       {/* ── Toolbar ───────────────────────────────────────────────────────── */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 flex-wrap">
+        {/* H5 — view toggle: main reconciliation vs rejected-refunds queue */}
+        <div className="flex bg-white w-fit border rounded-full p-1 shadow-sm">
+          <button
+            onClick={() => setViewMode("main")}
+            className={cn(
+              "px-4 py-1.5 rounded-full text-xs font-medium transition-colors",
+              viewMode === "main"
+                ? "bg-primary text-primary-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            )}
+          >
+            Reconciliation
+          </button>
+          <button
+            onClick={() => setViewMode("rejected_refunds")}
+            className={cn(
+              "relative px-4 py-1.5 rounded-full text-xs font-medium transition-colors",
+              viewMode === "rejected_refunds"
+                ? "bg-red-600 text-white shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            )}
+          >
+            Rejected refunds
+            {rejectedCount > 0 && viewMode !== "rejected_refunds" && (
+              <span className="ml-1.5 inline-flex items-center justify-center w-4 h-4 rounded-full bg-red-600 text-white text-[9px] font-bold">
+                {rejectedCount}
+              </span>
+            )}
+          </button>
+        </div>
+
+        {/* H5 — Rejected refunds sub-view (exits the main toolbar early) */}
+        {viewMode === "rejected_refunds" && (
+          <div className="w-full">
+            {/* Render the panel below the chip — we break out of the flex row early */}
+          </div>
+        )}
+
+        {/* Date range filter — only shown in main view */}
+        {viewMode === "main" && (
         <div className="flex bg-white w-fit border rounded-full p-1 shadow-sm">
           {(["7days", "30days", "all"] as const).map((f) => (
             <button
@@ -304,29 +512,37 @@ export default function AdminReconciliation({ session }: AdminReconciliationProp
             </button>
           ))}
         </div>
-        {summary && (
+        )}
+        {viewMode === "main" && summary && (
           <span className="text-xs text-muted-foreground">
             Last reconciled: {fmtDate(summary.last_run_at)}
           </span>
         )}
         <div className="flex-1" />
-        <Button
-          variant="outline"
-          size="sm"
-          className="rounded-xl text-xs"
-          onClick={runSweep}
-          disabled={sweepBusy}
-        >
-          <RefreshCw className={cn("h-3.5 w-3.5 mr-1.5", sweepBusy && "animate-spin")} />
-          {sweepBusy ? "Running…" : "Run reconciliation now"}
-        </Button>
+        {viewMode === "main" && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="rounded-xl text-xs"
+            onClick={runSweep}
+            disabled={sweepBusy}
+          >
+            <RefreshCw className={cn("h-3.5 w-3.5 mr-1.5", sweepBusy && "animate-spin")} />
+            {sweepBusy ? "Running…" : "Run reconciliation now"}
+          </Button>
+        )}
       </div>
-      {sweepMsg && (
+      {viewMode === "main" && sweepMsg && (
         <p className="text-xs text-muted-foreground px-1">{sweepMsg}</p>
       )}
 
-      {/* ── Summary cards ────────────────────────────────────────────────── */}
-      {summary && (
+      {/* ── H5: Rejected refunds sub-view ───────────────────────────────── */}
+      {viewMode === "rejected_refunds" && (
+        <RejectedRefundsPanel session={session} />
+      )}
+
+      {/* ── Main reconciliation view (hidden when viewing rejected refunds) */}
+      {viewMode === "main" && summary && (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
           <div className="bg-card rounded-xl border border-border shadow-sm p-4">
             <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Reconciled</p>
@@ -383,8 +599,8 @@ export default function AdminReconciliation({ session }: AdminReconciliationProp
         </div>
       )}
 
-      {/* ── Needs attention panel ─────────────────────────────────────────── */}
-      {needs_attention.length > 0 && (
+      {/* ── Needs attention panel (main view only) ───────────────────────── */}
+      {viewMode === "main" && needs_attention.length > 0 && (
         <div className="bg-card rounded-xl border border-amber-200 overflow-hidden shadow-sm">
           <div className="bg-amber-50 px-4 py-3 border-b border-amber-200 flex items-center gap-2">
             <AlertTriangle className="h-4 w-4 text-amber-600" />
@@ -519,8 +735,8 @@ export default function AdminReconciliation({ session }: AdminReconciliationProp
         </div>
       )}
 
-      {/* ── Full shipment table ───────────────────────────────────────────── */}
-      <div className="bg-card rounded-xl border border-border overflow-hidden shadow-sm">
+      {/* ── Full shipment table (main view only) ─────────────────────────── */}
+      {viewMode === "main" && <div className="bg-card rounded-xl border border-border overflow-hidden shadow-sm">
         <div className="px-4 py-3 border-b border-border flex items-center gap-2">
           <FileText className="h-4 w-4 text-muted-foreground" />
           <h2 className="text-sm font-bold">All shipments — every money movement</h2>
@@ -664,10 +880,10 @@ export default function AdminReconciliation({ session }: AdminReconciliationProp
             </tbody>
           </table>
         </div>
-      </div>
+      </div>}
 
-      {/* ── Legend ───────────────────────────────────────────────────────── */}
-      <div className="text-xs text-muted-foreground leading-relaxed px-1">
+      {/* ── Legend (main view only) ───────────────────────────────────────── */}
+      {viewMode === "main" && <div className="text-xs text-muted-foreground leading-relaxed px-1">
         <p>
           <strong className="text-foreground">The reconcile identity (money columns, left to right):</strong>
           <br />
@@ -691,7 +907,7 @@ export default function AdminReconciliation({ session }: AdminReconciliationProp
           <strong className="text-foreground">Chargeback</strong> — disputed amount clawed back <em>plus</em> the ~$15 Stripe dispute fee, as one
           figure. <strong>COMP</strong> shipments have no customer side.
         </p>
-      </div>
+      </div>}
     </div>
   );
 }

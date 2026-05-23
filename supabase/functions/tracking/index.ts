@@ -6,6 +6,8 @@ import { createRefund } from "../_shared/stripe.ts";
 import { writeEasypostRefund } from "../_shared/ledger.ts";
 import { getRefundableBalanceForPI } from "../_shared/refunds.ts";
 import { log } from "../_shared/logger.ts";
+import { sendEmail } from "../_shared/resend.ts";
+import { refundUnsuccessfulEmail } from "../_shared/email-templates.ts";
 
 const APP_URL = "https://sendmo.co";
 const NOTIFY_STATUSES = new Set(["in_transit", "out_for_delivery", "delivered"]);
@@ -363,6 +365,84 @@ serve(async (req: Request) => {
               entity_id: shipment.id,
               properties: { trigger: "tracking_poll" },
             });
+
+            // ── H5: Email C — refund unsuccessful ──────────────────────────
+            // Send once per shipment (keyed on PI id) via notifications_log dedup.
+            // Fire-and-forget — tracking page response must not block on email.
+            if (shipment.stripe_payment_intent_id) {
+              (async () => {
+                try {
+                  // Dedup: insert notifications_log row first.
+                  const { error: logErr } = await supabase
+                    .from("notifications_log")
+                    .insert({
+                      shipment_id: shipment.id,
+                      contact_id: null,
+                      channel: "email",
+                      event_type: "refund.unsuccessful",
+                      status: "sent",
+                      provider_id: shipment.stripe_payment_intent_id,
+                    });
+
+                  if (logErr && /duplicate key|unique constraint/i.test(logErr.message)) {
+                    return; // already sent — skip
+                  }
+                  if (logErr) throw new Error(logErr.message);
+
+                  // Look up payer email via the link owner.
+                  const linkJoinForEmail = shipment.sendmo_links as unknown as { user_id?: string } | null;
+                  const ownerUserId = linkJoinForEmail?.user_id ?? null;
+                  let payerEmail: string | null = null;
+                  if (ownerUserId) {
+                    const { data: profile } = await supabase
+                      .from("profiles")
+                      .select("email")
+                      .eq("id", ownerUserId)
+                      .maybeSingle();
+                    payerEmail = (profile as { email?: string | null } | null)?.email ?? null;
+                  }
+                  if (!payerEmail) return;
+
+                  // Capture any reason from the EP refund object.
+                  const refundObjects = (epShip.refunds as Array<{ status: string; message?: string }> | null) ?? [];
+                  const rejectedRefund = refundObjects.find((r) => r.status === "rejected");
+                  const reason = rejectedRefund?.message ?? null;
+
+                  const tpl = refundUnsuccessfulEmail({
+                    amount_cents: (shipment as { rate_cents?: number | null }).rate_cents ?? 0,
+                    carrier: shipment.carrier ?? "the carrier",
+                    public_code: shipment.public_code,
+                    tracking_url: `${APP_URL}/t/${shipment.public_code}`,
+                    reason,
+                  });
+
+                  await sendEmail({ to: payerEmail, subject: tpl.subject, html: tpl.html });
+                  log({
+                    event_type: "refund.unsuccessful_email_sent",
+                    source: "tracking",
+                    severity: "info",
+                    entity_type: "shipment",
+                    entity_id: shipment.id,
+                    properties: {
+                      recipient: payerEmail,
+                      payment_intent_id: shipment.stripe_payment_intent_id,
+                      trigger: "tracking_poll",
+                    },
+                  });
+                } catch (emailCErr) {
+                  const msg = emailCErr instanceof Error ? emailCErr.message : String(emailCErr);
+                  console.error("[tracking] Email C send failed:", msg);
+                  log({
+                    event_type: "refund.unsuccessful_email_error",
+                    source: "tracking",
+                    severity: "error",
+                    entity_type: "shipment",
+                    entity_id: shipment.id,
+                    properties: { error_message: msg, trigger: "tracking_poll" },
+                  });
+                }
+              })();
+            }
           }
           // epRefundStatus === 'submitted' → still waiting; no action
           // epRefundStatus === 'not_applicable' → EP says no refund needed;

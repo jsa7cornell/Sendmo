@@ -356,6 +356,176 @@ export function carrierAdjustmentEmail(params: {
   };
 }
 
+// ─── H5: Refund lifecycle emails ─────────────────────────────────────────────
+//
+// Three customer-facing emails at refund_status transitions.
+// Decided proposal: 2026-05-21_refund-system-implementation_..._decided-2026-05-22.md
+// Decision D5 — approved copy, carrier-aware, canceller-aware, soft hedge.
+//
+// Send-sites:
+//   Email A — cancel-label/index.ts   (refund_status → submitted)
+//   Email B — stripe-webhook/index.ts  (charge.refunded, submitted → refunded)
+//   Email C — tracking/index.ts poll + cron-refund-sweep (refund_status → rejected)
+//
+// Dedup: notifications_log row with contact_id=NULL, provider_id = the keying id.
+// Unique index: idx_notifications_log_refund_dedup (migration 035).
+
+type Carrier = string;                // 'USPS' | 'UPS' | 'FedEx' | ...
+
+/** Return the carrier-aware timeline copy for Email A. */
+function carrierTimeline(carrier: Carrier): string {
+  const upper = (carrier ?? "").toUpperCase();
+  if (upper === "USPS") {
+    return "USPS refunds typically take 2–4 weeks to process. Once confirmed, we'll issue your refund automatically to the original payment method.";
+  }
+  // UPS, FedEx, and other carriers are faster
+  return "Most refunds are confirmed within 1–2 weeks. Once the carrier confirms, we'll issue your refund automatically to the original payment method.";
+}
+
+/** Dollars display — e.g. 1295 → "$12.95" */
+function dollarStr(cents: number): string {
+  return "$" + (cents / 100).toFixed(2);
+}
+
+// ─── Email A — Refund submitted ──────────────────────────────────────────────
+
+export function refundSubmittedEmail(params: {
+  amount_cents: number;
+  carrier: string;
+  public_code: string;
+  tracking_url: string;
+  /** true  → payer cancelled their own label (omit canceller line)
+   *  false → someone else cancelled (add "by the person using your shared link") */
+  canceller_is_payer: boolean;
+  /** "admin" signals the admin cancelled — shows "by our team" instead of link-user copy */
+  canceller_type?: "payer" | "link_user" | "admin";
+}): { subject: string; html: string } {
+  const {
+    amount_cents,
+    carrier,
+    public_code,
+    tracking_url,
+    canceller_is_payer,
+    canceller_type,
+  } = params;
+  const amount = dollarStr(amount_cents);
+
+  const cancellationLine = canceller_is_payer
+    ? ""
+    : canceller_type === "admin"
+    ? `<p style="margin:0 0 16px;font-size:14px;color:${GRAY_600};line-height:1.5;">
+        Your label was cancelled by our team.
+      </p>`
+    : `<p style="margin:0 0 16px;font-size:14px;color:${GRAY_600};line-height:1.5;">
+        Your label was cancelled by the person using your shared link.
+      </p>`;
+
+  const timeline = carrierTimeline(carrier);
+
+  return {
+    subject: `Your ${amount} refund is on its way — SendMo`,
+    html: layout(`
+      <h2 style="margin:0 0 8px;font-size:20px;font-weight:600;color:#111827;">Refund submitted</h2>
+      ${cancellationLine}
+      <p style="margin:0 0 16px;font-size:14px;color:${GRAY_600};line-height:1.5;">
+        We submitted a refund request of <strong>${amount}</strong> to the carrier on your behalf.
+        ${timeline}
+      </p>
+      <p style="margin:0 0 16px;font-size:13px;color:${GRAY_600};line-height:1.5;">
+        Carriers sometimes take a bit longer during busy periods — we'll update you the moment it's confirmed.
+      </p>
+      <div style="text-align:center;margin:24px 0;">
+        <a href="${tracking_url}" style="display:inline-block;background-color:${BRAND_BLUE};color:#ffffff;font-size:14px;font-weight:600;text-decoration:none;padding:12px 32px;border-radius:8px;">View shipment</a>
+      </div>
+      <p style="margin:0;font-size:12px;color:${GRAY_400};text-align:center;">
+        SendMo tracking: <strong>${public_code}</strong>
+      </p>
+    `),
+  };
+}
+
+// ─── Email B — Refund completed ──────────────────────────────────────────────
+
+export function refundCompletedEmail(params: {
+  amount_cents: number;
+  public_code: string;
+  tracking_url: string;
+  /** Last 4 digits of the card the refund was issued to, if known */
+  last4?: string | null;
+}): { subject: string; html: string } {
+  const { amount_cents, public_code, tracking_url, last4 } = params;
+  const amount = dollarStr(amount_cents);
+  const cardLine = last4
+    ? `<p style="margin:0 0 16px;font-size:14px;color:${GRAY_600};line-height:1.5;">
+        The refund has been issued to the card ending in <strong>${last4}</strong>.
+        Please allow 5–10 business days for it to appear on your statement — this is standard bank processing time, not a SendMo delay.
+      </p>`
+    : `<p style="margin:0 0 16px;font-size:14px;color:${GRAY_600};line-height:1.5;">
+        The refund has been issued to your original payment method.
+        Please allow 5–10 business days for it to appear on your statement — this is standard bank processing time, not a SendMo delay.
+      </p>`;
+
+  return {
+    subject: `Your ${amount} refund has been issued — SendMo`,
+    html: layout(`
+      <h2 style="margin:0 0 8px;font-size:20px;font-weight:600;color:#111827;">Refund issued — ${amount}</h2>
+      <p style="margin:0 0 16px;font-size:14px;color:${GRAY_600};line-height:1.5;">
+        Great news — the carrier confirmed the cancellation and we've issued your refund.
+      </p>
+      ${cardLine}
+      <div style="text-align:center;margin:24px 0;">
+        <a href="${tracking_url}" style="display:inline-block;background-color:${BRAND_BLUE};color:#ffffff;font-size:14px;font-weight:600;text-decoration:none;padding:12px 32px;border-radius:8px;">View shipment</a>
+      </div>
+      <p style="margin:0;font-size:12px;color:${GRAY_400};text-align:center;">
+        SendMo tracking: <strong>${public_code}</strong>
+      </p>
+    `),
+  };
+}
+
+// ─── Email C — Refund unsuccessful ───────────────────────────────────────────
+// Customer-facing word: "Refund unsuccessful" (Decision D4).
+// Soft framing: SendMo acts on their behalf; carrier sometimes won't return cost.
+
+export function refundUnsuccessfulEmail(params: {
+  amount_cents: number;
+  carrier: string;
+  public_code: string;
+  tracking_url: string;
+  /** Best-effort reason from EasyPost (sparse — often null). Don't show if null. */
+  reason?: string | null;
+}): { subject: string; html: string } {
+  const { amount_cents, carrier, public_code, tracking_url, reason } = params;
+  const amount = dollarStr(amount_cents);
+  const carrierLabel = (carrier ?? "").trim() || "the carrier";
+
+  const reasonLine = reason
+    ? `<p style="margin:0 0 16px;font-size:13px;color:${GRAY_600};line-height:1.5;">
+        Carrier note: <em>${reason}</em>
+      </p>`
+    : "";
+
+  return {
+    subject: `Refund unsuccessful — ${amount} — SendMo`,
+    html: layout(`
+      <h2 style="margin:0 0 8px;font-size:20px;font-weight:600;color:#111827;">Refund unsuccessful</h2>
+      <p style="margin:0 0 16px;font-size:14px;color:${GRAY_600};line-height:1.5;">
+        We submitted a void request for your label and followed up on your behalf, but unfortunately ${carrierLabel} did not return the shipping cost to us. Because the carrier didn't credit us, we're unable to issue a refund for this shipment.
+      </p>
+      ${reasonLine}
+      <p style="margin:0 0 16px;font-size:13px;color:${GRAY_600};line-height:1.5;">
+        We know this isn't the outcome you were hoping for. If you believe this was a carrier error, please <a href="mailto:support@sendmo.co" style="color:${BRAND_BLUE};text-decoration:none;">contact us</a> and we'll review the details.
+      </p>
+      <div style="text-align:center;margin:24px 0;">
+        <a href="${tracking_url}" style="display:inline-block;background-color:${BRAND_BLUE};color:#ffffff;font-size:14px;font-weight:600;text-decoration:none;padding:12px 32px;border-radius:8px;">View shipment</a>
+      </div>
+      <p style="margin:0;font-size:12px;color:${GRAY_400};text-align:center;">
+        SendMo tracking: <strong>${public_code}</strong>
+      </p>
+    `),
+  };
+}
+
 // ─── B4: Radar-blocked-charge notification to the payer (O7) ────────
 // Sent on every Stripe Radar block of a flex off_session charge. Gentle:
 // the payer's card is fine; a sender on their link was flagged. They may

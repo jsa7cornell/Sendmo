@@ -2,7 +2,7 @@
 
 > **Read this first** when working on anything that touches Stripe, recipient cards, sender charges, refunds, or flex-link lifecycle. This is the operational reference; the canonical decision history lives in `proposals/`.
 
-> **Last meaningful change:** 2026-05-22 — Payments risk-intelligence v1 shipped (Account Budget + Radar-block handling + Radar metadata + per-shipment cap default $100→$50). See §10 below and decided proposal `proposals/2026-05-21_payments-risk-intelligence_reviewed-2026-05-22_decided-2026-05-22.md`.
+> **Last meaningful change:** 2026-05-23 — H5 shipped: three refund lifecycle emails (Email A submitted / B completed / C unsuccessful) + `cron-refund-sweep` (21-day timeout terminal) + admin rejected-refunds queue in AdminReconciliation. See §12 and decided proposal `proposals/2026-05-21_refund-system-implementation_reviewed-2026-05-21_decided-2026-05-22.md` D3/D4/D5.
 
 ---
 
@@ -428,8 +428,80 @@ The H4 admin reconciliation dashboard (separate package) surfaces these actions;
 
 ### 11.10 What was deferred to H4 / H5
 
-- **Reconciliation dashboard + sweep** — H4 (separate package). Daily/weekly sweep that catches webhook misses; admin Reconciliation tab in `/admin`; per-shipment detail view; Needs-Attention actions (Dispute / Re-charge / Absorb).
-- **Refund lifecycle emails + cron sweep** — H5 (separate package, depends on H3).
+- **Reconciliation dashboard + sweep** — H4 (shipped 2026-05-23). Daily/weekly sweep that catches webhook misses; admin Reconciliation tab in `/admin`; per-shipment detail view; Needs-Attention actions (Dispute / Re-charge / Absorb).
+- **Refund lifecycle emails + cron sweep** — H5 (shipped 2026-05-23). See §12 below.
 - **Programmatic carrier-dispute filing** — out of scope; carrier-direct manual filing is the v1 model.
 - **Prepaid balance / wallet** — money-transmitter-licensing territory (Phase H); WISHLIST.
+
+---
+
+## 12. Refund lifecycle emails + cron sweep (H5)
+
+> Decided proposal: `proposals/2026-05-21_refund-system-implementation_reviewed-2026-05-21_decided-2026-05-22.md` — Decisions D3/D4/D5
+
+Three customer-facing emails fire at `refund_status` transitions. Dedup via `notifications_log` (migration 035 partial index `idx_notifications_log_refund_dedup`).
+
+### 12.1 Email A — Refund submitted (`refund_status → submitted`)
+
+**Send-site:** `supabase/functions/cancel-label/index.ts` — after the EasyPost void is accepted and the DB is updated.
+
+**Recipient:** payer (link owner) — resolved via `sendmo_links.user_id → profiles.email`.
+
+**Carrier-aware copy:** USPS gets the slow-carrier timeline (2–4 weeks); UPS/FedEx/other get the faster timeline (1–2 weeks).
+
+**Canceller-aware:** when the canceller is not the payer, the email names who cancelled: "by the person using your shared link" (link_user) or "by our team" (admin). When the payer cancelled their own label, this line is omitted.
+
+**Dedup key:** `(shipment_id, event_type='refund.submitted', provider_id=stripe_payment_intent_id)` — one Email A per shipment.
+
+### 12.2 Email B — Refund completed (`refund_status → refunded`)
+
+**Send-site:** `supabase/functions/stripe-webhook/index.ts` — inside the `charge.refunded` arm, after `submitted → refunded` advance.
+
+**Dedup key:** `(shipment_id, event_type='refund.completed', provider_id=stripe_refund_id)` — **per refund event** (N2 fix), not per shipment. Two partial refunds on the same shipment correctly send two completion emails.
+
+**Last4:** if available from `charge.payment_method_details.card.last4`, mentioned in the email.
+
+**Note:** Admin `/refunds`-initiated refunds on non-cancelled shipments do not send Email B — `refund_status` was not `'submitted'`, so the conditional `.eq("refund_status", "submitted")` guard means those shipments don't advance via this path (D2).
+
+### 12.3 Email C — Refund unsuccessful (`refund_status → rejected`)
+
+**Send-sites (two):**
+1. `supabase/functions/tracking/index.ts` — the existing rejected-poll branch (~line 349), extended to fire Email C + dedup.
+2. `supabase/functions/cron-refund-sweep/index.ts` — when the sweep terminates a stuck `submitted` shipment.
+
+**Customer-facing word:** "Refund unsuccessful" (Decision D4 — no new enum value; the hard-reject vs. timeout distinction is in `easypost_refund_status`).
+
+**Soft framing:** "carrier did not return the cost to us, so we can't issue a refund."
+
+**Dedup key:** `(shipment_id, event_type='refund.unsuccessful', provider_id=stripe_payment_intent_id)` — one Email C per shipment.
+
+### 12.4 Cron sweep — cron-refund-sweep
+
+**Function:** `supabase/functions/cron-refund-sweep/index.ts`
+
+**Purpose:** Finds `refund_status='submitted'` shipments older than 21 days, polls EasyPost one final time, resolves:
+
+| EP status | Action |
+|---|---|
+| `refunded` | Fire `createRefund` (catches missed webhook), write `easypost_refund` ledger row, send Email B |
+| `rejected` | Mark `refund_status='rejected'` + `easypost_refund_status='rejected'`, send Email C |
+| `submitted` (timeout) | Mark `refund_status='rejected'` (leave `easypost_refund_status='submitted'` as the timeout signature), send Email C |
+
+**Cursor:** `recon_state.key='refund_sweep'` (seeded 21 days back by migration 035).
+
+**Auth:** admin-only (`requireAdmin`) for manual invocation from the Admin Reconciliation tab. Scheduled path (pg_cron) deferred — same fast-follow as H4's reconciliation-sweep.
+
+**Config:** `supabase/config.toml` `[functions.cron-refund-sweep]` with `verify_jwt = true`.
+
+**When to enable the daily cron:** after enabling `pg_cron` + `pg_net` (see migration 035 Block 2 comments). Until then, trigger manually from the Admin Reconciliation tab → "Rejected refunds" sub-view.
+
+### 12.5 Admin — rejected refunds queue
+
+`src/pages/AdminReconciliation.tsx` now has a "Rejected refunds" filter chip in the toolbar alongside the main reconciliation view. The sub-view lists all `refund_status='rejected'` shipments with carrier/timeout badges, and a "Run refund sweep now" button that calls `cron-refund-sweep` directly.
+
+**Timeout signature:** rows where `easypost_refund_status='submitted'` but `refund_status='rejected'` are labeled "Timeout" (the sweep terminated them after 21 days with EP still reporting submitted). Rows where both are `'rejected'` are labeled "Carrier rejected" (EP hard-rejected the void).
+
+### 12.6 Migration 035
+
+`supabase/migrations/035_refund_cron_state.sql` — Block 1 applies the `recon_state` cursor seed + the `idx_notifications_log_refund_dedup` partial unique index. Block 2 (deferred) is the pg_cron registration for the daily 04:30 UTC sweep.
 

@@ -169,3 +169,14 @@ verify_jwt = true
 [functions.admin-recon-action]
 enabled = true
 verify_jwt = true
+
+# H5 — Refund cron sweep (pre-launch P1).
+# Finds refund_status='submitted' shipments older than 21 days, polls EasyPost
+# one last time, and resolves: refunded (fire missed createRefund) / rejected
+# (mark terminal + Email C) / timed-out (mark rejected + Email C).
+# Admin-gated via requireAdmin for manual invocation; pg_cron service-role path
+# is DEFERRED to fast-follow (see migration 035 Block 2).
+# Per decided proposals: 2026-05-21_refund-system-implementation D3/D4/D5.
+[functions.cron-refund-sweep]
+enabled = true
+verify_jwt = true

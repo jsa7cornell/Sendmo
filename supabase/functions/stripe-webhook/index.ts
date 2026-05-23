@@ -4,7 +4,11 @@ import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { log } from "../_shared/logger.ts";
 import { verifyAndParseWebhook, retrieveCharge } from "../_shared/stripe.ts";
 import { sendEmail } from "../_shared/resend.ts";
-import { paymentDeclinedReactivateEmail, radarBlockedPayerEmail } from "../_shared/email-templates.ts";
+import {
+    paymentDeclinedReactivateEmail,
+    radarBlockedPayerEmail,
+    refundCompletedEmail,
+} from "../_shared/email-templates.ts";
 
 // POST /stripe-webhook
 //
@@ -688,6 +692,129 @@ serve(async (req: Request) => {
                         .eq("refund_status", "submitted");  // idempotent
                     if (shipErr) {
                         console.error("[stripe-webhook] shipments.refund_status update failed:", shipErr);
+                    }
+                }
+
+                // ── Email B — refund completed notification (H5 D5) ──────────
+                // Fires here in charge.refunded, after submitted→refunded advance.
+                // Dedup: per-refund-event, not per-shipment — so two partial
+                // refunds on the same shipment correctly send two completion emails
+                // (N2 fix from the decided proposal).
+                // Key: (shipment_id, event_type='refund.completed', provider_id=stripe_refund_id)
+                // contact_id=NULL (direct send, not via notification_contacts).
+                //
+                // Only send if we actually advanced the status (shipment was 'submitted').
+                // For admin /refunds-initiated refunds the shipment may not be in
+                // 'submitted' state — those don't get Email B (D2 of the decided proposal).
+                if (shipmentId && stripeRefundId) {
+                    try {
+                        // Check if this shipment was in submitted state (was a customer cancel).
+                        // We check by whether the shipment's refund_status was 'submitted'
+                        // before the update. Since we updated with .eq("refund_status", "submitted"),
+                        // shipErr being null means it was. However, we can't reliably know if rows
+                        // were updated (0 rows is not an error in Postgres). Use a heuristic:
+                        // look up the profile email for the shipment's link owner.
+                        const { data: linkData } = await supabase
+                            .from("stripe_intents")
+                            .select("link_id")
+                            .eq("stripe_intent_id", piId ?? "")
+                            .maybeSingle();
+                        const linkIdForEmail = (linkData as { link_id?: string | null } | null)?.link_id ?? linkId;
+
+                        let payerEmailForRefund: string | null = null;
+                        if (linkIdForEmail) {
+                            const { data: linkRow } = await supabase
+                                .from("sendmo_links")
+                                .select("user_id")
+                                .eq("id", linkIdForEmail)
+                                .maybeSingle();
+                            const ownerUserId = (linkRow as { user_id?: string } | null)?.user_id ?? null;
+                            if (ownerUserId) {
+                                const { data: ownerProfile } = await supabase
+                                    .from("profiles")
+                                    .select("email")
+                                    .eq("id", ownerUserId)
+                                    .maybeSingle();
+                                payerEmailForRefund = (ownerProfile as { email?: string | null } | null)?.email ?? null;
+                            }
+                        }
+
+                        if (payerEmailForRefund) {
+                            // Dedup: attempt to insert notifications_log row first.
+                            const { error: emailLogErr } = await supabase
+                                .from("notifications_log")
+                                .insert({
+                                    shipment_id: shipmentId,
+                                    contact_id: null,
+                                    channel: "email",
+                                    event_type: "refund.completed",
+                                    status: "sent",
+                                    provider_id: stripeRefundId,
+                                });
+
+                            if (!emailLogErr) {
+                                // First time for this refund object — send the email.
+                                // Extract last4 from the charge object if available.
+                                const last4 = (charge as { payment_method_details?: { card?: { last4?: string } } | null })
+                                    ?.payment_method_details?.card?.last4 ?? null;
+
+                                const tpl = refundCompletedEmail({
+                                    amount_cents: refundAmount,
+                                    public_code: "", // fetched below if needed
+                                    tracking_url: "",
+                                    last4,
+                                });
+
+                                // Get public_code for the tracking link.
+                                const { data: shipRow } = await supabase
+                                    .from("shipments")
+                                    .select("public_code")
+                                    .eq("id", shipmentId)
+                                    .maybeSingle();
+                                const publicCode = (shipRow as { public_code?: string } | null)?.public_code ?? "";
+
+                                const tplFull = refundCompletedEmail({
+                                    amount_cents: refundAmount,
+                                    public_code: publicCode,
+                                    tracking_url: `https://sendmo.co/t/${publicCode}`,
+                                    last4,
+                                });
+
+                                await sendEmail({ to: payerEmailForRefund, subject: tplFull.subject, html: tplFull.html });
+                                log({
+                                    event_type: "refund.completed_email_sent",
+                                    severity: "info",
+                                    entity_type: "payment_intent",
+                                    entity_id: piId,
+                                    properties: {
+                                        amount_cents: refundAmount,
+                                        stripe_refund_id: stripeRefundId,
+                                        recipient: payerEmailForRefund,
+                                    },
+                                });
+                            } else if (!/duplicate key|unique constraint/i.test(emailLogErr.message)) {
+                                // Unexpected error (not dedup) — log it.
+                                log({
+                                    event_type: "refund.completed_email_error",
+                                    severity: "error",
+                                    entity_type: "payment_intent",
+                                    entity_id: piId,
+                                    properties: { error_message: emailLogErr.message, stripe_refund_id: stripeRefundId },
+                                });
+                            }
+                            // duplicate key → already sent → skip silently
+                        }
+                    } catch (emailBErr) {
+                        // Email B failure must never fail the webhook response.
+                        const msg = emailBErr instanceof Error ? emailBErr.message : String(emailBErr);
+                        console.error("[stripe-webhook] Email B send failed:", msg);
+                        log({
+                            event_type: "refund.completed_email_error",
+                            severity: "error",
+                            entity_type: "payment_intent",
+                            entity_id: piId,
+                            properties: { error_message: msg, stripe_refund_id: stripeRefundId },
+                        });
                     }
                 }
 

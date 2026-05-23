@@ -2,6 +2,8 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { log } from "../_shared/logger.ts";
+import { sendEmail } from "../_shared/resend.ts";
+import { refundSubmittedEmail } from "../_shared/email-templates.ts";
 // createRefund import retired 2026-05-13 — Stripe refund is now triggered
 // by tracking/index.ts's lazy poll once EasyPost confirms the carrier
 // refund (two-step refund safety). See the comment at the refund_status
@@ -391,6 +393,110 @@ serve(async (req: Request) => {
                 }),
                 { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
             );
+        }
+
+        // ── Stage 3b: Email A — refund submitted notification ──────────
+        // Only sent when the refund is in 'submitted' state (has a Stripe PI
+        // and EP void was accepted). Comp/not_applicable and rejected voids
+        // don't get this email.
+        // Dedup: notifications_log row keyed by (shipment_id, event_type,
+        //   provider_id=stripe_payment_intent_id) via migration 035's
+        //   idx_notifications_log_refund_dedup partial index.
+        if (refundOutcome === "submitted" && shipment.stripe_payment_intent_id) {
+            // Find the payer email to notify.
+            // Full-label: payer is the link owner (recipient).
+            // We join sendmo_links in the fetch above; profile email is accessed
+            // via the user_id on the link.
+            const linkOwnerUserId = linkRow?.user_id ?? null;
+            let payerEmail: string | null = null;
+            if (linkOwnerUserId) {
+                const { data: profile } = await supabase
+                    .from("profiles")
+                    .select("email")
+                    .eq("id", linkOwnerUserId)
+                    .maybeSingle();
+                payerEmail = (profile as { email?: string | null } | null)?.email ?? null;
+            }
+
+            if (payerEmail) {
+                // Determine who cancelled for the canceller-aware copy.
+                // actor is 'admin' | 'link_owner' | 'session_token' | 'email_token'
+                const cancellerIsPayer =
+                    actor === "link_owner" || actor === "session_token" || actor === "email_token";
+                const cancellerType: "payer" | "link_user" | "admin" =
+                    actor === "admin" ? "admin" :
+                    cancellerIsPayer ? "payer" : "link_user";
+
+                const tpl = refundSubmittedEmail({
+                    amount_cents: shipment.rate_cents ?? 0,
+                    carrier: shipment.carrier ?? "the carrier",
+                    public_code: shipment.public_code,
+                    tracking_url: `https://sendmo.co/t/${shipment.public_code}`,
+                    canceller_is_payer: cancellerIsPayer,
+                    canceller_type: cancellerType,
+                });
+
+                // Dedup check: INSERT into notifications_log; if the row already
+                // exists (unique constraint), skip the send.
+                const { error: logInsertErr } = await supabase
+                    .from("notifications_log")
+                    .insert({
+                        shipment_id: shipment.id,
+                        contact_id: null,
+                        channel: "email",
+                        event_type: "refund.submitted",
+                        status: "sent",
+                        provider_id: shipment.stripe_payment_intent_id,
+                    });
+
+                if (!logInsertErr) {
+                    // Row inserted → first send for this event; fire the email.
+                    try {
+                        await sendEmail({ to: payerEmail, subject: tpl.subject, html: tpl.html });
+                        log({
+                            event_type: "refund.submitted_email_sent",
+                            session_id: sessionId,
+                            severity: "info",
+                            source: "cancel-label",
+                            entity_type: "shipment",
+                            entity_id: shipment.id,
+                            properties: { recipient: payerEmail, payment_intent_id: shipment.stripe_payment_intent_id },
+                        });
+                    } catch (emailErr) {
+                        // Email failure must not block the cancel-label response.
+                        const msg = emailErr instanceof Error ? emailErr.message : String(emailErr);
+                        console.error("[cancel-label] Email A send failed:", msg);
+                        // Update the log row to 'failed' so dedup doesn't prevent retry.
+                        await supabase
+                            .from("notifications_log")
+                            .update({ status: "failed", error_message: msg })
+                            .eq("shipment_id", shipment.id)
+                            .eq("event_type", "refund.submitted")
+                            .is("contact_id", null)
+                            .eq("provider_id", shipment.stripe_payment_intent_id);
+                        log({
+                            event_type: "refund.submitted_email_error",
+                            session_id: sessionId,
+                            severity: "error",
+                            source: "cancel-label",
+                            entity_type: "shipment",
+                            entity_id: shipment.id,
+                            properties: { error_message: msg },
+                        });
+                    }
+                } else if (/duplicate key|unique constraint/i.test(logInsertErr.message)) {
+                    // Already sent — skip silently.
+                    log({
+                        event_type: "refund.submitted_email_deduped",
+                        session_id: sessionId,
+                        severity: "info",
+                        source: "cancel-label",
+                        entity_type: "shipment",
+                        entity_id: shipment.id,
+                        properties: { payment_intent_id: shipment.stripe_payment_intent_id },
+                    });
+                }
+            }
         }
 
         // ── Stage 4: Link revival (in_use → active) ─────────────────
