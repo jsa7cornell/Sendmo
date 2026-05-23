@@ -8,6 +8,45 @@ const MARKUP_MULTIPLIER = 1.15;
 const MARKUP_FLAT_CENTS = 100; // $1.00 flat fee on top of the percentage markup
 const MAX_DISPLAY_PRICE = 200;
 
+// Service denylist — carrier+service pairs whose buy-time rate is not
+// guaranteed to equal the rate-shop quote. We do not surface these to
+// customers until the buy-time-rate-gate proposal lands and we have empirical
+// confidence in the gap being small (or zero) in live mode.
+// Format: { carrier: <lowercased>, service: <UPPERCASED> }
+//
+// 2026-05-23 — added FedEx Smart Post after shipment GC37EXG quoted at $9.61
+//   was billed at $19.23 in test mode. Per the smart-post-denylist handoff
+//   forensics (proposals/2026-05-23_smart-post-denylist-handoff.md):
+//     • GC37EXG was test-mode — no physical label or carrier billing; the
+//       gap is an EasyPost-API artifact, not a USPS / FedEx hub re-rate.
+//     • The rate.fetched log recorded weight=32 oz at quote time. The
+//       write-side weight=0 bug in labels/index.ts is unrelated to this
+//       quote→buy gap (separate spinoff task).
+//     • EasyPost rejects degenerate parcels (weight=0 or any dim=0) at the
+//       API layer, so the rates fn cannot have silently sent zeros.
+//     • Smart Post was the only carrier+service in the 32-shipment dataset
+//       with any meaningful quote→buy gap. USPS GroundAdvantage (27 ships)
+//       and UPS Ground/Groundsaver (4) all show $0.00 gap.
+//   Diagnosis: EasyPost's test-mode integration contract for Smart Post does
+//   not guarantee that the quoted rate equals the buy-time rate. We have
+//   ZERO live Smart Post shipments, so live behavior is unknown — the
+//   denylist is a precaution proportional to that lack of evidence.
+//
+// Re-enable path (subject to the buy-time-rate-gate proposal's final shape):
+//   Phase 1 — shadow mode: the rates fn issues a real rate-shop including
+//     Smart Post but does NOT surface Smart Post to customers; a separate
+//     /shipments/{id}/buy call in test mode compares selected_rate.rate to
+//     the quoted rate. Once buy-time delta < 5% holds for 30 consecutive
+//     shadow probes, lift to Phase 2.
+//   Phase 2 — gated live: lift the denylist, but the buy-time-rate-gate
+//     intercepts any live Smart Post buy where the delta exceeds 5%. If
+//     30 consecutive live Smart Post shipments pass the gate, consider the
+//     denylist permanently retired for this service.
+const SERVICE_DENYLIST: Array<{ carrier: string; service: string }> = [
+    { carrier: "fedexdefault", service: "SMART_POST" },
+    { carrier: "fedex", service: "SMART_POST" },          // defensive — covers either FedEx EP carrier-account label
+];
+
 serve(async (req: Request) => {
     // Handle CORS preflight
     const corsResponse = handleCors(req);
@@ -275,7 +314,31 @@ serve(async (req: Request) => {
                     easypost_rate_id: rate.id,
                 };
             })
-            .filter((r: { display_price: number; carrier: string; speed_tier: string }) => {
+            .filter((r: { display_price: number; carrier: string; service: string; speed_tier: string }) => {
+                // Service denylist (top of file) — exclude services with
+                // known systematic buy-time rate drift. Telemetry: emit a
+                // rate.service_denylisted event for each filtered rate so we
+                // can count how many quotes the denylist suppressed (and at
+                // what would-have-been price) — this is the data the
+                // denylist re-enable path is keyed on.
+                const carrierLower = r.carrier.toLowerCase();
+                const serviceUpper = r.service.toUpperCase();
+                if (SERVICE_DENYLIST.some(d => d.carrier === carrierLower && d.service === serviceUpper)) {
+                    log({
+                        event_type: "rate.service_denylisted",
+                        session_id: sessionId,
+                        severity: "info",
+                        entity_type: "rate",
+                        properties: {
+                            carrier: r.carrier,
+                            service: r.service,
+                            would_have_been_display_price: r.display_price,
+                            speed_tier: r.speed_tier,
+                        },
+                    });
+                    return false;
+                }
+
                 // Hard cap — never show rates above the absolute max
                 if (r.display_price > MAX_DISPLAY_PRICE) return false;
 
