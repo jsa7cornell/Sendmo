@@ -333,7 +333,13 @@ serve(async (req: Request) => {
                     carrier_messages: epMessages.length > 0 ? epMessages : undefined,
                     from_zip: from_address?.zip ?? null,
                     to_zip: to_address?.zip ?? null,
+                    // Log parcel dims alongside weight — FedEx Smart Post is
+                    // dim-weight-sensitive and silent dim-mismatch is the most
+                    // likely cause of quote-vs-billed gaps (see GC37EXG case).
                     parcel_weight_oz: parcel?.weight_oz ?? null,
+                    parcel_length: parcel?.length ?? null,
+                    parcel_width: parcel?.width ?? null,
+                    parcel_height: parcel?.height ?? null,
                     cheapest_rate: rates[0]?.display_price ?? null,
                     carriers_returned: [...new Set(rates.map((r: { carrier: unknown }) => r.carrier))],
                 },
