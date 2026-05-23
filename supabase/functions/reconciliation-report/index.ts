@@ -124,7 +124,6 @@ serve(async (req: Request) => {
         refund_submitted_at,
         cancelled_at,
         created_at,
-        shipped_at,
         delivered_at,
         stripe_payment_intent_id,
         sendmo_links!inner (
@@ -210,7 +209,6 @@ serve(async (req: Request) => {
       refund_submitted_at: string | null;
       cancelled_at: string | null;
       created_at: string;
-      shipped_at: string | null;
       delivered_at: string | null;
       stripe_payment_intent_id: string | null;
       sendmo_links: {
@@ -352,7 +350,7 @@ serve(async (req: Request) => {
         link_type: sh.sendmo_links?.link_type ?? null,
         // Timeline
         label_created_at: sh.created_at,
-        shipped_at: sh.shipped_at,
+        shipped_at: null, // shipments.shipped_at column doesn't exist; derive from tracker events in a future pass
         delivered_at: sh.delivered_at,
         cancelled_at: sh.cancelled_at,
         // Addresses

@@ -103,21 +103,17 @@ serve(async (req: Request) => {
         shipments (
           id,
           public_code,
-          user_id,
           carrier,
           is_test,
           stripe_payment_intent_id,
           easypost_shipment_id,
-          profiles (
-            email,
-            stripe_customer_id_live,
-            stripe_customer_id_test
-          ),
-          payment_methods (
-            id,
-            stripe_pm_id,
-            is_default,
-            deleted_at
+          sendmo_links!inner (
+            user_id,
+            profiles (
+              email,
+              stripe_customer_id_live,
+              stripe_customer_id_test
+            )
           )
         )
       `)
@@ -135,13 +131,14 @@ serve(async (req: Request) => {
       shipments: {
         id: string;
         public_code: string;
-        user_id: string;
         carrier: string | null;
         is_test: boolean;
         stripe_payment_intent_id: string | null;
         easypost_shipment_id: string | null;
-        profiles: { email: string; stripe_customer_id_live: string | null; stripe_customer_id_test: string | null } | null;
-        payment_methods: Array<{ id: string; stripe_pm_id: string; is_default: boolean; deleted_at: string | null }> | null;
+        sendmo_links: {
+          user_id: string;
+          profiles: { email: string; stripe_customer_id_live: string | null; stripe_customer_id_test: string | null } | null;
+        } | null;
       };
     }).shipments;
 
@@ -205,7 +202,22 @@ serve(async (req: Request) => {
       // Admin override — force recharge even for >$10.
       // We bypass the $10 threshold check that resolveRecovery would apply,
       // but still use the same recharge primitive for consistency.
-      const activePMs = (sh.payment_methods ?? []).filter((pm) => !pm.deleted_at);
+      const userId = sh.sendmo_links?.user_id;
+
+      if (!userId) {
+        return new Response(
+          JSON.stringify({ error: "Could not resolve user for this shipment" }),
+          { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      // payment_methods is not nested under shipments — fetch separately by user_id.
+      const { data: pms } = await supabase
+        .from("payment_methods")
+        .select("id, stripe_payment_method_id, is_default, deleted_at")
+        .eq("user_id", userId)
+        .is("deleted_at", null);
+      const activePMs = pms ?? [];
       const defaultPM = activePMs.find((pm) => pm.is_default) ?? activePMs[0];
 
       if (!defaultPM) {
@@ -215,9 +227,10 @@ serve(async (req: Request) => {
         );
       }
 
+      const profile = sh.sendmo_links?.profiles;
       const customerId = sh.is_test
-        ? (sh.profiles?.stripe_customer_id_test ?? null)
-        : (sh.profiles?.stripe_customer_id_live ?? null);
+        ? (profile?.stripe_customer_id_test ?? null)
+        : (profile?.stripe_customer_id_live ?? null);
 
       if (!customerId) {
         return new Response(
@@ -229,7 +242,7 @@ serve(async (req: Request) => {
       const shipmentContext: AdjustmentShipment = {
         id: sh.id,
         public_code: sh.public_code ?? sh.id.slice(0, 8),
-        user_id: sh.user_id,
+        user_id: userId,
         carrier: sh.carrier,
         is_test: sh.is_test,
         stripe_payment_intent_id: sh.stripe_payment_intent_id,
@@ -241,7 +254,7 @@ serve(async (req: Request) => {
         deltaCents: adjData.delta_cents,
         carrierAdjustmentId: carrier_adjustment_id,
         attempt: 99, // admin override attempt
-        paymentMethodId: defaultPM.stripe_pm_id,
+        paymentMethodId: defaultPM.stripe_payment_method_id,
         customerId,
         liveMode: !sh.is_test,
       });

@@ -212,17 +212,13 @@ async function runDailySweep(supabase: ReturnType<typeof createClient>, sessionI
       shipments (
         id,
         public_code,
-        user_id,
         carrier,
         is_test,
         stripe_payment_intent_id,
         easypost_shipment_id,
-        profiles ( email, stripe_customer_id_live, stripe_customer_id_test ),
-        payment_methods (
-          id,
-          stripe_pm_id,
-          is_default,
-          deleted_at
+        sendmo_links!inner (
+          user_id,
+          profiles ( email, stripe_customer_id_live, stripe_customer_id_test )
         )
       )
     `)
@@ -236,36 +232,47 @@ async function runDailySweep(supabase: ReturnType<typeof createClient>, sessionI
       const sh = adj.shipments as {
         id: string;
         public_code: string;
-        user_id: string;
         carrier: string | null;
         is_test: boolean;
         stripe_payment_intent_id: string | null;
         easypost_shipment_id: string | null;
-        profiles: { email: string; stripe_customer_id_live: string | null; stripe_customer_id_test: string | null } | null;
-        payment_methods: Array<{ id: string; stripe_pm_id: string; is_default: boolean; deleted_at: string | null }> | null;
+        sendmo_links: {
+          user_id: string;
+          profiles: { email: string; stripe_customer_id_live: string | null; stripe_customer_id_test: string | null } | null;
+        } | null;
       } | null;
 
       if (!sh) continue;
 
-      // Find the best saved payment method for this shipment.
-      const activePMs = (sh.payment_methods ?? []).filter((pm) => !pm.deleted_at);
+      const linkJoin = sh.sendmo_links;
+      const userId = linkJoin?.user_id;
+
+      if (!userId) continue;
+
+      // Fetch payment_methods separately by user_id (not nested under shipments).
+      const { data: pms } = await supabase
+        .from("payment_methods")
+        .select("id, stripe_payment_method_id, is_default, deleted_at")
+        .eq("user_id", userId)
+        .is("deleted_at", null);
+      const activePMs = pms ?? [];
       const defaultPM = activePMs.find((pm) => pm.is_default) ?? activePMs[0];
 
       const shipment: AdjustmentShipment = {
         id: sh.id,
         public_code: sh.public_code ?? sh.id.slice(0, 8),
-        user_id: sh.user_id,
+        user_id: userId,
         carrier: sh.carrier,
         is_test: sh.is_test,
         stripe_payment_intent_id: sh.stripe_payment_intent_id,
       };
 
       const paymentContext: AdjustmentPaymentContext = {
-        payment_method_id: defaultPM?.stripe_pm_id ?? null,
-        user_id: sh.user_id,
+        payment_method_id: defaultPM?.stripe_payment_method_id ?? null,
+        user_id: userId,
         customer_id: sh.is_test
-          ? (sh.profiles?.stripe_customer_id_test ?? null)
-          : (sh.profiles?.stripe_customer_id_live ?? null),
+          ? (linkJoin?.profiles?.stripe_customer_id_test ?? null)
+          : (linkJoin?.profiles?.stripe_customer_id_live ?? null),
       };
 
       await resolveRecovery({
@@ -277,7 +284,7 @@ async function runDailySweep(supabase: ReturnType<typeof createClient>, sessionI
         paymentContext,
         reasonText: adj.reason ?? undefined,
         trackingUrl: `/t/${sh.public_code}`,
-        receiptEmail: sh.profiles?.email ?? null,
+        receiptEmail: linkJoin?.profiles?.email ?? null,
         attempt: 1,
       });
 
