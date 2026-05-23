@@ -865,6 +865,36 @@ Three customer-facing emails fire at `refund_status` transitions. Sent via Resen
 
 Full operational reference: [PAYMENTS.md §12](PAYMENTS.md#12-refund-lifecycle-emails--cron-sweep-h5).
 
+## 13.6 Buy-Time Rate Gate
+
+The labels function enforces a hard correctness invariant immediately before calling EasyPost `/buy`:
+
+> **EasyPost's buy-time rate must leave room for Stripe fees plus a minimum net margin on the price the customer was quoted (`display_price_cents`).**
+
+Concretely, the gate refuses when:
+
+```
+buy_time_rate_cents > display_price_cents × (1 − STRIPE_FEE_PCT − MIN_NET_MARGIN_PCT) − STRIPE_FEE_FLAT_CENTS
+```
+
+Defaults: `STRIPE_FEE_PCT = 0.029`, `STRIPE_FEE_FLAT_CENTS = 30`, `MIN_NET_MARGIN_PCT = 0.05` (env-overridable via `LABEL_BUY_GATE_MIN_NET_MARGIN_PCT`).
+
+**Flow on a gate trip:**
+1. Re-fetch the rate from EasyPost (`/shipments/<id>/rates/<rate_id>` with fallback to `/shipments/<id>`) BEFORE calling `/buy`. No EasyPost label is ever created for a refused buy — no carrier-side artifact, no `shipments` row, no `label_cost` ledger row.
+2. Refund the captured PaymentIntent via Stripe `createRefund` with idempotency key `refund_<eps_id>_buy_time_rate_exceeded`.
+3. Return HTTP 409 with `error: "rate_changed"` and the new buy-time rate. The client (`RecipientStepPayment` / `SenderFlow`) catches `BuyLabelRateChangedError`, renders `RateChangedDialog`, lets the buyer re-shop at the new price or cancel.
+4. **Middle-path refund-failure handling**: if the Stripe refund itself fails, the 409 response carries `refunded: false` + `refund_error`. The dialog renders honest copy: "we tried, our team is on it, reference: <pi_id>". An `auto_refund_failed` event_logs row with `requires_manual_intervention: true` is the admin signal to manually process the refund. No automatic retry queue yet — fast-follow when real-world data demands it.
+
+**Soft warning band:** if the buy-time rate drifted >5% from the back-derived quoted rate but still passes the gate, emits a `label.buy_time_rate_drift` event_logs row (severity `warn`) with carrier/service/drift_pct/margin_remaining for telemetry. Doesn't block the buy. Threshold env-tunable via `LABEL_BUY_GATE_SOFT_DRIFT_PCT`.
+
+**Comp labels are exempt** — SendMo absorbs EP cost by design; comparing to `display_price_cents` (which is meaningless for comp flows) would be wrong.
+
+**Complements §13.4** (carrier-adjustment recovery, H2): §13.4 handles POST-pickup drift (USPS reweighs, dim/address surcharges discovered at the carrier scan); §13.6 handles BUY-TIME drift between rate-shop quote and `/buy` commit. They are not redundant — they catch different rate-divergence classes at different lifecycle points.
+
+**Why auto-capture and not auth-then-capture:** SendMo currently uses `capture_method='automatic'` on the PaymentIntent — money moves at customer confirmation, BEFORE `/labels` runs. The gate is consequently a *check-then-refund* design rather than an *auth-then-capture* design. The latter would eliminate the refund path entirely but requires `/payments` + client confirmation flow rework (~2-3h). Deferred until real-world data shows >1 hard refund per week sustained (audit at decision time: 0 live losses across 32 shipments → not warranted for launch).
+
+Reference: [proposals/2026-05-23_buy-time-rate-gate.md](proposals/2026-05-23_buy-time-rate-gate.md). Companion service denylist constant in `rates/index.ts` (`SERVICE_DENYLIST`) suppresses carrier+service pairs with known systematic quote/buy divergence (currently: FedEx Smart Post).
+
 ---
 
 ## 14. Security Requirements

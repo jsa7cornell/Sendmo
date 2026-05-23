@@ -270,3 +270,128 @@ export async function writeEasypostRefund(
         return { ok: false, error: msg };
     }
 }
+
+// ─── writeStripeFee ────────────────────────────────────────────────────────
+//
+// Records Stripe's processing fee on a successful charge. Called by:
+//   • stripe-webhook/index.ts — in the payment_intent.succeeded arm, after
+//     the existing +charge ledger insert. We retrieve the charge with
+//     ?expand[]=balance_transaction to source the fee directly from Stripe's
+//     canonical BalanceTransaction object (rather than computing it).
+//
+// Idempotency key = 'fee_stripe_<balance_transaction_id>'. The BT id is
+// unique per money movement, so this dedupes any retry / replay.
+//
+// amount_cents: negative (SendMo paid Stripe — cash out, mirrors label_cost
+// semantics on the EasyPost side).
+//
+// Per PLAYBOOK Rule 16 (amended): this module is the SOLE PLACE where
+// fee_stripe rows are constructed. Do not inline INSERT logic elsewhere —
+// extend this helper instead.
+
+export interface StripeFeeParams {
+    supabase: SupabaseClient;
+    sessionId: string;
+    shipmentId: string | null;        // null when fee precedes a labels-row mint
+    userId: string;
+    linkId: string | null;
+    stripeIntentId: string;           // 'pi_…' — for join symmetry with charge row
+    balanceTransactionId: string;     // 'txn_…' — the idempotency anchor
+    feeCents: number;                 // positive — Stripe's reported fee
+    mode: "test" | "live";
+    isComp: boolean;
+}
+
+export async function writeStripeFee(
+    params: StripeFeeParams,
+): Promise<{ ok: boolean; error?: string }> {
+    const {
+        supabase, sessionId, shipmentId, userId, linkId,
+        stripeIntentId, balanceTransactionId, feeCents, mode, isComp,
+    } = params;
+
+    const amountCents = -Math.abs(feeCents);    // negative — cash out
+    const idempotencyKey = `fee_stripe_${balanceTransactionId}`;
+    const fundingSource = isComp ? "comp" : null;
+
+    try {
+        const { error: txErr } = await supabase.from("transactions").insert({
+            user_id: userId,
+            shipment_id: shipmentId,
+            link_id: linkId,
+            stripe_intent_id: stripeIntentId,
+            type: "fee_stripe",
+            amount_cents: amountCents,
+            funding_source: fundingSource,
+            mode,
+            idempotency_key: idempotencyKey,
+            description: `Stripe processing fee — ${balanceTransactionId} (intent ${stripeIntentId})`,
+        });
+
+        if (txErr) {
+            if (txErr.code === "23505") {
+                log({
+                    event_type: "ledger.fee_stripe_duplicate",
+                    session_id: sessionId,
+                    severity: "info",
+                    entity_type: "transaction",
+                    entity_id: shipmentId,
+                    properties: {
+                        idempotency_key: idempotencyKey,
+                        balance_transaction_id: balanceTransactionId,
+                        stripe_intent_id: stripeIntentId,
+                    },
+                });
+                return { ok: true };
+            }
+            log({
+                event_type: "ledger.fee_stripe_error",
+                session_id: sessionId,
+                severity: "error",
+                entity_type: "transaction",
+                entity_id: shipmentId,
+                properties: {
+                    error_message: txErr.message,
+                    error_code: txErr.code ?? null,
+                    idempotency_key: idempotencyKey,
+                    balance_transaction_id: balanceTransactionId,
+                    stripe_intent_id: stripeIntentId,
+                    amount_cents: amountCents,
+                },
+            });
+            return { ok: false, error: txErr.message };
+        }
+
+        log({
+            event_type: "ledger.fee_stripe_recorded",
+            session_id: sessionId,
+            severity: "info",
+            entity_type: "transaction",
+            entity_id: shipmentId,
+            properties: {
+                amount_cents: amountCents,
+                fee_cents: feeCents,
+                balance_transaction_id: balanceTransactionId,
+                stripe_intent_id: stripeIntentId,
+                mode,
+                idempotency_key: idempotencyKey,
+            },
+        });
+        return { ok: true };
+    } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        log({
+            event_type: "ledger.fee_stripe_unhandled",
+            session_id: sessionId,
+            severity: "error",
+            entity_type: "transaction",
+            entity_id: shipmentId,
+            properties: {
+                error_message: msg,
+                balance_transaction_id: balanceTransactionId,
+                stripe_intent_id: stripeIntentId,
+            },
+        });
+        return { ok: false, error: msg };
+    }
+}

@@ -103,9 +103,15 @@ serve(async (req: Request) => {
     const endDate = url.searchParams.get("end_date") ?? now.toISOString().slice(0, 10);
     // end_date is inclusive — extend to end of day
     const endDatetime = `${endDate}T23:59:59.999Z`;
+    // Environment filter — inherits from Admin.tsx top toolbar (All / Production
+    // / Test). Applied to the shipments query so BOTH summary cards AND
+    // per-shipment rows respect the chosen env. Unset / 'all' = no filter.
+    const envParam = url.searchParams.get("env");
+    const envFilter: "production" | "test" | null =
+      envParam === "production" ? "production" : envParam === "test" ? "test" : null;
 
     // ── 1. Fetch shipments with transactions, carrier_adjustments, and refunds ──
-    const { data: shipments, error: shipErr } = await supabase
+    let shipQuery = supabase
       .from("shipments")
       .select(`
         id,
@@ -130,7 +136,9 @@ serve(async (req: Request) => {
           short_code,
           link_type,
           status,
+          user_id,
           profiles (
+            id,
             email,
             stripe_customer_id_live,
             stripe_customer_id_test
@@ -161,11 +169,57 @@ serve(async (req: Request) => {
         recipient_address:recipient_address_id ( name, street1, city, state, zip )
       `)
       .gte("created_at", `${startDate}T00:00:00.000Z`)
-      .lte("created_at", endDatetime)
-      .order("created_at", { ascending: false });
+      .lte("created_at", endDatetime);
+
+    if (envFilter === "production") shipQuery = shipQuery.eq("is_test", false);
+    else if (envFilter === "test") shipQuery = shipQuery.eq("is_test", true);
+
+    const { data: shipments, error: shipErr } = await shipQuery.order("created_at", { ascending: false });
 
     if (shipErr) {
       throw new Error(`Shipments query failed: ${shipErr.message}`);
+    }
+
+    // ── 1b. Stripe-side ledger via PI back-reference ────────────────────────
+    // `transactions` is append-only (no UPDATE grant for service_role), so
+    // charge/refund/fee_stripe/chargeback rows are written with shipment_id
+    // IS NULL — by the time the PI succeeds, the shipments row doesn't exist
+    // yet (it's minted later in labels/index.ts). We instead reverse the
+    // join: labels/index.ts populates shipments.stripe_payment_intent_id
+    // after admin_insert_shipment, and the historical backfill script
+    // (scripts/backfill-charge-shipment-links-2026-05-23.mjs) populated it
+    // for pre-existing rows. Here we look up the Stripe-side ledger rows by
+    // shipments.stripe_payment_intent_id ↔ transactions.stripe_intent_id and
+    // merge them into each shipment's transactions array. Net-margin math
+    // below is unchanged — it still sums by type.
+    const piIds = ((shipments as Array<{ stripe_payment_intent_id: string | null }>) ?? [])
+      .map((s) => s.stripe_payment_intent_id)
+      .filter((p): p is string => !!p);
+
+    const piTxMap = new Map<string, Array<{
+      id: string;
+      type: string;
+      amount_cents: number;
+      stripe_intent_id: string | null;
+      idempotency_key: string | null;
+      created_at: string;
+    }>>();
+
+    if (piIds.length > 0) {
+      const { data: piTxs, error: piTxErr } = await supabase
+        .from("transactions")
+        .select("id, type, amount_cents, stripe_intent_id, idempotency_key, created_at")
+        .in("stripe_intent_id", piIds)
+        .in("type", ["charge", "refund", "fee_stripe", "chargeback"]);
+      if (piTxErr) {
+        throw new Error(`PI-side transactions query failed: ${piTxErr.message}`);
+      }
+      for (const t of piTxs ?? []) {
+        if (!t.stripe_intent_id) continue;
+        const arr = piTxMap.get(t.stripe_intent_id) ?? [];
+        arr.push(t);
+        piTxMap.set(t.stripe_intent_id, arr);
+      }
     }
 
     // ── 2. Compute per-shipment financials ──────────────────────────────────
@@ -212,10 +266,11 @@ serve(async (req: Request) => {
       delivered_at: string | null;
       stripe_payment_intent_id: string | null;
       sendmo_links: {
+        user_id: string;
         short_code: string;
         link_type: string;
         status: string;
-        profiles: { email: string; stripe_customer_id_live: string | null; stripe_customer_id_test: string | null } | null;
+        profiles: { id: string; email: string; stripe_customer_id_live: string | null; stripe_customer_id_test: string | null } | null;
       } | null;
       transactions: TxRow[] | null;
       carrier_adjustments: AdjRow[] | null;
@@ -233,7 +288,23 @@ serve(async (req: Request) => {
     let chargebacksCount = 0;
 
     for (const sh of (shipments as ShipmentRow[]) ?? []) {
-      const txs = sh.transactions ?? [];
+      // Per-shipment ledger = shipment_id-linked rows (label_cost,
+      // easypost_refund, comp_grant) + PI-linked rows resolved through
+      // shipments.stripe_payment_intent_id (charge, refund, fee_stripe,
+      // chargeback). Dedupe by id in case a row carries both linkages
+      // (defensive — should not happen with current writers).
+      const shipTxs = sh.transactions ?? [];
+      const piTxs = sh.stripe_payment_intent_id
+        ? (piTxMap.get(sh.stripe_payment_intent_id) ?? [])
+        : [];
+      const seenIds = new Set<string>(shipTxs.map((t) => t.id));
+      const txs: TxRow[] = [...shipTxs];
+      for (const t of piTxs) {
+        if (!seenIds.has(t.id)) {
+          txs.push(t);
+          seenIds.add(t.id);
+        }
+      }
 
       // Sum each transaction type.
       const sumByType = (type: string) =>
@@ -348,6 +419,8 @@ serve(async (req: Request) => {
         payment_method: sh.payment_method,
         link_short_code: sh.sendmo_links?.short_code ?? null,
         link_type: sh.sendmo_links?.link_type ?? null,
+        owner_user_id: sh.sendmo_links?.user_id ?? sh.sendmo_links?.profiles?.id ?? null,
+        owner_email: sh.sendmo_links?.profiles?.email ?? null,
         // Timeline
         label_created_at: sh.created_at,
         shipped_at: null, // shipments.shipped_at column doesn't exist; derive from tracker events in a future pass

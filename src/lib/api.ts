@@ -339,6 +339,47 @@ export async function fetchTrackingAdmin(
 
 // ─── Label Purchase ─────────────────────────────────────────
 
+// Thrown when the labels function returned HTTP 409 + error:"rate_changed".
+// Callers should catch this and render a "rate changed" dialog with the
+// before/after prices, then either re-shop or cancel based on user choice.
+// See proposals/2026-05-23_buy-time-rate-gate.md.
+export class BuyLabelRateChangedError extends Error {
+  readonly code = "BUY_TIME_RATE_EXCEEDS_DISPLAY_PRICE";
+  readonly quotedDisplayPriceCents: number;
+  readonly buyTimeRateCents: number;
+  readonly newDisplayPriceCents: number;
+  readonly refunded: boolean;
+  readonly refundError: string | null;
+  readonly paymentIntentId: string | null;
+  readonly easypostShipmentId: string;
+  readonly easypostRateId: string;
+  readonly userMessage: string;
+
+  constructor(body: {
+    message: string;
+    quoted_display_price_cents: number;
+    buy_time_rate_cents: number;
+    new_display_price_cents: number;
+    refunded: boolean;
+    refund_error: string | null;
+    payment_intent_id: string | null;
+    easypost_shipment_id: string;
+    easypost_rate_id: string;
+  }) {
+    super(body.message);
+    this.name = "BuyLabelRateChangedError";
+    this.quotedDisplayPriceCents = body.quoted_display_price_cents;
+    this.buyTimeRateCents = body.buy_time_rate_cents;
+    this.newDisplayPriceCents = body.new_display_price_cents;
+    this.refunded = body.refunded;
+    this.refundError = body.refund_error;
+    this.paymentIntentId = body.payment_intent_id;
+    this.easypostShipmentId = body.easypost_shipment_id;
+    this.easypostRateId = body.easypost_rate_id;
+    this.userMessage = body.message;
+  }
+}
+
 export async function buyLabel(
   easypostShipmentId: string,
   easypostRateId: string,
@@ -370,7 +411,21 @@ export async function buyLabel(
     // shipments.item_description via a follow-up UPDATE (migration 021).
     parcel: parcel?.description ? { description: parcel.description } : undefined,
   };
-  return post<LabelResult>("labels", body, accessToken);
+  // Custom fetch path (not post<T>): we need to surface the 409 rate-changed
+  // body as a typed error rather than collapsing it to `new Error(message)`.
+  const res = await fetch(`${BASE_URL}/functions/v1/labels`, {
+    method: "POST",
+    headers: headers(accessToken),
+    body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  if (res.status === 409 && data?.error === "rate_changed") {
+    throw new BuyLabelRateChangedError(data);
+  }
+  if (!res.ok) {
+    throw new Error(data.error || data.message || `API error ${res.status}`);
+  }
+  return data as LabelResult;
 }
 
 // ─── Flexible Link CRUD ────────────────────────────────────

@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { Gift, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { formatCents, buyLabel, addressToApi } from "@/lib/api";
+import { formatCents, buyLabel, addressToApi, BuyLabelRateChangedError } from "@/lib/api";
+import { RateChangedDialog } from "@/components/RateChangedDialog";
 import { carrierDisplayName, serviceDisplayName } from "@/lib/utils";
 import { getTotalPriceCents } from "@/hooks/useRecipientFlow";
 import type { RecipientFlowState } from "@/hooks/useRecipientFlow";
@@ -52,6 +53,7 @@ interface Props {
 export default function RecipientStepPayment({ state, onUpdate, onBack, liveMode = false, compMode = false }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [compLoading, setCompLoading] = useState(false);
+  const [rateChanged, setRateChanged] = useState<BuyLabelRateChangedError | null>(null);
   const { session } = useAuth();
   const navigate = useNavigate();
 
@@ -107,6 +109,14 @@ export default function RecipientStepPayment({ state, onUpdate, onBack, liveMode
       onUpdate({ paymentStatus: "succeeded", labelResult: result });
       redirectToTracking(result);
     } catch (err) {
+      // Buy-time rate gate trip — refund issued (or attempted); render the
+      // dialog so the user can either re-shop at the new price or cancel.
+      // Don't surface as an inline error since the dialog is the UI for it.
+      if (err instanceof BuyLabelRateChangedError) {
+        setRateChanged(err);
+        onUpdate({ paymentStatus: "failed" });
+        return;       // do NOT re-throw — Stripe form would treat as a card error.
+      }
       const msg = err instanceof Error ? err.message : "Label generation failed";
       setError(msg);
       onUpdate({ paymentStatus: "failed" });
@@ -249,6 +259,28 @@ export default function RecipientStepPayment({ state, onUpdate, onBack, liveMode
         <Button variant="outline" onClick={onBack} className="rounded-xl">
           Back
         </Button>
+      )}
+
+      {/* Buy-time rate gate dialog (proposal 2026-05-23_buy-time-rate-gate) */}
+      {rateChanged && (
+        <RateChangedDialog
+          error={rateChanged}
+          onReshop={() => {
+            // Back to the rate-shop step so the user sees fresh rates.
+            // The previous PI is already refunded server-side; the next buy
+            // creates a new one. Clear local error/state defensively.
+            setRateChanged(null);
+            setError(null);
+            onUpdate({ paymentStatus: "idle", selectedRate: null });
+            onBack();
+          }}
+          onCancel={() => {
+            // Dismiss and leave the buyer where they are. The refund is
+            // already done (or pending — copy in dialog reflects which).
+            setRateChanged(null);
+            onUpdate({ paymentStatus: "idle" });
+          }}
+        />
       )}
     </div>
   );

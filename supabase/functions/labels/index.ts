@@ -846,6 +846,209 @@ serve(async (req: Request) => {
             );
         }
 
+        // ─── Buy-time rate gate (proposal 2026-05-23_buy-time-rate-gate) ─
+        // Refetch the rate from EasyPost BEFORE calling /buy. If the buy-time
+        // rate now exceeds what we charged the customer (minus Stripe fees and
+        // minimum margin), refuse the buy, refund the customer, and return a
+        // structured 409 the client surfaces as a "rate changed" dialog.
+        //
+        // Decisions (this session):
+        //   • BEFORE check (vs AFTER void): avoids the carrier-side voided
+        //     label artifact. Refund path is identical in either option since
+        //     payments uses capture_method='automatic'.
+        //   • Margin floor: 5% net after Stripe fees. Threshold formula:
+        //         ep ≤ display × (1 − STRIPE_FEE_PCT − MIN_NET_MARGIN_PCT)
+        //               − STRIPE_FEE_FLAT_CENTS
+        //   • Refund-failure handling: middle path — auto-refund; if refund
+        //     itself fails, log+admin alert event, return 409 with
+        //     refunded:false so the client shows honest copy.
+        //   • Comp labels: exempt (SendMo absorbs EP cost by design).
+        //
+        // Skipped when display_price_cents is missing or zero — can't compare.
+        const STRIPE_FEE_PCT = 0.029;
+        const STRIPE_FEE_FLAT_CENTS = 30;
+        const MIN_NET_MARGIN_PCT = parseFloat(
+            Deno.env.get("LABEL_BUY_GATE_MIN_NET_MARGIN_PCT") ?? "0.05"
+        );
+        const SOFT_DRIFT_PCT = parseFloat(
+            Deno.env.get("LABEL_BUY_GATE_SOFT_DRIFT_PCT") ?? "0.05"
+        );
+
+        const gateDisplayCents = typeof display_price_cents === "number" ? display_price_cents : 0;
+
+        if (gateDisplayCents > 0 && !isComp) {
+            // Refetch rate — same fallback pattern as the flex-cap block above
+            // (/rates/<id> endpoint preferred, fall back to GET shipment).
+            let buyTimeRateCents: number | null = null;
+            try {
+                const rateResp = await fetch(
+                    `https://api.easypost.com/v2/shipments/${easypost_shipment_id}/rates/${easypost_rate_id}`,
+                    { headers: { Authorization: authHeader } },
+                );
+                if (rateResp.ok) {
+                    const rateData = await rateResp.json();
+                    buyTimeRateCents = Math.round(parseFloat(rateData.rate ?? "0") * 100);
+                } else {
+                    const shipResp = await fetch(
+                        `https://api.easypost.com/v2/shipments/${easypost_shipment_id}`,
+                        { headers: { Authorization: authHeader } },
+                    );
+                    if (shipResp.ok) {
+                        const shipData = await shipResp.json();
+                        const matched = (shipData.rates || []).find((r: { id: string }) => r.id === easypost_rate_id);
+                        if (matched) {
+                            buyTimeRateCents = Math.round(parseFloat(matched.rate ?? "0") * 100);
+                        }
+                    }
+                }
+            } catch (rateErr) {
+                log({
+                    event_type: "label.buy_time_rate_refetch_failed",
+                    session_id: sessionId,
+                    severity: "warn",
+                    entity_type: "label",
+                    entity_id: easypost_shipment_id,
+                    properties: {
+                        error_message: rateErr instanceof Error ? rateErr.message : String(rateErr),
+                    },
+                });
+            }
+
+            if (buyTimeRateCents !== null && buyTimeRateCents > 0) {
+                // Threshold: EP cost must leave room for Stripe fees + min net margin.
+                const gateThresholdCents = Math.floor(
+                    gateDisplayCents * (1 - STRIPE_FEE_PCT - MIN_NET_MARGIN_PCT) - STRIPE_FEE_FLAT_CENTS
+                );
+
+                if (buyTimeRateCents > gateThresholdCents) {
+                    const marginLossCents = buyTimeRateCents - gateThresholdCents;
+                    log({
+                        event_type: "label.buy_time_rate_exceeded",
+                        session_id: sessionId,
+                        severity: "error",
+                        entity_type: "label",
+                        entity_id: easypost_shipment_id,
+                        properties: {
+                            quoted_display_price_cents: gateDisplayCents,
+                            buy_time_rate_cents: buyTimeRateCents,
+                            gate_threshold_cents: gateThresholdCents,
+                            margin_loss_cents: marginLossCents,
+                            stripe_fee_pct: STRIPE_FEE_PCT,
+                            stripe_fee_flat_cents: STRIPE_FEE_FLAT_CENTS,
+                            min_net_margin_pct: MIN_NET_MARGIN_PCT,
+                            flow: resolvedLink ? "flex" : "full_label",
+                            easypost_rate_id,
+                        },
+                    });
+
+                    // Auto-refund. If this fails, the customer's $$$ is stuck
+                    // until we (the admin) manually refund. Middle-path: we
+                    // log loud + admin alert event + return refunded:false so
+                    // the client can render honest copy.
+                    let refundIssued = false;
+                    let refundErrorMsg: string | null = null;
+                    if (verifiedPaymentIntent) {
+                        try {
+                            const refund = await createRefund({
+                                payment_intent_id: verifiedPaymentIntent.id,
+                                reason: "requested_by_customer",
+                                metadata: {
+                                    easypost_shipment_id,
+                                    failure_reason: "buy_time_rate_exceeded",
+                                    margin_loss_cents: String(marginLossCents),
+                                },
+                                idempotency_key: `refund_${easypost_shipment_id}_buy_time_rate_exceeded`,
+                                liveMode: isLive,
+                            });
+                            refundIssued = true;
+                            log({
+                                event_type: "label.auto_refund_issued",
+                                session_id: sessionId,
+                                severity: "warn",
+                                entity_type: "payment_intent",
+                                entity_id: verifiedPaymentIntent.id,
+                                properties: {
+                                    refund_id: refund.id,
+                                    amount_cents: refund.amount,
+                                    easypost_shipment_id,
+                                    reason: "buy_time_rate_exceeded",
+                                },
+                            });
+                        } catch (refundErr) {
+                            refundErrorMsg = refundErr instanceof Error ? refundErr.message : String(refundErr);
+                            console.error(`[Session ${sessionId}] [labels] BUY-TIME-GATE REFUND FAILED:`, refundErrorMsg);
+                            log({
+                                event_type: "label.auto_refund_failed",
+                                session_id: sessionId,
+                                severity: "error",
+                                entity_type: "payment_intent",
+                                entity_id: verifiedPaymentIntent.id,
+                                properties: {
+                                    error_message: refundErrorMsg,
+                                    easypost_shipment_id,
+                                    reason: "buy_time_rate_exceeded",
+                                    payment_intent_id: verifiedPaymentIntent.id,
+                                    requires_manual_intervention: true,
+                                },
+                            });
+                        }
+                    }
+
+                    // New display price = what we'd quote at the new EP rate.
+                    const newDisplayPriceCents = Math.round(
+                        buyTimeRateCents * MARKUP_MULTIPLIER + MARKUP_FLAT_CENTS
+                    );
+
+                    return new Response(
+                        JSON.stringify({
+                            error: "rate_changed",
+                            code: "BUY_TIME_RATE_EXCEEDS_DISPLAY_PRICE",
+                            message: refundIssued
+                                ? "The shipping cost changed and we couldn't complete your purchase at the price you saw. We've refunded your charge — review the new rate to continue."
+                                : "The shipping cost changed and we couldn't complete your purchase at the price you saw. We tried to refund your charge automatically but our payment system was slow — our team has been alerted and will complete the refund within 24 hours. Reference: " + (verifiedPaymentIntent?.id ?? "n/a"),
+                            quoted_display_price_cents: gateDisplayCents,
+                            buy_time_rate_cents: buyTimeRateCents,
+                            new_display_price_cents: newDisplayPriceCents,
+                            refunded: refundIssued,
+                            refund_error: refundErrorMsg,
+                            payment_intent_id: verifiedPaymentIntent?.id ?? null,
+                            easypost_shipment_id,
+                            easypost_rate_id,
+                        }),
+                        { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                    );
+                }
+
+                // Soft warning — rate drifted up but still profitable.
+                // Quoted rate is back-derived from display_price via the
+                // markup formula (display = rate × M + F → rate = (display − F) / M).
+                const quotedRateCentsApprox = Math.max(
+                    0,
+                    Math.round((gateDisplayCents - MARKUP_FLAT_CENTS) / MARKUP_MULTIPLIER)
+                );
+                if (
+                    quotedRateCentsApprox > 0 &&
+                    buyTimeRateCents > Math.round(quotedRateCentsApprox * (1 + SOFT_DRIFT_PCT))
+                ) {
+                    log({
+                        event_type: "label.buy_time_rate_drift",
+                        session_id: sessionId,
+                        severity: "warn",
+                        entity_type: "label",
+                        entity_id: easypost_shipment_id,
+                        properties: {
+                            quoted_rate_cents_approx: quotedRateCentsApprox,
+                            buy_time_rate_cents: buyTimeRateCents,
+                            drift_pct: Math.round(((buyTimeRateCents - quotedRateCentsApprox) / quotedRateCentsApprox) * 100),
+                            margin_remaining_cents: gateDisplayCents - buyTimeRateCents,
+                            flow: resolvedLink ? "flex" : "full_label",
+                            easypost_rate_id,
+                        },
+                    });
+                }
+            }
+        }
+
         // Buy the label with EndShipper
         const buyStart = Date.now();
         const buyResponse = await fetch(
@@ -1021,10 +1224,21 @@ serve(async (req: Request) => {
                     p_easypost_tracker_id: buyData.tracker?.id ?? null,
                     p_rate_cents: Math.round(parseFloat(buyData.selected_rate?.rate || "0") * 100),
                     p_display_price_cents: display_price_cents ?? Math.round(parseFloat(buyData.selected_rate?.rate || "0") * 100),
-                    p_weight_oz: parcel?.weight_oz ?? 0,
-                    p_length_in: parcel?.length_in ?? 0,
-                    p_width_in: parcel?.width_in ?? 0,
-                    p_height_in: parcel?.height_in ?? 0,
+                    // Read parcel dims from the EasyPost buy response (source of
+                    // truth — what carriers were actually quoted and billed on),
+                    // not the client request body. The client `buyLabel` wrapper
+                    // strips weight/dims before POSTing here, which left every
+                    // shipments row at 0 and broke per-shipment margin display.
+                    // (Separate issue from GC37EXG's $11.74 Smart Post gap — the
+                    // rate.fetched log shows weight=32 oz at quote time for that
+                    // shipment, so the EasyPost quote wasn't fed a 0-oz parcel.
+                    // The Smart Post gap is most likely a dim-weight re-rate at
+                    // the FedEx hub, still under investigation.)
+                    // EasyPost uses `weight` (oz) / `length`/`width`/`height` (in).
+                    p_weight_oz: Number(buyData.parcel?.weight ?? parcel?.weight_oz ?? 0),
+                    p_length_in: Number(buyData.parcel?.length ?? parcel?.length_in ?? 0),
+                    p_width_in: Number(buyData.parcel?.width ?? parcel?.width_in ?? 0),
+                    p_height_in: Number(buyData.parcel?.height ?? parcel?.height_in ?? 0),
                     p_is_live: isLive,
                     p_promised_delivery_date: buyData.selected_rate?.delivery_date
                         ? new Date(buyData.selected_rate.delivery_date).toISOString().slice(0, 10)
@@ -1078,6 +1292,31 @@ serve(async (req: Request) => {
                                 // happen — helper catches internally — but belt-and-suspenders).
                                 console.error('[labels] writeLabelCost unexpected throw:', err);
                             });
+                        }
+
+                        // ── Forward stitch: shipments.stripe_payment_intent_id ──
+                        // The Stripe PI is created in payments/index.ts BEFORE
+                        // a shipments row exists, so the `charge` transaction
+                        // emitted by stripe-webhook on payment_intent.succeeded
+                        // lands with shipment_id IS NULL. The transactions
+                        // table is append-only (no UPDATE grant), so the join
+                        // must run the other way: reconciliation-report joins
+                        // charge/refund rows via t.stripe_intent_id ↔
+                        // s.stripe_payment_intent_id. Populating the shipments
+                        // side here is what makes that join resolvable.
+                        // try/catch — failure logs but never breaks label-buy.
+                        if (shipmentId && !isComp && payment_intent_id) {
+                            try {
+                                const { error: shipErr } = await supabase
+                                    .from('shipments')
+                                    .update({ stripe_payment_intent_id: payment_intent_id })
+                                    .eq('id', shipmentId);
+                                if (shipErr) {
+                                    console.error('[labels] forward-stitch shipments update:', shipErr);
+                                }
+                            } catch (err) {
+                                console.error('[labels] forward-stitch unexpected throw:', err);
+                            }
                         }
 
                         // ── Cancel-flow Phase A (migration 020) ────────────

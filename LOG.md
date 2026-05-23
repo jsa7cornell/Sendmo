@@ -12,6 +12,85 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-23] Shipments parcel-dims wiped to 0 — labels fn now reads from EasyPost (data-quality fix + backfill)
+
+**Category:** fix | Edge Functions | Backfill | Data Quality
+**Cross-link:** sibling reconciliation fix below (this surfaced via investigation of the $9.62 net-margin loss on shipment `GC37EXG` flagged in the reconciliation entry — same shipment, deeper root cause) | PLAYBOOK Rule 16 (one-time data backfill — documented exception)
+
+**What broke (symptom):** 14/32 shipments in prod had `weight_oz=0` AND `length_in=width_in=height_in=0`. The all-zero rows clustered in test-mode shipments created via `SenderFlow` / `RecipientStepPayment` from 2026-03-18 onward; rows created via the dev `/label-test` page (which sends parcel fields directly, bypassing the wrapper) had correct values. Concrete cost: `GC37EXG` (shp_ae0561ba18f649b5b9da23a57f3cdf82, FedEx Smart Post) was quoted on a 0-oz parcel, then FedEx billed the real 32 oz / 4×4×11 in shipment — SendMo absorbed the $9.62 difference.
+
+**Root cause (one bug, two-step trace):**
+- **Client wrapper drops the fields.** `src/lib/api.ts:371` — `buyLabel` strips parcel weight/dims before POSTing to `/labels`: `parcel: parcel?.description ? { description: parcel.description } : undefined`. Only `description` survives. Both production call-sites (`SenderFlow.tsx:152`, `RecipientStepPayment.tsx:85`) flow through this wrapper.
+- **Edge Function reads from the (now-empty) request body.** `supabase/functions/labels/index.ts:1024-1027` — `p_weight_oz: parcel?.weight_oz ?? 0` etc. Defaults to 0 when the field is missing. `admin_insert_shipment` writes 0s into NOT-NULL columns with no DB default, so the row lands all-zero. The rates Edge Function correctly forwards dims to EasyPost when creating the shipment — so EasyPost has the truth all along; only the SendMo DB copy is wrong.
+
+**The fix (server-side, no client/API contract change):** `supabase/functions/labels/index.ts:1024-1035` now reads dims from `buyData.parcel` (the EasyPost `/v2/shipments/{id}/buy` response — the same shipment object the carrier was quoted and billed on). Falls back to the request body's parcel for defense-in-depth. EasyPost uses field names `weight` (oz) / `length`/`width`/`height` (in), so the mapping is direct. This also matches the existing server-resolve security pattern (don't trust the client for fields the server can derive).
+
+**Backfill: `scripts/backfill-shipment-parcel-dims-2026-05-23.mjs`** (new, ~165 LOC) — for each zero-dim shipments row, GETs `https://api.easypost.com/v2/shipments/{easypost_shipment_id}` using the appropriate test/live key based on `is_live`, reads `parcel.weight/length/width/height`, and UPDATEs the row. Idempotent: the WHERE clause requires `weight_oz=0 AND length_in=0 AND width_in=0 AND height_in=0`, so re-runs are no-ops. Skips fake `shp_test*` seed ids explicitly. Result: 14/14 historical rows recovered. Notable: `GC37EXG` correctly restored to 32 oz / 4×4×11 in — explains the carrier-bill vs. quoted-rate gap that hit margin.
+
+**Files changed:**
+- `supabase/functions/labels/index.ts` (+9 / -4) — read dims from `buyData.parcel`, fall back to request body
+- `scripts/backfill-shipment-parcel-dims-2026-05-23.mjs` (new) — one-shot historical backfill
+
+**Deployed:** `supabase functions deploy labels` ✓
+**Backfill run:** `op read`-piped secrets → `node scripts/backfill-shipment-parcel-dims-2026-05-23.mjs` ✓ — checked: 14, updated: 14, errors: 0.
+
+**Verification (SQL):** `SELECT COUNT(*) FILTER (WHERE weight_oz=0) AS weight_zero, COUNT(*) FILTER (WHERE length_in=0 AND width_in=0 AND height_in=0) AS dims_all_zero FROM shipments;` → `weight_zero=0, dims_all_zero=0` (was 14/14 before).
+
+**Future-proofing note:** The client wrapper at `src/lib/api.ts:371` still drops weight/dims — left as-is because the server-side read from `buyData.parcel` makes the client field redundant. If the API surface is ever rewritten, prefer not re-introducing client-supplied dims; the EasyPost shipment is authoritative.
+
+**Browser-verified:**
+  n/a-category: backend-only
+  n/a-reason: Edge Function change with no DOM/wire-shape consumer; affects what's written to the `shipments` table. Verified via post-deploy SQL count drop (14→0 zero-dim rows) and per-row inspection of recovered dims against carrier-billed weights. New label-buys post-deploy will be observable in the next admin/reconciliation page load; that surface is already covered by the sibling entry's mcp-session verification.
+
+---
+
+### [2026-05-23] Reconciliation dashboard — empty-columns fix (H1 backfill + Stripe-side join refactor)
+
+**Category:** fix | Reconciliation | Backfill | Edge Functions | Ledger
+**Cross-link:** H1 ledger foundation [d0ef0b5](LOG.md#2026-05-23-h1) (label_cost + easypost_refund writers shipped today ~15:37 UTC) | H4 reconciliation dashboard [LOG.md#2026-05-23-h4] (this fix amends `reconciliation-report` and is technically inside the H1–H5 "don't touch" window, but was required to make the dashboard render real values) | handoff [proposals/2026-05-23_pre-launch-handoff-plan.md](proposals/2026-05-23_pre-launch-handoff-plan.md) §Post-H5 — Backfill | PLAYBOOK Rule 16 (one-time data backfill — documented exception)
+
+**What broke (symptom):** Admin reconciliation dashboard rendered with all financial columns showing $0 per shipment. Net margin = `-label_cost + easypost_refund` only (the Stripe side absent). Looked like the dashboard was wrong but the ledger was deeper-broken.
+
+**Two distinct root causes, fixed together:**
+
+**(1) H1 writers had never run for historical shipments (Rule-16 backfill).** The 32 shipments in prod were created before today's d0ef0b5 ledger writers existed, so the `transactions` table had 1 `label_cost` row (the post-H1 test shipment) and 0 `easypost_refund` rows. Backfill SQL inserted 30 `label_cost` rows + 1 `easypost_refund` row, idempotent via `ON CONFLICT (idempotency_key) DO NOTHING`, mirroring the H1 writer's `funding_source`/`mode`/`description`/`idempotency_key` conventions exactly. Two `easypost_shipment_id` values are shared across 2 shipments each (`shp_test` + one real id from late Feb — pre-existing duplicate-shipment data quality issue) so 30 `label_cost` rows cover all 32 shipments — H1 keys on eps_id and would have produced the same 30 rows in real time. The single `easypost_refund` row uses synthetic `idempotency_key = 'easypost_refund_backfill_<eps_id>'` because the original EasyPost Refund object id is unrecoverable for historical rows (documented Rule-16 exception).
+
+**(2) PI ↔ shipment linkage gap (architectural — discovered while verifying #1).** Even after #1, per-shipment `Paid` / `Stripe fee` / `Refund to customer` columns still read $0 because `charge` and `refund` transaction rows have `shipment_id IS NULL`. Trace:
+
+- `payments/index.ts` creates the Stripe PI BEFORE a `shipments` row exists. The PI's `metadata` carries `easypost_shipment_id` (text) but not `shipment_id` (UUID — doesn't exist yet).
+- `stripe-webhook` resolver reads `metadata.shipment_id`, finds nothing, writes the `charge` row with `shipment_id = NULL`. By design at write time.
+- `labels/index.ts` later creates the shipments row via `admin_insert_shipment` — but never back-references the PI. So `shipments.stripe_payment_intent_id` was NULL for every card shipment ever, including the one created today after H1.
+- The `transactions` table has no `UPDATE` grant for `service_role` (append-only ledger by design — `writeLabelCost` uses `INSERT ... ON CONFLICT DO NOTHING` precisely because of this). So you cannot retro-link `transactions.shipment_id` after the fact.
+
+**The fix (Path B — preserves append-only invariant):**
+
+- **`supabase/functions/labels/index.ts`** — after `admin_insert_shipment` returns the UUID and before the cancel-token mint, set `shipments.stripe_payment_intent_id = payment_intent_id` (a column-level UPDATE on `shipments`, which IS grantable to service_role). Guarded by `!isComp && payment_intent_id`. Try/catch wraps the update so a failure logs but doesn't break label-buy (H1 pattern).
+- **`supabase/functions/reconciliation-report/index.ts`** — added a second `.from('transactions')` query keyed on `stripe_intent_id IN (shipments.stripe_payment_intent_id)` filtered to `type IN ('charge','refund','fee_stripe','chargeback')`. Results merged into each shipment's `txs` array with id-based dedup. Net-margin sum-by-type math unchanged. The `transactions` relational sub-select in the shipments fetch continues to surface `label_cost`/`easypost_refund`/`comp_grant` (which DO carry `shipment_id`).
+- **Historical PI back-reference: `scripts/backfill-charge-shipment-links-2026-05-23.mjs`** — one-shot Node script that for each `charge` row with a `stripe_intent_id`, retrieves the PI from Stripe, reads `pi.metadata.easypost_shipment_id`, resolves to `shipments.id`, sets `shipments.stripe_payment_intent_id = pi.id` (only when still NULL — idempotent). Run locally with secrets piped from `op` (1Password CLI). Result: 11/14 charges linked. 3 unlinked because their PIs pointed to `shp_…` values with no matching `shipments` row (label-buy aborted after PI succeeded — separate condition; charges are orphaned on Stripe side).
+
+**Outcome (browser-verified):** All 15 shipments in the last-30-day window render real per-shipment financial columns. Net margin $2.88 portfolio total. SM-727C (FedEx) correctly surfaces as a -$9.62 loss (real business condition: label cost $19.23 > Paid $9.61 — pricing gap, not a data bug; flag for post-launch review). Voided shipments (SM-0D89/E6B7/0113/30EF) correctly show `label_cost` balanced or in-flight against `easypost_refund`.
+
+**Known still-unlinked after this fix (acceptable for launch):**
+- 16 shipments from Feb-Mar 2026 are old test-mode data with no charge ledger row at all (no charge to link to). Predates the current Stripe flow. Acceptable noise.
+- **4 LIVE shipments from 2026-05-13** have `payment_method='card'` but no charge row in transactions. Spun off as separate task (see commit footer / Spawned task) — not blocking launch.
+
+**Stripe-fee column is intentionally all "—":** no `fee_stripe` ledger writer exists yet (SPEC §13.3 admits it; no writer planned in P1). Post-launch fast-follow.
+
+**Architectural note for future ledger work:** The `transactions` table's append-only stance (no UPDATE grant) is correct and worth preserving. Any future late-arriving foreign-key linkage must follow the Path B pattern (populate the OTHER side's FK column, then join via secondary key in the read path) rather than introducing UPDATE escape hatches or SECURITY DEFINER stitcher functions. Both alternatives erode the audit invariant.
+
+**Files changed:**
+- `supabase/functions/labels/index.ts` (+22 / -0) — forward stitch
+- `supabase/functions/reconciliation-report/index.ts` (+47 / -1) — Path B join + per-shipment merge
+- `scripts/backfill-charge-shipment-links-2026-05-23.mjs` (new, 142 LOC) — one-shot historical PI back-reference backfill
+
+**Deployed:** `npx supabase functions deploy labels reconciliation-report` — both ✓.
+
+**Browser-verified:**
+  mcp-session: live admin reconciliation dashboard reload after deploy
+  variants-covered: [reload /admin?tab=reconciliation, Last 30 days view → 15/15 shipments reconciled, Net margin = $2.88 (portfolio sum); per-shipment table shows non-zero Paid + Label cost + Net margin for all card shipments with linked PI; voided shipments show label_cost balanced by easypost_refund or "submitted" in-flight; FedEx outlier SM-727C correctly surfaces as -$9.62 net (real loss, not a data bug)]
+
+---
+
 ### [2026-05-23] H5 — Refund lifecycle emails + cron sweep + admin rejected queue
 
 **Category:** feat | Email | Refunds | Edge Functions | Admin | Migration

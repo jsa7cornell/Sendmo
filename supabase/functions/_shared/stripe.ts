@@ -220,13 +220,40 @@ export interface Charge {
     outcome?: ChargeOutcome | null;
     payment_intent?: string | null;
     metadata?: Record<string, string>;
+    // When ?expand[]=balance_transaction is requested, this becomes the full
+    // BT object (id + fee + fee_details). Otherwise it's the BT id string.
+    balance_transaction?: string | BalanceTransaction | null;
+}
+
+// Stripe BalanceTransaction — canonical source-of-truth for the processing
+// fee on a charge. writeStripeFee in _shared/ledger.ts reads `fee` and emits
+// a `fee_stripe` ledger row keyed on the BT id.
+export interface BalanceTransaction {
+    id: string;
+    object: "balance_transaction";
+    amount: number;       // gross amount in cents (positive for charges)
+    fee: number;          // processing fee in cents (positive — what Stripe took)
+    net: number;          // amount - fee
+    currency: string;
+    type: string;         // 'charge', 'refund', etc.
+    fee_details?: Array<{
+        type: string;       // e.g. 'stripe_fee', 'application_fee'
+        amount: number;
+        currency: string;
+        description?: string | null;
+        application?: string | null;
+    }>;
 }
 
 export function retrieveCharge(
     id: string,
     liveMode: boolean,
+    opts?: { expandBalanceTransaction?: boolean },
 ): Promise<Charge> {
-    return stripeRequest<Charge>(`/charges/${encodeURIComponent(id)}`, {
+    const path = opts?.expandBalanceTransaction
+        ? `/charges/${encodeURIComponent(id)}?expand[]=balance_transaction`
+        : `/charges/${encodeURIComponent(id)}`;
+    return stripeRequest<Charge>(path, {
         method: "GET",
         liveMode,
     });

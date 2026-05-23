@@ -3,6 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { log } from "../_shared/logger.ts";
 import { verifyAndParseWebhook, retrieveCharge } from "../_shared/stripe.ts";
+import { writeStripeFee } from "../_shared/ledger.ts";
 import { sendEmail } from "../_shared/resend.ts";
 import {
     paymentDeclinedReactivateEmail,
@@ -234,6 +235,60 @@ serve(async (req: Request) => {
                 });
                 if (txErr && !/duplicate key|unique constraint/i.test(txErr.message)) {
                     throw new Error(`transactions insert failed: ${txErr.message}`);
+                }
+
+                // ── Ledger: fee_stripe ──────────────────────────────────────
+                // Retrieve the charge with ?expand[]=balance_transaction so we
+                // can read the canonical Stripe-side fee directly off the BT.
+                // The BT id is also the idempotency anchor for the fee row.
+                // Fire-and-forget within the webhook: a fee-write failure must
+                // not break the charge-success path. We do NOT throw here.
+                const ledgerLatestChargeId = (pi as { latest_charge?: string }).latest_charge;
+                if (ledgerLatestChargeId) {
+                    (async () => {
+                        try {
+                            const chargeWithBT = await retrieveCharge(ledgerLatestChargeId, liveMode, { expandBalanceTransaction: true });
+                            const bt = typeof chargeWithBT.balance_transaction === "object"
+                                ? chargeWithBT.balance_transaction
+                                : null;
+                            if (!bt || typeof bt.fee !== "number" || !bt.id) {
+                                log({
+                                    event_type: "ledger.fee_stripe_no_bt",
+                                    severity: "warn",
+                                    entity_type: "payment_intent",
+                                    entity_id: piId,
+                                    properties: {
+                                        latest_charge: ledgerLatestChargeId,
+                                        bt_present: bt !== null,
+                                    },
+                                });
+                                return;
+                            }
+                            await writeStripeFee({
+                                supabase,
+                                sessionId: eventId,
+                                shipmentId: shipment_id,
+                                userId: ledgerUserId,
+                                linkId: link_id,
+                                stripeIntentId: piId,
+                                balanceTransactionId: bt.id,
+                                feeCents: bt.fee,
+                                mode,
+                                isComp: false,    // PI succeeded → real Stripe charge, not comp
+                            });
+                        } catch (feeErr) {
+                            log({
+                                event_type: "ledger.fee_stripe_unhandled",
+                                severity: "error",
+                                entity_type: "payment_intent",
+                                entity_id: piId,
+                                properties: {
+                                    error_message: feeErr instanceof Error ? feeErr.message : String(feeErr),
+                                    latest_charge: ledgerLatestChargeId,
+                                },
+                            });
+                        }
+                    })();
                 }
 
                 // NB: Pattern D explicitly does NOT update holds.status or flip

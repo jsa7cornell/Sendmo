@@ -5,8 +5,9 @@ import { Loader2, AlertCircle, Shield } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import AppHeader from "@/components/AppHeader";
 import {
-  fetchLink, fetchSenderRates, buyLabel,
+  fetchLink, fetchSenderRates, buyLabel, BuyLabelRateChangedError,
 } from "@/lib/api";
+import { RateChangedDialog } from "@/components/RateChangedDialog";
 import type { LinkData } from "@/lib/api";
 import type { AddressInput, ShippingRate } from "@/lib/types";
 import { emptyAddress } from "@/lib/utils";
@@ -59,6 +60,7 @@ export default function SenderFlow() {
 
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [rateChanged, setRateChanged] = useState<BuyLabelRateChangedError | null>(null);
   const [usedGuestimator, setUsedGuestimator] = useState(false);
 
   useEffect(() => {
@@ -197,7 +199,13 @@ export default function SenderFlow() {
         );
       }
     } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : "Failed to generate label");
+      // Buy-time rate gate trip — refund issued (or attempted server-side).
+      // Surface the dedicated dialog instead of a generic error string.
+      if (err instanceof BuyLabelRateChangedError) {
+        setRateChanged(err);
+      } else {
+        setSubmitError(err instanceof Error ? err.message : "Failed to generate label");
+      }
     } finally {
       setSubmitting(false);
     }
@@ -314,6 +322,26 @@ export default function SenderFlow() {
           </AnimatePresence>
         </div>
       </div>
+
+      {/* Buy-time rate gate dialog (proposal 2026-05-23_buy-time-rate-gate) */}
+      {rateChanged && (
+        <RateChangedDialog
+          error={rateChanged}
+          onReshop={() => {
+            // The previous off_session PI is refunded server-side. Send the
+            // user back to the rates step so they see fresh quotes (which
+            // will re-issue a new PI on the next confirm).
+            setRateChanged(null);
+            setSubmitError(null);
+            setStep("rates");
+          }}
+          onCancel={() => {
+            // Dismiss the dialog and stay on the review step. The user
+            // already saw the refund-status copy inside the dialog.
+            setRateChanged(null);
+          }}
+        />
+      )}
     </div>
   );
 }
