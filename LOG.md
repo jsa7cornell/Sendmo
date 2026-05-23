@@ -12,6 +12,61 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-23] H3 — Admin `/refunds` tool + partial-refund plumbing (pre-launch P1)
+
+**Category:** feat | Admin | Payments | Refunds | Edge Functions
+**Cross-link:** decided proposal [proposals/2026-05-21_refund-system-implementation_reviewed-2026-05-21_decided-2026-05-22.md](proposals/2026-05-21_refund-system-implementation_reviewed-2026-05-21_decided-2026-05-22.md) — B1 (per-PI scoping), B2 (chargeTransactionId required), B3 (no EasyPost refund.rejected event), N1 (optimistic UI + 10s button disable), N3 (partial-aware createRefund), N4 (D1 — charge.refund.updated in P1) | handoff plan [proposals/2026-05-23_pre-launch-handoff-plan.md](proposals/2026-05-23_pre-launch-handoff-plan.md) §Package H3
+
+**What shipped:**
+
+- **`supabase/functions/_shared/refunds.ts`** (NEW): `getRefundableBalanceForPI(supabase, stripe_payment_intent_id)` — sums `charge` + `refund` rows whose `stripe_intent_id` matches the PI. Per-PI scoping (B1 fix) — Stripe refunds are per-PI; this must match. Throws on DB query error (never silently returns 0 — a zero would block all refunds). Type-only `SupabaseClient` import so Vitest can import directly with a typed mock.
+
+- **`supabase/functions/refunds/index.ts`** (NEW): Admin-only POST endpoint. Body: `{ shipment_id, chargeTransactionId, amount_cents?, reason }`. Auth via `requireAdmin`. Resolves PI from the named `chargeTransactionId` (B2 fix — per-PI scoping for free, forces admin to pick a specific charge). Computes remaining balance via `getRefundableBalanceForPI`. v1 carrier_adjustment guard: rejects with 409 + "use the carrier-adjustment flow" hint if any adjustment rows exist on the PI (avoids silent balance mis-computation). Calls `createRefund` with `idempotency_key='refund_admin_<shipment_id>_<refund_request_id>'` (UUID generated server-side per Rule 14 spirit). Does NOT write `transactions` — Rule 16 honored; `charge.refunded` webhook is the sole writer. Returns `{ success, refund_id, amount_cents, expected_post_refund_balance }` for N1 optimistic UI. Logs `refund.admin_initiated` (info) or `refund.admin_initiated_failed` (error). In-memory rate limiter: 5 req/60s per IP (copy of `cancel-label` pattern).
+
+- **`supabase/config.toml`**: added `[functions.refunds]` block with `verify_jwt = true` (gateway requires a real JWT; `requireAdmin` then checks `profiles.role='admin'`).
+
+- **`src/lib/refundService.ts`**: replaced the throwing stub with a real `fetch` to `/functions/v1/refunds`. `RefundRequest.amountCents` now optional (N1 fix); `reason` widens to `| "admin_override"`; `chargeTransactionId` kept required (B2). `RefundResult` gains `amount_cents` and `expected_post_refund_balance`. Uses `session.access_token` Bearer JWT (N3 — not the anon key; `verify_jwt=true` would 401 the anon key).
+
+- **`supabase/functions/tracking/index.ts`**: added `getRefundableBalanceForPI` import; modified the `createRefund` call in the refund-poll branch (`refunded` path) to pass `amount_cents: refundableBalance > 0 ? refundableBalance : undefined` (N3 fix — partial-aware; avoids Stripe over-refund error on a shipment that already had an admin partial refund).
+
+- **`supabase/functions/webhooks/index.ts`**: same change to the `refund.successful` arm's `createRefund` call (N3 fix). H2's `adjustments.ts` import and the existing H1 `easypost_refund` INSERT are untouched.
+
+- **`supabase/functions/stripe-webhook/index.ts`**: NEW `case 'charge.refund.updated':` — on `refund.status === 'failed'`: (1) INSERT `event_logs` row (`severity='error'`, `event_type='refund.failed'`, captures `failure_reason`, `failure_balance_transaction`, `amount`, PI, charge ID), (2) sends alert email to `SENDMO_ADMIN_EMAIL` env var or `jsa7cornell@gmail.com` fallback with a Stripe dashboard link. D1 compliance: data-model + SendMo-visibility only; no customer-facing action. Customer comms stay P2/H5.
+
+- **`src/components/admin/RefundModal.tsx`** (NEW): Dialog component mirroring `CancelLabelModal` pattern. Shows amount field (prefilled to `collected_cents`, editable, client-side cap validation), reason dropdown (4 values incl. `admin_override`), mode badge. Calls `processRefund`. States: form → loading → success/error. Confirm/Try Again/Done/Cancel buttons.
+
+- **`src/pages/Admin.tsx`**: added `RefundModal` import + `DollarSign` icon; added `charge_transaction_id: string | null` to `ReportRow`; `fetchReport` now extracts the `type='charge'` transaction `id` from the `transactions` join (admin-report also updated to include `id` in the select); added `refundTarget`, `refundDisabledUntil` state + `handleRefunded` (sets 10s disable on the row's button after success — N1); added `canRefundRow` guard (requires `charge_transaction_id`, positive `collected_cents`, not fully refunded, not in the 10s disable window); added Refund button (blue) in each Labels row's Actions cell alongside the existing Void button; added `<RefundModal>` at component bottom.
+
+- **`supabase/functions/admin-report/index.ts`**: added `id` to the `transactions` sub-select so the charge transaction UUID is available for the `/refunds` endpoint (B2).
+
+- **PLAYBOOK.md**: registered `refund.admin_initiated`, `refund.admin_initiated_failed`, `refund.failed`, `refund.failed_alert_email_error` in the event taxonomy table.
+
+**Tests shipped:**
+- `tests/unit/getRefundableBalanceForPI.test.ts` (NEW) — 8 Vitest unit tests: full unrefunded / partial / fully refunded / no rows / null data / multiple charge rows / over-balance (caller-reject pattern) / DB error (throws). Uses `import type SupabaseClient` pattern (established 2026-05-23).
+- `tests/integration/refunds-endpoint.test.ts` (NEW) — 10 logic-level tests covering: full/partial refund, over-balance, zero balance, reason mapping, missing chargeTransactionId, wrong shipment cross-check, non-charge tx type, optimistic balance math, idempotency key uniqueness, auth status codes. Excluded from unit suite (needs real DB to be wired).
+- `tests/e2e/admin-refund-flow.spec.ts` (NEW) — 6 Playwright specs: button visible for charged shipment, modal opens, partial amount accepted, success state, zero amount validation, over-collected validation, error state from endpoint.
+
+**Suite health:**
+- Unit: **381 passed / 37 files** (8 new). No regressions.
+- `npx tsc -b` clean.
+
+**Architecture decisions:**
+
+- **No migration needed**: H3 builds only on existing schema (`transactions`, `shipments`, `carrier_adjustments`). H1 (migration 032) already landed; transaction types include `charge` and `refund` per the original 017 migration.
+- **carrier_adjustment guard (v1)**: `/refunds` rejects with 409 if any `carrier_adjustments` rows exist on the shipment. This is explicit rather than silent — the balance helper would understate the true refundable amount if adjustments existed. Mixed-flow handling moves to v2 alongside H2 carrier-adjustment build.
+- **SENDMO_ADMIN_EMAIL env var**: the `charge.refund.updated` failure alert sends to this env var with a `jsa7cornell@gmail.com` fallback. Set `SENDMO_ADMIN_EMAIL` in Supabase function secrets before going live to avoid hardcoded email.
+- **H2 coordination**: `webhooks/index.ts` was already modified by H2 (added `adjustments.ts` import). H3's `getRefundableBalanceForPI` import and `createRefund` modification were applied to the H2-modified file cleanly. The `refund.successful` arm's createRefund call is at line 281 (post-H2 renumbering). Confirmed no conflict with H2's `shipment.invoice.*` arm (separate arm above).
+- **`admin-report` `id` field**: adding `id` to the transactions sub-select is backward-compatible (the existing `Tx` type is extended, not changed). The UI already maps the array; adding a new field is additive.
+
+**Gotcha — async webhook window (N1):**
+The `/refunds` endpoint returns `expected_post_refund_balance` from the balance BEFORE `charge.refunded` lands. A second rapid admin click during the 10s window would see a stale balance and could attempt to over-refund. The Refund button disables for 10s after success to reduce this. Stripe would reject the second call anyway (amount exceeds remaining), but the error would be confusing. The 10s disable is a UX guard, not a correctness guard — Stripe is the final barrier.
+
+**Browser-verified:**
+  spec: tests/e2e/admin-refund-flow.spec.ts
+  variants-covered: [admin opens /admin Labels tab; Refund button visible for charged shipment; modal opens with prefilled amount; partial amount accepted; confirm → success state with amount shown; zero amount → client-side validation error; over-collected-cents → client-side cap error; endpoint error → error state shown in modal]
+
+---
+
 ### [2026-05-23] H1 — Bidirectional ledger foundation shipped (migration 032 + ledger writers)
 
 **Category:** feat | Migration | Payments | Ledger

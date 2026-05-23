@@ -4,6 +4,7 @@ import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { dispatchNotifications } from "../_shared/notifications.ts";
 import { createRefund } from "../_shared/stripe.ts";
 import { writeEasypostRefund } from "../_shared/ledger.ts";
+import { getRefundableBalanceForPI } from "../_shared/refunds.ts";
 import { log } from "../_shared/logger.ts";
 
 const APP_URL = "https://sendmo.co";
@@ -240,9 +241,21 @@ serve(async (req: Request) => {
               // key is shared with what cancel-label would have used pre-2026-
               // 05-13; Stripe dedupes on key so repeated polls in the window
               // before charge.refunded lands are no-ops.
+              //
+              // H3 (N3 fix): compute the remaining per-PI refundable balance
+              // before passing amount_cents. Without this, a shipment that has
+              // already had a partial admin refund would send amount_cents=full
+              // charge to Stripe, which would reject with an over-refund error.
+              // getRefundableBalanceForPI throws on DB error (never silently
+              // returns 0) — caught below along with the Stripe call errors.
               try {
+                const refundableBalance = await getRefundableBalanceForPI(
+                  supabase,
+                  shipment.stripe_payment_intent_id,
+                );
                 await createRefund({
                   payment_intent_id: shipment.stripe_payment_intent_id,
+                  amount_cents: refundableBalance > 0 ? refundableBalance : undefined,
                   reason: "requested_by_customer",
                   metadata: {
                     shipment_id: shipment.id,

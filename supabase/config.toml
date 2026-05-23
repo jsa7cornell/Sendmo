@@ -139,3 +139,12 @@ verify_jwt = false
 [functions.backfill-refund-status]
 enabled = true
 verify_jwt = true
+
+# Admin-initiated refund endpoint (H3 — pre-launch P1).
+# Resolves the PaymentIntent from the named charge transaction row, computes
+# the remaining per-PI refundable balance, and calls Stripe createRefund.
+# verify_jwt=true: gateway requires a real JWT; requireAdmin then checks role.
+# Per decided proposal 2026-05-21_refund-system-implementation_decided-2026-05-22.
+[functions.refunds]
+enabled = true
+verify_jwt = true

@@ -76,7 +76,7 @@ serve(async (req: Request) => {
                     refund_submitted_at,
                     cancelled_at,
                     created_at,
-                    transactions ( amount_cents, type, funding_source, mode, stripe_intent_id ),
+                    transactions ( id, amount_cents, type, funding_source, mode, stripe_intent_id ),
                     sender_address:sender_address_id ( name, street1, city, state, zip ),
                     recipient_address:recipient_address_id ( name, street1, city, state, zip )
                 )
@@ -93,7 +93,7 @@ serve(async (req: Request) => {
 
     // Filter transactions by mode (live/test/all). PostgREST returns the full
     // join; we filter client-side here so 'all' is just no filter.
-    type Tx = { amount_cents: number; type: string; funding_source: string | null; mode: string; stripe_intent_id: string | null };
+    type Tx = { id: string; amount_cents: number; type: string; funding_source: string | null; mode: string; stripe_intent_id: string | null };
     type Shipment = { transactions?: Tx[] | null };
     type Link = { shipments?: Shipment[] | null };
     if (modeParam === "live" || modeParam === "test") {

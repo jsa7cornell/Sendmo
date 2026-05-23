@@ -753,6 +753,103 @@ serve(async (req: Request) => {
                 break;
             }
 
+            case "charge.refund.updated": {
+                // H3 — D1 (decided 2026-05-22): failure-detection handler.
+                //
+                // Fires when a Stripe Refund's status changes. The only status
+                // that matters in P1 is 'failed' — the customer's card couldn't
+                // accept the refund (closed account, expired card). This is the
+                // automated detection half of Decision #6: "never silent."
+                //
+                // D1 scopes to data-model + SendMo-visibility only:
+                //   - Write a severity='error' event_logs row (durable record).
+                //   - Send an alert email to the SendMo admin (John).
+                //   - No customer-facing action; resolution is manual (John
+                //     issues payment another way outside SendMo). Customer
+                //     comms stay in P2 / H5.
+                interface RefundObj extends StripeObj {
+                    id: string;
+                    amount: number;
+                    status: string;
+                    payment_intent?: string | null;
+                    charge?: string | null;
+                    failure_reason?: string | null;
+                    failure_balance_transaction?: string | null;
+                }
+                const refundObj = obj as RefundObj;
+                if (refundObj.status === "failed") {
+                    // (1) Durable event_logs row — detection record.
+                    await supabase.from("event_logs").insert({
+                        event_type: "refund.failed",
+                        severity: "error",
+                        entity_type: "refund",
+                        entity_id: refundObj.id,
+                        properties: {
+                            payment_intent: refundObj.payment_intent ?? null,
+                            charge_id: refundObj.charge ?? null,
+                            failure_reason: refundObj.failure_reason ?? null,
+                            failure_balance_transaction: refundObj.failure_balance_transaction ?? null,
+                            amount: refundObj.amount,
+                            live_mode: liveMode,
+                        },
+                    });
+
+                    // (2) Alert email to admin — manual resolution path.
+                    // SENDMO_ADMIN_EMAIL env var; falls back to John's email.
+                    const adminEmail = Deno.env.get("SENDMO_ADMIN_EMAIL") || "jsa7cornell@gmail.com";
+                    const stripeDashboardUrl = liveMode
+                        ? `https://dashboard.stripe.com/refunds/${refundObj.id}`
+                        : `https://dashboard.stripe.com/test/refunds/${refundObj.id}`;
+                    const amountDollars = (refundObj.amount / 100).toFixed(2);
+                    try {
+                        await sendEmail({
+                            to: adminEmail,
+                            subject: `[SendMo ALERT] Refund failed — manual resolution required`,
+                            html: `<!DOCTYPE html><html><body style="font-family:sans-serif;padding:24px;">
+<h2 style="color:#DC2626;">&#x26A0;&#xFE0F; Refund Failed — Action Required</h2>
+<p>A Stripe refund could not be delivered to the customer's card.
+The customer has not received their money. <strong>Manual resolution required.</strong></p>
+<table style="border-collapse:collapse;width:100%;max-width:480px;">
+  <tr><td style="padding:6px 0;color:#6B7280;width:180px;">Refund ID</td><td style="padding:6px 0;font-family:monospace;">${refundObj.id}</td></tr>
+  <tr><td style="padding:6px 0;color:#6B7280;">Amount</td><td style="padding:6px 0;">$${amountDollars}</td></tr>
+  <tr><td style="padding:6px 0;color:#6B7280;">Failure reason</td><td style="padding:6px 0;">${refundObj.failure_reason ?? "unknown"}</td></tr>
+  <tr><td style="padding:6px 0;color:#6B7280;">PaymentIntent</td><td style="padding:6px 0;font-family:monospace;">${refundObj.payment_intent ?? "—"}</td></tr>
+  <tr><td style="padding:6px 0;color:#6B7280;">Mode</td><td style="padding:6px 0;">${liveMode ? "LIVE" : "Test"}</td></tr>
+</table>
+<p><a href="${stripeDashboardUrl}" style="color:#2563EB;">View refund in Stripe Dashboard</a></p>
+<p style="font-size:13px;color:#9CA3AF;margin-top:24px;">SendMo automated alert — stripe-webhook charge.refund.updated handler</p>
+</body></html>`,
+                        });
+                    } catch (emailErr) {
+                        // Never let email failure block the webhook response.
+                        const msg = emailErr instanceof Error ? emailErr.message : String(emailErr);
+                        console.error("[stripe-webhook] refund.failed alert email failed:", msg);
+                        log({
+                            event_type: "refund.failed_alert_email_error",
+                            severity: "error",
+                            entity_type: "refund",
+                            entity_id: refundObj.id,
+                            properties: { error_message: msg },
+                        });
+                    }
+
+                    log({
+                        event_type: "stripe.refund_failed_alerted",
+                        severity: "info",
+                        entity_type: "refund",
+                        entity_id: refundObj.id,
+                        properties: {
+                            failure_reason: refundObj.failure_reason ?? null,
+                            amount: refundObj.amount,
+                            live_mode: liveMode,
+                        },
+                    });
+                }
+                // Other statuses (pending → succeeded, etc.) are informational;
+                // no action needed in P1.
+                break;
+            }
+
             case "setup_intent.succeeded": {
                 // Mirror SetupIntent state to stripe_intents. Card data
                 // (brand/last4/exp) is NOT on this event — see Phase B B1

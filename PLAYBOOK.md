@@ -530,6 +530,10 @@ Use **Supabase SQL Editor** (service role) to query this table for debugging.
 | `label.created` | labels fn | Label successfully purchased |
 | `label.buy_error` | labels fn | EasyPost label buy call failed |
 | `label.endshipper_error` | labels fn | EndShipper creation failed |
+| `refund.admin_initiated` | refunds fn | Admin issued a Stripe refund via `/refunds` (H3 — info severity) |
+| `refund.admin_initiated_failed` | refunds fn | Admin refund Stripe call failed (H3 — error severity) |
+| `refund.failed` | stripe-webhook | Stripe `charge.refund.updated` with `status='failed'` — card couldn't accept refund (H3 D1 — error severity) |
+| `refund.failed_alert_email_error` | stripe-webhook | The admin alert email for a failed refund itself failed to send (H3 — error severity) |
 
 ### How to Instrument a New Edge Function
 

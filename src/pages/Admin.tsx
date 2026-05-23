@@ -3,7 +3,8 @@ import { Navigate, useSearchParams } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import CancelLabelModal from "@/components/CancelLabelModal";
-import { Ban, Package, Link2, AlertTriangle } from "lucide-react";
+import RefundModal, { type RefundTarget } from "@/components/admin/RefundModal";
+import { Ban, Package, Link2, AlertTriangle, DollarSign } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
@@ -34,6 +35,8 @@ interface ReportRow {
     is_live: boolean;
     sender_name: string | null;
     recipient_name: string | null;
+    /** UUID of the type='charge' transactions row — required for the /refunds endpoint (B2 fix). */
+    charge_transaction_id: string | null;
 }
 
 // Links-tab row derived from the same admin-report payload.
@@ -166,6 +169,10 @@ export default function Admin() {
     const [envFilter, setEnvFilter] = useState<"all" | "production" | "test">("production");
     const [search, setSearch] = useState("");
     const [cancelTarget, setCancelTarget] = useState<CancelTarget | null>(null);
+    const [refundTarget, setRefundTarget] = useState<RefundTarget | null>(null);
+    // N1 — disable Refund button for ~10s after a successful refund to let
+    // the charge.refunded webhook land before another refund attempt.
+    const [refundDisabledUntil, setRefundDisabledUntil] = useState<Record<string, number>>({});
 
     // Account-Budget admin tool (fast-follow of the 2026-05-22 risk-intel
     // proposal). Minimal form — Admin pastes a target user_id + daily/weekly
@@ -306,11 +313,12 @@ export default function Admin() {
                         is_live: !linkIsTest,
                         sender_name: null,
                         recipient_name: null,
+                        charge_transaction_id: null,
                     });
                 } else {
                     for (const sh of shs) {
                         // Stripe Phase A: derive margin from the transactions ledger.
-                        const txs: Array<{ amount_cents: number; type: string }> =
+                        const txs: Array<{ id: string; amount_cents: number; type: string }> =
                             Array.isArray(sh.transactions) ? sh.transactions : (sh.transactions ? [sh.transactions] : []);
                         const sumByType = (t: string) =>
                             txs.filter((x) => x.type === t).reduce((sum, x) => sum + (x.amount_cents || 0), 0);
@@ -318,6 +326,8 @@ export default function Admin() {
                         const refundSum = sumByType("refund");     // negative
                         const compSum   = sumByType("comp_grant"); // negative
                         const collected = chargeSum !== 0 ? chargeSum : null;
+                        // H3 — extract the charge transaction UUID for the /refunds endpoint (B2 fix).
+                        const chargeTransactionId: string | null = txs.find((x) => x.type === "charge")?.id ?? null;
                         const cost = sh.rate_cents ?? null;
                         const ins = 0;
                         let margin: number | null;
@@ -356,6 +366,7 @@ export default function Admin() {
                             is_live: sh.is_live ?? false,
                             sender_name: sh.sender_address?.name || null,
                             recipient_name: sh.recipient_address?.name || null,
+                            charge_transaction_id: chargeTransactionId,
                         });
                     }
                 }
@@ -402,6 +413,23 @@ export default function Admin() {
         setCancelTarget(null);
     }
 
+    // Called by RefundModal after a successful admin refund.
+    // N1 — disables the Refund button on this row for 10s to let the
+    // charge.refunded webhook land before another refund click is possible.
+    function handleRefunded(shipmentId: string, _expectedBalance: number) {
+        const enableAt = Date.now() + 10_000;
+        setRefundDisabledUntil(prev => ({ ...prev, [shipmentId]: enableAt }));
+        setRefundTarget(null);
+        // Re-enable after 10s so state doesn't grow unboundedly.
+        setTimeout(() => {
+            setRefundDisabledUntil(prev => {
+                const next = { ...prev };
+                delete next[shipmentId];
+                return next;
+            });
+        }, 10_000);
+    }
+
     // Formatting helpers
     const formatDate = (ds: string) => new Intl.DateTimeFormat("en-US", {
         month: "short", day: "numeric", year: "numeric"
@@ -429,6 +457,17 @@ export default function Admin() {
         row.easypost_shipment_id !== null &&
         row.shipment_status === "label_created" &&
         row.refund_status === "none";
+
+    // Determine if a row can have an admin refund issued.
+    // A refund is available when: the shipment has a Stripe charge (collected_cents > 0
+    // and charge_transaction_id is present), the shipment has not already been fully
+    // refunded, and there's a remaining balance. The endpoint enforces the actual balance.
+    const canRefundRow = (row: ReportRow, now: number) =>
+        row.shipment_uuid !== "" &&
+        row.charge_transaction_id !== null &&
+        (row.collected_cents ?? 0) > 0 &&
+        row.refund_status !== "refunded" &&
+        !(refundDisabledUntil[row.shipment_uuid] && refundDisabledUntil[row.shipment_uuid] > now);
 
     const getCancelDisabledReason = (row: ReportRow): string | null => {
         if (row.shipment_uuid === "" || row.shipment_id === "—") return "No label to cancel";
@@ -679,8 +718,10 @@ export default function Admin() {
                                                     </tr>
                                                 ) : (
                                                     labelRows.map((row, i) => {
+                                                        const now = Date.now();
                                                         const canCancel = canCancelLabel(row);
                                                         const disabledReason = getCancelDisabledReason(row);
+                                                        const canRefund = canRefundRow(row, now);
                                                         return (
                                                             <tr key={i} className="hover:bg-gray-50/50 transition-colors">
                                                                 <td className="px-4 py-3">{formatDate(row.created_at)}</td>
@@ -722,30 +763,55 @@ export default function Admin() {
                                                                     ) : "—"}
                                                                 </td>
                                                                 <td className="px-4 py-3">
-                                                                    <div title={!canCancel && disabledReason ? disabledReason : undefined}>
-                                                                        <Button
-                                                                            variant="outline"
-                                                                            size="sm"
-                                                                            disabled={!canCancel}
-                                                                            onClick={() => canCancel && setCancelTarget({
-                                                                                shipmentId: row.shipment_uuid,
-                                                                                easypostShipmentId: row.easypost_shipment_id!,
-                                                                                carrier: row.carrier,
-                                                                                trackingNumber: row.tracking_number,
-                                                                                rateCents: row.label_cost_cents ?? 0,
-                                                                                createdAt: row.shipment_created_at,
-                                                                                isTest: row.is_test,
-                                                                            })}
-                                                                            className={`text-xs gap-1.5 ${canCancel
-                                                                                ? "border-red-300 text-red-600 hover:bg-red-50 hover:border-red-400"
-                                                                                : "opacity-40 cursor-not-allowed"
-                                                                                }`}
-                                                                        >
-                                                                            <Ban className="h-3 w-3" />
-                                                                            {row.refund_status === "submitted" ? "Pending" :
-                                                                                row.shipment_status === "cancelled" ? "Voided" :
-                                                                                    "Void"}
-                                                                        </Button>
+                                                                    <div className="flex flex-col gap-1.5">
+                                                                        <div title={!canCancel && disabledReason ? disabledReason : undefined}>
+                                                                            <Button
+                                                                                variant="outline"
+                                                                                size="sm"
+                                                                                disabled={!canCancel}
+                                                                                onClick={() => canCancel && setCancelTarget({
+                                                                                    shipmentId: row.shipment_uuid,
+                                                                                    easypostShipmentId: row.easypost_shipment_id!,
+                                                                                    carrier: row.carrier,
+                                                                                    trackingNumber: row.tracking_number,
+                                                                                    rateCents: row.label_cost_cents ?? 0,
+                                                                                    createdAt: row.shipment_created_at,
+                                                                                    isTest: row.is_test,
+                                                                                })}
+                                                                                className={`text-xs gap-1.5 w-full ${canCancel
+                                                                                    ? "border-red-300 text-red-600 hover:bg-red-50 hover:border-red-400"
+                                                                                    : "opacity-40 cursor-not-allowed"
+                                                                                    }`}
+                                                                            >
+                                                                                <Ban className="h-3 w-3" />
+                                                                                {row.refund_status === "submitted" ? "Pending" :
+                                                                                    row.shipment_status === "cancelled" ? "Voided" :
+                                                                                        "Void"}
+                                                                            </Button>
+                                                                        </div>
+                                                                        {/* H3 — Refund button (per-row admin goodwill refund) */}
+                                                                        {row.charge_transaction_id && (
+                                                                            <Button
+                                                                                variant="outline"
+                                                                                size="sm"
+                                                                                disabled={!canRefund}
+                                                                                onClick={() => canRefund && setRefundTarget({
+                                                                                    shipmentId: row.shipment_uuid,
+                                                                                    chargeTransactionId: row.charge_transaction_id!,
+                                                                                    collectedCents: row.collected_cents ?? 0,
+                                                                                    isTest: row.is_test,
+                                                                                    shipmentPublicId: row.shipment_id,
+                                                                                })}
+                                                                                className={`text-xs gap-1.5 w-full ${canRefund
+                                                                                    ? "border-blue-300 text-blue-600 hover:bg-blue-50 hover:border-blue-400"
+                                                                                    : "opacity-40 cursor-not-allowed"
+                                                                                    }`}
+                                                                                title={!canRefund ? "No refundable balance or already fully refunded" : "Issue Stripe refund"}
+                                                                            >
+                                                                                <DollarSign className="h-3 w-3" />
+                                                                                Refund
+                                                                            </Button>
+                                                                        )}
                                                                     </div>
                                                                 </td>
                                                             </tr>
@@ -845,6 +911,16 @@ export default function Admin() {
                     onClose={() => setCancelTarget(null)}
                     shipment={cancelTarget}
                     onCancelled={handleCancelled}
+                />
+            )}
+
+            {/* Refund Modal — H3 admin goodwill refund */}
+            {refundTarget && (
+                <RefundModal
+                    open={!!refundTarget}
+                    onClose={() => setRefundTarget(null)}
+                    target={refundTarget}
+                    onRefunded={handleRefunded}
                 />
             )}
         </div>
