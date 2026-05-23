@@ -12,6 +12,7 @@ import Privacy from "@/pages/Privacy";
 import Terms from "@/pages/Terms";
 import Admin from "@/pages/Admin";
 import AdminShipmentDetail from "@/pages/AdminShipmentDetail";
+import AdminUserDetail from "@/pages/AdminUserDetail";
 import LabelTest from "@/pages/LabelTest";
 import SenderPreview from "@/pages/SenderPreview";
 import HeaderPreview from "@/pages/HeaderPreview";
@@ -98,6 +99,7 @@ function App() {
           <Route path="/terms" element={<Terms />} />
           <Route path="/admin" element={<Admin />} />
           <Route path="/admin/shipments/:public_code" element={<AdminShipmentDetail />} />
+          <Route path="/admin/users/:userId" element={<AdminUserDetail />} />
           <Route path="/t/:code" element={<TrackingPage />} />
           <Route path="/track/:trackingNumber" element={<LegacyTrackingRedirect />} />
           <Route path="/label-test" element={<LabelTest />} />

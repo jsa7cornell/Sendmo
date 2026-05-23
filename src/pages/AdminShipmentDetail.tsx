@@ -44,6 +44,8 @@ interface ShipmentDetail {
   payment_method: string | null;
   link_short_code: string | null;
   link_type: string | null;
+  owner_user_id: string | null;
+  owner_email: string | null;
   stripe_payment_intent_id: string | null;
   // Timeline
   label_created_at: string;
@@ -308,7 +310,23 @@ export default function AdminShipmentDetail() {
                       <span className="w-24 text-muted-foreground flex-none">Recipient</span>
                       <div>
                         <strong>{detail.recipient_address.name}</strong>
-                        <div className="text-muted-foreground text-xs">link owner · {detail.payment_method === "comp" ? "comp label" : "card charged"}</div>
+                        <div className="text-muted-foreground text-xs">
+                          link owner ·{" "}
+                          {detail.owner_user_id ? (
+                            <Link
+                              to={`/admin/users/${detail.owner_user_id}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-primary hover:underline"
+                            >
+                              {detail.owner_email || "view user"}
+                            </Link>
+                          ) : (
+                            detail.owner_email || "unknown"
+                          )}
+                          {" · "}
+                          {detail.payment_method === "comp" ? "comp label" : "card charged"}
+                        </div>
                       </div>
                     </div>
                   )}

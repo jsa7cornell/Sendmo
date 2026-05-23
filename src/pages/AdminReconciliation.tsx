@@ -271,7 +271,7 @@ function RejectedRefundsPanel({ session }: { session: { access_token: string } |
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-bold">
-                      <Link to={`/admin/shipments/${row.public_code}`} className="text-primary hover:underline">
+                      <Link to={`/admin/shipments/${row.public_code}`} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
                         {row.public_code}
                       </Link>
                       {row.is_test && (
@@ -310,9 +310,14 @@ function RejectedRefundsPanel({ session }: { session: { access_token: string } |
 
 interface AdminReconciliationProps {
   session: { access_token: string } | null;
+  // Inherited from Admin.tsx top toolbar (All / Production / Test). When the
+  // user flips that chip, the reconciliation report re-fetches with the
+  // filter applied — so summary cards AND per-shipment table both reflect
+  // the chosen environment. "all" is unfiltered.
+  envFilter?: "all" | "production" | "test";
 }
 
-export default function AdminReconciliation({ session }: AdminReconciliationProps) {
+export default function AdminReconciliation({ session, envFilter = "all" }: AdminReconciliationProps) {
   const [data, setData] = useState<ReconResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -331,11 +336,14 @@ export default function AdminReconciliation({ session }: AdminReconciliationProp
     else if (dateRange === "30days") start.setDate(end.getDate() - 30);
     else start.setFullYear(2020, 0, 1); // "all" — well before SendMo existed
 
-    return new URLSearchParams({
+    const params = new URLSearchParams({
       start_date: start.toISOString().slice(0, 10),
       end_date: end.toISOString().slice(0, 10),
     });
-  }, [dateRange]);
+    if (envFilter === "production") params.set("env", "production");
+    else if (envFilter === "test") params.set("env", "test");
+    return params;
+  }, [dateRange, envFilter]);
 
   const fetchReport = useCallback(async () => {
     if (!session) return;
@@ -790,6 +798,8 @@ export default function AdminReconciliation({ session }: AdminReconciliationProp
                     <td className="px-3 py-2">
                       <Link
                         to={`/admin/shipments/${row.tracking_number || row.shipment_id}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
                         className="text-primary font-bold hover:underline"
                       >
                         {row.shipment_public}

@@ -862,7 +862,7 @@ export default function Admin() {
 
                         {/* ── Reconciliation tab ─────────────────────────── */}
                         {tab === "reconciliation" && (
-                            <AdminReconciliation session={session} />
+                            <AdminReconciliation session={session} envFilter={envFilter} />
                         )}
 
                         {/* ── Links tab ──────────────────────────────────── */}
