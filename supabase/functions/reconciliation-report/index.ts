@@ -130,7 +130,12 @@ serve(async (req: Request) => {
         sendmo_links!inner (
           short_code,
           link_type,
-          status
+          status,
+          profiles (
+            email,
+            stripe_customer_id_live,
+            stripe_customer_id_test
+          )
         ),
         transactions (
           id,
@@ -154,12 +159,7 @@ serve(async (req: Request) => {
           source_event_id
         ),
         sender_address:sender_address_id ( name, street1, city, state, zip ),
-        recipient_address:recipient_address_id ( name, street1, city, state, zip ),
-        profiles (
-          email,
-          stripe_customer_id_live,
-          stripe_customer_id_test
-        )
+        recipient_address:recipient_address_id ( name, street1, city, state, zip )
       `)
       .gte("created_at", `${startDate}T00:00:00.000Z`)
       .lte("created_at", endDatetime)
@@ -213,12 +213,16 @@ serve(async (req: Request) => {
       shipped_at: string | null;
       delivered_at: string | null;
       stripe_payment_intent_id: string | null;
-      sendmo_links: { short_code: string; link_type: string; status: string } | null;
+      sendmo_links: {
+        short_code: string;
+        link_type: string;
+        status: string;
+        profiles: { email: string; stripe_customer_id_live: string | null; stripe_customer_id_test: string | null } | null;
+      } | null;
       transactions: TxRow[] | null;
       carrier_adjustments: AdjRow[] | null;
       sender_address: { name: string; street1: string; city: string; state: string; zip: string } | null;
       recipient_address: { name: string; street1: string; city: string; state: string; zip: string } | null;
-      profiles: { email: string; stripe_customer_id_live: string | null; stripe_customer_id_test: string | null } | null;
     }
 
     const rows: object[] = [];
