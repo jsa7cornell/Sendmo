@@ -797,6 +797,25 @@ SendMo allows labels to be voided before the package has been picked up and scan
 
 SendMo's payments risk-intelligence system defends the flex-link off-session charge surface (where an anonymous sender charges a recipient's saved card) with a per-account **Account Budget** ($200/day + $500/week, admin-raised), a per-account PM-add breaker, and distinct routing for Stripe Radar blocks; the per-shipment cap and Stripe Radar handle the on-session surfaces. Full architecture, operational instructions, observable event types, and the remaining-work list live in [`RISKMANAGEMENT.html`](RISKMANAGEMENT.html) — see also [`PAYMENTS.md`](PAYMENTS.md) §10.
 
+## 13.3 Bidirectional Ledger (migration 032, H1)
+
+The `transactions` ledger is now fully bidirectional — it records both the customer/Stripe side and the EasyPost/carrier side of every shipment's money movement. Two new `type` values (admitted by migration 032):
+
+| Type | Sign | Writer | Trigger |
+|---|---|---|---|
+| `label_cost` | Negative (−) | `labels` function | Immediately after EasyPost label buy succeeds |
+| `easypost_refund` | Positive (+) | `webhooks` (push) + `tracking` (poll) | When EasyPost confirms the carrier void (`refund.successful` event or lazy poll flip to `'refunded'`) |
+
+**Idempotency:** `easypost_refund` rows are keyed on the EasyPost Refund object id (`rfnd_…`), not the shipment id — so a re-void, a webhook retry, and a concurrent tracking poll all resolve to the same row with a safe UNIQUE collision (B4 fix, decided proposal 2026-05-22).
+
+**Net-margin identity** (foundation for H4 reconciliation dashboard):
+
+```
+Paid − Stripe fee − Refund to customer + Adjustment collected − Chargeback − Label cost + Refund from EasyPost − Adjustment charged = Net margin
+```
+
+All terms are now ledger rows; no column lookups on `shipments` are needed. Full reconciliation architecture: [`proposals/2026-05-22_reconciliation-and-carrier-adjustments_reviewed-2026-05-22_decided-2026-05-22.md`](proposals/2026-05-22_reconciliation-and-carrier-adjustments_reviewed-2026-05-22_decided-2026-05-22.md).
+
 ---
 
 ## 14. Security Requirements

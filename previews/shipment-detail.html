@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SendMo Admin — Shipment SM-2028 (mockup)</title>
+<style>
+  :root{
+    --bg:#f4f5f7; --card:#fff; --ink:#1a1d21; --muted:#6b7280; --line:#e5e7eb;
+    --green:#16a34a; --green-bg:#dcfce7; --amber:#b45309; --amber-bg:#fef3c7;
+    --red:#dc2626; --red-bg:#fee2e2; --blue:#2563eb; --blue-bg:#dbeafe;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+    background:var(--bg);color:var(--ink);-webkit-font-smoothing:antialiased}
+  .mock-banner{background:#1a1d21;color:#fff;text-align:center;font-size:12px;
+    padding:6px;letter-spacing:.3px}
+  .topbar{background:var(--card);border-bottom:1px solid var(--line);
+    padding:0 28px;display:flex;align-items:center;gap:28px;height:54px}
+  .brand{font-weight:700;font-size:15px}
+  .brand .dot{color:var(--green)}
+  .tabs{display:flex;gap:2px;margin-left:8px}
+  .tab{padding:8px 14px;color:var(--muted);font-weight:600;border-radius:7px}
+  .tab.active{background:var(--green-bg);color:var(--green)}
+  .wrap{max-width:1080px;margin:0 auto;padding:24px 28px 40px}
+  .back{color:var(--blue);text-decoration:none;font-weight:600;font-size:13px}
+  .back:hover{text-decoration:underline}
+
+  .head{display:flex;align-items:flex-start;gap:14px;margin:14px 0 4px}
+  .head h1{font-size:24px;font-weight:700}
+  .head .pub{color:var(--muted);font-weight:600;font-size:14px;margin-top:3px}
+  .head .grow{flex:1}
+  .metaline{color:var(--muted);font-size:13px;margin-bottom:16px}
+  .metaline b{color:var(--ink)}
+
+  .tag{display:inline-block;font-size:12px;font-weight:700;padding:3px 9px;border-radius:6px}
+  .tag.green{background:var(--green-bg);color:var(--green)}
+  .tag.amber{background:var(--amber-bg);color:var(--amber)}
+  .tag.comp{background:#ede9fe;color:#6d28d9}
+
+  .btn{background:var(--green);color:#fff;border:0;border-radius:8px;
+    padding:8px 14px;font-weight:700;font-size:13px;cursor:pointer}
+  .btn.ghost{background:var(--card);color:var(--ink);border:1px solid var(--line)}
+  .btn:disabled{opacity:.45;cursor:not-allowed}
+  .actions{display:flex;gap:8px;margin:0 0 18px}
+
+  .grid{display:grid;grid-template-columns:1fr 1.25fr;gap:18px;align-items:start}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:11px;overflow:hidden}
+  .card+.card{margin-top:18px}
+  .chead{padding:12px 16px;border-bottom:1px solid var(--line);font-weight:700;font-size:13px;
+    display:flex;align-items:center;gap:8px}
+  .chead .mut{color:var(--muted);font-weight:500;font-size:12px}
+  .cbody{padding:14px 16px}
+
+  .kv{display:flex;padding:6px 0;font-size:13px}
+  .kv .k{width:108px;color:var(--muted);flex:none}
+  .kv .v{flex:1}
+  .kv a{color:var(--blue);text-decoration:none}
+  .kv a:hover{text-decoration:underline}
+  .who{font-weight:700}
+  .addr{font-size:13px;line-height:1.5}
+  .addr .lbl{color:var(--muted);font-size:11px;text-transform:uppercase;
+    letter-spacing:.4px;font-weight:700;margin-bottom:3px}
+
+  .tl{list-style:none;position:relative;padding-left:20px}
+  .tl li{position:relative;padding:5px 0;font-size:13px}
+  .tl li::before{content:"";position:absolute;left:-15px;top:10px;width:9px;height:9px;
+    border-radius:50%;background:var(--green)}
+  .tl li.pending::before{background:#c4c7cc}
+  .tl li::after{content:"";position:absolute;left:-11px;top:18px;width:2px;height:100%;
+    background:var(--line)}
+  .tl li:last-child::after{display:none}
+  .tl .d{color:var(--muted);font-size:12px}
+
+  .ledger{width:100%;border-collapse:collapse}
+  .ledger th{text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.4px;
+    color:var(--muted);padding:7px 16px;border-bottom:1px solid var(--line);font-weight:700}
+  .ledger td{padding:9px 16px;border-bottom:1px solid #f0f1f3;font-size:13px;vertical-align:top}
+  .ledger tr:last-child td{border-bottom:0}
+  .ledger .amt{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .neg{color:var(--red)}
+  .pos{color:var(--green)}
+  .side{font-size:11px;font-weight:700;padding:1px 6px;border-radius:4px}
+  .side.stripe{background:var(--blue-bg);color:var(--blue)}
+  .side.ep{background:var(--amber-bg);color:var(--amber)}
+  .evt .e{font-weight:600}
+  .evt .s{color:var(--muted);font-size:12px}
+  .total{background:#fafbfc}
+  .total td{font-weight:700;font-size:14px;border-top:1px solid var(--line)}
+  .reconciled{display:flex;align-items:center;gap:8px;padding:11px 16px;
+    background:var(--green-bg);color:var(--green);font-weight:700;font-size:13px}
+</style>
+</head>
+<body>
+
+<div class="mock-banner">MOCKUP — proposed shipment detail view · reached by clicking a shipment ID on the Reconciliation tab</div>
+
+<div class="topbar">
+  <div class="brand">SendMo<span class="dot">.</span> <span style="color:var(--muted);font-weight:600">Admin</span></div>
+  <div class="tabs">
+    <div class="tab">Labels</div>
+    <div class="tab">Links</div>
+    <div class="tab active">Reconciliation</div>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <a class="back" href="reconciliation-dashboard.html">← Back to Reconciliation</a>
+
+  <div class="head">
+    <div>
+      <h1>SM-2028</h1>
+      <div class="pub">Tracking code K7T2WX9</div>
+    </div>
+    <div class="grow"></div>
+    <span class="tag green">✓ Reconciled</span>
+  </div>
+  <div class="metaline">
+    <b>UPS Ground</b> · tracking <b>1Z999AA10123456784</b> · delivered May 18, 2026 · created from flex link <b>/s/dana-reyes</b>
+  </div>
+
+  <div class="actions">
+    <button class="btn ghost">Issue refund</button>
+    <button class="btn ghost" disabled title="Delivered — can no longer void">Cancel / void label</button>
+    <button class="btn ghost">Re-poll EasyPost</button>
+    <button class="btn ghost">View event log</button>
+  </div>
+
+  <div class="grid">
+
+    <!-- ─── LEFT: shipment facts ─────────────────────── -->
+    <div>
+      <div class="card">
+        <div class="chead">Parties</div>
+        <div class="cbody">
+          <div class="kv"><div class="k">Sender</div><div class="v"><span class="who">Marcus Lee</span><br><a href="#">marcus.lee@example.com</a><br><span style="color:var(--muted);font-size:12px">used the link · anonymous checkout</span></div></div>
+          <div class="kv"><div class="k">Recipient</div><div class="v"><span class="who">Dana Reyes</span><br><a href="#">dana.reyes@example.com</a><br><span style="color:var(--muted);font-size:12px">link owner · card on file · charged</span></div></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="chead">Addresses</div>
+        <div class="cbody">
+          <div class="addr" style="margin-bottom:12px">
+            <div class="lbl">Ship from</div>
+            Marcus Lee<br>88 Oak St<br>Portland, OR 97204<br>(503) 555-0142
+          </div>
+          <div class="addr">
+            <div class="lbl">Ship to</div>
+            Dana Reyes<br>1450 Mission St, Apt 5<br>San Francisco, CA 94103<br>(415) 555-0188
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="chead">Package &amp; service</div>
+        <div class="cbody">
+          <div class="kv"><div class="k">Dimensions</div><div class="v">9 × 6 × 4 in</div></div>
+          <div class="kv"><div class="k">Weight</div><div class="v">1 lb 12 oz <span style="color:var(--amber);font-size:12px">· carrier captured 2 lb 6 oz</span></div></div>
+          <div class="kv"><div class="k">Declared value</div><div class="v">$40.00</div></div>
+          <div class="kv"><div class="k">Service</div><div class="v">UPS Ground</div></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="chead">Timeline</div>
+        <div class="cbody">
+          <ul class="tl">
+            <li><b>Label created</b><div class="d">May 14, 2026 · 3:42 PM</div></li>
+            <li><b>Shipped</b> — first carrier scan<div class="d">May 15, 2026</div></li>
+            <li><b>Carrier adjustment posted</b><div class="d">May 17, 2026 · UPS dimensional reweigh</div></li>
+            <li><b>Delivered</b><div class="d">May 18, 2026 · 11:20 AM</div></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── RIGHT: the money ─────────────────────────── -->
+    <div>
+      <div class="card">
+        <div class="chead">Money ledger <span class="mut">— every event on this shipment</span></div>
+        <table class="ledger">
+          <thead>
+            <tr><th>Date</th><th>Event</th><th>Side</th><th class="amt">Amount</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>May 14</td>
+              <td class="evt"><div class="e">Customer charge</div><div class="s">PaymentIntent pi_3Rx…K9</div></td>
+              <td><span class="side stripe">Stripe</span></td>
+              <td class="amt pos">+$12.80</td>
+            </tr>
+            <tr>
+              <td>May 14</td>
+              <td class="evt"><div class="e">Stripe processing fee</div><div class="s">on the $12.80 charge</div></td>
+              <td><span class="side stripe">Stripe</span></td>
+              <td class="amt neg">−$0.77</td>
+            </tr>
+            <tr>
+              <td>May 14</td>
+              <td class="evt"><div class="e">Label purchased</div><div class="s">UPS Ground · shp_4f1a…c7</div></td>
+              <td><span class="side ep">EasyPost</span></td>
+              <td class="amt neg">−$10.20</td>
+            </tr>
+            <tr>
+              <td>May 17</td>
+              <td class="evt"><div class="e">Carrier adjustment charged</div><div class="s">UPS dimensional reweigh · billed to wallet</div></td>
+              <td><span class="side ep">EasyPost</span></td>
+              <td class="amt neg">−$2.40</td>
+            </tr>
+            <tr>
+              <td>May 17</td>
+              <td class="evt"><div class="e">Adjustment re-charged to customer</div><div class="s">auto · $2.40 adjustment + $1.00 handling fee</div></td>
+              <td><span class="side stripe">Stripe</span></td>
+              <td class="amt pos">+$3.40</td>
+            </tr>
+            <tr>
+              <td>May 17</td>
+              <td class="evt"><div class="e">Stripe processing fee</div><div class="s">on the $3.40 re-charge</div></td>
+              <td><span class="side stripe">Stripe</span></td>
+              <td class="amt neg">−$0.40</td>
+            </tr>
+            <tr class="total">
+              <td colspan="3">Net margin</td>
+              <td class="amt pos">+$2.43</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="reconciled">✓ Reconciled — every movement matched · last checked May 22, 9:14 AM</div>
+      </div>
+
+      <div class="card">
+        <div class="chead">References &amp; links</div>
+        <div class="cbody">
+          <div class="kv"><div class="k">Shipment ID</div><div class="v">94c8…2f10 <span style="color:var(--muted)">(SendMo)</span></div></div>
+          <div class="kv"><div class="k">EasyPost</div><div class="v"><a href="#">shp_4f1a…c7 ↗</a></div></div>
+          <div class="kv"><div class="k">Stripe PI</div><div class="v"><a href="#">pi_3Rx…K9 ↗</a></div></div>
+          <div class="kv"><div class="k">Tracking page</div><div class="v"><a href="#">sendmo.co/t/K7T2WX9 ↗</a></div></div>
+          <div class="kv"><div class="k">Flex link</div><div class="v"><a href="#">sendmo.co/s/dana-reyes ↗</a></div></div>
+          <div class="kv"><div class="k">Mode</div><div class="v">Live</div></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+</body>
+</html>

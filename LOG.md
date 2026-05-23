@@ -12,6 +12,58 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-23] H1 — Bidirectional ledger foundation shipped (migration 032 + ledger writers)
+
+**Category:** feat | Migration | Payments | Ledger
+**Cross-link:** decided proposal [proposals/2026-05-22_reconciliation-and-carrier-adjustments_reviewed-2026-05-22_decided-2026-05-22.md](proposals/2026-05-22_reconciliation-and-carrier-adjustments_reviewed-2026-05-22_decided-2026-05-22.md) §2.1 writer map, B2/B3/B4 fixes, D2 decision list | handoff plan [proposals/2026-05-23_pre-launch-handoff-plan.md](proposals/2026-05-23_pre-launch-handoff-plan.md) §Package H1 | SPEC.md §13.3 | PLAYBOOK.md Rule 16
+
+**What shipped:**
+
+- **Migration 032** (`032_carrier_adjustments_amendments_and_ledger_extensions.sql`):
+  - `ALTER TABLE carrier_adjustments ADD COLUMN claimed_weight_oz INT, captured_weight_oz INT, expected_credit_cents INT` — ShipmentInvoice payload fields + dispute-tracking column (N4 fix).
+  - `DROP CONSTRAINT carrier_adjustments_recovery_status_check; ADD CONSTRAINT ... CHECK (IN ('pending','recovered','absorbed','disputed','rejected'))` — adds `'rejected'` as the fifth terminal state (B2 fix).
+  - `CREATE UNIQUE INDEX carrier_adjustments_source_event_id_uidx ON carrier_adjustments (source_event_id) WHERE source_event_id IS NOT NULL` — partial UNIQUE; load-bearing for H2's dedup architecture (B2 fix).
+  - `DROP CONSTRAINT transactions_type_check; ADD CONSTRAINT ... CHECK (IN ('charge','fee_stripe','refund','refund_fee_recovered','comp_grant','balance_topup','balance_topup_bonus','balance_redeem','carrier_adjustment','chargeback','adjustment','label_cost','easypost_refund'))` — admits two new types (B3 fix; without this, every first INSERT of those types would fail with a CHECK violation at the DB layer).
+  - Constraint names verified against live DB before writing: `transactions_type_check`, `carrier_adjustments_recovery_status_check`.
+
+- **`supabase/functions/_shared/ledger.ts`** (NEW): shared helpers `writeLabelCost` + `writeEasypostRefund`. Fire-and-forget wrappers — failure is logged (severity=error event_logs row) but never breaks the calling operation. Type-only import for `SupabaseClient` (same pattern as budget.ts) so Vitest can import directly with a typed mock.
+
+- **`supabase/functions/labels/index.ts`** — imports `writeLabelCost` and calls it after `admin_insert_shipment` succeeds. Row shape: `type='label_cost'`, `amount_cents = -rate_cents`, `idempotency_key='label_cost_<easypost_shipment_id>'`, `funding_source = isComp ? 'comp' : null`. Fire-and-forget (label-buy must not fail on a ledger write error).
+
+- **`supabase/functions/tracking/index.ts`** — imports `writeEasypostRefund` and calls it in the refund-poll branch when `epRefundStatus === 'refunded'`, after the existing Stripe refund + DB update. Extracts `epShip.refunds[0]` for the Refund object id (`rfnd_…`) and amount (falls back to `rate_cents` if absent).
+
+- **`supabase/functions/webhooks/index.ts`** — imports `writeEasypostRefund` and calls it in the `refund.successful` arm, after the existing `easypost_refund_status` update. Extracts `result.refunds[0]` from the EasyPost Shipment payload (also checks `result.refund` as a fallback for historical API variance).
+
+- **`supabase/functions/cancel-label/index.ts`** — verified: does NOT write `easypost_refund` rows (correct — cancel-label submits the void; the credit lands later when the carrier confirms). No changes made.
+
+- **PLAYBOOK.md Rule 16** — amended to show the full writer map including the three new rows. Cross-links this decided proposal.
+
+- **SPEC.md §13.3** — new section documenting the bidirectional ledger, net-margin identity, and the two new types.
+
+- **`tests/unit/ledger-writes.test.ts`** (NEW): 15 Vitest unit tests for `writeLabelCost` and `writeEasypostRefund` — row shape, sign conventions, idempotency behavior, UNIQUE collision no-op, DB error resilience, webhook/poll race scenario.
+
+**Suite health:**
+- Unit: **373 passed / 36 files** (15 new). No regressions.
+- `npx tsc -b` clean.
+
+**Gotcha — migration must be applied BEFORE pushing edge-function code:**
+Same lesson as migration 031 (see 2026-05-22 "deploy-order note"). The edge functions reference the new `type` values. If code deploys before the migration, the first label-buy attempts `INSERT ... type='label_cost'` → Postgres CHECK violation → the trigger's "Rule 16 / append-only" RAISE message is a red herring that makes diagnosis take longer than needed. Apply migration 032 first, then push.
+
+**Gotcha — Supabase MCP is read-only for DDL on this project:**
+`mcp__supabase__apply_migration` returns `"Cannot apply migration in read-only mode"`. `execute_sql` also rejects DDL (same error). The migration was applied via `npx supabase db push --include-all` with `SUPABASE_DB_PASSWORD` set. See the "Migration apply instructions" section below if you need to re-apply.
+
+**Gotcha — EasyPost refunds array shape:**
+`epShip.refunds` is an array of Refund objects (not `epShip.refund` singular). Historical EasyPost API variance exists — the webhooks writer also checks `result.refund` (object) as a fallback. Both paths log a `shp_fallback_<shipment_id>` idempotency key when the refund object id can't be sourced, which is detectable in event_logs if it ever fires.
+
+**cancel-label finding:**
+`cancel-label/index.ts` does NOT write `easypost_refund` rows — confirmed by reading the file. This is correct: cancel-label submits the void to EasyPost and sets `refund_status='submitted'`; the actual EasyPost credit confirmation arrives later via the `refund.successful` webhook or the tracking lazy-poll. No change was made to cancel-label.
+
+**Browser-verified:**
+  n/a-category: backend-only
+  n/a-reason: migration 032 + ledger helper + edge function additive writes; no DOM or wire-shape consumer is affected. The label-buy response shape is unchanged; the new transactions rows are DB-only. Verified by unit test coverage (373 pass) and tsc -b clean.
+
+---
+
 ### [2026-05-23] Payments risk-intel — Job 2 tests (T1 + T2) shipped
 
 **Category:** test | ship | Payments | Risk

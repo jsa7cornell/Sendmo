@@ -3,6 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { dispatchNotifications } from "../_shared/notifications.ts";
 import { createRefund } from "../_shared/stripe.ts";
+import { writeEasypostRefund } from "../_shared/ledger.ts";
 import { log } from "../_shared/logger.ts";
 
 const APP_URL = "https://sendmo.co";
@@ -214,6 +215,26 @@ serve(async (req: Request) => {
           if (epRefundStatus === "refunded") {
             // Carrier confirmed the void. Two branches depending on whether
             // this shipment had a Stripe charge.
+            //
+            // H1 (migration 032): after either branch, write an easypost_refund
+            // ledger row via writeEasypostRefund. Idempotency keyed on the
+            // EasyPost Refund object id (rfnd_…) per B4 of the decided proposal.
+            //
+            // EasyPost shipment payload: epShip.refunds is an array of Refund
+            // objects. The first (most recent) is the one we care about. Shape:
+            //   { id: 'rfnd_…', amount: 8.50, tracking_code: '…', status: 'refunded', … }
+            // We extract id and amount from epShip.refunds[0]. If the array is
+            // absent or empty (unexpected), we fall back to shipments.rate_cents
+            // as the amount and use the easypost_shipment_id as a fallback key
+            // suffix (less ideal but prevents a silent ledger hole).
+            const refundObjects = (epShip.refunds as Array<{ id: string; amount: string | number }> | null) ?? [];
+            const refundObj = refundObjects[0] ?? null;
+            const refundObjId: string = refundObj?.id ?? `shp_fallback_${shipment.easypost_shipment_id}`;
+            // amount is a dollar float from EasyPost → convert to cents.
+            const refundAmountCents: number = refundObj?.amount
+              ? Math.round(parseFloat(String(refundObj.amount)) * 100)
+              : (shipment as { rate_cents?: number | null }).rate_cents ?? 0;
+
             if (shipment.stripe_payment_intent_id) {
               // Phase E (real money) — fire the Stripe refund now. Idempotency
               // key is shared with what cancel-label would have used pre-2026-
@@ -287,6 +308,30 @@ serve(async (req: Request) => {
                 properties: { resolution: "not_applicable", trigger: "tracking_poll" },
               });
             }
+
+            // ── H1: easypost_refund ledger row ──────────────────────────
+            // Fire-and-forget: a failed ledger write must not break the
+            // tracking page response. writeEasypostRefund catches internally
+            // and logs a severity=error event_logs row on failure.
+            // Idempotency key = 'easypost_refund_<refund_object_id>' prevents
+            // duplicate rows when both the tracking poll and the refund.successful
+            // webhook race to write the same event (B4 fix).
+            const linkJoinForLedger = shipment.sendmo_links as unknown as { user_id?: string; id?: string } | null;
+            writeEasypostRefund({
+              supabase,
+              sessionId: req.headers.get("x-session-id") || "tracking",
+              shipmentId: shipment.id,
+              userId: linkJoinForLedger?.user_id ?? "00000000-0000-0000-0000-000000000001",
+              linkId: (shipment as { link_id?: string | null }).link_id ?? null,
+              easypostShipmentId: shipment.easypost_shipment_id!,
+              easypostRefundObjectId: refundObjId,
+              refundAmountCents,
+              mode: shipment.is_test ? "test" : "live",
+              isComp: !shipment.stripe_payment_intent_id,
+              source: "tracking_poll",
+            }).catch((err) => {
+              console.error("[tracking] writeEasypostRefund unexpected throw:", err);
+            });
           } else if (epRefundStatus === "rejected") {
             // Carrier rejected the void (label was scanned). Terminal state.
             // Write both columns — easypost_refund_status (migration 030) and

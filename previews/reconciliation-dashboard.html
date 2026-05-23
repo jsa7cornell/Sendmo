@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SendMo Admin — Reconciliation (mockup)</title>
+<style>
+  :root{
+    --bg:#f4f5f7; --card:#fff; --ink:#1a1d21; --muted:#6b7280; --line:#e5e7eb;
+    --green:#16a34a; --green-bg:#dcfce7; --amber:#b45309; --amber-bg:#fef3c7;
+    --red:#dc2626; --red-bg:#fee2e2; --blue:#2563eb; --blue-bg:#dbeafe;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+    background:var(--bg);color:var(--ink);-webkit-font-smoothing:antialiased}
+  .mock-banner{background:#1a1d21;color:#fff;text-align:center;font-size:12px;
+    padding:6px;letter-spacing:.3px}
+  .topbar{background:var(--card);border-bottom:1px solid var(--line);
+    padding:0 28px;display:flex;align-items:center;gap:28px;height:54px}
+  .brand{font-weight:700;font-size:15px}
+  .brand .dot{color:var(--green)}
+  .tabs{display:flex;gap:2px;margin-left:8px}
+  .tab{padding:8px 14px;color:var(--muted);font-weight:600;border-radius:7px;cursor:pointer}
+  .tab.active{background:var(--green-bg);color:var(--green)}
+  .wrap{max-width:1240px;margin:0 auto;padding:28px}
+  .h1{font-size:22px;font-weight:700}
+  .sub{color:var(--muted);margin-top:3px}
+  .toolbar{display:flex;align-items:center;gap:12px;margin:18px 0 22px;flex-wrap:wrap}
+  .pill{background:var(--card);border:1px solid var(--line);border-radius:8px;
+    padding:8px 12px;font-weight:600;color:var(--ink)}
+  .pill .mut{color:var(--muted);font-weight:500}
+  .grow{flex:1}
+  .btn{background:var(--green);color:#fff;border:0;border-radius:8px;
+    padding:9px 16px;font-weight:700;font-size:13px;cursor:pointer}
+  .btn.ghost{background:var(--card);color:var(--ink);border:1px solid var(--line)}
+  .btn.sm{padding:5px 11px;font-size:12px;border-radius:6px}
+  .btn.amber{background:var(--amber);color:#fff}
+  .btn.red{background:#fff;color:var(--red);border:1px solid #f1c2c2}
+
+  .cards{display:grid;grid-template-columns:repeat(5,1fr);gap:14px}
+  .stat{background:var(--card);border:1px solid var(--line);border-radius:11px;padding:15px}
+  .stat .lbl{color:var(--muted);font-size:12px;font-weight:600;text-transform:uppercase;
+    letter-spacing:.4px}
+  .stat .val{font-size:24px;font-weight:700;margin-top:7px}
+  .stat .note{font-size:12px;margin-top:4px;color:var(--muted)}
+  .stat .note.ok{color:var(--green);font-weight:600}
+  .stat .note.warn{color:var(--amber);font-weight:600}
+  .stat .note.bad{color:var(--red);font-weight:600}
+
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:11px;
+    margin-top:22px;overflow:hidden}
+  .panel.attn{border-color:#f0d9a8}
+  .phead{padding:14px 18px;border-bottom:1px solid var(--line);display:flex;
+    align-items:center;gap:10px}
+  .phead h2{font-size:15px;font-weight:700}
+  .phead.attn{background:var(--amber-bg)}
+  .count{background:var(--amber);color:#fff;border-radius:20px;padding:1px 9px;
+    font-size:12px;font-weight:700}
+  .phead .grow{flex:1}
+  .phead .mut{color:var(--muted);font-size:12px;font-weight:500}
+
+  .exc{padding:14px 18px;border-bottom:1px solid var(--line);display:flex;
+    align-items:center;gap:14px}
+  .exc:last-child{border-bottom:0}
+  .ico{width:34px;height:34px;border-radius:8px;flex:none;display:flex;
+    align-items:center;justify-content:center;font-size:16px}
+  .ico.amber{background:var(--amber-bg)}
+  .ico.red{background:var(--red-bg)}
+  .ico.blue{background:var(--blue-bg)}
+  .exc .body{flex:1;min-width:0}
+  .exc .body .t{font-weight:700}
+  .exc .body .d{color:var(--muted);font-size:13px;margin-top:2px}
+  .exc .acts{display:flex;gap:7px;flex:none}
+
+  .tbl-wrap{overflow-x:auto}
+  table{width:100%;border-collapse:collapse;min-width:1560px}
+  th,td{padding:9px 11px;border-bottom:1px solid #f0f1f3;white-space:nowrap}
+  thead th{font-size:11px;text-transform:uppercase;letter-spacing:.3px;
+    color:var(--muted);font-weight:700;border-bottom:1px solid var(--line)}
+  th.r,td.r{text-align:right}
+  .grp{text-align:center;font-size:10px;padding:6px 11px;background:#f9fafb}
+  .grp.time{color:var(--muted)}
+  .grp.cust{color:var(--blue)}
+  .grp.ep{color:var(--amber)}
+  .grp.res{color:var(--green)}
+  .gsep{border-left:2px solid var(--line)}
+  tbody tr:last-child td{border-bottom:0}
+  tbody tr:hover{background:#fafbfc}
+  a.code{color:var(--blue);font-weight:700;text-decoration:none}
+  a.code:hover{text-decoration:underline}
+  .code.dead{color:#c4c7cc;font-weight:700}
+  .carrier{color:var(--muted);font-size:12px}
+  .dt{font-variant-numeric:tabular-nums;font-size:13px}
+  .money{font-variant-numeric:tabular-nums;text-align:right}
+  .dash{color:#c4c7cc}
+  .neg{color:var(--red)}
+  .pos{color:var(--green)}
+  .sub2{display:block;font-size:11px;color:var(--muted);font-weight:400}
+  .tag{display:inline-block;font-size:11px;font-weight:700;padding:2px 7px;border-radius:5px}
+  .tag.comp{background:#ede9fe;color:#6d28d9}
+  .tag.green{background:var(--green-bg);color:var(--green)}
+  .tag.amber{background:var(--amber-bg);color:var(--amber)}
+  .tag.red{background:var(--red-bg);color:var(--red)}
+  .tag.blue{background:var(--blue-bg);color:var(--blue)}
+  .tag.gray{background:#f1f1f3;color:var(--muted)}
+  .legend{margin-top:16px;color:var(--muted);font-size:12px;line-height:1.7}
+  .legend b{color:var(--ink)}
+  .legend code{background:#eef0f2;padding:1px 5px;border-radius:4px;font-size:11px}
+</style>
+</head>
+<body>
+
+<div class="mock-banner">MOCKUP — proposed design for the Reconciliation tab · not built · for the reconciliation + carrier-adjustment proposal</div>
+
+<div class="topbar">
+  <div class="brand">SendMo<span class="dot">.</span> <span style="color:var(--muted);font-weight:600">Admin</span></div>
+  <div class="tabs">
+    <div class="tab">Labels</div>
+    <div class="tab">Links</div>
+    <div class="tab active">Reconciliation</div>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <div class="h1">Reconciliation</div>
+  <div class="sub">Every shipment trued up across EasyPost, SendMo, and Stripe — every dollar in, every dollar out.</div>
+
+  <div class="toolbar">
+    <div class="pill"><span class="mut">Period</span> &nbsp;May 1 – 22, 2026 ▾</div>
+    <div class="pill"><span class="mut">Last reconciled</span> &nbsp;May 22, 9:14 AM</div>
+    <div class="grow"></div>
+    <button class="btn ghost">Export CSV</button>
+    <button class="btn">Run reconciliation now</button>
+  </div>
+
+  <!-- ─── summary cards ─────────────────────────────────────── -->
+  <div class="cards">
+    <div class="stat">
+      <div class="lbl">Reconciled</div>
+      <div class="val">27 / 31</div>
+      <div class="note warn">4 need attention</div>
+    </div>
+    <div class="stat">
+      <div class="lbl">Net margin (period)</div>
+      <div class="val">$11.45</div>
+      <div class="note">after carrier cost, fees, 1 chargeback</div>
+    </div>
+    <div class="stat">
+      <div class="lbl">Carrier adjustments</div>
+      <div class="val">$17.34</div>
+      <div class="note">3 shipments · 2 auto-recharged, 1 flagged</div>
+    </div>
+    <div class="stat">
+      <div class="lbl">Chargebacks</div>
+      <div class="val">$26.40</div>
+      <div class="note bad">1 disputed · evidence due May 29</div>
+    </div>
+    <div class="stat">
+      <div class="lbl">EasyPost wallet</div>
+      <div class="val">$122.63</div>
+      <div class="note ok">✓ matches expected</div>
+    </div>
+  </div>
+
+  <!-- ─── needs attention ──────────────────────────────────── -->
+  <div class="panel attn">
+    <div class="phead attn">
+      <h2>Needs attention</h2><span class="count">4</span>
+      <div class="grow"></div>
+      <span class="mut">Items the sweep can't resolve on its own</span>
+    </div>
+
+    <div class="exc">
+      <div class="ico red">🛑</div>
+      <div class="body">
+        <div class="t">Chargeback filed — respond before the deadline</div>
+        <div class="d"><b>SM-2009</b> · cardholder disputed <b>$11.40</b> + $15 Stripe dispute fee · flagged likely fraud · evidence due <b>May 29</b></div>
+      </div>
+      <div class="acts">
+        <button class="btn sm amber">Submit evidence</button>
+        <button class="btn sm ghost">Accept</button>
+      </div>
+    </div>
+
+    <div class="exc">
+      <div class="ico amber">⚖️</div>
+      <div class="body">
+        <div class="t">Carrier adjustment over $10 — review before charging the customer</div>
+        <div class="d"><b>SM-2031</b> · USPS reweigh <b>+$14.20</b> · declared 1 lb 0 oz, carrier captured 3 lb 2 oz · customer paid $9.40 · landed 2 days ago</div>
+      </div>
+      <div class="acts">
+        <button class="btn sm red">Dispute (USPS)</button>
+        <button class="btn sm amber">Re-charge customer</button>
+        <button class="btn sm ghost">Absorb</button>
+      </div>
+    </div>
+
+    <div class="exc">
+      <div class="ico red">❗</div>
+      <div class="body">
+        <div class="t">Shipment in EasyPost with no SendMo record</div>
+        <div class="d"><code>shp_4a9c…d1f2</code> · UPS · $8.30 · bought May 19 · a real label was charged to the wallet but never written to <code>shipments</code></div>
+      </div>
+      <div class="acts">
+        <button class="btn sm ghost">Investigate</button>
+      </div>
+    </div>
+
+    <div class="exc">
+      <div class="ico blue">⏳</div>
+      <div class="body">
+        <div class="t">Refund stuck at "submitted" past 3 weeks</div>
+        <div class="d"><b>SM-1990</b> · USPS · voided 22 days ago · EasyPost still reports <code>submitted</code> · cron will mark it <b>Refund unsuccessful</b> unless it resolves</div>
+      </div>
+      <div class="acts">
+        <button class="btn sm ghost">Re-poll EasyPost</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── full table ───────────────────────────────────────── -->
+  <div class="panel">
+    <div class="phead">
+      <h2>All shipments — every money movement</h2>
+      <div class="grow"></div>
+      <span class="mut">Click a shipment ID for full detail · May 1 – 22, 2026 · 31 shipments</span>
+    </div>
+    <div class="tbl-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th rowspan="2">Shipment</th>
+          <th rowspan="2">Carrier</th>
+          <th class="grp time gsep" colspan="3">Timeline</th>
+          <th class="grp cust gsep" colspan="5">Customer side — Stripe</th>
+          <th class="grp ep gsep" colspan="3">EasyPost side</th>
+          <th class="grp res gsep" rowspan="2">Net&nbsp;margin</th>
+          <th rowspan="2" class="gsep">Status</th>
+        </tr>
+        <tr>
+          <th class="gsep">Label&nbsp;created</th>
+          <th>Ship&nbsp;date</th>
+          <th>Delivered</th>
+          <th class="r gsep">Paid</th>
+          <th class="r">Stripe&nbsp;fee</th>
+          <th class="r">Refunded<br>to customer</th>
+          <th class="r">Adjustment<br>collected</th>
+          <th class="r">Chargeback</th>
+          <th class="r gsep">Label&nbsp;cost</th>
+          <th class="r">Refunded<br>from EasyPost</th>
+          <th class="r">Adjustment<br>charged</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><a class="code" href="shipment-detail.html">SM-2042</a></td>
+          <td class="carrier">USPS GA</td>
+          <td class="dt gsep">May 20</td>
+          <td class="dt">May 21</td>
+          <td class="dt"><span class="tag blue">in transit</span></td>
+          <td class="money gsep">$9.10</td>
+          <td class="money neg">−$0.56</td>
+          <td class="money dash">—</td>
+          <td class="money dash">—</td>
+          <td class="money dash">—</td>
+          <td class="money neg gsep">−$7.10</td>
+          <td class="money dash">—</td>
+          <td class="money dash">—</td>
+          <td class="money pos gsep"><b>$1.44</b></td>
+          <td class="gsep"><span class="tag green">✓ Reconciled</span></td>
+        </tr>
+        <tr>
+          <td><a class="code" href="shipment-detail.html">SM-2038</a></td>
+          <td class="carrier">FedEx</td>
+          <td class="dt gsep">May 17</td>
+          <td class="dt">May 18</td>
+          <td class="dt">May 21</td>
+          <td class="money gsep">$14.25</td>
+          <td class="money neg">−$0.71</td>
+          <td class="money dash">—</td>
+          <td class="money dash">—</td>
+          <td class="money dash">—</td>
+          <td class="money neg gsep">−$11.40</td>
+          <td class="money dash">—</td>
+          <td class="money dash">—</td>
+          <td class="money pos gsep"><b>$2.14</b></td>
+          <td class="gsep"><span class="tag green">✓ Reconciled</span></td>
+        </tr>
+        <tr>
+          <td><a class="code" href="shipment-detail.html">SM-2031</a></td>
+          <td class="carrier">USPS GA</td>
+          <td class="dt gsep">May 16</td>
+          <td class="dt">May 17</td>
+          <td class="dt">May 19</td>
+          <td class="money gsep">$9.40</td>
+          <td class="money neg">−$0.57</td>
+          <td class="money dash">—</td>
+          <td class="money dash">— <span class="sub2">pending review</span></td>
+          <td class="money dash">—</td>
+          <td class="money neg gsep">−$7.30</td>
+          <td class="money dash">—</td>
+          <td class="money neg">−$14.20</td>
+          <td class="money neg gsep"><b>−$12.67</b></td>
+          <td class="gsep"><span class="tag amber">⚖ Adjustment — review</span></td>
+        </tr>
+        <tr>
+          <td><a class="code" href="shipment-detail.html">SM-2028</a></td>
+          <td class="carrier">UPS</td>
+          <td class="dt gsep">May 14</td>
+          <td class="dt">May 15</td>
+          <td class="dt">May 18</td>
+          <td class="money gsep">$12.80</td>
+          <td class="money neg">−$1.17</td>
+          <td class="money dash">—</td>
+          <td class="money pos">+$3.40 <span class="sub2">$2.40 + $1.00 fee</span></td>
+          <td class="money dash">—</td>
+          <td class="money neg gsep">−$10.20</td>
+          <td class="money dash">—</td>
+          <td class="money neg">−$2.40</td>
+          <td class="money pos gsep"><b>$2.43</b></td>
+          <td class="gsep"><span class="tag green">✓ Reconciled</span></td>
+        </tr>
+        <tr>
+          <td><a class="code" href="shipment-detail.html">SM-2009</a></td>
+          <td class="carrier">USPS GA</td>
+          <td class="dt gsep">May 8</td>
+          <td class="dt">May 9</td>
+          <td class="dt">May 12</td>
+          <td class="money gsep">$11.40</td>
+          <td class="money neg">−$0.63</td>
+          <td class="money dash">—</td>
+          <td class="money dash">—</td>
+          <td class="money neg">−$26.40 <span class="sub2">$11.40 disputed + $15 fee</span></td>
+          <td class="money neg gsep">−$9.10</td>
+          <td class="money dash">—</td>
+          <td class="money dash">—</td>
+          <td class="money neg gsep"><b>−$24.73</b></td>
+          <td class="gsep"><span class="tag red">🛑 Chargeback</span></td>
+        </tr>
+        <tr>
+          <td><a class="code" href="shipment-detail.html">SM-2025</a></td>
+          <td class="carrier">USPS GA</td>
+          <td class="dt gsep">May 13</td>
+          <td class="dt">May 14</td>
+          <td class="dt">May 16</td>
+          <td class="money gsep">$8.05</td>
+          <td class="money neg">−$0.53</td>
+          <td class="money dash">—</td>
+          <td class="money dash">— <span class="sub2">absorbed &lt;$1</span></td>
+          <td class="money dash">—</td>
+          <td class="money neg gsep">−$6.30</td>
+          <td class="money dash">—</td>
+          <td class="money neg">−$0.74</td>
+          <td class="money pos gsep"><b>$0.48</b></td>
+          <td class="gsep"><span class="tag green">✓ Reconciled</span></td>
+        </tr>
+        <tr>
+          <td><a class="code" href="shipment-detail.html">71NF1E8</a> <span class="tag comp">COMP</span></td>
+          <td class="carrier">USPS GA</td>
+          <td class="dt gsep">May 5</td>
+          <td class="dt">May 6</td>
+          <td class="dt">May 10</td>
+          <td class="money gsep">$0.00</td>
+          <td class="money dash">—</td>
+          <td class="money dash">—</td>
+          <td class="money dash">—</td>
+          <td class="money dash">—</td>
+          <td class="money neg gsep">−$11.29</td>
+          <td class="money dash">—</td>
+          <td class="money dash">—</td>
+          <td class="money neg gsep"><b>−$11.29</b></td>
+          <td class="gsep"><span class="tag green">✓ Reconciled</span></td>
+        </tr>
+        <tr>
+          <td><a class="code" href="shipment-detail.html">ECWHJES</a> <span class="tag comp">COMP</span></td>
+          <td class="carrier">UPS</td>
+          <td class="dt gsep">May 12</td>
+          <td class="dt dash">— voided</td>
+          <td class="dt dash">—</td>
+          <td class="money gsep">$0.00</td>
+          <td class="money dash">—</td>
+          <td class="money dash">—</td>
+          <td class="money dash">—</td>
+          <td class="money dash">—</td>
+          <td class="money neg gsep">−$13.00</td>
+          <td class="money pos">+$14.00</td>
+          <td class="money dash">—</td>
+          <td class="money pos gsep"><b>+$1.00</b></td>
+          <td class="gsep"><span class="tag green">✓ Refund credited</span></td>
+        </tr>
+        <tr>
+          <td><a class="code" href="shipment-detail.html">RA2W2NG</a> <span class="tag comp">COMP</span></td>
+          <td class="carrier">USPS GA</td>
+          <td class="dt gsep">May 12</td>
+          <td class="dt dash">— voided</td>
+          <td class="dt dash">—</td>
+          <td class="money gsep">$0.00</td>
+          <td class="money dash">—</td>
+          <td class="money dash">—</td>
+          <td class="money dash">—</td>
+          <td class="money dash">—</td>
+          <td class="money neg gsep">−$5.48</td>
+          <td class="money"><span class="tag blue">submitted</span></td>
+          <td class="money dash">—</td>
+          <td class="money neg gsep"><b>−$5.48</b></td>
+          <td class="gsep"><span class="tag amber">⏳ Awaiting credit</span></td>
+        </tr>
+        <tr>
+          <td><a class="code" href="shipment-detail.html">SM-1990</a></td>
+          <td class="carrier">USPS GA</td>
+          <td class="dt gsep">Apr 29</td>
+          <td class="dt dash">— voided</td>
+          <td class="dt dash">—</td>
+          <td class="money gsep">$7.60</td>
+          <td class="money neg">−$0.52</td>
+          <td class="money"><span class="tag amber">submitted</span></td>
+          <td class="money dash">—</td>
+          <td class="money dash">—</td>
+          <td class="money neg gsep">−$5.90</td>
+          <td class="money"><span class="tag amber">submitted 22d</span></td>
+          <td class="money dash">—</td>
+          <td class="money gsep"><b>$1.18</b></td>
+          <td class="gsep"><span class="tag amber">⏳ Refund overdue</span></td>
+        </tr>
+        <tr>
+          <td><span class="code dead">— unknown —</span></td>
+          <td class="carrier">UPS</td>
+          <td class="dt gsep">May 19</td>
+          <td class="dt dash">?</td>
+          <td class="dt dash">?</td>
+          <td class="money dash gsep">?</td>
+          <td class="money dash">?</td>
+          <td class="money dash">—</td>
+          <td class="money dash">—</td>
+          <td class="money dash">—</td>
+          <td class="money neg gsep">−$8.30</td>
+          <td class="money dash">—</td>
+          <td class="money dash">—</td>
+          <td class="money dash gsep"><b>?</b></td>
+          <td class="gsep"><span class="tag red">❗ Not in SendMo DB</span></td>
+        </tr>
+      </tbody>
+    </table>
+    </div>
+  </div>
+
+  <div class="legend">
+    <b>The reconcile identity (money columns, left to right):</b><br>
+    <code>Paid − Stripe fee − Refund to customer + Adjustment collected − Chargeback − Label cost + Refund from EasyPost − Adjustment charged = Net margin</code><br>
+    A row is <b>✓ Reconciled</b> when every counterpart movement is present and the math closes to the cent. <b>Click any shipment ID</b> for the full detail view — parties, addresses, package, the complete event-by-event ledger, and links out to EasyPost / Stripe / the tracking page.<br><br>
+    <b>Timeline</b> — label created, carrier ship date (first scan), and delivery. Voided shipments never ship, so those cells read "— voided".<br>
+    <b>Carrier adjustments</b> have two columns — <i>Adjustment charged</i> (what EasyPost billed the wallet) vs <i>Adjustment collected</i> (what we re-charged the customer, incl. the $1 handling fee). ≤ $1 absorbed · $1–$10 auto-recharged · &gt; $10 flagged.<br>
+    <b>Chargeback</b> — disputed amount clawed back <i>plus</i> the ~$15 Stripe dispute fee, as one figure. <b>COMP</b> shipments have no customer side.
+  </div>
+
+</div>
+</body>
+</html>

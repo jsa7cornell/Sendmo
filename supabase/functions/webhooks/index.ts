@@ -4,6 +4,7 @@ import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { log } from "../_shared/logger.ts";
 import { dispatchNotifications } from "../_shared/notifications.ts";
 import { createRefund } from "../_shared/stripe.ts";
+import { writeEasypostRefund } from "../_shared/ledger.ts";
 
 /**
  * Webhook handler for EasyPost tracker updates.
@@ -328,6 +329,44 @@ serve(async (req: Request) => {
           had_stripe_pi: !!refundShipment.stripe_payment_intent_id,
         },
       });
+
+      // ── H1: easypost_refund ledger row ──────────────────────────────────
+      // The refund.successful event delivers the EasyPost Shipment as
+      // result (body.result). The Refund objects are at result.refunds[].
+      // Shape: { id: 'rfnd_…', amount: 8.50, status: 'refunded', … }
+      // Idempotency key = 'easypost_refund_<rfnd_id>' — same key the
+      // tracking lazy-poll would use, so whichever writer lands first wins
+      // and the second sees a safe UNIQUE collision no-op (B4 fix).
+      {
+        const refundObjects = (result.refunds as Array<{ id: string; amount: string | number }> | null) ?? [];
+        const refundObj = refundObjects[0] ?? null;
+        // Fallback: if EasyPost ships refunds at result.refund (object, not array),
+        // check that too (EasyPost API has varied this historically).
+        const refundObjFallback = !refundObj && result.refund
+          ? (result.refund as { id: string; amount: string | number })
+          : null;
+        const effectiveRefundObj = refundObj ?? refundObjFallback;
+        const refundObjId: string = effectiveRefundObj?.id ?? `shp_fallback_${epShipmentId}`;
+        const refundAmountCents: number = effectiveRefundObj?.amount
+          ? Math.round(parseFloat(String(effectiveRefundObj.amount)) * 100)
+          : 0;
+
+        writeEasypostRefund({
+          supabase,
+          sessionId: body.id ?? "webhook",
+          shipmentId: refundShipment.id,
+          userId: "00000000-0000-0000-0000-000000000001", // resolved below if available
+          linkId: null,  // not available in refund webhook context without extra query
+          easypostShipmentId: epShipmentId,
+          easypostRefundObjectId: refundObjId,
+          refundAmountCents,
+          mode: refundShipment.is_test ? "test" : "live",
+          isComp: !refundShipment.stripe_payment_intent_id,
+          source: "webhook",
+        }).catch((err) => {
+          console.error("[webhooks] writeEasypostRefund unexpected throw:", err);
+        });
+      }
 
       return new Response(JSON.stringify({ ok: true }), {
         status: 200,

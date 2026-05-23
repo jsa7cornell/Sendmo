@@ -5,6 +5,7 @@ import { log } from "../_shared/logger.ts";
 import { sendEmail } from "../_shared/resend.ts";
 import { labelConfirmationEmail, budgetReachedEmail } from "../_shared/email-templates.ts";
 import { checkAccountBudget } from "../_shared/budget.ts";
+import { writeLabelCost } from "../_shared/ledger.ts";
 import {
     retrievePaymentIntent,
     createRefund,
@@ -1053,6 +1054,31 @@ serve(async (req: Request) => {
                     dbShipmentId = shipmentId ?? null;
                     dbPublicCode = publicCode ?? null;
                     dbShortCode = shortCode ?? null;
+
+                        // ── Ledger: label_cost (H1 — migration 032) ────────
+                        // Write a label_cost transaction row recording that
+                        // SendMo paid EasyPost for this label. Fire-and-forget
+                        // wrapper — failure is logged but never breaks label-buy.
+                        // Per PLAYBOOK Rule 16 (amended): labels is the sole
+                        // writer for label_cost rows.
+                        if (shipmentId) {
+                            const rateCents = Math.round(parseFloat(buyData.selected_rate?.rate || "0") * 100);
+                            writeLabelCost({
+                                supabase,
+                                sessionId,
+                                shipmentId,
+                                userId: resolvedLink?.user_id ?? callerUserId ?? '00000000-0000-0000-0000-000000000001',
+                                linkId: resolvedLink?.id ?? null,
+                                easypostShipmentId: easypost_shipment_id,
+                                rateCents,
+                                mode: isLive ? 'live' : 'test',
+                                isComp,
+                            }).catch((err) => {
+                                // Synchronous throw from the helper itself (shouldn't
+                                // happen — helper catches internally — but belt-and-suspenders).
+                                console.error('[labels] writeLabelCost unexpected throw:', err);
+                            });
+                        }
 
                         // ── Cancel-flow Phase A (migration 020) ────────────
                         // Mint a per-shipment cancel_token used by /t/<code>?cancel=<hex>
