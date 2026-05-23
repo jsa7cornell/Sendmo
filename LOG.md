@@ -12,6 +12,67 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-23] H4 — Reconciliation dashboard + sweep + admin actions
+
+**Category:** feat | Admin | Reconciliation | Edge Functions | Migration
+**Cross-link:** decided proposal [proposals/2026-05-22_reconciliation-and-carrier-adjustments_reviewed-2026-05-22_decided-2026-05-22.md](proposals/2026-05-22_reconciliation-and-carrier-adjustments_reviewed-2026-05-22_decided-2026-05-22.md) (§2.5 admin dashboard, §3 Edge Functions) | handoff [proposals/2026-05-23_pre-launch-handoff-plan.md](proposals/2026-05-23_pre-launch-handoff-plan.md) §Package H4 | builds on H1 + H2 + H3 | PAYMENTS.md §11 (extended) | SPEC.md §13.5 (new) | mockups: [previews/reconciliation-dashboard.html](previews/reconciliation-dashboard.html), [previews/shipment-detail.html](previews/shipment-detail.html)
+
+**What shipped:**
+
+- **Migration 034** (`034_reconciliation_cron.sql`) — `recon_state` cursor table for the sweep (one row per mode: `reconciliation_daily`, `reconciliation_weekly`). Service-role-only via RLS-enabled-no-policies. **Applied 2026-05-23 via Dashboard SQL Editor**, verified `recon_state_rows=2`.
+
+- **`supabase/functions/reconciliation-report/index.ts`** (NEW, 432 LOC) — admin GET endpoint. Joins `shipments` ⟕ `transactions` ⟕ `carrier_adjustments` ⟕ derived-refunds for a date range. Returns: summary cards + needs-attention items + per-shipment rows with the 15-column shape from the mockup. Computes Net margin per the identity (`Paid − Stripe fee − Refund to customer + Adjustment collected − Chargeback − Label cost + Refund from EasyPost − Adjustment charged`). EasyPost wallet balance via `GET /v2/users`. N3 dispute-window countdown on flagged >$10 adjustments (USPS 60d / UPS 120d / FedEx 90d).
+
+- **`supabase/functions/reconciliation-sweep/index.ts`** (NEW, 642 LOC) — admin + scheduled. Two modes:
+  - `mode=daily` — list-and-diff EasyPost shipments + refunds since `recon_state.last_run_at`. Cursor-paginated.
+  - `mode=weekly` — bulk sweep via EasyPost Reports API (`shipment` + `payment_log` reports, ≤31-day windows, poll until `available`, parse CSV).
+  - **N1 drift detection**: for `carrier_adjustments` rows with `recovery_status='pending'`, re-fires `resolveRecovery` (idempotent — recharge key includes `_${attempt}`). Catches webhooks that crashed between INSERT and recovery dispatch.
+  - For new adjustments found in the sweep (not via webhook): calls `_shared/adjustments.ts:resolveRecovery` to fire the same tiered policy.
+
+- **`supabase/functions/admin-recon-action/index.ts`** (NEW, 306 LOC) — admin POST endpoint. Routes:
+  - `dispute` — sets `recovery_status='disputed'` + captures `expected_credit_cents` for later sweep pattern-match (N4 fix).
+  - `recharge` — calls `createAdjustmentRecharge` even for >$10 (admin override).
+  - `absorb` — sets `recovery_status='absorbed'`. Terminal.
+
+- **`supabase/config.toml`** — three new function blocks (`reconciliation-report`, `reconciliation-sweep`, `admin-recon-action`), all `verify_jwt = true`.
+
+- **`src/pages/AdminReconciliation.tsx`** (NEW, 697 LOC) — React port of `previews/reconciliation-dashboard.html`. Preserves the column structure + Net-margin identity legend. Honors app design tokens (blue-primary; mockup's green is mockup-only). Fetches `/functions/v1/reconciliation-report`. Needs-Attention buttons wire to `/functions/v1/admin-recon-action`.
+
+- **`src/pages/AdminShipmentDetail.tsx`** (NEW, 583 LOC) — React port of `previews/shipment-detail.html`. Route `/admin/shipments/:public_code` (added to `App.tsx`). Parties, addresses, package + service, timeline, full event-by-event ledger → Net margin, references out (EasyPost / Stripe / `/t/<code>` / flex link).
+
+- **`src/pages/Admin.tsx`** — Reconciliation tab added as a third tab alongside Labels / Links. Lazy-loaded. **N1 bonus** (deferred-nicety from risk-intel handoff Job 1): per-owner Account Budget displayed in the Reconciliation/Links view since `admin-report` was already being extended for reconciliation data. Closes that gap.
+
+- **Tests:**
+  - `tests/unit/reconciliation-math.test.ts` — Net-margin identity against fixtures (every combo of charge / fee / refund / chargeback / label_cost / easypost_refund / carrier_adjustment).
+  - `tests/e2e/admin-reconciliation.spec.ts` — admin opens Reconciliation tab → summary populated → clicks Needs-Attention action → state changes.
+  - **Skipped**: a planned `tests/integration/reconciliation-sweep.test.ts` (seed-and-sweep). Documented as fast-follow.
+
+**Suite health:** **426 passed / 39 files** (18 new unit tests). `npx tsc -b` clean.
+
+**Cron registration — DEFERRED to fast-follow:**
+The original H4 plan included pg_cron jobs (daily 04:00 UTC + weekly 05:00 UTC Sundays) for automatic sweeps. Deferred because (a) `pg_cron` + `pg_net` extensions are not enabled on this Supabase project; (b) cron also needs `app.supabase_url` + `app.service_role_key` Postgres GUCs configured; (c) pre-launch traffic doesn't generate sweep work for the first ~week (no live shipments yet) — sweeps can be triggered manually from the Reconciliation tab in the interim.
+
+**To enable cron later:**
+1. Dashboard → Database → Extensions → enable `pg_cron` + `pg_net`
+2. `ALTER DATABASE postgres SET app.supabase_url = 'https://fkxykvzsqdjzhurntgah.supabase.co';` + same for `app.service_role_key`
+3. Apply a follow-up migration with `cron.schedule()` calls (sketch lives in this commit's first-draft of `034_reconciliation_cron.sql` — see file history if you want the boilerplate).
+
+Tracked: WISHLIST → "Enable pg_cron + register reconciliation-sweep jobs."
+
+**Coordination achieved:**
+- `Admin.tsx` shared with H3 (Refund button) + risk-intel (Account-Budget setter form). All three coexist cleanly — new Reconciliation tab is a top-level addition.
+- `_shared/adjustments.ts:resolveRecovery` reused unchanged from H2 — sweep calls it for new adjustments + drift detection.
+- Chargeback column verified: `transactions.type='chargeback'` rows ARE written by `stripe-webhook` `charge.dispute.created` (per `stripe-webhook/index.ts:594`). Dashboard relies on this existing wiring.
+
+**Gotcha — Supabase MCP read-only continues to apply:**
+Migration 034 followed the same process as 032/033 — agent wrote the file, paused, John applied via Dashboard SQL Editor, returned the verification result. The H2 LOG documented this rule going-forward; H4 honored it correctly.
+
+**Browser-verified:**
+  spec: tests/e2e/admin-reconciliation.spec.ts
+  variants-covered: [admin opens /admin → clicks Reconciliation tab → summary cards populate from reconciliation-report endpoint; per-shipment row Net margin matches the identity formula; clicks a Needs-Attention action button → admin-recon-action endpoint called → state updates and row moves to the appropriate terminal status]
+
+---
+
 ### [2026-05-23] H2 — Carrier-adjustment detection + recovery + full-label save-card
 
 **Category:** feat | Payments | Reconciliation | Edge Functions | Migration

@@ -4,7 +4,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import CancelLabelModal from "@/components/CancelLabelModal";
 import RefundModal, { type RefundTarget } from "@/components/admin/RefundModal";
-import { Ban, Package, Link2, AlertTriangle, DollarSign } from "lucide-react";
+import AdminReconciliation from "@/pages/AdminReconciliation";
+import { Ban, Package, Link2, AlertTriangle, DollarSign, BarChart3 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
@@ -216,12 +217,13 @@ export default function Admin() {
         }
     }
 
-    // Two-tab pattern — mirrors Dashboard.tsx (PLAYBOOK Rule 6).
+    // Three-tab pattern — Labels (default), Links, Reconciliation.
     const tabParam = searchParams.get("tab");
-    const initialTab: "labels" | "links" = tabParam === "links" ? "links" : "labels";
-    const [tab, setTab] = useState<"labels" | "links">(initialTab);
+    const initialTab: "labels" | "links" | "reconciliation" =
+        tabParam === "links" ? "links" : tabParam === "reconciliation" ? "reconciliation" : "labels";
+    const [tab, setTab] = useState<"labels" | "links" | "reconciliation">(initialTab);
 
-    function switchTab(next: "labels" | "links") {
+    function switchTab(next: "labels" | "links" | "reconciliation") {
         setTab(next);
         const params = new URLSearchParams(searchParams);
         if (next === "labels") params.delete("tab");
@@ -681,6 +683,19 @@ export default function Admin() {
                                     <span className="text-[10px] text-muted-foreground font-normal">({linksRows.length})</span>
                                 )}
                             </button>
+                            <button
+                                type="button"
+                                onClick={() => switchTab("reconciliation")}
+                                className={cn(
+                                    "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors flex items-center gap-2",
+                                    tab === "reconciliation"
+                                        ? "border-primary text-foreground"
+                                        : "border-transparent text-muted-foreground hover:text-foreground"
+                                )}
+                            >
+                                <BarChart3 className="w-4 h-4" />
+                                Reconciliation
+                            </button>
                         </div>
 
                         {/* ── Labels tab ─────────────────────────────────── */}
@@ -843,6 +858,11 @@ export default function Admin() {
                                     </div>
                                 </div>
                             </>
+                        )}
+
+                        {/* ── Reconciliation tab ─────────────────────────── */}
+                        {tab === "reconciliation" && (
+                            <AdminReconciliation session={session} />
                         )}
 
                         {/* ── Links tab ──────────────────────────────────── */}

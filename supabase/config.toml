@@ -148,3 +148,24 @@ verify_jwt = true
 [functions.refunds]
 enabled = true
 verify_jwt = true
+
+# H4 — Reconciliation dashboard + sweep + admin actions (pre-launch P1).
+# Per decided proposal 2026-05-22_reconciliation-and-carrier-adjustments_decided-2026-05-22.
+
+# GET endpoint — returns summary cards + per-shipment rows + needs-attention items
+# for the /admin Reconciliation tab. Admin-gated via requireAdmin.
+[functions.reconciliation-report]
+enabled = true
+verify_jwt = true
+
+# POST endpoint — daily incremental + weekly bulk EasyPost diff.
+# Also called by pg_cron (service-role Bearer). Both paths valid.
+[functions.reconciliation-sweep]
+enabled = true
+verify_jwt = true
+
+# POST endpoint — Needs-Attention action buttons: dispute / recharge / absorb.
+# Admin-gated via requireAdmin.
+[functions.admin-recon-action]
+enabled = true
+verify_jwt = true
