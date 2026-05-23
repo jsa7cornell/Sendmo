@@ -5,6 +5,8 @@ import { log } from "../_shared/logger.ts";
 import { dispatchNotifications } from "../_shared/notifications.ts";
 import { createRefund } from "../_shared/stripe.ts";
 import { writeEasypostRefund } from "../_shared/ledger.ts";
+import { resolveRecovery, type AdjustmentShipment, type AdjustmentPaymentContext } from "../_shared/adjustments.ts";
+import { getRefundableBalanceForPI } from "../_shared/refunds.ts";
 
 /**
  * Webhook handler for EasyPost tracker updates.
@@ -189,6 +191,297 @@ serve(async (req: Request) => {
     const description = body.description || "";
     const result = body.result || {};
 
+    // ── EasyPost ShipmentInvoice events (H2 — carrier adjustments) ───────────
+    //
+    // shipment.invoice.created / shipment.invoice.updated arrive when a
+    // carrier re-bills the rate post-pickup (reweigh, dim adjustment,
+    // address-correction surcharge). Docs:
+    //   https://docs.easypost.com/docs/events — ShipmentInvoice section.
+    //
+    // The `.updated` event corrects a prior `.created` event's amount — both
+    // arms UPSERT on `source_event_id` (the partial UNIQUE index from
+    // migration 032), so the latest amount wins. Pitfall 3 from the decided
+    // proposal review: silently dropping `.updated` would leave SendMo on a
+    // stale delta.
+    //
+    // Flow:
+    //   1. Resolve the SendMo shipment by EasyPost shipment id.
+    //   2. UPSERT carrier_adjustments row (dedup on source_event_id).
+    //   3. INSERT transactions row type='carrier_adjustment'
+    //      (idempotency_key = ShipmentInvoice id).
+    //   4. Call resolveRecovery → fires off_session recharge if tier matches.
+    //
+    // Decided proposal:
+    //   2026-05-22_reconciliation-and-carrier-adjustments §2.3 + §2.4.
+    if (description === "shipment.invoice.created" ||
+        description === "shipment.invoice.updated") {
+      const supabase = getSupabase();
+
+      // EasyPost's ShipmentInvoice payload (verified against docs.easypost.com):
+      //   result.id                       — 'si_…' the ShipmentInvoice id (dedup key)
+      //   result.shipment_id              — 'shp_…' the linked Shipment id
+      //   result.adjustment_amount        — string dollars (e.g. "1.25")
+      //   result.adjustment_reason        — 'reweigh', 'dim', 'address_correction', ...
+      //   result.claimed_details          — { declared_weight_oz, billed_weight_oz, ... }
+      const sourceEventId: string | undefined = result.id;
+      const epShipmentId: string | undefined = result.shipment_id;
+      const adjustmentAmountStr = result.adjustment_amount;
+      const adjustmentReason: string | null = result.adjustment_reason ?? null;
+      const claimedDetails = (result.claimed_details ?? {}) as {
+        declared_weight_oz?: number | string;
+        billed_weight_oz?: number | string;
+      };
+
+      if (!sourceEventId || !epShipmentId || adjustmentAmountStr === undefined) {
+        log({
+          event_type: "webhook.shipment_invoice_malformed",
+          severity: "warn",
+          source: "webhook",
+          properties: {
+            description,
+            has_source_event_id: !!sourceEventId,
+            has_shipment_id: !!epShipmentId,
+            has_adjustment_amount: adjustmentAmountStr !== undefined,
+            result_keys: Object.keys(result),
+          },
+        });
+        return new Response(JSON.stringify({ ok: true, skipped: "malformed" }), {
+          status: 200,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      const deltaCents = Math.round(parseFloat(String(adjustmentAmountStr)) * 100);
+      const claimedWeightOz = claimedDetails.declared_weight_oz != null
+        ? Math.round(Number(claimedDetails.declared_weight_oz)) : null;
+      const capturedWeightOz = claimedDetails.billed_weight_oz != null
+        ? Math.round(Number(claimedDetails.billed_weight_oz)) : null;
+
+      // Look up the SendMo shipment.
+      const { data: adjShipment, error: adjFetchErr } = await supabase
+        .from("shipments")
+        .select("id, public_code, user_id, carrier, is_test, stripe_payment_intent_id, link_id")
+        .eq("easypost_shipment_id", epShipmentId)
+        .maybeSingle();
+
+      if (adjFetchErr || !adjShipment) {
+        log({
+          event_type: "webhook.shipment_invoice_shipment_not_found",
+          severity: "warn",
+          source: "webhook",
+          properties: { easypost_shipment_id: epShipmentId, source_event_id: sourceEventId },
+        });
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      // Outer webhook_events dedup — same belt-and-braces as refund.successful.
+      const invoiceEventId = body.id || `ep_shipinv_${sourceEventId}_${Date.now()}`;
+      const { error: invoiceDupeErr } = await supabase.from("webhook_events").insert({
+        source: "easypost",
+        event_id: invoiceEventId,
+        event_type: description,
+        payload: body,
+      });
+      if (invoiceDupeErr?.code === "23505") {
+        return new Response(JSON.stringify({ ok: true, duplicate: true }), {
+          status: 200,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      // UPSERT carrier_adjustments on source_event_id.
+      // The .updated event reuses the ShipmentInvoice id and corrects the
+      // prior amount — we want the LATEST amount, not the first.
+      const { error: adjUpsertErr } = await supabase
+        .from("carrier_adjustments")
+        .upsert(
+          {
+            shipment_id: adjShipment.id,
+            source: "easypost",
+            source_event_id: sourceEventId,
+            delta_cents: deltaCents,
+            reason: adjustmentReason,
+            claimed_weight_oz: claimedWeightOz,
+            captured_weight_oz: capturedWeightOz,
+            recovery_status: "pending",
+          },
+          { onConflict: "source_event_id" },
+        );
+
+      if (adjUpsertErr) {
+        log({
+          event_type: "webhook.carrier_adjustment_upsert_failed",
+          severity: "error",
+          source: "webhook",
+          entity_type: "shipment",
+          entity_id: adjShipment.id,
+          properties: {
+            error_message: adjUpsertErr.message,
+            error_code: adjUpsertErr.code ?? null,
+            source_event_id: sourceEventId,
+          },
+        });
+        // Still return 200 — webhook retries are EP-driven and won't help if our DB rejected.
+        return new Response(JSON.stringify({ ok: true, upsert_failed: true }), {
+          status: 200,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      // Read back the row to get the id (UPSERT didn't return it).
+      const { data: adjRow } = await supabase
+        .from("carrier_adjustments")
+        .select("id")
+        .eq("source_event_id", sourceEventId)
+        .maybeSingle();
+
+      const carrierAdjustmentId: string | null = (adjRow?.id as string) ?? null;
+
+      if (!carrierAdjustmentId) {
+        log({
+          event_type: "webhook.carrier_adjustment_missing_after_upsert",
+          severity: "error",
+          source: "webhook",
+          entity_type: "shipment",
+          entity_id: adjShipment.id,
+          properties: { source_event_id: sourceEventId },
+        });
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      // INSERT transactions row type='carrier_adjustment' — the carrier
+      // billed SendMo more, so amount_cents is NEGATIVE (SendMo loses).
+      // Idempotency key keyed on the ShipmentInvoice id — same dedup
+      // namespace as the carrier_adjustments row.
+      const { error: txErr } = await supabase.from("transactions").insert({
+        user_id: adjShipment.user_id,
+        shipment_id: adjShipment.id,
+        link_id: adjShipment.link_id ?? null,
+        type: "carrier_adjustment",
+        amount_cents: -Math.abs(deltaCents),
+        mode: adjShipment.is_test ? "test" : "live",
+        idempotency_key: `carrier_adjustment_${sourceEventId}`,
+        description: `Carrier adjustment — ${adjustmentReason ?? "unknown reason"}`,
+      });
+
+      if (txErr && txErr.code !== "23505") {
+        // 23505 = UNIQUE collision on idempotency_key (we already wrote it
+        // for the .created event; the .updated arm hits this expectedly).
+        // Anything else is a real DB error.
+        log({
+          event_type: "webhook.carrier_adjustment_tx_failed",
+          severity: "error",
+          source: "webhook",
+          entity_type: "carrier_adjustment",
+          entity_id: carrierAdjustmentId,
+          properties: {
+            error_message: txErr.message,
+            error_code: txErr.code ?? null,
+            source_event_id: sourceEventId,
+          },
+        });
+      }
+
+      log({
+        event_type: "webhook.carrier_adjustment_recorded",
+        severity: "info",
+        source: "webhook",
+        entity_type: "carrier_adjustment",
+        entity_id: carrierAdjustmentId,
+        properties: {
+          event: description,
+          source_event_id: sourceEventId,
+          shipment_id: adjShipment.id,
+          delta_cents: deltaCents,
+          reason: adjustmentReason,
+          claimed_weight_oz: claimedWeightOz,
+          captured_weight_oz: capturedWeightOz,
+        },
+      });
+
+      // Resolve the recovery decision. Need to look up the payment context
+      // (saved PM + customer id) from stripe_intents joined back to the PI.
+      let paymentContext: AdjustmentPaymentContext = {
+        payment_method_id: null,
+        user_id: adjShipment.user_id,
+        customer_id: null,
+      };
+      let receiptEmail: string | null = null;
+
+      if (adjShipment.stripe_payment_intent_id) {
+        // Find the stripe_intents row to pull the payment_method_id + customer.
+        const { data: piRow } = await supabase
+          .from("stripe_intents")
+          .select("payment_method_id")
+          .eq("stripe_intent_id", adjShipment.stripe_payment_intent_id)
+          .maybeSingle();
+        const pmId = (piRow as { payment_method_id?: string | null } | null)?.payment_method_id ?? null;
+
+        // Customer id lives on profiles (per mode).
+        const customerCol = adjShipment.is_test
+          ? "stripe_customer_id_test" : "stripe_customer_id_live";
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select(`${customerCol}, email`)
+          .eq("id", adjShipment.user_id)
+          .maybeSingle();
+        const customerId = (profile as Record<string, string | null> | null)?.[customerCol] ?? null;
+        receiptEmail = (profile as { email?: string | null } | null)?.email ?? null;
+
+        paymentContext = {
+          payment_method_id: pmId,
+          user_id: adjShipment.user_id,
+          customer_id: customerId,
+        };
+      }
+
+      const adjustmentShipment: AdjustmentShipment = {
+        id: adjShipment.id,
+        public_code: adjShipment.public_code,
+        user_id: adjShipment.user_id,
+        carrier: adjShipment.carrier,
+        is_test: adjShipment.is_test,
+        stripe_payment_intent_id: adjShipment.stripe_payment_intent_id,
+      };
+
+      const resolution = await resolveRecovery({
+        supabase,
+        sessionId: invoiceEventId,
+        shipment: adjustmentShipment,
+        carrierAdjustmentId,
+        deltaCents,
+        paymentContext,
+        reasonText: adjustmentReason ?? undefined,
+        trackingUrl: `${APP_URL}/t/${adjShipment.public_code}`,
+        receiptEmail,
+      });
+
+      log({
+        event_type: "webhook.carrier_adjustment_resolved",
+        severity: "info",
+        source: "webhook",
+        entity_type: "carrier_adjustment",
+        entity_id: carrierAdjustmentId,
+        properties: {
+          decision: resolution.decision,
+          amount_cents: resolution.amount_cents,
+          reason: resolution.reason,
+          ...(resolution.blocked_by_cap ? { blocked_by_cap: resolution.blocked_by_cap } : {}),
+        },
+      });
+
+      return new Response(JSON.stringify({ ok: true, resolution }), {
+        status: 200,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     // ── EasyPost refund.successful event (migration 030) ────────────────────
     //
     // EasyPost fires `refund.successful` when a non-instantaneous carrier
@@ -266,9 +559,19 @@ serve(async (req: Request) => {
       if (refundShipment.stripe_payment_intent_id) {
         // Stripe-paid shipment: fire the customer refund now (same logic as
         // tracking/index.ts lazy-poll — idempotency key prevents double-refunds).
+        //
+        // H3 (N3 fix): compute remaining per-PI refundable balance before
+        // passing amount_cents. Without this, a partially-refunded PI would
+        // receive amount_cents=full-charge, which Stripe rejects as over-refund.
+        // getRefundableBalanceForPI throws on DB error — caught below.
         try {
+          const refundableBalance = await getRefundableBalanceForPI(
+            supabase,
+            refundShipment.stripe_payment_intent_id,
+          );
           await createRefund({
             payment_intent_id: refundShipment.stripe_payment_intent_id,
+            amount_cents: refundableBalance > 0 ? refundableBalance : undefined,
             reason: "requested_by_customer",
             metadata: {
               shipment_id: refundShipment.id,

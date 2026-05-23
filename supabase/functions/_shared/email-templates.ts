@@ -293,6 +293,69 @@ export function budgetReachedEmail(params: {
   };
 }
 
+// ─── H2: Carrier-adjustment notification (auto-recharge tier) ─────────
+//
+// Sent to the customer when an auto-recharge for a post-pickup carrier
+// adjustment succeeds. The customer's card was billed for `amount_cents`
+// (delta + $1 handling fee). Honest, factual tone — this is post-hoc
+// billing and customer trust matters.
+//
+// Decided proposal: 2026-05-22_reconciliation-and-carrier-adjustments §2.4.
+
+export function carrierAdjustmentEmail(params: {
+  amount_cents: number;             // total billed = delta + fee
+  fee_cents: number;                // handling fee component ($1)
+  carrier: string;                  // 'UPS', 'USPS', 'FedEx', or 'the carrier'
+  reason: string;                   // EasyPost adjustment_reason ('reweigh', etc.)
+  public_code: string;              // /t/<code>
+  tracking_url: string;             // full URL
+}): { subject: string; html: string } {
+  const totalDollars = (params.amount_cents / 100).toFixed(2);
+  const feeDollars = (params.fee_cents / 100).toFixed(2);
+  const deltaDollars = ((params.amount_cents - params.fee_cents) / 100).toFixed(2);
+  const carrierLabel = params.carrier?.trim() || "the carrier";
+  const reasonLabel = params.reason?.trim() || "weight adjustment";
+
+  return {
+    subject: `A small carrier adjustment of $${totalDollars} — SendMo`,
+    html: layout(`
+      <h2 style="margin:0 0 8px;font-size:20px;font-weight:600;color:#111827;">Carrier adjustment — $${totalDollars}</h2>
+      <p style="margin:0 0 16px;font-size:14px;color:${GRAY_600};line-height:1.5;">
+        Heads up — ${carrierLabel} re-rated your shipment after pickup (reason: <em>${reasonLabel}</em>) and billed us a bit more than the label price. We covered it and charged your saved card to balance it out.
+      </p>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 24px;background-color:#f9fafb;border-radius:8px;border:1px solid #e5e7eb;">
+        <tr>
+          <td style="padding:12px 16px;border-bottom:1px solid #e5e7eb;">
+            <span style="font-size:12px;color:${GRAY_400};text-transform:uppercase;letter-spacing:0.5px;">Carrier adjustment</span><br/>
+            <span style="font-size:14px;font-weight:500;color:#111827;">$${deltaDollars}</span>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:12px 16px;border-bottom:1px solid #e5e7eb;">
+            <span style="font-size:12px;color:${GRAY_400};text-transform:uppercase;letter-spacing:0.5px;">Handling fee</span><br/>
+            <span style="font-size:14px;font-weight:500;color:#111827;">$${feeDollars}</span>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:12px 16px;">
+            <span style="font-size:12px;color:${GRAY_400};text-transform:uppercase;letter-spacing:0.5px;">Total charged</span><br/>
+            <span style="font-size:18px;font-weight:700;color:${BRAND_BLUE};">$${totalDollars}</span>
+          </td>
+        </tr>
+      </table>
+      <p style="margin:0 0 16px;font-size:13px;color:${GRAY_600};line-height:1.5;">
+        Carriers sometimes reweigh or remeasure packages on their own scales after pickup. If we get charged more than the label price, we pass through the difference plus a small handling fee.
+      </p>
+      <div style="text-align:center;margin:24px 0 0;">
+        <a href="${params.tracking_url}" style="display:inline-block;background-color:${BRAND_BLUE};color:#ffffff;font-size:14px;font-weight:600;text-decoration:none;padding:12px 32px;border-radius:8px;">View shipment</a>
+      </div>
+      <p style="margin:24px 0 0;font-size:12px;color:${GRAY_400};text-align:center;">
+        SendMo tracking: <strong>${params.public_code}</strong>
+      </p>
+    `),
+  };
+}
+
 // ─── B4: Radar-blocked-charge notification to the payer (O7) ────────
 // Sent on every Stripe Radar block of a flex off_session charge. Gentle:
 // the payer's card is fine; a sender on their link was flagged. They may

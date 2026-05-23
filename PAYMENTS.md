@@ -305,6 +305,131 @@ Stripe Radar blocks surface as a `payment_intent.payment_failed` with the failed
 ### 10.7 What was deferred / fast-follow
 
 - **Admin UI for `set_account_budget`** — the RPC works (Supabase Studio / `supabase.rpc('set_account_budget', …)`). A minimal Admin.tsx control is the lead fast-follow.
-- **`shipping` on the full-label PI** — `payments/` only gets `easypost_shipment_id`; would need a mid-flow EasyPost lookup. Radar at 2b is already strong on-session; low-value.
+- ~~**`shipping` on the full-label PI**~~ — **shipped 2026-05-23 (H2)**. `payments/index.ts` now does a mid-flow EasyPost GET to map `to_address` into Stripe's `shipping` param. Optional — falls back gracefully on EasyPost timeout/error.
 - **Integration tests for `checkAccountBudget`** + **e2e for B5/B4.**
 - **B1 — Stripe Dashboard config** (John, ~1 hr — recommended block rules + card-testing protection).
+
+## 11. Carrier adjustments (2026-05-23) — detection, recovery, ledger
+
+Shipped 2026-05-23, commits `d0ef0b5` (H1 — bidirectional ledger) + the H2 commit landing this section. Decided proposal: [`proposals/2026-05-22_reconciliation-and-carrier-adjustments_reviewed-2026-05-22_decided-2026-05-22.md`](proposals/2026-05-22_reconciliation-and-carrier-adjustments_reviewed-2026-05-22_decided-2026-05-22.md). Read the proposal for full design rationale; this section is the operational summary.
+
+### 11.1 What "carrier adjustments" means
+
+After a carrier (USPS / UPS / FedEx) picks up a package, they may reweigh or remeasure it on their own equipment and bill more than the label rate. EasyPost forwards these via the **ShipmentInvoice** event family (`shipment.invoice.created` and `shipment.invoice.updated`). The corrected amount is the **delta** — typically a few dollars for a slight reweigh.
+
+Without recovery, SendMo eats every delta — Phase G of the master plan §3.7 specified this as a wallet-leak. H2 closes the leak.
+
+### 11.2 Tiered recovery policy
+
+Decision tree applied immediately after the adjustment is recorded:
+
+| Delta (signed; + = carrier billed more) | Action |
+|---|---|
+| ≤ $1.00 | **Absorb** — admin overhead exceeds recovery |
+| $1.01 – $10.00 *AND* no cap breach *AND* saved PM available | **Auto-recharge** — off-session PaymentIntent for delta + $1 handling fee |
+| > $10.00 *OR* any cap breach | **Flag** — surfaces in Admin Reconciliation tab (H4) |
+| Negative delta (carrier credit) | **Absorb** — credit lands in EP wallet; record only |
+| Comp shipment (no PI) | **Absorb** — no customer to charge |
+| No usable saved PM | **Flag** — admin manually charges |
+
+**Caps (auto-recharge tier only):**
+
+| Cap | Threshold |
+|---|---|
+| Per-shipment lifetime | ≤ $10 in auto-recharges per `shipment_id` |
+| Per-card per-24h | ≤ $20 per `payment_method_id` |
+| Per-user per-7d | ≤ $50 per `user_id` |
+
+Cap-breach → flag for manual review. Prevents the "stuck loop chains 3 charges and looks like fraud" failure §3.7 was written to stop.
+
+**Race-condition guard (N2 fix — load-bearing):** the cap sums are read inside a transaction with `SELECT … FOR UPDATE` on the shipments row. Two near-simultaneous adjustments serialize and can't both pass the same cap. Implemented via the `resolve_recovery_lock` SECURITY DEFINER plpgsql RPC (migration 033). If the RPC is missing the helper falls back to an unlocked per-shipment-only read.
+
+### 11.3 Detection — dual-path
+
+| Path | Where | When | Note |
+|---|---|---|---|
+| **Push (primary)** | `webhooks/index.ts` `shipment.invoice.created/updated` arm | Seconds after EasyPost generates the ShipmentInvoice | USPS coverage confirmed; UPS/FedEx coverage uncertain |
+| **Pull (backstop)** | `reconciliation-sweep` (H4 — not yet shipped) | Daily 04:00 UTC + weekly Sundays | Catches anything the webhook missed |
+
+Both paths converge on the `carrier_adjustments` table. Dedup via the partial UNIQUE index on `source_event_id` (migration 032).
+
+**Pitfall 3 (`.updated` overwrites `.created`):** the `.updated` event corrects a prior `.created` event's amount. The webhook handler does an **UPSERT on `source_event_id`** (not pure dedup-skip) so the latest amount wins. Silently dropping `.updated` would leave SendMo on a stale delta.
+
+### 11.4 Adjustment recharges bypass `checkAccountBudget`
+
+A deliberate design call (build-LOG amendment from the proposal close-out): adjustment recharges do NOT pass through `checkAccountBudget`. The adjustment-specific caps (per-shipment $10 / per-card-24h $20 / per-user-7d $50) govern. The Account Budget is for preventing runaway customer charges; adjustments are post-pickup carrier corrections with their own three-cap policy.
+
+If both gates fired, an adjustment for a customer near their daily budget would flag despite being well under the adjustment caps — defeating the auto-recharge tier's purpose for the common case.
+
+### 11.5 Save-card on the full-label flow (D1)
+
+Auto-recharge needs a saved PM. The flex flow (Pattern D) already saves cards via SetupIntent. The full-label flow did not — that gap would have made the ≤$10 tier inert for the dominant launch traffic.
+
+Shipped 2026-05-23 (H2 D1) in `payments/index.ts`:
+
+- **`getOrCreateCustomerForUser`** — get-or-create a Stripe Customer for authenticated buyers (mirrors `payment-methods/:ensureCustomer`).
+- **`setup_future_usage: 'off_session'`** on the full-label PI — Stripe attaches the PM to the Customer after the charge succeeds; the existing `payment_method.attached` webhook (Phase B) lands the `payment_methods` row.
+- **Consent disclosure** on the checkout form: *"We'll save your card to handle any carrier adjustments after delivery — usually a few dollars."* — `src/components/recipient/StripePaymentForm.tsx`.
+
+**Anonymous buyers** continue to pay without a saved card. Their post-pickup adjustments route to "flag" — admin handles each manually.
+
+**Ordering preserved:** `checkAccountBudget` runs first (PI creation blocked on budget breach), then `getOrCreateCustomerForUser`, then `createPaymentIntent` with `setup_future_usage`. Risk-Intel B5 contract honored.
+
+### 11.6 The recharge PI shape
+
+| Field | Value |
+|---|---|
+| `amount` | `delta_cents + 100` (delta + $1 handling fee) |
+| `customer` | The saved-card Customer id |
+| `payment_method` | The saved PM id |
+| `off_session` | `true` |
+| `confirm` | `true` |
+| `idempotency_key` | `adjustment_<shipment_id>_<carrier_adjustment_id>_<attempt>` |
+| `metadata.txn_kind` | `mit_adjustment` |
+| `metadata.intent_role` | `carrier_adjustment` |
+
+Attempt counter (`_<attempt>`) is the Nit fix from the review: without it, a failed first PI's "failed" result would dedup the retry on the same key.
+
+### 11.7 Customer notification
+
+Auto-recharge success fires `carrierAdjustmentEmail` from `_shared/adjustments.ts:resolveRecovery` immediately after the PI returns `succeeded`. Soft-tone, factual framing — names the carrier, the reason, the breakdown (delta + fee = total). Dedup via `notifications_log` keyed per `carrier_adjustments.id`.
+
+### 11.8 Disputes (manual carrier-direct, not programmatic)
+
+When the dashboard flags an adjustment for manual review (>$10 or cap-breach), the admin's options are:
+
+- **Dispute** — file with the carrier directly. USPS: `VerifyPostageHelp@usps.gov` (≤60d window). UPS: support forms (≤120d). FedEx: support forms (≤90d). The `carrier_adjustments.claimed_weight_oz` + `captured_weight_oz` columns carry the evidence.
+- **Re-charge** — admin override; force the recharge even past caps.
+- **Absorb** — accept the loss.
+
+The H4 admin reconciliation dashboard (separate package) surfaces these actions; the `admin-recon-action` endpoint persists them. `recovery_status='disputed'` + `expected_credit_cents` (the carrier-side credit we expect on a successful dispute) lets the reconciliation sweep pattern-match a later `easypost_refund` credit against the open dispute.
+
+### 11.9 New event_logs event types (free TEXT)
+
+| Event | Severity | Emitter | When |
+|---|---|---|---|
+| `webhook.carrier_adjustment_recorded` | info | webhooks | Successful UPSERT + transactions row |
+| `webhook.carrier_adjustment_resolved` | info | webhooks | After resolveRecovery returns |
+| `webhook.carrier_adjustment_upsert_failed` | error | webhooks | DB error on the UPSERT |
+| `webhook.carrier_adjustment_tx_failed` | error | webhooks | Non-23505 error on the transactions insert |
+| `webhook.shipment_invoice_malformed` | warn | webhooks | Missing shipment_id / source_event_id |
+| `webhook.shipment_invoice_shipment_not_found` | warn | webhooks | SendMo has no shipment for this EP id |
+| `adjustment.recharged` | info | _shared/adjustments.ts | Recharge succeeded |
+| `adjustment.recharge_not_succeeded` | warn | _shared/adjustments.ts | Off_session PI returned non-succeeded |
+| `adjustment.recharge_error` | error | _shared/adjustments.ts | Stripe call threw |
+| `adjustment.flagged` | warn | _shared/adjustments.ts | Above ceiling — manual review |
+| `adjustment.no_saved_pm` | warn | _shared/adjustments.ts | Tier matched but no PM/customer |
+| `adjustment.cap_breach` | warn | _shared/adjustments.ts | One of the three caps blocked recharge |
+| `adjustment.cap_lock_rpc_unavailable` | warn | _shared/adjustments.ts | RPC missing — degraded to unlocked fallback |
+| `adjustment.mark_resolved_failed` | error | _shared/adjustments.ts | DB error updating recovery_status |
+| `adjustment.email_sent` | info | _shared/adjustments.ts | Customer email delivered |
+| `adjustment.email_failed` | warn | _shared/adjustments.ts | Customer email failed |
+| `payment.get_or_create_customer_failed` | warn | payments | Stripe Customer create failed (PI still created, no save-card) |
+
+### 11.10 What was deferred to H4 / H5
+
+- **Reconciliation dashboard + sweep** — H4 (separate package). Daily/weekly sweep that catches webhook misses; admin Reconciliation tab in `/admin`; per-shipment detail view; Needs-Attention actions (Dispute / Re-charge / Absorb).
+- **Refund lifecycle emails + cron sweep** — H5 (separate package, depends on H3).
+- **Programmatic carrier-dispute filing** — out of scope; carrier-direct manual filing is the v1 model.
+- **Prepaid balance / wallet** — money-transmitter-licensing territory (Phase H); WISHLIST.
+

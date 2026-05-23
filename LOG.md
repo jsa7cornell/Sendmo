@@ -12,6 +12,68 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-23] H2 — Carrier-adjustment detection + recovery + full-label save-card
+
+**Category:** feat | Payments | Reconciliation | Edge Functions | Migration
+**Cross-link:** decided proposal [proposals/2026-05-22_reconciliation-and-carrier-adjustments_reviewed-2026-05-22_decided-2026-05-22.md](proposals/2026-05-22_reconciliation-and-carrier-adjustments_reviewed-2026-05-22_decided-2026-05-22.md) (D1 full-label save-card, D2 technical fixes) | handoff [proposals/2026-05-23_pre-launch-handoff-plan.md](proposals/2026-05-23_pre-launch-handoff-plan.md) §Package H2 | builds on H1 (`d0ef0b5`) | PAYMENTS.md §11 (new) | SPEC.md §13.4 (new) | risk-intel handoff Job 3 (`shipping` bundled — closed)
+
+**What shipped:**
+
+- **Migration 033** (`033_resolve_recovery_lock_rpc.sql`) — `resolve_recovery_lock(p_shipment_id, p_payment_method_id, p_user_id)` SECURITY DEFINER plpgsql RPC. Locks the shipments row (FOR UPDATE) and returns the three cap sums (shipment lifetime, per-card 24h, per-user 7d) inside one transaction. Serializes concurrent `resolveRecovery` calls — fixes N2 race where two near-simultaneous adjustments both pass the same cap. Applied to prod via Dashboard SQL Editor 2026-05-23 (see "Migration-apply correction" below).
+
+- **`supabase/functions/_shared/adjustments.ts`** (NEW, 671 LOC) — the tiered recovery engine. `resolveRecovery(shipment, deltaCents, paymentContext)` returns `{ decision, amount_cents, blocked_by_cap?, reason }`. Implements the absorb/recharge/flag tree + the three caps + the FOR UPDATE lock (via the RPC; falls back to unlocked per-shipment-only read if the RPC is missing). On `decision === 'recharge'` success: sends `carrierAdjustmentEmail` immediately (N5 send-site fix).
+
+- **`supabase/functions/_shared/stripe.ts`** — added `createAdjustmentRecharge({ shipment, deltaCents, carrierAdjustmentId, attempt, paymentMethodId, customerId, liveMode })`. Wraps `createOffSessionShipmentPI` with the `+$1` handling fee. Idempotency key `adjustment_${shipment_id}_${carrier_adjustment_id}_${attempt}` — the `_${attempt}` suffix is the retry-safety fix so a failed first PI doesn't dedup the retry.
+
+- **`supabase/functions/webhooks/index.ts`** — new `shipment.invoice.created` + `shipment.invoice.updated` arm (303 LOC). UPSERT on `source_event_id` (NOT pure dedup-skip — `.updated` corrects the prior `.created` amount). INSERTs `carrier_adjustments` row + `transactions` row (`type='carrier_adjustment'`, `-delta_cents`) → calls `resolveRecovery` → fires `createAdjustmentRecharge` if `decision === 'recharge'` → sends email. Additive to the existing `tracker.updated` / `refund.successful` arms — verified no regression.
+
+- **`supabase/functions/payments/index.ts`** — **D1 save-card extension** (176 LOC modified):
+  - `getOrCreateCustomerForUser(userId, mode)` helper — creates a Stripe Customer if one doesn't exist for that user in that mode, persists the id; mirrors the flex/Pattern-D path.
+  - `setup_future_usage: 'off_session'` on the full-label PI create — Stripe attaches the PM after the charge; the existing `payment_method.attached` webhook lands the `payment_methods` row.
+  - Ordering preserved: `checkAccountBudget` → `getOrCreateCustomerForUser` → `createPaymentIntent`. Risk-Intel B5 contract honored.
+  - **Risk-Intel Job 3 bundled**: mid-flow EasyPost GET on `body.easypost_shipment_id` → maps `to_address` into Stripe's `shipping` param (Radar destination signal). Falls back gracefully on EasyPost timeout/error (no fail-closed). Closes the deferred risk-intel work.
+
+- **`src/components/recipient/StripePaymentForm.tsx`** — consent disclosure near the Stripe Elements card form: *"We'll save your card to handle any carrier adjustments after delivery — usually a few dollars."*
+
+- **`supabase/functions/_shared/email-templates.ts`** — `carrierAdjustmentEmail({ amount_cents, fee_cents, carrier, reason, public_code, tracking_url })`. Named-carrier framing, soft post-hoc-billing tone, links to `/t/<public_code>`.
+
+- **Docs**:
+  - **PAYMENTS.md §11** (NEW) — full operational reference for carrier adjustments (detection, tiered policy, caps, save-card mechanics, recharge PI shape, dispute window).
+  - **SPEC.md §13.4** (NEW) — architecture summary.
+  - **PLAYBOOK.md Rule 16** — `carrier_adjustment` writer-map entry filled in (was reserved by H1's amendment).
+
+- **Tests**:
+  - `tests/unit/adjustments.test.ts` — **27 unit tests**. Every tier (≤$1 absorb / $1.01–$10 recharge / >$10 flag / negative delta / comp / no-card flag); each cap (per-shipment, per-card-24h, per-user-7d); race-condition mock; RPC-missing fallback path.
+  - `tests/integration/shipment-invoice-webhook.test.ts` — mock `.created` + follow-up `.updated` → UPSERT preserves latest + correct `recovery_status`.
+  - `tests/e2e/full-label-save-card.spec.ts` — buy a full-label → assert `payment_methods` row written for the buyer.
+
+**Suite health:** **408 passed / 38 files** (27 new unit + the integration/e2e). `npx tsc -b` clean.
+
+**Coordination achieved:**
+- Webhook file shared with H3 (`refund.successful` arm createRefund modification) — H2 added a NEW arm above it; H3 modified existing call. Different lines; clean merge.
+- `payments/index.ts` shared with risk-intel's `checkAccountBudget` — ordering preserved (budget first).
+- `_shared/stripe.ts` purely additive (no overlap with risk-intel's `retrieveCharge`).
+
+**Design call — adjustment recharges bypass `checkAccountBudget`:**
+The adjustment-specific caps (per-shipment $10 lifetime / per-card $20/24h / per-user $50/7d) govern. The Account Budget is for runaway customer charges; carrier adjustments are post-pickup corrections with their own three-cap policy. Documented in PAYMENTS.md §11.4.
+
+**Gotcha — `shipment.invoice.updated` overwrites, not dedups (Pitfall 3 from review):**
+The `.updated` event corrects a prior `.created` event's amount. UPSERT on `source_event_id` (not pure INSERT-on-conflict-skip) so the latest amount wins. Silently dropping `.updated` would leave SendMo on a stale delta.
+
+**Gotcha — `setup_future_usage` requires `customer`:**
+Stripe rejects `setup_future_usage: 'off_session'` if no `customer` is attached. The `getOrCreateCustomerForUser` call MUST land first; the `customerForPi` nullable path is removed for authenticated buyers. Anonymous full-label buyers continue to pay without a saved card (their adjustments route to "flag").
+
+**Migration-apply correction (process fix):**
+The H1 LOG entry below claimed migration 032 was applied via `npx supabase db push --include-all`. That command did NOT actually take effect on this project — verified post-deploy: prod's `transactions_type_check` was still on the migration-017 enum (no `label_cost` / `easypost_refund`). The Supabase MCP for `fkxykvzsqdjzhurntgah` is in **read-only mode** (`apply_migration` returns `"Cannot apply migration in read-only mode"`), and the CLI push apparently silently failed or applied to a different target. **Migrations 032 and 033 were ACTUALLY applied 2026-05-23 via Dashboard SQL Editor by John** (post-verification: `has_claimed_weight=1`, `has_unique_index=1`, `transactions_type_check` includes both new types, `has_033_rpc=1`).
+
+**Going-forward rule:** the Supabase MCP for this project cannot apply DDL. All migrations are applied by John via Dashboard SQL Editor. Agents should write the migration file, paste the SQL into chat for John, and confirm the post-apply verification query before proceeding.
+
+**Browser-verified:**
+  spec: tests/e2e/full-label-save-card.spec.ts
+  variants-covered: [authenticated buyer completes full-label checkout → `payment_methods` row written for the buyer's Stripe Customer; consent disclosure visible on the checkout form; anonymous buyer's flow still completes without a saved-card attach]
+
+---
+
 ### [2026-05-23] H3 — Admin `/refunds` tool + partial-refund plumbing (pre-launch P1)
 
 **Category:** feat | Admin | Payments | Refunds | Edge Functions

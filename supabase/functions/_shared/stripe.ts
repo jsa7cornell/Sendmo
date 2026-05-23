@@ -305,6 +305,60 @@ export function createOffSessionShipmentPI(params: {
     });
 }
 
+// ─── Carrier-adjustment off_session recharge (H2) ───────────
+//
+// Wraps createOffSessionShipmentPI with the carrier-adjustment-specific
+// amount math ($1 handling fee), metadata, and the per-attempt-namespaced
+// idempotency key so a failed first PI's "failed" result doesn't dedup
+// the retry (Nit fix from the decided proposal review).
+//
+// Idempotency key shape: `adjustment_<shipment_id>_<carrier_adjustment_id>_<attempt>`
+// - shipment_id namespaces against label-buy keys (`pi_create_…`,
+//   `pi_offsess_…`, `label_cost_…`).
+// - carrier_adjustment_id namespaces against multiple adjustment events on
+//   the same shipment (a reweigh + an address correction = 2 distinct rows).
+// - attempt counter lets the recharge retry without colliding with the
+//   prior failure's PI.
+//
+// Decided proposal:
+//   2026-05-22_reconciliation-and-carrier-adjustments §2.4 + Nits.
+export function createAdjustmentRecharge(params: {
+    shipmentId: string;                  // SendMo shipment UUID
+    publicCode: string;                  // for metadata + reason text
+    carrierAdjustmentId: string;         // anchors the idempotency key
+    deltaCents: number;                  // carrier overcharge; +$1 handling fee added
+    attempt: number;                     // 1 on first try; bump on retry
+    paymentMethodId: string;             // pre-attached saved PM
+    customerId: string;                  // Stripe Customer (owner of the PM)
+    reason?: string;                     // EasyPost adjustment_reason
+    liveMode: boolean;
+}): Promise<PaymentIntent> {
+    const totalCents = params.deltaCents + 100;  // delta + $1 handling fee
+    const idempotencyKey =
+        `adjustment_${params.shipmentId}_${params.carrierAdjustmentId}_${params.attempt}`;
+
+    return createOffSessionShipmentPI({
+        amount_cents: totalCents,
+        customer: params.customerId,
+        payment_method: params.paymentMethodId,
+        metadata: {
+            source: "carrier_adjustment_recharge",
+            intent_role: "carrier_adjustment",
+            // txn_kind — Radar/Fraud-Teams discriminator (B2 from risk-intel).
+            txn_kind: "mit_adjustment",
+            shipment_id: params.shipmentId,
+            public_code: params.publicCode,
+            carrier_adjustment_id: params.carrierAdjustmentId,
+            delta_cents: String(params.deltaCents),
+            fee_cents: "100",
+            attempt: String(params.attempt),
+            ...(params.reason ? { reason: params.reason } : {}),
+        },
+        idempotency_key: idempotencyKey,
+        liveMode: params.liveMode,
+    });
+}
+
 // ─── Customers ──────────────────────────────────────────────
 
 export interface Customer {

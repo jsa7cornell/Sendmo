@@ -816,6 +816,35 @@ Paid − Stripe fee − Refund to customer + Adjustment collected − Chargeback
 
 All terms are now ledger rows; no column lookups on `shipments` are needed. Full reconciliation architecture: [`proposals/2026-05-22_reconciliation-and-carrier-adjustments_reviewed-2026-05-22_decided-2026-05-22.md`](proposals/2026-05-22_reconciliation-and-carrier-adjustments_reviewed-2026-05-22_decided-2026-05-22.md).
 
+## 13.4 Carrier-Adjustment Recovery (H2)
+
+Post-pickup carrier rate adjustments (USPS reweighs, UPS dim adjustments, address-correction surcharges) are now detected, recorded, and recovered automatically.
+
+**Detection** — `webhooks/index.ts` `shipment.invoice.created/updated` arm:
+- UPSERT `carrier_adjustments` on the partial-UNIQUE `source_event_id` (the ShipmentInvoice id). The `.updated` event corrects the prior amount; UPSERT preserves the latest.
+- INSERT `transactions` row `type='carrier_adjustment'`, `amount_cents = -delta_cents` (SendMo's expense).
+- Dispatches `_shared/adjustments.ts:resolveRecovery` for the tiered decision.
+
+**Recovery — tiered policy** (`_shared/adjustments.ts`):
+
+| Delta | Action |
+|---|---|
+| ≤ $1.00 | Absorb |
+| $1.01 – $10.00 with no cap breach + saved PM | Auto-recharge = delta + $1 handling fee |
+| > $10.00 or cap breach | Flag (Admin Reconciliation tab — H4) |
+| Negative delta (carrier credit) | Absorb (credit lands in EP wallet) |
+| Comp / no PM | Absorb / Flag |
+
+**Caps:** per-shipment $10 lifetime, per-card $20/24h, per-user $50/7d. Read inside a transaction with `SELECT … FOR UPDATE` on the shipments row (migration 033 `resolve_recovery_lock` RPC) so two near-simultaneous adjustments can't both pass the same cap.
+
+**Adjustment recharges bypass `checkAccountBudget`** — the adjustment-specific caps govern. Documented in PAYMENTS.md §11.4.
+
+**Full-label save-card (D1)** — `payments/index.ts` now does `getOrCreateCustomerForUser` + `setup_future_usage: 'off_session'` so adjustment recharges have a PM to charge against. Brief consent disclosure on the checkout form.
+
+**Risk-Intel Job 3 bundled** — `payments/index.ts` now does a mid-flow EasyPost GET to map `to_address` into Stripe's `shipping` param (Radar destination signal). Closes the deferred risk-intel work.
+
+Full operational reference: [PAYMENTS.md §11](PAYMENTS.md#11-carrier-adjustments-2026-05-23--detection-recovery-ledger).
+
 ---
 
 ## 14. Security Requirements

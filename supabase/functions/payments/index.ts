@@ -8,7 +8,9 @@ import { checkAccountBudget } from "../_shared/budget.ts";
 import {
     createPaymentIntent,
     createCustomerSession,
+    createCustomer,
     retrievePaymentIntent,
+    type ShippingDetails,
 } from "../_shared/stripe.ts";
 
 // POST /payments
@@ -45,6 +47,97 @@ function jsonResponse(body: unknown, status = 200): Response {
         status,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
+}
+
+// ─── getOrCreateCustomerForUser (H2 D1 — save-card for full-label) ───────────
+//
+// Returns a Stripe Customer id for (user, mode). If one is already stamped on
+// profiles.stripe_customer_id_{test,live}, returns it; otherwise creates a
+// new Stripe Customer and persists the id.
+//
+// Mirrors the pattern in `payment-methods/index.ts:ensureCustomer` (the
+// SetupIntent / Add-Card flow). Centralizing here so the full-label PI flow
+// (D1) and any future authenticated payment path share the same primitive.
+//
+// Decided proposal:
+//   2026-05-22_reconciliation-and-carrier-adjustments §3 + ## Decision D1
+//   (full-label save-card extension).
+async function getOrCreateCustomerForUser(
+    // deno-lint-ignore no-explicit-any
+    supabase: any,
+    userId: string,
+    email: string | null,
+    liveMode: boolean,
+): Promise<string> {
+    const col = liveMode ? "stripe_customer_id_live" : "stripe_customer_id_test";
+    const { data: row } = await supabase
+        .from("profiles")
+        .select(col)
+        .eq("id", userId)
+        .maybeSingle();
+
+    const existing = (row as Record<string, string | null> | null)?.[col];
+    if (existing) return existing;
+
+    const customer = await createCustomer({
+        email: email || undefined,
+        metadata: { sendmo_user_id: userId, mode: liveMode ? "live" : "test" },
+        liveMode,
+    });
+
+    await supabase.from("profiles").update({ [col]: customer.id }).eq("id", userId);
+    return customer.id;
+}
+
+// ─── fetchEasypostToAddress (H2 — bundles risk-intel Job 3 destination addr) ──
+//
+// Looks up the EasyPost shipment to pull its `to_address` for use as Stripe's
+// `shipping` param (Radar destination-address signal — risk-intel B2).
+//
+// Risk-intel deferred this for the full-label PI because `payments/` only got
+// `easypost_shipment_id` (no destination address in the request). H2 bundles
+// it here as a single mid-flow GET — one EasyPost call, low latency, closes
+// the deferred work. Failure is non-fatal — returns null and the PI is
+// created without `shipping` (current behavior — Radar is already strong on
+// 2b with on-session device fingerprint).
+async function fetchEasypostToAddress(
+    easypostShipmentId: string,
+    liveMode: boolean,
+): Promise<ShippingDetails | null> {
+    const apiKey = Deno.env.get(liveMode ? "EASYPOST_API_KEY" : "EASYPOST_TEST_API_KEY");
+    if (!apiKey) return null;
+
+    try {
+        const ac = new AbortController();
+        const tid = setTimeout(() => ac.abort(), 4000);
+        const resp = await fetch(
+            `https://api.easypost.com/v2/shipments/${easypostShipmentId}`,
+            {
+                headers: { Authorization: "Basic " + btoa(apiKey + ":") },
+                signal: ac.signal,
+            },
+        );
+        clearTimeout(tid);
+        if (!resp.ok) return null;
+        const data = await resp.json();
+        const toAddr = data?.to_address;
+        if (!toAddr?.street1 || !toAddr?.name) return null;
+        return {
+            name: String(toAddr.name),
+            ...(toAddr.phone ? { phone: String(toAddr.phone) } : {}),
+            address: {
+                line1: String(toAddr.street1),
+                ...(toAddr.street2 ? { line2: String(toAddr.street2) } : {}),
+                city: toAddr.city ? String(toAddr.city) : undefined,
+                state: toAddr.state ? String(toAddr.state) : undefined,
+                postal_code: toAddr.zip ? String(toAddr.zip) : undefined,
+                country: toAddr.country ? String(toAddr.country) : undefined,
+            },
+        };
+    } catch {
+        // Network error / timeout / abort — safe to proceed without shipping.
+        return null;
+    }
 }
 
 serve(async (req: Request) => {
@@ -89,12 +182,15 @@ serve(async (req: Request) => {
         const clientWantsLive = live_mode === true;
 
         // Resolve the calling user from the JWT, when present. Optional for
-        // full-label — anonymous PIs are permitted but get no saved-PM display.
+        // full-label — anonymous PIs are permitted but get no saved-PM display
+        // and no carrier-adjustment auto-recharge (anonymous payers fall
+        // straight to "flag" if a post-pickup adjustment arrives).
         let resolvedUserId: string | null = null;
         let callerRole: string | null = null;
         let callerAdminMode: string = "test";
         let customerIdTest: string | null = null;
         let customerIdLive: string | null = null;
+        let userEmail: string | null = null;
         const sbUrl = Deno.env.get("SUPABASE_URL") || Deno.env.get("VITE_SUPABASE_URL");
         const sbKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || Deno.env.get("SB_SERVICE_ROLE_KEY");
         const sbAdmin = sbUrl && sbKey
@@ -109,13 +205,14 @@ serve(async (req: Request) => {
                 resolvedUserId = userResp.user.id;
                 const { data: profile } = await sbAdmin
                     .from("profiles")
-                    .select("role, admin_active_mode, stripe_customer_id_test, stripe_customer_id_live")
+                    .select("role, admin_active_mode, stripe_customer_id_test, stripe_customer_id_live, email")
                     .eq("id", resolvedUserId)
                     .maybeSingle();
                 callerRole = (profile?.role as string) ?? null;
                 callerAdminMode = (profile?.admin_active_mode as string) ?? "test";
                 customerIdTest = (profile?.stripe_customer_id_test as string) ?? null;
                 customerIdLive = (profile?.stripe_customer_id_live as string) ?? null;
+                userEmail = (profile?.email as string) ?? null;
             }
         }
 
@@ -148,15 +245,19 @@ serve(async (req: Request) => {
         }
 
         // ─── Full-label PI creation ─────────────────────────────────────
-        const customerForPi = (isLive ? customerIdLive : customerIdTest) ?? undefined;
-
-        const idempotencyKey = customerForPi
-            ? `pi_create_${body.easypost_shipment_id}_${customerForPi}`
-            : `pi_create_${body.easypost_shipment_id}`;
 
         // ─── B5 Account Budget check (proposal 2026-05-21, decided 2026-05-22) ──
-        // Only enforced when there's an account to budget. Anonymous full-label
-        // payers fall through (Radar still applies on-session).
+        // ORDERING (preserved from risk-intel B5): the budget check runs
+        // BEFORE PI creation so a refusal never leaves a charged-but-no-label
+        // race. Only enforced when there's an account to budget. Anonymous
+        // full-label payers fall through (Radar still applies on-session).
+        //
+        // After this gate passes, H2 D1 work runs:
+        //   1. getOrCreateCustomerForUser (so customerForPi is non-null for
+        //      authenticated buyers — required by setup_future_usage).
+        //   2. fetchEasypostToAddress (Risk-Intel Job 3 bundling — destination
+        //      address as Stripe `shipping` for Radar).
+        //   3. createPaymentIntent with customer + setup_future_usage=off_session.
         if (resolvedUserId && sbAdmin) {
             const bcMode: "live" | "test" = isLive ? "live" : "test";
             const budgetCheck = await checkAccountBudget(
@@ -205,19 +306,60 @@ serve(async (req: Request) => {
             }
         }
 
+        // ─── D1: Ensure Stripe Customer for authenticated buyers ──────────────
+        //
+        // Save-card on the full-label PI requires a Customer + setup_future_usage.
+        // For authenticated buyers we get-or-create a Stripe Customer here
+        // (mirrors payment-methods/:ensureCustomer). Anonymous buyers continue
+        // to pay without a saved card — their post-pickup adjustments will
+        // route to "flag" in the recovery engine.
+        let customerForPi: string | undefined = (isLive ? customerIdLive : customerIdTest) ?? undefined;
+        if (resolvedUserId && sbAdmin && !customerForPi) {
+            try {
+                customerForPi = await getOrCreateCustomerForUser(
+                    sbAdmin, resolvedUserId, userEmail, isLive,
+                );
+            } catch (custErr) {
+                // Fall back to anonymous PI (no save-card) on Customer create
+                // failure. Logged so the gap is visible but never blocks the
+                // checkout.
+                log({
+                    event_type: "payment.get_or_create_customer_failed",
+                    session_id: sessionId,
+                    severity: "warn",
+                    entity_type: "payment_intent",
+                    properties: {
+                        error_message: custErr instanceof Error ? custErr.message : String(custErr),
+                        user_id: resolvedUserId,
+                        live_mode: isLive,
+                    },
+                });
+                customerForPi = undefined;
+            }
+        }
+
+        const idempotencyKey = customerForPi
+            ? `pi_create_${body.easypost_shipment_id}_${customerForPi}`
+            : `pi_create_${body.easypost_shipment_id}`;
+
+        // ─── Risk-Intel Job 3 bundling — destination address as Stripe `shipping` ──
+        // Fetch the EasyPost shipment to read its to_address. Optional —
+        // failure returns null and PI is created without `shipping` (current
+        // behavior, on-session Radar already strong). One EasyPost GET.
+        const shipping = await fetchEasypostToAddress(body.easypost_shipment_id, isLive);
+
         const pi = await createPaymentIntent({
             amount_cents,
             currency: "usd",
             capture_method: "automatic",
             customer: customerForPi,
-            // NB: `shipping` (Stripe's destination-address Radar signal) is
-            // NOT passed on the full-label PI in v1. The destination address
-            // isn't in this request body (`payments/` only gets
-            // easypost_shipment_id), and Radar is already strong on 2b
-            // (on-session — Stripe Elements captures full device fingerprint).
-            // Deferred as a fast-follow per the B2 review (finding 2): if
-            // Fraud Teams custom rules want the destination signal later,
-            // fetch the address via the EasyPost shipment lookup.
+            // H2 D1: save the card so carrier-adjustment recharges (≤$10 tier)
+            // can fire off_session via createAdjustmentRecharge. Only meaningful
+            // when `customer` is set — Stripe rejects setup_future_usage
+            // without one. Anonymous buyers naturally fall through.
+            ...(customerForPi ? { setup_future_usage: "off_session" as const } : {}),
+            // Risk-Intel B2 destination-address signal (now wired — Job 3).
+            ...(shipping ? { shipping } : {}),
             metadata: {
                 easypost_shipment_id: body.easypost_shipment_id,
                 session_id: sessionId,

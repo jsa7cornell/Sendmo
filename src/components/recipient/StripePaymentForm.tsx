@@ -200,6 +200,15 @@ function InnerPaymentForm({
         }}
       />
 
+      {/* H2 D1: save-card consent disclosure. The PI now sets
+          setup_future_usage='off_session' for authenticated buyers so we can
+          handle post-pickup carrier adjustments (reweighs etc.) without a
+          re-prompt. This line is the consent. Decided proposal:
+          2026-05-22_reconciliation-and-carrier-adjustments §Decision D1. */}
+      <p className="text-[11px] text-muted-foreground mt-3 leading-relaxed">
+        We'll save your card to handle any carrier adjustments after delivery — usually a few dollars.
+      </p>
+
       {!liveMode && (
         <p className="text-[11px] text-muted-foreground mt-3">
           Test mode — use card <code className="font-mono">4242 4242 4242 4242</code>, any future expiry, any 3-digit CVC.
