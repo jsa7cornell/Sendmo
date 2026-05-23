@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SendMo — Risk Management</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 880px; margin: 2rem auto; padding: 0 1.5rem; color: #1f2937; line-height: 1.55; }
+  h1 { margin-bottom: 0.25rem; }
+  h2 { margin-top: 2rem; border-bottom: 1px solid #e5e7eb; padding-bottom: 0.3rem; font-size: 1.35rem; }
+  h3 { margin-top: 1.4rem; font-size: 1.05rem; }
+  .meta { color: #6b7280; font-size: 0.9rem; margin-bottom: 1.5rem; }
+  .tldr { background: #f9fafb; border-left: 4px solid #3b82f6; padding: 0.8rem 1rem; margin: 1rem 0; }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: 0.92rem; }
+  th, td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid #e5e7eb; vertical-align: top; }
+  th { background: #f3f4f6; font-weight: 600; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; color: #374151; }
+  code { background: #f3f4f6; padding: 0.1rem 0.35rem; border-radius: 3px; font-size: 0.88em; }
+  .flow { display: flex; gap: 0.6rem; align-items: stretch; margin: 1rem 0; flex-wrap: wrap; }
+  .box { border: 1px solid #d1d5db; border-radius: 8px; padding: 0.7rem 0.9rem; background: white; flex: 1; min-width: 220px; }
+  .box.strong { border-color: #10b981; background: #ecfdf5; }
+  .box.weak { border-color: #f59e0b; background: #fffbeb; }
+  .box h4 { margin: 0 0 0.3rem; font-size: 0.95rem; }
+  .box .meta-line { font-size: 0.8rem; color: #6b7280; margin: 0.15rem 0; }
+  .box .protect { font-size: 0.85rem; color: #1f2937; margin-top: 0.4rem; }
+  .done { color: #059669; font-weight: 600; }
+  .pending { color: #d97706; font-weight: 600; }
+  .reserve { color: #6b7280; font-weight: 600; }
+  .never { font-weight: 600; color: #dc2626; }
+  ul { padding-left: 1.4rem; }
+  li { margin-bottom: 0.3rem; }
+  .footer-pointer { background: #f9fafb; padding: 1rem; border-radius: 6px; margin-top: 1.5rem; font-size: 0.9rem; }
+  .footer-pointer p { margin: 0.4rem 0; }
+</style>
+</head>
+<body>
+
+<h1>SendMo — Risk Management</h1>
+<p class="meta">Last updated 2026-05-23 · Scope: payments fraud + abuse · Status: <strong>v1 shipped</strong> (commits <code>397530c</code>, <code>dbf2254</code>, <code>60e09b3</code>)</p>
+
+<div class="tldr">
+<strong>TL;DR.</strong> SendMo's flex-link product lets an anonymous sender charge a recipient's saved card off-session. That's the novel risk surface, and the one we defend ourselves — Stripe Radar can't see the sender on an off-session merchant-initiated charge. Three controls handle it: an <strong>Account Budget</strong> ($200/day + $500/week per account, admin-raised), a per-account <strong>PM-add breaker</strong> (5 card-adds/day), and a distinct <strong>Radar-block branch</strong> in the webhook so a fraud block isn't treated as a card decline. Per-shipment cap ($50 default) and Stripe Radar handle the easier on-session surfaces. The Account Budget is the only customer-visible control — everything else is transparent to good users.
+</div>
+
+<h2>1. Architecture</h2>
+
+<p>Three charge contexts, each with its own protections:</p>
+
+<div class="flow">
+  <div class="box strong">
+    <h4>Context 1 — PM-add</h4>
+    <p class="meta-line">Stripe SetupIntent · cardholder on-session</p>
+    <p class="protect"><strong>Radar (strong)</strong> + PM-add breaker (5/day per account).</p>
+  </div>
+  <div class="box weak">
+    <h4>Context 2a — Flex charge</h4>
+    <p class="meta-line">off_session MIT · anonymous sender ≠ payer</p>
+    <p class="protect"><strong>Account Budget</strong> + per-shipment cap + distinct <strong>Radar-block routing</strong>. Radar still scores the payer on every charge.</p>
+  </div>
+  <div class="box strong">
+    <h4>Context 2b — Full-label</h4>
+    <p class="meta-line">on-session CIT · payer = printer</p>
+    <p class="protect"><strong>Radar (strong)</strong> + Account Budget.</p>
+  </div>
+</div>
+
+<p><strong>The asymmetry:</strong> 2a is where SendMo carries the risk itself, because Stripe Radar can't see the anonymous sender on an off-session merchant-initiated transaction. Contexts 1 and 2b are ordinary Stripe surfaces — Radar handles them.</p>
+
+<h2>2. The controls</h2>
+
+<table>
+  <thead><tr><th>Control</th><th>What it does</th><th>Where it lives</th><th>Defaults</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Account Budget</strong></td>
+      <td>Per-account cumulative spend ceiling, summed across flex (2a) + full-label (2b) per mode. Counts <code>transactions</code> ledger rows in trailing 24h and 7d. Refuses charges that would breach. Notifies the account holder.</td>
+      <td><code>supabase/functions/_shared/budget.ts</code> (<code>checkAccountBudget()</code>). Called in <code>labels/</code> + <code>payments/</code> <em>before</em> PI creation. Storage: <code>profiles.daily_/weekly_budget_cents</code>.</td>
+      <td>$200 / day, $500 / week</td>
+    </tr>
+    <tr>
+      <td><strong>PM-add breaker</strong></td>
+      <td>Caps SetupIntents (card-adds) per user per 24h. Blunts card-testing via repeated saves. Counts attempts, not just successes.</td>
+      <td><code>supabase/functions/payment-methods/index.ts</code> before <code>createSetupIntent</code>.</td>
+      <td>5 / day per user</td>
+    </tr>
+    <tr>
+      <td><strong>Radar-block branch</strong></td>
+      <td>When Stripe Radar blocks an off_session flex charge (charge <code>outcome.type === 'blocked'</code>), do NOT treat as a card decline. Distinct <code>radar_blocked</code> link event, payer notified, link stays Active.</td>
+      <td><code>supabase/functions/stripe-webhook/index.ts</code> (authoritative via <code>retrieveCharge</code>). Sync hint in <code>labels/</code> via <code>decline_code === 'fraudulent'</code> picks the sender message.</td>
+      <td>—</td>
+    </tr>
+    <tr>
+      <td><strong>Per-shipment cap</strong></td>
+      <td>Max charge for a single shipment. Recipient-set per link; bounds blast radius of one bad event.</td>
+      <td><code>sendmo_links.max_price_cents</code>, server-enforced in <code>labels/</code> (rate vs cap check).</td>
+      <td>$50 default (was $100 pre-2026-05-22; recipient can raise)</td>
+    </tr>
+    <tr>
+      <td><strong>Stripe Radar</strong></td>
+      <td>Stripe's ML fraud scoring on every charge. Auto-blocks at the highest risk band. Strongest on on-session charges (Contexts 1 + 2b).</td>
+      <td>Stripe Dashboard config; metadata fed by all three intent types via <code>_shared/stripe.ts</code> (txn_kind, link_id, sender_ip, emails, <code>shipping</code> for flex).</td>
+      <td>Stripe defaults; recommended block rules pending (B1 — see §5)</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>3. How to work with it</h2>
+
+<h3>For admins (raising a budget)</h3>
+<ol>
+  <li>Sign in to SendMo as the admin account.</li>
+  <li>Go to <code>/admin</code> and expand the <strong>Set Account Budget</strong> panel.</li>
+  <li>Paste the target user's UUID, the new daily $ amount, the new weekly $ amount, click <strong>Set</strong>. Success or server error appears inline.</li>
+  <li>Alternative (no UI): from Supabase Studio or any authenticated supabase-js client — <code>supabase.rpc('set_account_budget', { target_user_id, daily_cents, weekly_cents })</code>.</li>
+</ol>
+<p>The RPC is admin-gated server-side (<code>SECURITY DEFINER</code> + role check). A column-level <code>REVOKE UPDATE</code> on the budget columns prevents any user from self-raising via PostgREST, even though the "Users can update own profile" RLS policy would otherwise allow it. Both gates are required because Supabase RLS doesn't override column grants — together they form a defense-in-depth lock.</p>
+
+<h3>For agents and devs working on payments</h3>
+<p><strong>Do NOT</strong> (per <code>PAYMENTS.md</code> §9):</p>
+<ul>
+  <li class="never">Bypass <code>checkAccountBudget()</code> in <code>labels/</code> or <code>payments/</code>. It runs <em>before</em> PI creation so a refusal never leaves a charged-but-no-label race.</li>
+  <li class="never">Treat a Stripe Radar block as a card decline in <code>stripe-webhook/</code>. Use the <code>radar_blocked</code> branch — payer's card is fine, link must stay Active.</li>
+  <li class="never">Bypass the per-shipment cap. <code>display_price_cents</code> is server-derived from EasyPost, never trusted from the client.</li>
+  <li class="never">Write to <code>transactions</code> outside <code>stripe-webhook/</code> (Rule 16; the lone exception is the <code>comp_grant</code> path in <code>labels/</code>).</li>
+</ul>
+<p><strong>Observability — these event types appear in <code>event_logs</code>:</strong></p>
+<ul>
+  <li><code>velocity.limit_hit</code> — budget or PM-add breach. <code>properties.layer</code> = <code>account_budget</code> | <code>pm_add</code>.</li>
+  <li><code>label.flex_radar_blocked</code> — synchronous Radar-block hint (from <code>labels/</code>).</li>
+  <li><code>stripe.radar_blocked</code> — authoritative Radar block (from <code>stripe-webhook/</code>, severity <code>warn</code>).</li>
+  <li><code>stripe.radar_check_failed</code> — charge fetch failed during the Radar check; conservative fall-through to the decline path.</li>
+  <li><code>stripe.radar_block_email_failed</code>, <code>velocity.budget_email_failed</code> — outbound notification failures.</li>
+</ul>
+<p>The <code>radar_blocked</code> row in <code>link_state_events</code> is the audit record for each block.</p>
+
+<h2>4. Tests — what runs in CI on every push</h2>
+<p>The <strong>"Provide Tests"</strong> GitHub Actions workflow runs <strong>automatically on every push and PR to <code>main</code></strong>. No special invocation needed when shipping risk-intel changes. Per <code>TESTING.md</code>:</p>
+<ul>
+  <li><code>npm run test:unit</code> — Vitest, all <code>tests/unit/*</code>. Includes <code>tests/unit/budget.test.ts</code> (16 tests: window math, fail-open, per-mode, defaults, daily-vs-weekly precedence). <strong>Blocking</strong>.</li>
+  <li><code>npm run test:e2e</code> — Playwright mocked suite. Includes <code>tests/e2e/account-budget-admin.spec.ts</code> (3 tests for the Admin UI). Currently <strong>non-blocking</strong> (<code>continue-on-error</code>) while the e2e suite stabilises overall — make it blocking once health is reliably green.</li>
+  <li><code>tsc -b</code> — blocking.</li>
+</ul>
+<p><strong>Pushing changes to risk-intel code:</strong> the unit + e2e specs above run automatically. Confirm green before declaring done. Integration tests (<code>npm run test:integration</code>) and real-service e2e are excluded from the default (they cost real EasyPost / Stripe API calls) — run them deliberately when meaningful.</p>
+
+<h2>5. Status — done vs. remaining</h2>
+
+<table>
+<thead><tr><th>Item</th><th>Status</th><th>Where</th></tr></thead>
+<tbody>
+  <tr><td>Migration 031 — schema + admin RPC + column lock + <code>radar_blocked</code> enum</td><td class="done">✓ shipped</td><td>commit <code>397530c</code></td></tr>
+  <tr><td>B2 — Radar metadata fed across all three intent types</td><td class="done">✓ shipped</td><td><code>397530c</code></td></tr>
+  <tr><td>B5 — Account Budget enforcement + PM-add breaker + budget-hit email</td><td class="done">✓ shipped</td><td><code>397530c</code></td></tr>
+  <tr><td>B4 — Radar-block routing in webhook + payer notification</td><td class="done">✓ shipped</td><td><code>397530c</code></td></tr>
+  <tr><td>B6 — per-shipment cap default $100 → $50</td><td class="done">✓ shipped</td><td><code>397530c</code> (migration)</td></tr>
+  <tr><td>Admin UI — Set Account Budget panel on <code>/admin</code></td><td class="done">✓ shipped</td><td><code>dbf2254</code></td></tr>
+  <tr><td>Unit tests (<code>checkAccountBudget</code>) + admin-UI e2e</td><td class="done">✓ shipped</td><td><code>60e09b3</code></td></tr>
+  <tr><td><strong>B1 — Stripe Dashboard config</strong> (block rules, card-testing protection, both modes)</td><td class="pending">⏳ pending</td><td>John, ~1 hr</td></tr>
+  <tr><td>Sender-flow e2e for budget-breach + Radar-block sender messages (T3 / T4)</td><td class="pending">⏳ pending</td><td>needs a sender-flow mock harness (~½ day); see handoff Job 2</td></tr>
+  <tr><td>Real-service B4 e2e (Stripe test card <code>4100 0000 0000 0019</code>)</td><td class="pending">⏳ pending</td><td>~½ day; <code>buy_label_debug.spec.ts</code>-style real-service spec</td></tr>
+  <tr><td><code>shipping</code> param on the full-label PI</td><td class="pending">⏳ pending (low priority)</td><td>needs an EasyPost shipment lookup; Radar already strong on 2b</td></tr>
+  <tr><td>Per-card fingerprint spend cap (anti-farm escalation)</td><td class="reserve">📋 held in reserve</td><td>only if telemetry shows a real account farm</td></tr>
+  <tr><td>ZDA / Pattern D′ at SetupIntent save</td><td class="reserve">📋 held in reserve</td><td>telemetry-gated; revisit ~2 weeks post-launch with the <code>PAYMENTS.md</code> §4 decline-rate query</td></tr>
+  <tr><td>Turnstile signup CAPTCHA (Supabase-native)</td><td class="reserve">📋 WISHLIST</td><td>parked; revisit if real bot-farm activity appears</td></tr>
+  <tr><td>Stripe Radar for Fraud Teams (custom rules + review queue)</td><td class="reserve">📋 deferred</td><td>flip on at volume — metadata is pre-wired so it's a Dashboard toggle</td></tr>
+</tbody>
+</table>
+
+<h2>6. Pointers</h2>
+
+<div class="footer-pointer">
+  <p><strong>Architectural reference:</strong> <code>PAYMENTS.md</code> §10 "Risk intelligence (2026-05-22)" — operational summary, data contract, full event-log surface, NEVER-do rules.</p>
+  <p><strong>Design rationale:</strong> <code>proposals/2026-05-21_payments-risk-intelligence_reviewed-2026-05-22_decided-2026-05-22.md</code> — full proposal with the embedded fresh-eyes review + author response (incl. the corrected understanding of how Radar works on off-session MITs).</p>
+  <p><strong>Handoff for next agent:</strong> <code>proposals/2026-05-22_payments-risk-intel-followups-handoff.md</code> — what's still owed, Stripe test card for B4 verification, telemetry pointers for ZDA reconsideration.</p>
+  <p><strong>Decision history:</strong> <code>LOG.md</code> — the four 2026-05-22 / 2026-05-23 entries (proposal decided → implementation shipped → docs + Admin UI → Job 2 tests).</p>
+</div>
+
+</body>
+</html>
