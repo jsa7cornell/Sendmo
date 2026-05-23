@@ -94,28 +94,53 @@ Effort: ~1–2 hours.
 
 ### Job 2 — Tests for B5 + B4
 
-The 2026-05-22 implementation shipped without new tests; the LOG entry flags
-this as owed. Per the approved plan:
+**Partially shipped 2026-05-23.** What's done vs. remaining:
 
-- **Unit / integration tests for `checkAccountBudget`** (`_shared/budget.ts`).
-  Pure logic; mock the supabase client. Cover: trailing-window math (24h vs
-  7d split), the empty-transactions case, the "missing profile fails open"
-  case, the per-mode segregation.
-- **E2e test (Playwright) for the budget breach path:** drive a flex link
-  past `weekly_budget_cents=50000` (admin-set it low first), confirm the
-  402 + the contact-us copy + a `velocity.limit_hit` event_log row.
-- **E2e test for Radar-block routing:** Stripe test card
-  `4100 0000 0000 0019` triggers a Radar block. Confirm `label.flex_radar_blocked`
-  is logged, `radar_blocked` `link_state_events` is written, the decline
-  email is NOT sent (check `sendmo_links.last_decline_email_at` doesn't
-  bump), the link stays `active`, and `radarBlockedPayerEmail` is sent to
-  the payer.
+- **✅ Done:** `tests/unit/budget.test.ts` — 16 Vitest unit tests for
+  `_shared/budget.ts checkAccountBudget` (window math, fail-open, per-mode,
+  24h/7d boundary, null defaults, abs on amount_cents). Pattern: TYPE-ONLY
+  import of `SupabaseClient` so Vitest's TS transform erases the remote URL
+  and we import the real helper directly + feed it a typed mock client.
+- **✅ Done:** `tests/e2e/account-budget-admin.spec.ts` — 3 mocked Playwright
+  tests for the `/admin` Account Budget UI (success path, RPC error
+  surfacing, client-side validation). Mocks `/rest/v1/profiles*` to return
+  `role:'admin'` so the seeded test user clears the admin gate (same
+  workaround `admin.spec.ts` flagged as the coverage path forward).
+- **⏳ Remaining — `tests/e2e/flex-budget-breach.spec.ts`:** drive the
+  sender flow at `/s/<code>` to Confirm with a mock `labels` Edge Function
+  response of `{ status: 402, body: "this link has reached its spending
+  limit…" }`; assert the sender sees the "contact us" message.
+- **⏳ Remaining — `tests/e2e/flex-radar-block.spec.ts`:** same harness, mock
+  `labels` to return `{ status: 402, body: "this payment was declined by our
+  fraud protection…" }`; assert the distinct fraud-protection wording.
 
-The existing `tests/e2e/phone-gate.spec.ts` is a good model for the
-authenticated-spec harness pattern (`playwright/.auth/user.json` from
-`global-setup.ts`).
+**Why T3/T4 weren't shipped this round:** the existing `sender-flow.spec.ts`
+only covers the link-fetch *error* path. Driving the multi-step sender wizard
+(intro → from address + package → rates → confirm) to the Confirm step needs
+mocking `links`/`autocomplete`/`place-details`/`rates` plus accurate UI
+navigation through each step — that harness doesn't exist yet in the repo
+and is real work. T3/T4 are **stepwise straightforward once that harness
+exists**: each is a ~50-LOC append to that base spec, just changing the
+`labels` mock response.
 
-Effort: ~1 day.
+**Real-service e2e for the server-side routing** (the actual
+charge-fetch-and-route in `stripe-webhook`, with Stripe test card
+`4100 0000 0000 0019`) is the most honest verification of B4 but lives
+outside the mocked default suite (per `playwright.config.ts`'s `testIgnore`).
+Worth adding as a `buy_label_debug.spec.ts`-style real-service spec.
+
+**Pre-existing breakage noted (NOT from this work):**
+`tests/e2e/label-flow.spec.ts` is **stale relative to the 2026-05-20
+`/label-test` 5-step refactor** that inserted a Stripe payment step between
+Rates and Label. The spec clicks "Select a Rate" then expects the "Label
+Ready!" heading, but the page now renders the Payment step in between. Spec
+last touched at commit `56029c1` (de-rot); `LabelTest.tsx` has been touched
+since. **Fix path:** mock Stripe Elements (or skip the payment step via
+test mode) and update the spec to drive through Payment. ~½ day. Not caused
+by the risk-intel work — surfaced when I ran the full e2e suite for Job 2.
+
+Effort remaining for Job 2: ~½ day for T3/T4 (with harness), ~½ day for the
+real-service B4 verification spec, ~½ day for the `label-flow.spec.ts` fix.
 
 ### Job 3 (optional, low-priority) — `shipping` on the full-label PI
 

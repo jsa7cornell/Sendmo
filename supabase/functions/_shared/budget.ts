@@ -15,7 +15,10 @@
 // charge itself — so two near-simultaneous charges could both pass the gate.
 // Acceptable at SendMo's volume; revisit if real concurrency emerges.
 
-import { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+// Type-only import — at runtime TypeScript erases this so Vitest doesn't need
+// to resolve the remote URL. Lets `tests/unit/budget.test.ts` import this
+// helper directly and feed it a typed mock client.
+import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const WEEK_MS = 7 * DAY_MS;

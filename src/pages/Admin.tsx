@@ -558,8 +558,9 @@ export default function Admin() {
                             </summary>
                             <form onSubmit={handleSetBudget} className="px-4 pb-4 flex flex-col sm:flex-row gap-2 items-stretch sm:items-end">
                                 <div className="flex flex-col gap-1 flex-1 min-w-[280px]">
-                                    <label className="text-[10px] uppercase tracking-wider text-muted-foreground">target_user_id (UUID)</label>
+                                    <label htmlFor="budget-target-user-id" className="text-[10px] uppercase tracking-wider text-muted-foreground">target_user_id (UUID)</label>
                                     <input
+                                        id="budget-target-user-id"
                                         type="text"
                                         value={budgetTargetId}
                                         onChange={e => setBudgetTargetId(e.target.value)}
@@ -568,8 +569,9 @@ export default function Admin() {
                                     />
                                 </div>
                                 <div className="flex flex-col gap-1 w-32">
-                                    <label className="text-[10px] uppercase tracking-wider text-muted-foreground">daily ($)</label>
+                                    <label htmlFor="budget-daily-cents" className="text-[10px] uppercase tracking-wider text-muted-foreground">daily ($)</label>
                                     <input
+                                        id="budget-daily-cents"
                                         type="number"
                                         step="0.01"
                                         min="0"
@@ -580,8 +582,9 @@ export default function Admin() {
                                     />
                                 </div>
                                 <div className="flex flex-col gap-1 w-32">
-                                    <label className="text-[10px] uppercase tracking-wider text-muted-foreground">weekly ($)</label>
+                                    <label htmlFor="budget-weekly-cents" className="text-[10px] uppercase tracking-wider text-muted-foreground">weekly ($)</label>
                                     <input
+                                        id="budget-weekly-cents"
                                         type="number"
                                         step="0.01"
                                         min="0"

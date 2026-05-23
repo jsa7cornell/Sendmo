@@ -12,6 +12,33 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-23] Payments risk-intel — Job 2 tests (T1 + T2) shipped
+
+**Category:** test | ship | Payments | Risk
+**Cross-link:** handoff [proposals/2026-05-22_payments-risk-intel-followups-handoff.md](proposals/2026-05-22_payments-risk-intel-followups-handoff.md) Job 2 | TESTING.md | the three 2026-05-22 entries below for context.
+
+**What shipped:**
+- **`tests/unit/budget.test.ts`** — 16 Vitest unit tests for `_shared/budget.ts checkAccountBudget`: window math (24h / 7d), fail-open on missing profile / DB error / synchronous throw, per-mode plumbing, null-default fallback, `Math.abs` on `amount_cents`, daily-vs-weekly precedence. **All pass.** Pattern: changed `import { SupabaseClient }` → **`import type`** in `_shared/budget.ts` so Vitest's TS transform erases the Deno-style remote URL and lets the test import the real helper directly + feed it a typed mock client. (Existing shared-helper tests like `actor.test.ts` re-implement logic locally because of the remote-import issue — the type-only-import path is cleaner and now established as a precedent.)
+- **`tests/e2e/account-budget-admin.spec.ts`** — 3 mocked Playwright tests for the `/admin` Account-Budget UI: valid submission → success message, RPC error → error surfaces, client-side validation blocks empty-target submission (and verifies the RPC wasn't called). Mocks `/rest/v1/profiles*` to return `role:'admin'` so the seeded test user clears `isAdmin` (the path `admin.spec.ts` had flagged as the coverage workaround).
+- **`src/pages/Admin.tsx`** — added `htmlFor`/`id` to the three Account-Budget form fields. A11y improvement + makes `getByLabel` work (the e2e was written against the standard label-input association).
+
+**Suite health:**
+- Unit: **358 passed / 35 files** (16 new). No regressions.
+- E2E: 52 passed / 5 skipped / **1 failed**. The single failure is **pre-existing breakage in `tests/e2e/label-flow.spec.ts`** — stale relative to the 2026-05-20 `/label-test` 5-step refactor that inserted a Stripe payment step between Rates and Label. The spec was last touched at `56029c1`; `LabelTest.tsx` has changed since. Not caused by the risk-intel work; documented in the handoff (Job 2 §Pre-existing breakage).
+
+**What was deferred — coverage gaps documented in the handoff:**
+- **T3 `flex-budget-breach.spec.ts`** + **T4 `flex-radar-block.spec.ts`** — driving the multi-step sender wizard to Confirm needs a mock harness for `links`/`autocomplete`/`place-details`/`rates` + accurate per-step UI navigation. That harness doesn't exist yet in the repo (the existing `sender-flow.spec.ts` only covers the link-fetch error path). T3/T4 are stepwise straightforward once the harness exists — each is a ~50-LOC append, only the `labels` mock response differs.
+- **Real-service B4 verification** with Stripe test card `4100 0000 0000 0019` — the most honest verification of the webhook's Radar-block routing, but lives outside the mocked default suite (per `playwright.config.ts`'s `testIgnore`). Worth adding as a `buy_label_debug.spec.ts`-style real-service spec.
+
+**Root-clutter housekeeping:** deleted stale `playwright_debug.log` (Feb 24, untracked). All Playwright artifact paths (`test-results/`, `playwright-report/`, `playwright/.auth/`, `.playwright-mcp/`, `*.log`) confirmed already in `.gitignore` — nothing leaks to git.
+
+**Browser-verified:**
+  spec: tests/e2e/account-budget-admin.spec.ts
+  variants-covered: [admin opens /admin past the gate; expands "Set Account Budget"; valid submit → success message; RPC error → server error surfaces in the form; empty target_user_id → client-side validation blocks submission and RPC is not called]
+  `npm run test:unit` 358/358 pass. `npx tsc -b` clean.
+
+---
+
 ### [2026-05-22] Payments risk-intel — docs + Admin Account-Budget UI (fast-follow)
 
 **Category:** docs | ship | Payments | Risk
