@@ -12,6 +12,79 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-23] Pre-launch correctness bundle — Stripe fee writer + buy-time rate gate + Smart Post denylist + admin user page + React #310 fix
+
+**Category:** feat | fix | Ledger | Edge Functions | Admin | Rates | UX
+**Cross-link:** sibling reconciliation entry below (the empty-columns fix) | decided proposal [proposals/2026-05-23_buy-time-rate-gate.md](proposals/2026-05-23_buy-time-rate-gate.md) (all four OQs decided live in session) | handoff [proposals/2026-05-23_smart-post-denylist-handoff.md](proposals/2026-05-23_smart-post-denylist-handoff.md) | deferred-to-WISHLIST [proposals/2026-05-23_edge-function-import-resilience.md](proposals/2026-05-23_edge-function-import-resilience.md) | builds on H1 ledger foundation (d0ef0b5) and H4 reconciliation dashboard (78af457)
+
+**Why this bundle:** the reconciliation dashboard surfaced two real launch-readiness gaps once it started rendering live numbers — (a) Stripe fees were missing from the ledger entirely (no writer existed), (b) a single FedEx Smart Post shipment had a -$9.62 net margin because EasyPost's quoted rate diverged from buy-time billing with no in-code gate to catch it. Audit confirmed it was an isolated test-mode loss (0 live losses across 32 historical shipments) but the gap is real for future traffic. Plus, the admin pane needed a per-user view + functional test/live filter to triage real shipments properly.
+
+**Five changes, one shipping session:**
+
+**(1) Stripe processing fee as a first-class ledger row.** New `writeStripeFee` helper in [`_shared/ledger.ts`](supabase/functions/_shared/ledger.ts) matching the H1 writer pattern (idempotency_key = `fee_stripe_<balance_transaction_id>`, fire-and-forget). [`stripe-webhook/index.ts`](supabase/functions/stripe-webhook/index.ts) on `payment_intent.succeeded` now retrieves the latest charge with `?expand[]=balance_transaction` and writes a `fee_stripe` ledger row. Type CHECK already admitted `fee_stripe` (verified before writing — no migration). [`_shared/stripe.ts`](supabase/functions/_shared/stripe.ts) gains a `BalanceTransaction` interface + optional expand param on `retrieveCharge`. **Historical backfill:** [`scripts/backfill-stripe-fees-2026-05-23.mjs`](scripts/backfill-stripe-fees-2026-05-23.mjs) — for each of 14 historical `charge` rows, pulls the PI with expanded BT from Stripe, inserts a corresponding `fee_stripe` row. Result: 14 rows inserted, -$11.57 total (matches expected formula 2.9% × $253.83 + $0.30 × 14 = $11.56 within 1¢ rounding). Reconciliation-report's PI-side query already had `fee_stripe` in its type filter from the prior Path B refactor, so dashboard surfaces fees automatically post-backfill.
+
+**(2) Buy-time rate gate.** [`labels/index.ts`](supabase/functions/labels/index.ts) now refetches the EasyPost rate BEFORE calling `/buy` (uses the same fallback pattern as the existing flex-cap re-derive — `/shipments/<id>/rates/<id>` with `/shipments/<id>` fallback). Threshold formula encodes John's 5%-net-after-Stripe-fees decision:
+```
+ep_cost ≤ display × (1 − STRIPE_FEE_PCT − MIN_NET_MARGIN_PCT) − STRIPE_FEE_FLAT_CENTS
+       ≤ display × 0.921 − 30 cents
+```
+Defaults: 2.9% + 30¢ Stripe + 5% net margin. All three values env-overridable. On a gate trip: refund the PI via `createRefund` (idempotency `refund_<eps_id>_buy_time_rate_exceeded`), return HTTP 409 with structured body (`error: "rate_changed"`, before/after prices, refunded flag, PI id). **Middle-path refund-failure handling (decided in session):** if the Stripe refund itself fails, response carries `refunded: false` + `refund_error`; an `auto_refund_failed` event_logs row with `requires_manual_intervention: true` is the admin alert. No automatic retry queue yet — fast-follow when real-world data demands it. **Soft-warning band** (5% drift threshold, env-tunable): non-blocking `label.buy_time_rate_drift` event for telemetry. **Comp labels exempt** (SendMo absorbs EP cost by design).
+
+Client: [`src/lib/api.ts`](src/lib/api.ts) gains a `BuyLabelRateChangedError` typed class; `buyLabel()` rewritten to throw it on 409 (was previously collapsing to a generic `new Error`). New shared component [`src/components/RateChangedDialog.tsx`](src/components/RateChangedDialog.tsx) (~85 LOC) renders the rate-changed UX with honest-copy branching on `refunded: true/false`. Wired into both full-label ([`RecipientStepPayment.tsx`](src/components/recipient/RecipientStepPayment.tsx)) and flex ([`SenderFlow.tsx`](src/pages/SenderFlow.tsx)) buy-flow call sites. SPEC §13.6 documents the invariant + auto-capture-vs-auth-then-capture trade-off (defer the latter until real-world data shows >1 hard refund per week sustained).
+
+**Decisions on the proposal (made live in session):**
+- OQ1 (BEFORE vs AFTER): **BEFORE.** Customer charge happens at `/pay` (auto-capture), so refund path is identical in either option — AFTER's only extra cost is the EP-side voided-label artifact. BEFORE wins on UX cleanliness for the rare-but-possible drift case.
+- OQ2 (margin floor 0% vs 5%): **5% net after Stripe fees** (not just 5% gross). John's framing — more nuanced than the proposal's simple 5%.
+- OQ3 (which refund-failure handling): **middle path** — auto-refund + honest copy if it fails + admin alert event. No retry queue (would be over-engineering for the rarity).
+- OQ4 (audit before shipping): **yes, audit first.** Result: 0 live losses, 1 hard test-mode loss (GC37EXG, the trigger case), and 13 zero-margin shipments all from pre-markup-formula test data. Gate is safe to ship — would refuse 0 legitimate live transactions to date.
+
+**(3) FedEx Smart Post denylist + telemetry.** Companion to the gate. [`rates/index.ts`](supabase/functions/rates/index.ts) gains a `SERVICE_DENYLIST` constant (FedEx Smart Post) + a `rate.service_denylisted` event_logs row per filtered rate (carrier/service/would_have_been_display_price). Per the parallel-session handoff's forensics, the corrected diagnosis is that EasyPost's TEST-mode integration contract for Smart Post doesn't guarantee quote = buy-time (NOT a write-side weight=0 bug — the `rate.fetched` log shows weight=32 oz at quote time for GC37EXG). Live behavior is unknown — we have zero LIVE Smart Post shipments — so the denylist is a precaution proportional to the lack of evidence. Re-enable path is reframed as **Phase 1 shadow observations** + **Phase 2 gated live** (the original "30 consecutive Smart Post shipments via gate's soft-warning" was structurally unobservable while denylisted). Companion probe script: [`scripts/probe-smartpost-rate-divergence-2026-05-23.mjs`](scripts/probe-smartpost-rate-divergence-2026-05-23.mjs).
+
+**(4) Admin user-detail page + cross-navigation + functional test/live filter.** New route `/admin/users/:userId` ([`src/pages/AdminUserDetail.tsx`](src/pages/AdminUserDetail.tsx) ~370 LOC + new edge function [`admin-user-detail/index.ts`](supabase/functions/admin-user-detail/index.ts) ~230 LOC). One-page comprehensive view (no toggle, per John): identity strip + composite risk chip (High/Watch/Clear with reasoning) + 6 risk cards (chargebacks · refund rate · lifetime loss · declines 30d · Radar high-risk · account age) + 6 account KPI cards + payment methods + links + shipments table (per-row linked SM-codes, target=_blank) + activity timeline (last 100 event_logs scoped via `actor_id` OR `properties.sendmo_user_id`) + Connection-signals "not captured" honest placeholder (event_logs doesn't carry IP/UA today). Server computes all sums from the append-only transactions ledger, using the same Path B merge pattern (shipment_id-keyed + PI-back-ref merged). Read-only — no admin action buttons (per John, decision in session). [`AdminShipmentDetail.tsx`](src/pages/AdminShipmentDetail.tsx) now links the "link owner" line to `/admin/users/<uuid>`, surfaced via new `owner_user_id` + `owner_email` fields added to `reconciliation-report` row construction (nested `sendmo_links.user_id` + `profiles.id` added to the select). [`AdminReconciliation.tsx`](src/pages/AdminReconciliation.tsx) shipment links now `target="_blank"`. Existing All/Production/Test toolbar in [`Admin.tsx`](src/pages/Admin.tsx) is now passed as `envFilter` prop into AdminReconciliation, threaded through to `reconciliation-report` as a query param, applied server-side to the shipments query — so summary cards AND per-shipment table both respect the filter (previously the dashboard ignored it).
+
+**(5) Hooks-order fix — React error #310.** Post-deploy regression discovered when John tried to open a shipment detail page: blank page + minified `Minified React error #310` in console (`Rendered more hooks than during the previous render`). Root cause: both [`AdminShipmentDetail.tsx`](src/pages/AdminShipmentDetail.tsx) (existing — latent bug since written) and the new [`AdminUserDetail.tsx`](src/pages/AdminUserDetail.tsx) (inherited the same template) had auth-guard early returns ABOVE the `useEffect` call. When `authLoading` flipped between renders the hook count changed, tripping React's rules-of-hooks check. Existing page worked by luck when `authLoading` was already false on first render. Fix: move `useEffect` above all conditional returns in both files. Scanned `src/pages/` + `src/components/` for the same anti-pattern — no other instances.
+
+**Files changed:**
+- `supabase/functions/_shared/ledger.ts` (+126) — writeStripeFee
+- `supabase/functions/_shared/stripe.ts` (+27 / -3) — BalanceTransaction + expand
+- `supabase/functions/stripe-webhook/index.ts` (+50) — fee row write
+- `supabase/functions/labels/index.ts` (+170) — buy-time gate + forward stitch (prior commit)
+- `supabase/functions/reconciliation-report/index.ts` (+50 / -2) — owner_user_id + env filter + Path B (prior commit)
+- `supabase/functions/rates/index.ts` (+50) — SERVICE_DENYLIST + telemetry
+- `supabase/functions/admin-user-detail/index.ts` (new, ~230 LOC)
+- `src/lib/api.ts` (+50 / -1) — BuyLabelRateChangedError
+- `src/components/RateChangedDialog.tsx` (new, ~85 LOC)
+- `src/components/recipient/RecipientStepPayment.tsx` (+30)
+- `src/pages/SenderFlow.tsx` (+25)
+- `src/pages/AdminShipmentDetail.tsx` (+17 / -9) — user link + hooks fix
+- `src/pages/AdminUserDetail.tsx` (new, ~370 LOC) — hooks fix folded in
+- `src/pages/Admin.tsx` (+1) — envFilter prop pass
+- `src/pages/AdminReconciliation.tsx` (+14 / -1) — target=_blank + envFilter pass
+- `src/App.tsx` (+2) — route registration
+- `SPEC.md` §13.6 — full invariant + auto-capture rationale
+- `proposals/` — buy-time-rate-gate (in-review), smart-post-denylist-handoff, edge-function-import-resilience (deferred)
+- `scripts/` — backfill-charge-shipment-links-2026-05-23.mjs, backfill-stripe-fees-2026-05-23.mjs, backfill-shipment-parcel-dims-2026-05-23.mjs, probe-smartpost-rate-divergence-2026-05-23.mjs
+- `WISHLIST.md` — esm.sh→JSR migration deferred entry
+- `LOG.md` — this entry + sibling reconciliation entry below
+
+**Deployed:** `supabase functions deploy labels rates stripe-webhook reconciliation-report admin-user-detail` ✓ · Vercel auto-built React side from the 4 commits pushed (c2d2efb, fbd0865, bff93f6, dda355b).
+
+**Backfills run (op-piped secrets, John's terminal):**
+- `node scripts/backfill-charge-shipment-links-2026-05-23.mjs` ✓ — checked 14, linked 11 (3 skipped — orphan PIs with no matching shipments row, correctly handled)
+- `node scripts/backfill-stripe-fees-2026-05-23.mjs` ✓ — checked 14, inserted 14, fee total -$11.57 (matches 2.9% formula within 1¢)
+- `node scripts/backfill-shipment-parcel-dims-2026-05-23.mjs` ✓ — checked 14, updated 14 (parallel session, sibling entry below)
+
+**Post-launch follow-ups (not blocking):**
+- Migrate edge-function imports off esm.sh + deno.land to JSR — deferred to WISHLIST per OQ1 decision on resilience proposal.
+- Review FedEx Smart Post live-mode behavior once we have data. Denylist holds until then.
+- Auth-then-capture (`capture_method='manual'`) redesign — only if real-world data shows >1 hard refund per week sustained. Audit baseline: 0.
+
+**Browser-verified:**
+  mcp-session: live reconciliation dashboard reload after fee backfill + admin shipment detail page resolves after hooks fix
+  variants-covered: [reconciliation dashboard renders Stripe Fee column for every card shipment (-$0.50 to -$0.60 range); test/live toggle filters table + summary cards; clicking SM-code opens new tab; opening shipment detail (`/admin/shipments/<tracking>`) loads without React #310 after hooks fix; clicking link-owner email opens `/admin/users/<uuid>`; SM-727C net margin updates from -$9.62 to -$10.20 once the $0.58 Stripe fee is subtracted]
+
+---
+
 ### [2026-05-23] Shipments parcel-dims wiped to 0 — labels fn now reads from EasyPost (data-quality fix + backfill)
 
 **Category:** fix | Edge Functions | Backfill | Data Quality
