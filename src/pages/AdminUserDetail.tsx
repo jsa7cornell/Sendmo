@@ -187,11 +187,10 @@ export default function AdminUserDetail() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  if (authLoading) return null;
-  if (!user) return <Navigate to="/login?redirectTo=/admin" replace />;
-  if (!profileLoaded) return null;
-  if (!isAdmin) return <Navigate to="/admin" replace />;
-
+  // useEffect MUST come before any conditional returns — React Rules of Hooks.
+  // Putting the auth-guard returns above this would trip React error #310
+  // ("rendered more hooks than during the previous render") when authLoading
+  // flips between renders.
   useEffect(() => {
     if (!session || !userId) return;
     (async () => {
@@ -217,6 +216,12 @@ export default function AdminUserDetail() {
       }
     })();
   }, [session, userId]);
+
+  // Auth guards — only run AFTER all hooks above.
+  if (authLoading) return null;
+  if (!user) return <Navigate to="/login?redirectTo=/admin" replace />;
+  if (!profileLoaded) return null;
+  if (!isAdmin) return <Navigate to="/admin" replace />;
 
   if (loading) {
     return (
