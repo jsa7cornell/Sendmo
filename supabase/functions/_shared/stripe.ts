@@ -393,6 +393,49 @@ export interface Customer {
     object: "customer";
     email?: string;
     metadata?: Record<string, string>;
+    invoice_settings?: {
+        default_payment_method?: string | null;
+    };
+}
+
+export interface StripeCardPaymentMethod {
+    id: string;
+    object: "payment_method";
+    type: "card";
+    created: number; // Stripe unix timestamp (seconds)
+    customer?: string | null;
+    card?: {
+        brand: string;
+        last4: string;
+        exp_month: number;
+        exp_year: number;
+    };
+}
+
+// List a customer's card PaymentMethods directly from Stripe. Used by the
+// Dashboard "My Wallet" surface as the source of truth (replaces a local-table
+// read that could silently drift if a `payment_method.attached` webhook event
+// was missed — see 2026-05-24 investigation).
+export function listCustomerCardPaymentMethods(params: {
+    customerId: string;
+    liveMode: boolean;
+    limit?: number;
+}): Promise<{ data: StripeCardPaymentMethod[]; has_more: boolean }> {
+    const limit = params.limit ?? 20;
+    return stripeRequest<{ data: StripeCardPaymentMethod[]; has_more: boolean }>(
+        `/customers/${encodeURIComponent(params.customerId)}/payment_methods?type=card&limit=${limit}`,
+        { method: "GET", liveMode: params.liveMode },
+    );
+}
+
+export function retrieveCustomer(params: {
+    customerId: string;
+    liveMode: boolean;
+}): Promise<Customer> {
+    return stripeRequest<Customer>(
+        `/customers/${encodeURIComponent(params.customerId)}`,
+        { method: "GET", liveMode: params.liveMode },
+    );
 }
 
 export function createCustomer(params: {

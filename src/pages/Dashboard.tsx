@@ -267,26 +267,37 @@ export default function Dashboard() {
     fetchData();
   }, [user]);
 
-  // Phase B saved cards — direct PostgREST read filtered by current mode.
-  // Refetched on liveMode flip (admin toggles in header). Optimistic refetch
-  // after Add Card success runs in handleCardAdded() below.
-  // Returns the fetched rows so callers can decide whether to keep polling.
+  // Phase B saved cards — read from Stripe directly via /payment-methods GET
+  // (source of truth). The local payment_methods table can silently drift if
+  // a payment_method.attached webhook event is ever missed — see 2026-05-24
+  // investigation. Refetched on liveMode flip + after Add Card success.
   const fetchPaymentMethods = async (): Promise<PaymentMethodRow[]> => {
     if (!user) return [];
-    const mode = liveMode ? "live" : "test";
     setLoadingPaymentMethods(true);
-    const { data, error } = await supabase
-      .from("payment_methods")
-      .select("id, stripe_payment_method_id, mode, brand, last4, exp_month, exp_year, is_default, created_at")
-      .eq("user_id", user.id)
-      .eq("mode", mode)
-      .is("deleted_at", null)
-      .order("created_at", { ascending: false });
-    setLoadingPaymentMethods(false);
-    if (error || !data) return [];
-    const rows = data as PaymentMethodRow[];
-    setPaymentMethods(rows);
-    return rows;
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        setLoadingPaymentMethods(false);
+        return [];
+      }
+      const BASE_URL = import.meta.env.VITE_SUPABASE_URL;
+      const res = await fetch(`${BASE_URL}/functions/v1/payment-methods`, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          "Content-Type": "application/json",
+        },
+      });
+      setLoadingPaymentMethods(false);
+      if (!res.ok) return [];
+      const body = await res.json();
+      const rows = (body.payment_methods ?? []) as PaymentMethodRow[];
+      setPaymentMethods(rows);
+      return rows;
+    } catch {
+      setLoadingPaymentMethods(false);
+      return [];
+    }
   };
 
   useEffect(() => {

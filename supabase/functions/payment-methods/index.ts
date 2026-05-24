@@ -6,6 +6,8 @@ import {
     createCustomer,
     createSetupIntent,
     detachPaymentMethod,
+    listCustomerCardPaymentMethods,
+    retrieveCustomer,
 } from "../_shared/stripe.ts";
 
 // /payment-methods — Phase B saved-cards surface.
@@ -117,6 +119,57 @@ serve(async (req: Request) => {
     const mode = caller.liveMode ? "live" : "test";
 
     try {
+        // GET /payment-methods → list the caller's saved cards directly from
+        // Stripe (source of truth). Source-of-truth fix per 2026-05-24
+        // investigation: the local payment_methods table can silently drift
+        // from Stripe Customer reality if a `payment_method.attached` webhook
+        // event is ever missed (e.g. PM attached during an interaction that
+        // didn't deliver the event). For the read-side surface (Dashboard
+        // "My Wallet"), bypass the local table entirely. The local table is
+        // still maintained by the stripe-webhook handler and remains the
+        // off-session-charging reference for the H2 carrier-adjustment flow.
+        if (method === "GET" && path === "") {
+            // Look up the existing customer for this user+mode. Do NOT call
+            // ensureCustomer here — we don't want a side-effect Customer
+            // creation on a read endpoint. Users with no Customer get [].
+            const col = caller.liveMode ? "stripe_customer_id_live" : "stripe_customer_id_test";
+            const { data: profileRow } = await caller.supabase
+                .from("profiles")
+                .select(col)
+                .eq("id", caller.userId)
+                .maybeSingle();
+            const customerId = (profileRow as Record<string, string | null> | null)?.[col] ?? null;
+            if (!customerId) {
+                return jsonResponse({ payment_methods: [] }, 200);
+            }
+
+            // Two Stripe calls in parallel: list PMs + retrieve customer
+            // (to resolve invoice_settings.default_payment_method for the
+            // is_default flag).
+            const [pmsResult, customer] = await Promise.all([
+                listCustomerCardPaymentMethods({ customerId, liveMode: caller.liveMode }),
+                retrieveCustomer({ customerId, liveMode: caller.liveMode }),
+            ]);
+            const defaultPmId = customer.invoice_settings?.default_payment_method ?? null;
+
+            const rows = pmsResult.data.map((pm) => ({
+                // `id` matches the local-table contract; use the Stripe PM id
+                // since there's no local UUID when reading from Stripe directly.
+                id: pm.id,
+                stripe_payment_method_id: pm.id,
+                mode,
+                brand: pm.card?.brand ?? null,
+                last4: pm.card?.last4 ?? null,
+                exp_month: pm.card?.exp_month ?? null,
+                exp_year: pm.card?.exp_year ?? null,
+                is_default: defaultPmId != null && pm.id === defaultPmId,
+                // Stripe returns `created` as unix seconds.
+                created_at: new Date(pm.created * 1000).toISOString(),
+            }));
+
+            return jsonResponse({ payment_methods: rows }, 200);
+        }
+
         // POST /payment-methods → create SetupIntent (start "Add card" flow).
         if (method === "POST" && path === "") {
             // Idempotency: per master proposal §4.5, allow legitimate user
