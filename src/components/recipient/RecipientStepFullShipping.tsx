@@ -3,7 +3,6 @@ import { motion, AnimatePresence } from "framer-motion";
 import { AlertCircle, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Switch } from "@/components/ui/switch";
 import SmartAddressInput from "@/components/ui/SmartAddressInput";
 import PriceSummaryCard from "./PriceSummaryCard";
 import ShippingMethodCard from "./ShippingMethodCard";
@@ -351,7 +350,21 @@ export default function RecipientStepFullShipping({
         )}
       </div>
 
-      {/* Insurance */}
+      {/* Insurance toggle — HIDDEN 2026-05-24 pending real insurance build.
+          The toggle was phantom: collected $2.50 from customers but never
+          passed `insurance` to EasyPost's /buy → customers paid for no
+          coverage. Toggle disappears from UI until the real build lands.
+
+          State field (state.insurance) intentionally preserved — downstream
+          renderers (RecipientStepPayment, ReceiptBlock, useRecipientFlow
+          total math) all check `if (state.insurance)` which now uniformly
+          evaluates false since the toggle can never be set true. When real
+          insurance ships, restore this block + wire the buy-side.
+
+          See: WISHLIST → "Real shipping insurance build" +
+          previews/insurance-product-brief.html (product brief) +
+          proposals/2026-05-12_shipping-insurance.md (implementation design).
+
       <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
         <div className="flex items-center justify-between">
           <div>
@@ -364,6 +377,7 @@ export default function RecipientStepFullShipping({
           />
         </div>
       </div>
+      */}
 
       {/* Validation summary */}
       <AnimatePresence>

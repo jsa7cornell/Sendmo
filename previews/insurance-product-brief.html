@@ -1,0 +1,878 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SendMo — Shipping Insurance Product Brief</title>
+<style>
+  :root {
+    --bg: #f4f5f7;
+    --card: #fff;
+    --ink: #1a1d21;
+    --muted: #6b7280;
+    --line: #e5e7eb;
+    --green: #16a34a;
+    --green-bg: #dcfce7;
+    --green-light: #f0fdf4;
+    --amber: #b45309;
+    --amber-bg: #fef3c7;
+    --amber-light: #fffbeb;
+    --red: #dc2626;
+    --red-bg: #fee2e2;
+    --blue: #2563eb;
+    --blue-bg: #dbeafe;
+    --blue-light: #eff6ff;
+    --purple: #7c3aed;
+    --purple-bg: #ede9fe;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Top bar */
+  .topbar {
+    background: var(--card);
+    border-bottom: 1px solid var(--line);
+    padding: 0 32px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    height: 54px;
+  }
+  .brand { font-weight: 800; font-size: 16px; letter-spacing: -.3px; }
+  .brand .dot { color: var(--green); }
+  .badge {
+    background: var(--amber-bg);
+    color: var(--amber);
+    font-size: 12px;
+    font-weight: 700;
+    padding: 2px 10px;
+    border-radius: 20px;
+    border: 1px solid #f3c96b;
+  }
+  .badge.blue {
+    background: var(--blue-bg);
+    color: var(--blue);
+    border-color: #93c5fd;
+  }
+  .topbar-right { margin-left: auto; color: var(--muted); font-size: 13px; }
+
+  /* Layout */
+  .wrap { max-width: 960px; margin: 0 auto; padding: 36px 24px 80px; }
+
+  /* Hero */
+  .hero { margin-bottom: 32px; }
+  .hero h1 { font-size: 28px; font-weight: 800; letter-spacing: -.5px; line-height: 1.2; }
+  .hero .meta { color: var(--muted); font-size: 13px; margin-top: 6px; }
+
+  /* TL;DR callout */
+  .tldr {
+    background: var(--ink);
+    color: #fff;
+    border-radius: 14px;
+    padding: 24px 28px;
+    margin-bottom: 32px;
+  }
+  .tldr .label {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .8px;
+    color: #9ca3af;
+    margin-bottom: 10px;
+  }
+  .tldr p { font-size: 16px; line-height: 1.6; color: #f9fafb; }
+  .tldr .risk {
+    margin-top: 14px;
+    background: rgba(220, 38, 38, 0.15);
+    border: 1px solid rgba(220, 38, 38, 0.3);
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 13px;
+    color: #fca5a5;
+  }
+  .tldr .risk strong { color: #fecaca; }
+
+  /* Rec box */
+  .rec-box {
+    background: var(--green-light);
+    border: 2px solid var(--green);
+    border-radius: 14px;
+    padding: 22px 26px;
+    margin-bottom: 32px;
+  }
+  .rec-box .rec-label {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .8px;
+    color: var(--green);
+    margin-bottom: 8px;
+  }
+  .rec-box h3 { font-size: 18px; font-weight: 700; color: var(--green); margin-bottom: 8px; }
+  .rec-box p { color: #166534; font-size: 14px; line-height: 1.6; }
+
+  /* Section */
+  .section { margin-bottom: 40px; }
+  .section h2 {
+    font-size: 18px;
+    font-weight: 700;
+    margin-bottom: 16px;
+    padding-bottom: 10px;
+    border-bottom: 2px solid var(--line);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .section-num {
+    background: var(--blue);
+    color: #fff;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    font-size: 13px;
+    font-weight: 700;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  /* Cards */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 20px 22px;
+    margin-bottom: 14px;
+  }
+  .card h3 { font-size: 15px; font-weight: 700; margin-bottom: 8px; }
+  .card p { color: #374151; font-size: 14px; line-height: 1.6; }
+  .card ul { color: #374151; font-size: 14px; line-height: 1.8; padding-left: 18px; }
+  .card.warn { border-left: 4px solid var(--amber); background: var(--amber-light); }
+  .card.danger { border-left: 4px solid var(--red); background: #fff8f8; }
+  .card.info { border-left: 4px solid var(--blue); background: var(--blue-light); }
+  .card.green { border-left: 4px solid var(--green); background: var(--green-light); }
+
+  /* Alert strip */
+  .alert {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    background: var(--red-bg);
+    border: 1px solid #fca5a5;
+    border-radius: 10px;
+    padding: 14px 18px;
+    margin-bottom: 16px;
+  }
+  .alert-icon { font-size: 20px; flex-shrink: 0; margin-top: 1px; }
+  .alert-body { font-size: 14px; color: #7f1d1d; line-height: 1.6; }
+  .alert-body strong { color: #991b1b; }
+  .alert.warn { background: var(--amber-bg); border-color: #fcd34d; }
+  .alert.warn .alert-body { color: #78350f; }
+  .alert.warn .alert-body strong { color: #92400e; }
+  .alert.info { background: var(--blue-bg); border-color: #93c5fd; }
+  .alert.info .alert-body { color: #1e3a5f; }
+  .alert.info .alert-body strong { color: #1d4ed8; }
+
+  /* Pricing table */
+  .tbl-wrap { overflow-x: auto; margin-bottom: 14px; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    min-width: 560px;
+  }
+  th {
+    background: #f8f9fa;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .4px;
+    color: var(--muted);
+    padding: 9px 12px;
+    text-align: left;
+    border-bottom: 2px solid var(--line);
+  }
+  td {
+    padding: 10px 12px;
+    border-bottom: 1px solid #f0f1f3;
+    vertical-align: top;
+    color: var(--ink);
+  }
+  tr:last-child td { border-bottom: 0; }
+  tr:hover td { background: #fafafa; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+  td.highlight { background: var(--green-light); font-weight: 700; }
+  td.warn { background: var(--amber-light); }
+  td.danger { background: var(--red-bg); color: var(--red); font-weight: 700; }
+  td.muted { color: var(--muted); font-size: 12px; }
+  .tag {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 7px;
+    border-radius: 5px;
+    margin-left: 5px;
+  }
+  .tag.easy { background: var(--green-bg); color: var(--green); }
+  .tag.med { background: var(--amber-bg); color: var(--amber); }
+  .tag.hard { background: var(--red-bg); color: var(--red); }
+
+  /* Options grid */
+  .options-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 14px; }
+  @media (max-width: 700px) { .options-grid { grid-template-columns: 1fr; } }
+  .option-card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 18px;
+  }
+  .option-card.recommended {
+    border: 2px solid var(--green);
+    background: var(--green-light);
+  }
+  .option-label {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .5px;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+  .option-card.recommended .option-label { color: var(--green); }
+  .option-card h3 { font-size: 15px; font-weight: 700; margin-bottom: 10px; }
+  .option-card ul {
+    font-size: 13px;
+    color: #374151;
+    line-height: 1.7;
+    padding-left: 16px;
+  }
+  .option-tag {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 3px 9px;
+    border-radius: 6px;
+    margin-bottom: 10px;
+  }
+
+  /* Decision path */
+  .decision-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+  @media (max-width: 700px) { .decision-grid { grid-template-columns: 1fr; } }
+  .decision-card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 18px;
+    text-align: center;
+  }
+  .decision-card.active { border: 2px solid var(--green); }
+  .decision-card .icon { font-size: 28px; margin-bottom: 10px; }
+  .decision-card h3 { font-size: 14px; font-weight: 700; margin-bottom: 8px; }
+  .decision-card p { font-size: 13px; color: var(--muted); line-height: 1.5; }
+
+  /* Math table */
+  .math-table { margin-bottom: 14px; }
+
+  /* Q list */
+  .q-list { list-style: none; padding: 0; }
+  .q-list li {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 14px 18px;
+    margin-bottom: 10px;
+    font-size: 14px;
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+  }
+  .q-num {
+    background: var(--purple-bg);
+    color: var(--purple);
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    font-size: 12px;
+    font-weight: 700;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+  .q-list li .text { color: #374151; line-height: 1.6; }
+  .q-list li .text strong { color: var(--ink); }
+
+  /* Footer note */
+  .footer-note {
+    border-top: 1px solid var(--line);
+    padding-top: 20px;
+    margin-top: 40px;
+    font-size: 12px;
+    color: var(--muted);
+    line-height: 1.7;
+  }
+  .footer-note a { color: var(--blue); text-decoration: none; }
+  .footer-note a:hover { text-decoration: underline; }
+
+  /* Inline link */
+  a.src { color: var(--blue); font-size: 12px; text-decoration: none; }
+  a.src:hover { text-decoration: underline; }
+
+  /* Two-col */
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+  @media (max-width: 640px) { .two-col { grid-template-columns: 1fr; } }
+
+  /* Inline bold note */
+  .note { font-size: 13px; color: var(--muted); margin-top: 8px; font-style: italic; }
+  .caption { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">Send<span class="dot">Mo</span></div>
+  <span class="badge">Internal Brief</span>
+  <span class="badge blue">Decision Required</span>
+  <div class="topbar-right">May 2026 &middot; Prepared for John Anderson</div>
+</div>
+
+<div class="wrap">
+
+  <!-- Hero -->
+  <div class="hero">
+    <h1>Shipping Insurance — Ship It, Defer It, or Kill It?</h1>
+    <div class="meta">Product decision brief &middot; Based on proposal <code>2026-05-12_shipping-insurance.md</code> &middot; External pricing verified May 2026</div>
+  </div>
+
+  <!-- TL;DR -->
+  <div class="tldr">
+    <div class="label">TL;DR — Bottom Line Up Front</div>
+    <p><strong>Defer insurance to post-launch, but fix the phantom toggle today.</strong> The current toggle charges customers $2.50 for coverage that is never bound — that's a trust and legal issue that must be resolved before you take another live payment. Hiding the toggle takes ~30 minutes. Shipping real insurance correctly takes 1–3 days of code plus a legal-review gate before you can charge for it. At one-user scale today, there's no revenue upside that justifies the legal complexity pre-launch. Hide the toggle now, ship real insurance in your first post-launch sprint.</p>
+    <div class="risk">
+      <strong>Biggest risk of doing nothing:</strong> You already have one live label where the customer may have paid for phantom coverage. If that package is lost, you have no claim to file and no coverage to offer. Resolve the phantom toggle today — do not take another live payment with insurance checked.
+    </div>
+  </div>
+
+  <!-- Section 1: Current State -->
+  <div class="section">
+    <h2><span class="section-num">1</span> Current State — The Phantom Toggle Problem</h2>
+
+    <div class="alert">
+      <div class="alert-icon">&#9888;</div>
+      <div class="alert-body">
+        <strong>The insurance toggle is currently cosmetic.</strong> When a customer checks "Add shipping insurance (+$2.50)" and completes checkout, SendMo collects the $2.50 but <em>never passes the <code>insurance</code> field to EasyPost's <code>/buy</code> endpoint</em>. No coverage is bound. The package ships with only the carrier's default liability (USPS Priority/FedEx/UPS Ground: $100 included automatically — not from us). The customer paid for coverage that does not exist through SendMo.
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>What the current code does</h3>
+      <ul>
+        <li><code>display_price_cents</code> adds 250&cent; when the toggle is on (collected at Stripe checkout)</li>
+        <li>The <code>/buy</code> call to EasyPost omits the <code>insurance</code> parameter entirely</li>
+        <li>No <code>insurance_easypost_id</code> is stored — there's nothing to file a claim against</li>
+        <li>The existing <code>insurance_cost_cents</code> column in the admin view reflects what was charged, not any actual coverage</li>
+      </ul>
+    </div>
+
+    <div class="two-col">
+      <div class="card warn">
+        <h3>Why this must be fixed before any live payment</h3>
+        <ul>
+          <li>Charging for a service not delivered = potential fraud / consumer protection issue</li>
+          <li>You have one live label already — if that package is lost, you have no coverage to offer</li>
+          <li>As you scale, this becomes a class action waiting to happen</li>
+        </ul>
+      </div>
+      <div class="card green">
+        <h3>The 30-minute hotfix (Option A)</h3>
+        <ul>
+          <li>Hide the insurance toggle in the UI entirely</li>
+          <li>Remove the $2.50 from <code>display_price_cents</code> logic</li>
+          <li>Add a "Coming soon" note if desired</li>
+          <li>No legal review needed — you're just removing a broken feature</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- Section 2: Competitive Landscape -->
+  <div class="section">
+    <h2><span class="section-num">2</span> What Every Other Shipping Platform Does — Competitive Pricing</h2>
+
+    <p class="caption">Current prices as of May 2026, sourced from each platform's support documentation. See source links in footer.</p>
+
+    <div class="tbl-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Platform</th>
+            <th>Price Structure</th>
+            <th>Cost at $100</th>
+            <th>Cost at $500</th>
+            <th>Min Charge</th>
+            <th>Underwriter</th>
+            <th>Claims Process</th>
+            <th>Notable</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Pirate Ship</strong></td>
+            <td>$1.00 per $100 declared value (rounds up to next $100)</td>
+            <td class="num">$1.00</td>
+            <td class="num">$5.00</td>
+            <td>$1.00</td>
+            <td>InsureShield (UPS Capital)</td>
+            <td>Customer files directly via InsureShield portal — Pirate Ship hands off entirely</td>
+            <td>No SendMo-style claims involvement; voids carrier default insurance</td>
+          </tr>
+          <tr>
+            <td><strong>Shippo</strong></td>
+            <td>1.25% domestic; 1.5% international (no min stated)</td>
+            <td class="num">$1.25</td>
+            <td class="num">$6.25</td>
+            <td>Not published</td>
+            <td>XCover (Cover Genius)</td>
+            <td>Online portal; 95% of claims resolved in &lt; 3 days</td>
+            <td>Fastest claims resolution in the market; also covers return shipping cost</td>
+          </tr>
+          <tr>
+            <td><strong>ShipStation</strong></td>
+            <td>ParcelGuard: ~0.99%–1.39% (volume-based)</td>
+            <td class="num">~$1.00–$1.39</td>
+            <td class="num">~$5.00–$7.00</td>
+            <td>Not published</td>
+            <td>Parcel Insurance Plan / Shipsurance (legacy)</td>
+            <td>Via insurer portal; ShipStation no longer handles Shipsurance (legacy only)</td>
+            <td>Pricing varies by account volume and claims history</td>
+          </tr>
+          <tr>
+            <td><strong>Stamps.com / Endicia</strong></td>
+            <td>ParcelGuard: $0.99 per $100</td>
+            <td class="num">$0.99</td>
+            <td class="num">$4.95</td>
+            <td>~$0.99</td>
+            <td>Parcel Insurance Plan</td>
+            <td>Via insurer portal</td>
+            <td>Lowest per-$100 rate in the market</td>
+          </tr>
+          <tr>
+            <td><strong>EasyPost direct</strong> <span class="tag easy">SendMo's infra</span></td>
+            <td>1% of declared value</td>
+            <td class="num highlight">$1.00</td>
+            <td class="num highlight">$5.00</td>
+            <td>$1.00</td>
+            <td>EasyPost (self-underwritten)</td>
+            <td>Via EasyPost Claims API or support portal</td>
+            <td>SendMo already has API access; one parameter away from live</td>
+          </tr>
+          <tr>
+            <td><strong>USPS direct</strong></td>
+            <td>Tiered flat rates (see below)</td>
+            <td class="num">$3.45</td>
+            <td class="num">$6.45</td>
+            <td>$2.05</td>
+            <td>USPS (self)</td>
+            <td>USPS claims portal; known for slow resolution (weeks–months)</td>
+            <td>Priority Mail / Ground Advantage include first $100 free</td>
+          </tr>
+          <tr>
+            <td><strong>UPS direct</strong></td>
+            <td>$3.90 flat for $0–$300; +$1.30 per add'l $100</td>
+            <td class="num">$0 (incl.)</td>
+            <td class="num">$5.20</td>
+            <td>$3.90</td>
+            <td>UPS (self)</td>
+            <td>UPS claims portal</td>
+            <td>First $100 of liability included in shipping rate</td>
+          </tr>
+          <tr>
+            <td><strong>FedEx direct</strong></td>
+            <td>$3.90 for first $300; +$1.00 per add'l $100 (Ground/Express)</td>
+            <td class="num">$0 (incl.)</td>
+            <td class="num">$5.90</td>
+            <td>$3.90</td>
+            <td>FedEx (self)</td>
+            <td>FedEx claims portal</td>
+            <td>First $100 liability included; declared value &ne; true insurance</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card info">
+      <h3>Key observation on UPS/FedEx "declared value"</h3>
+      <p>UPS and FedEx use the term "declared value" not "insurance." It's a <em>liability cap</em>, not an insurance policy — the carrier will deny claims for reasons outside their scope (e.g., inadequate packaging). Third-party insurance (EasyPost, InsureShield, XCover) covers more scenarios and is what most shipping platforms resell.</p>
+    </div>
+
+    <h3 style="font-size:15px;font-weight:700;margin-bottom:10px;margin-top:4px;">USPS tiered rate detail (current 2026 rates)</h3>
+    <div class="tbl-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Declared Value</th>
+            <th>USPS insurance cost</th>
+            <th>Effective rate per $100</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>$0.01–$50</td><td class="num">$2.05</td><td class="muted">~4.1% at $50</td></tr>
+          <tr><td>$50–$100</td><td class="num">$3.45</td><td class="muted">~3.5% at $100</td></tr>
+          <tr><td>$100–$200</td><td class="num">$4.45</td><td class="muted">~2.2% at $200</td></tr>
+          <tr><td>$200–$300</td><td class="num">$4.45</td><td class="muted">~1.5% at $300</td></tr>
+          <tr><td>$300–$400</td><td class="num">$5.45</td><td class="muted">~1.4% at $400</td></tr>
+          <tr><td>$400–$500</td><td class="num">$6.45</td><td class="muted">~1.3% at $500</td></tr>
+          <tr><td>$500–$600</td><td class="num">$7.45</td><td class="muted">~1.2% at $600</td></tr>
+          <tr><td>$600+</td><td class="num">$8.95 + $1.50/add'l $100</td><td class="muted">~1.5% effective</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">USPS insurance is expensive relative to third-party alternatives and has slow claims resolution. The proposal correctly uses EasyPost insurance, not USPS's own insurance.</p>
+  </div>
+
+  <!-- Section 3: Economics -->
+  <div class="section">
+    <h2><span class="section-num">3</span> Economics — Can SendMo Make Money on Insurance?</h2>
+
+    <div class="two-col">
+      <div class="card">
+        <h3>Industry claim rates (loss/damage)</h3>
+        <ul>
+          <li><strong>~1–4% of packages</strong> are lost or damaged in transit (industry range)</li>
+          <li><strong>3–4%</strong> arrive with some form of damage (InsureShield / Opensend data)</li>
+          <li><strong>1–1.5%</strong> of annual shipping spend results in a claim (financial exposure basis)</li>
+          <li>At 32 historical shipments: <strong>expected claims = 0–1</strong> in this range</li>
+        </ul>
+        <p class="note">At SendMo's current scale, you will almost certainly have zero claims for months. The risk is a single large claim wiping out a month of insurance revenue.</p>
+      </div>
+      <div class="card">
+        <h3>Reseller margin — what's normal</h3>
+        <ul>
+          <li>Typical wholesale-to-retail markup on parcel insurance: <strong>30–100% over wholesale cost</strong></li>
+          <li>EasyPost charges you 1% of declared value (min $1.00)</li>
+          <li>Market retail price: $1.00–$1.39 per $100 (Stamps, ShipStation)</li>
+          <li>Normal margin at those prices: <strong>$0–$0.39 per $100</strong> — extremely thin</li>
+          <li>Pirate Ship charges $1.00 / $100 — they likely break even or use it as retention, not profit</li>
+        </ul>
+        <p class="note">Insurance at the market rate is barely profitable for a shipping platform. The margin is in volume, not unit economics.</p>
+      </div>
+    </div>
+
+    <h3 style="font-size:15px;font-weight:700;margin-bottom:12px;">The pricing math from the proposal — three options</h3>
+    <p class="caption">EasyPost cost: 1% of declared value, $1.00 minimum. The question is what SendMo charges the customer.</p>
+
+    <div class="tbl-wrap math-table">
+      <table>
+        <thead>
+          <tr>
+            <th>Declared Value</th>
+            <th>EasyPost cost (our wholesale)</th>
+            <th>Option A: $3 + 0.5% (John's preference)</th>
+            <th>Margin A</th>
+            <th>Option B: $3 + 1.5% (proposal author's rec)</th>
+            <th>Margin B</th>
+            <th>Market price (~$1/100)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>$50</td>
+            <td class="num">$1.00</td>
+            <td class="num">$3.25</td>
+            <td class="num highlight">+$2.25</td>
+            <td class="num">$3.75</td>
+            <td class="num highlight">+$2.75</td>
+            <td class="num muted">$0.50</td>
+          </tr>
+          <tr>
+            <td>$100</td>
+            <td class="num">$1.00</td>
+            <td class="num">$3.50</td>
+            <td class="num highlight">+$2.50</td>
+            <td class="num">$4.50</td>
+            <td class="num highlight">+$3.50</td>
+            <td class="num muted">$1.00</td>
+          </tr>
+          <tr>
+            <td>$250</td>
+            <td class="num">$2.50</td>
+            <td class="num">$4.25</td>
+            <td class="num highlight">+$1.75</td>
+            <td class="num">$6.75</td>
+            <td class="num highlight">+$4.25</td>
+            <td class="num muted">$2.50</td>
+          </tr>
+          <tr>
+            <td>$500</td>
+            <td class="num">$5.00</td>
+            <td class="num">$5.50</td>
+            <td class="num highlight">+$0.50</td>
+            <td class="num">$10.50</td>
+            <td class="num highlight">+$5.50</td>
+            <td class="num muted">$5.00</td>
+          </tr>
+          <tr>
+            <td>$600</td>
+            <td class="num">$6.00</td>
+            <td class="num warn">$6.00</td>
+            <td class="num warn"><strong>$0.00</strong></td>
+            <td class="num">$12.00</td>
+            <td class="num highlight">+$6.00</td>
+            <td class="num muted">$6.00</td>
+          </tr>
+          <tr>
+            <td>$1,000</td>
+            <td class="num">$10.00</td>
+            <td class="num danger">$8.00</td>
+            <td class="num danger">&#8722;$2.00</td>
+            <td class="num">$18.00</td>
+            <td class="num highlight">+$8.00</td>
+            <td class="num muted">$10.00</td>
+          </tr>
+          <tr>
+            <td>$5,000</td>
+            <td class="num">$50.00</td>
+            <td class="num danger">$28.00</td>
+            <td class="num danger">&#8722;$22.00</td>
+            <td class="num">$78.00</td>
+            <td class="num highlight">+$28.00</td>
+            <td class="num muted">$50.00</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="alert warn">
+      <div class="alert-icon">&#9888;</div>
+      <div class="alert-body">
+        <strong>John's preferred formula ($3 + 0.5%) loses money above $600 declared value.</strong> This is a real problem — a single $1,000 insured shipment that gets lost costs SendMo $2.00 out of pocket (you paid EasyPost $10, customer paid you $8). The proposal author's recommendation to switch to <strong>$3 + 1.5%</strong> keeps margin positive at all declared values, but roughly doubles the user-visible price at $100 declared value ($4.50 vs $3.50). A third option — cap declared value at $500 — is operationally clean but forfeits high-value shippers.
+      </div>
+    </div>
+
+    <div class="card info">
+      <h3>Revenue upside at SendMo's current scale (honest math)</h3>
+      <p>At 32 historical shipments and "one user today," the realistic 6-month insurance revenue is:</p>
+      <ul style="margin-top:10px;">
+        <li>Assume 50–100 shipments/month at 30% insurance attach rate = 15–30 insured packages/month</li>
+        <li>Average declared value: $150; premium at $3 + 1.5% = $5.25; margin = ~$3.75</li>
+        <li><strong>Monthly insurance revenue: $56–$113</strong>. Six-month total: <strong>~$340–$675</strong></li>
+        <li>Single $1,000 claim (EasyPost pays you, you pay customer): ~$10 cost to you</li>
+      </ul>
+      <p style="margin-top:10px;">At this scale, insurance is a trust and feature signal, not meaningful revenue. The economics become interesting at thousands of shipments per month.</p>
+    </div>
+  </div>
+
+  <!-- Section 4: Implementation Paths -->
+  <div class="section">
+    <h2><span class="section-num">4</span> Implementation Paths</h2>
+
+    <div class="options-grid">
+      <div class="option-card recommended">
+        <div class="option-label">Recommended Path</div>
+        <div class="option-tag" style="background:var(--green-bg);color:var(--green);">Option A — EasyPost API</div>
+        <h3>EasyPost Insurance API</h3>
+        <ul>
+          <li>Already integrated — one new parameter (<code>insurance: declaredValue</code>) on the <code>/buy</code> call</li>
+          <li>EasyPost handles claims — their portal, their liability</li>
+          <li>We collect premium, pay EasyPost 1%, keep margin</li>
+          <li>Proposal already fully spec'd with file-by-file plan</li>
+          <li>~1–2 days of implementation work</li>
+        </ul>
+        <p style="font-size:13px;color:#166534;margin-top:10px;"><strong>Margin:</strong> $3 + 1.5% (always positive)<br><strong>Claims:</strong> Customer &rarr; SendMo &rarr; EasyPost portal</p>
+      </div>
+
+      <div class="option-card">
+        <div class="option-label">Higher Margin, More Work</div>
+        <div class="option-tag" style="background:var(--amber-bg);color:var(--amber);">Option B — Third-Party Insurer</div>
+        <h3>Cabrella / U-PIC / XCover Direct</h3>
+        <ul>
+          <li>Direct relationship with insurance provider (bypass EasyPost's 1%)</li>
+          <li>Cabrella: API-first, dynamic pricing, $20/month membership + premiums</li>
+          <li>Better margins if volume is high</li>
+          <li>2–4 weeks of integration work; separate API, account setup</li>
+          <li>Claims still handled by insurer</li>
+        </ul>
+        <p style="font-size:13px;color:#92400e;margin-top:10px;"><strong>Margin:</strong> Potentially higher at scale<br><strong>Claims:</strong> Customer &rarr; SendMo &rarr; Cabrella/XCover</p>
+      </div>
+
+      <div class="option-card">
+        <div class="option-label">Avoid at This Stage</div>
+        <div class="option-tag" style="background:var(--red-bg);color:var(--red);">Option C — Self-Insure</div>
+        <h3>SendMo Carries the Risk</h3>
+        <ul>
+          <li>SendMo pays out of pocket on all claims</li>
+          <li>At 1–4% claim rate, one $500 loss eliminates months of insurance revenue</li>
+          <li>No actuarial reserves, no reinsurance, no scale</li>
+          <li>Essentially requires an insurance license in most states</li>
+          <li>Not viable unless you're a large-volume operation</li>
+        </ul>
+        <p style="font-size:13px;color:#991b1b;margin-top:10px;"><strong>Margin:</strong> 100% until a claim, then deeply negative<br><strong>Claims:</strong> You pay directly</p>
+      </div>
+    </div>
+
+    <p class="note">Option A is the only sensible path for SendMo's stage. Option B becomes worth evaluating at ~10,000 shipments/month. Option C is never the right answer for a solo-operated product.</p>
+  </div>
+
+  <!-- Section 5: Legal -->
+  <div class="section">
+    <h2><span class="section-num">5</span> Legal + Regulatory — What You Need to Know</h2>
+
+    <div class="alert warn">
+      <div class="alert-icon">&#9432;</div>
+      <div class="alert-body">
+        <strong>This is not legal advice.</strong> The below surfaces the questions you'd need to ask a lawyer — which the proposal correctly identifies as a ~30-minute legal-eagle review, not a multi-week engagement.
+      </div>
+    </div>
+
+    <div class="card warn">
+      <h3>EasyPost TOS — Is reselling with markup actually permitted?</h3>
+      <p>EasyPost's Master Customer Agreement broadly prohibits reselling or sublicensing their services to third parties "unless expressly permitted." Critically, the agreement specifically prohibits marking up UPS rates for resale. Whether this prohibition extends to insurance is unclear — the agreement references a "Shipping Insurance Addendum" that is not publicly posted.</p>
+      <p style="margin-top:10px;"><strong>The critical question:</strong> Before charging customers an insurance markup over EasyPost's 1% wholesale rate, confirm with EasyPost (via your account manager or their legal contact) that this is explicitly permitted in your agreement. This is a one-email check, not a legal project. If it's not permitted, Option B (direct insurer relationship) is the path to margin.</p>
+      <p style="margin-top:10px;color:#92400e;font-size:13px;"><strong>Risk level if you skip this:</strong> Medium. EasyPost is unlikely to sue a small customer over insurance markup, but their TOS gives them grounds to terminate your account — which would take down all of SendMo, not just insurance.</p>
+    </div>
+
+    <div class="two-col">
+      <div class="card warn">
+        <h3>Is SendMo an "insurance reseller"?</h3>
+        <ul>
+          <li>The standard industry posture: <em>EasyPost is the named coverage provider; SendMo facilitates; the markup is a service fee</em></li>
+          <li>Pirate Ship, Shippo, Stamps.com all operate this way without apparent licensing issues</li>
+          <li>The gray area: California's "Cargo Shippers' Agent" classification requires a $10,000 surety bond to procure cargo insurance on behalf of others. Whether a software platform counts as a "cargo shippers' agent" is the question.</li>
+          <li>NY and TX: similar broker-licensing frameworks; NY is more aggressive in enforcement</li>
+          <li><strong>The structural defense:</strong> if EasyPost is named as the coverage provider in your customer-facing copy and claims flow through EasyPost (not SendMo), you are facilitating access to a licensed insurer, not acting as an agent. This is the safer posture.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Claims handling responsibility</h3>
+        <ul>
+          <li>The proposal correctly identifies that v1 is: customer &rarr; <code>claims@sendmo.co</code> &rarr; John &rarr; EasyPost portal</li>
+          <li>Your disclosure must honestly reflect this: "we submit the claim to our coverage provider and pass the payout through to you"</li>
+          <li>If EasyPost denies a claim, you are the customer's point of contact — not EasyPost. You must then explain the denial and potentially dispute it on their behalf.</li>
+          <li>If you promise "30–60 day resolution" in your TOS and EasyPost takes 90 days, you have a TOS breach on your hands even if EasyPost caused the delay</li>
+          <li><strong>Mitigation:</strong> use vague-but-honest language ("typically resolved within 30–60 business days, subject to provider timelines")</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>The proposal's recommended legal gate</h3>
+      <p>The proposal's author recommendation (and this brief's agreement): <strong>ship the code in comp/test mode, gate the real-money charge flip on a one-session legal review</strong>. You can validate the technical pipe — EasyPost returns a real <code>insurance_easypost_id</code>, the admin column populates, the claim flow is testable — before any customer pays for it. The legal review only needs to happen before you flip the billing switch. That's the right sequencing.</p>
+    </div>
+  </div>
+
+  <!-- Section 6: Recommendation -->
+  <div class="section">
+    <h2><span class="section-num">6</span> Recommendation</h2>
+
+    <div class="decision-grid">
+      <div class="decision-card">
+        <div class="icon">&#9940;</div>
+        <h3>Pre-launch (~1–2 days)</h3>
+        <p>Implement real insurance now, before any other users. 1–2 days of work + legal gate before billing goes live.</p>
+        <p style="margin-top:8px;color:var(--red);font-size:13px;"><strong>Not recommended.</strong> Adds legal complexity and a hard dependency on a lawyer before you can take your second real payment.</p>
+      </div>
+      <div class="decision-card active">
+        <div class="icon">&#10003;</div>
+        <h3>Post-launch — Sprint 1</h3>
+        <p><strong>Hide toggle now (30 min). Ship real insurance in your first post-launch sprint (~1–2 weeks out).</strong></p>
+        <p style="margin-top:8px;color:var(--green);font-size:13px;"><strong>This is the recommendation.</strong> Resolves the trust/legal issue today. Gives time for legal check. No lost revenue at this scale.</p>
+      </div>
+      <div class="decision-card">
+        <div class="icon">&#10007;</div>
+        <h3>Never / Long defer</h3>
+        <p>Keep insurance off indefinitely. Focus on other features.</p>
+        <p style="margin-top:8px;color:var(--muted);font-size:13px;"><strong>Not recommended.</strong> Insurance is a trust signal for shippers of moderate-value goods. Missing it limits your appeal as you grow.</p>
+      </div>
+    </div>
+
+    <div class="rec-box">
+      <div class="rec-label">Recommendation</div>
+      <h3>Hide the phantom toggle today. Ship real insurance in Sprint 1 post-launch.</h3>
+      <p>The immediate action is the 30-minute hotfix: remove the toggle from the UI, strip the $2.50 from display pricing, and ship that as a standalone commit today. That resolves the trust issue and blocks no other work.</p>
+      <p style="margin-top:10px;">For real insurance, the proposal is well-spec'd and the implementation is straightforward — it's essentially one new parameter in the EasyPost <code>/buy</code> call plus UI, schema, and price-formula work. Target this as the first substantive feature post-launch. Before charging real money for it, confirm with EasyPost that markup on their insurance rate is permitted in your account agreement, and get a 30-minute legal-eagle opinion on the CA/NY/TX reseller posture.</p>
+      <p style="margin-top:10px;">Use pricing formula <strong>$3 + 1.5%</strong> (not $3 + 0.5%) — John's preferred formula goes loss-making above $600 declared value. The extra ~$1 on a $100 declared value shipment is unlikely to be a conversion issue.</p>
+    </div>
+
+    <div class="card info">
+      <h3>Why not pre-launch?</h3>
+      <ul>
+        <li><strong>Legal gate is real.</strong> You cannot responsibly charge customers for a marked-up insurance product without confirming EasyPost TOS + state licensing posture. That gate exists regardless of when you ship the code.</li>
+        <li><strong>Zero revenue impact.</strong> One user, 32 historical shipments — even perfect insurance attach rate generates &lt;$50/month. No launch-blocking urgency.</li>
+        <li><strong>The proposal itself flags this.</strong> The author's lean: "ship the code, gate the charge flip on legal sign-off." You can implement the code pre-launch, but you can't charge for it without the legal check.</li>
+        <li><strong>Complexity risk.</strong> Every new feature pre-launch is a potential bug that delays real users. The hotfix (hide toggle) eliminates the trust issue with zero complexity.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Section 7: Open Questions -->
+  <div class="section">
+    <h2><span class="section-num">7</span> Open Questions for John</h2>
+
+    <ul class="q-list">
+      <li>
+        <span class="q-num">1</span>
+        <div class="text"><strong>Pricing formula — which do you choose?</strong> The proposal's math shows $3 + 0.5% (your original preference) goes underwater at $600 declared value. The author recommends $3 + 1.5% — always positive margin, but doubles the user-visible price at low declared values. Or cap declared value at $500 for v1 (simple, limits high-value exposure). You need to pick one before implementing the premium computation.</div>
+      </li>
+      <li>
+        <span class="q-num">2</span>
+        <div class="text"><strong>EasyPost TOS check — does your agreement permit insurance markup?</strong> The public TOS broadly prohibits reselling EasyPost services without express permission and specifically prohibits marking up UPS rates. You need to confirm whether this extends to insurance — a one-email question to your EasyPost account contact. Don't charge for insurance until you have this answer.</div>
+      </li>
+      <li>
+        <span class="q-num">3</span>
+        <div class="text"><strong>Legal-eagle review — who and when?</strong> The proposal recommends a ~30-minute review of the CA/NY/TX insurance-reseller posture before billing goes live. Do you have a lawyer to ask? The question is narrow: "Is our posture — EasyPost named as coverage provider, SendMo as facilitator, markup as a service fee — consistent with not being a licensed insurance broker in CA, NY, and TX?" This is a one-session conversation, not a retainer.</div>
+      </li>
+      <li>
+        <span class="q-num">4</span>
+        <div class="text"><strong>Claims SLA — what are you committing to?</strong> The proposal's v1 claims path is <code>mailto:claims@sendmo.co</code> → John reads → John files with EasyPost → EasyPost pays → John passes payout to customer. What response time are you willing to commit to in the TOS? The proposal suggests 30–60 days. Are you willing to be the human in this loop for the first 6 months?</div>
+      </li>
+      <li>
+        <span class="q-num">5</span>
+        <div class="text"><strong>The live label today — do you know if insurance was checked?</strong> If the one live label that already shipped had the insurance toggle checked, you collected $2.50 for coverage that wasn't bound. You may want to proactively refund that $2.50 and note it in your records. Check the Stripe payment and the <code>shipments.insurance_cost_cents</code> column for that shipment.</div>
+      </li>
+      <li>
+        <span class="q-num">6</span>
+        <div class="text"><strong>Auto-toggle insurance ON from the Guestimator — yes or no?</strong> The proposal suggests auto-checking the insurance toggle when the Guestimator returns a declared value ≥ $50. This is a nudge that increases attach rate but adds friction for users who notice it. Reasonable for v1, but it's a product decision that affects your conversion math.</div>
+      </li>
+    </ul>
+  </div>
+
+  <!-- Sidebar: Adjacent signal -->
+  <div class="section">
+    <h2><span class="section-num">8</span> Adjacent Signal (Out of Scope — Flagged for Awareness)</h2>
+    <div class="card">
+      <h3>Signature Confirmation as a companion feature</h3>
+      <p>Several competitors (Shippo, ShipStation) bundle signature confirmation with their insurance offering as a package. Signature confirmation is available from USPS/UPS/FedEx at $3–$5 per shipment and is easy to implement in EasyPost's <code>/buy</code> call. Not a launch blocker and not part of the insurance proposal — but worth one line in the post-launch backlog. Insured packages over $500 often warrant signature confirmation too.</p>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <div class="footer-note">
+    <strong>Sources consulted for pricing data:</strong><br>
+    Pirate Ship: <a href="https://support.pirateship.com/en/articles/1068431-does-pirate-ship-offer-insurance">support.pirateship.com — Insurance overview</a> &middot;
+    Shippo: <a href="https://goshippo.com/insurance">goshippo.com/insurance</a> &middot;
+    ShipStation/ParcelGuard: <a href="https://help.shipstation.com/hc/en-us/articles/14888782725915-ParcelGuard">help.shipstation.com</a> &middot;
+    Stamps.com: <a href="https://help.stamps.com/hc/en-us/articles/20821667530139-Insure-Packages-in-Stamps-com">help.stamps.com</a> &middot;
+    EasyPost insurance pricing: <a href="https://www.easypost.com/pricing/">easypost.com/pricing</a> &middot;
+    EasyPost insurance overview: <a href="https://www.easypost.com/shipping-insurance/">easypost.com/shipping-insurance</a> &middot;
+    EasyPost TOS: <a href="https://legal.easypost.com/">legal.easypost.com</a> &middot;
+    USPS insurance rates: <a href="https://parcelpath.com/usps-insurance-rates/">parcelpath.com/usps-insurance-rates</a> &middot;
+    UPS declared value: <a href="https://www.refundretriever.com/blog/ups-declared-value">refundretriever.com</a> &middot;
+    FedEx declared value: <a href="https://www.refundretriever.com/blog/fedex-declared-value-what-you-need-to-know">refundretriever.com — FedEx</a> &middot;
+    Industry claim stats: <a href="https://www.insureshield.com/us/en/resources/insights/shipping-stats-2025.html">InsureShield 2025 stats</a>, <a href="https://www.opensend.com/post/shipping-damage-rate-statistics">Opensend damage stats</a> &middot;
+    CA cargo shippers agent: <a href="https://www.insurance.ca.gov/0200-industry/0050-renew-license/0200-requirements/cargo-shippers.cfm">insurance.ca.gov</a>
+    <br><br>
+    <strong>Proposal source:</strong> <code>/Users/ja/AI Brain/sendmo/proposals/2026-05-12_shipping-insurance.md</code> — read this in full before implementing. The proposal has a complete file-by-file plan; this brief is the decision layer above it.
+    <br><br>
+    Pricing marked "approximate / not verified": ShipStation/Shipsurance rates (volume-based, not published publicly — pulled from third-party analysis at Claisy.com).
+  </div>
+
+</div>
+</body>
+</html>
