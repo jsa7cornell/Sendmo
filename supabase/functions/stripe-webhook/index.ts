@@ -4,6 +4,7 @@ import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { log } from "../_shared/logger.ts";
 import { verifyAndParseWebhook, retrieveCharge } from "../_shared/stripe.ts";
 import { writeStripeFee } from "../_shared/ledger.ts";
+import { resolvePiContextWithFallback } from "../_shared/intents.ts";
 import { sendEmail } from "../_shared/resend.ts";
 import {
     paymentDeclinedReactivateEmail,
@@ -689,19 +690,12 @@ serve(async (req: Request) => {
                 const stripeRefundId = refundData?.id ?? `${charge.id}_refund`;
 
                 // Look up the originating shipment + user via the PI.
-                let userId: string | null = null;
-                let shipmentId: string | null = null;
-                let linkId: string | null = null;
-                if (piId) {
-                    const { data: intentRow } = await supabase
-                        .from("stripe_intents")
-                        .select("user_id, shipment_id, link_id")
-                        .eq("stripe_intent_id", piId)
-                        .maybeSingle();
-                    userId = intentRow?.user_id ?? null;
-                    shipmentId = intentRow?.shipment_id ?? null;
-                    linkId = intentRow?.link_id ?? null;
-                }
+                // Uses Path B fallback — for SendMo's full-label flow the PI is
+                // created before the shipment row exists, so stripe_intents.
+                // shipment_id is NULL. The helper falls back to a shipments
+                // lookup keyed on stripe_payment_intent_id (forward-stitched
+                // by labels/index.ts post-H1).
+                const { userId, shipmentId, linkId } = await resolvePiContextWithFallback(supabase, piId);
 
                 // (1) UPSERT refunds row.
                 if (shipmentId && piId) {
@@ -888,19 +882,7 @@ serve(async (req: Request) => {
                 const piId = dispute.payment_intent ?? null;
                 const chargeId = dispute.charge ?? null;
 
-                let userId: string | null = null;
-                let shipmentId: string | null = null;
-                let linkId: string | null = null;
-                if (piId) {
-                    const { data: intentRow } = await supabase
-                        .from("stripe_intents")
-                        .select("user_id, shipment_id, link_id")
-                        .eq("stripe_intent_id", piId)
-                        .maybeSingle();
-                    userId = intentRow?.user_id ?? null;
-                    shipmentId = intentRow?.shipment_id ?? null;
-                    linkId = intentRow?.link_id ?? null;
-                }
+                const { userId, shipmentId, linkId } = await resolvePiContextWithFallback(supabase, piId);
 
                 const ledgerUserId = userId ?? "00000000-0000-0000-0000-000000000001";
                 const { error: txErr } = await supabase.from("transactions").insert({

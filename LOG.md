@@ -12,6 +12,62 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-24] charge.refunded Path B — stripe-webhook resolves shipment via shipments.stripe_payment_intent_id fallback (YPPY9AK unstick)
+
+**Category:** fix | Payments | Webhooks | Refunds
+**Cross-link:** root-cause sibling [2026-05-23 Reconciliation dashboard — empty-columns fix](#2026-05-23-reconciliation-dashboard--empty-columns-fix-h1-backfill--stripe-side-join-refactor) (the original Path B introduction — labels-side forward-stitch + reconciliation-report Path B JOIN) | webhook payload-shape fix [076bf75](https://github.com/anthropics/sendmo/commit/076bf75) (sibling — refund.successful Refund-object shape) | H3 refund implementation [proposals/2026-05-21_refund-system-implementation_reviewed-2026-05-21_decided-2026-05-22.md](proposals/2026-05-21_refund-system-implementation_reviewed-2026-05-21_decided-2026-05-22.md) | H5 LOG entry above (Email B gating)
+
+**What broke (the first live cancel — YPPY9AK, $9.18 UPS DAP):** Stripe processed the customer refund ($-918¢ ledger row written) but `shipments.refund_status` never advanced submitted → refunded, the `refunds`-table mirror row was skipped, and Email B (refund completed) never fired. From the recipient's perspective: their card was refunded, but the SendMo confirmation email never landed.
+
+**Root cause:** the `charge.refunded` arm in [`stripe-webhook/index.ts`](supabase/functions/stripe-webhook/index.ts) resolved `shipmentId` ONLY via `stripe_intents.shipment_id`. That column is permanently NULL for SendMo's full-label flow because `payments/index.ts` creates the PI BEFORE the `shipments` row exists — the PI's `metadata` carries `easypost_shipment_id` (text) but not the not-yet-existing shipment UUID. This is the same architectural gap the 2026-05-23 H4 reconciliation entry fixed for the dashboard via Path B (read-side join on `shipments.stripe_payment_intent_id`, which `labels/index.ts` forward-stitches after the shipment row is inserted). The labels-side stitch + the read-side join shipped together — but the webhook handler was never updated to use the same fallback.
+
+Three downstream effects, all gated on `shipmentId` resolving non-null:
+1. `refunds`-table UPSERT (line 707) skipped → no Stripe-refund mirror row.
+2. `shipments.update({ refund_status: 'refunded' }).eq('refund_status', 'submitted')` (line 742) skipped → DB stays out of sync with Stripe.
+3. Email B send (line 764, gated on `shipmentId && stripeRefundId`) skipped → recipient gets no completion email.
+
+Same gap also existed in `charge.dispute.created` — fixed in the same change.
+
+**Fix:** new [`_shared/intents.ts`](supabase/functions/_shared/intents.ts) `resolvePiContextWithFallback(supabase, piId)`. Queries `stripe_intents` first; if `shipment_id` is null, falls back to `shipments` keyed on `stripe_payment_intent_id` and reads `link_id` + `user_id` (via the `sendmo_links!inner` join). Type-only `SupabaseClient` import so Vitest can import the helper directly with a typed mock (matches the `budget.ts` / `ledger.ts` precedent). Wired into both the `charge.refunded` and `charge.dispute.created` arms — replacing two inline `stripe_intents` lookups with one shared helper.
+
+**Why a helper, not inline:** the same fallback could leak into `payment_intent.succeeded`'s `+charge` ledger row (which also has `shipment_id=null` for every card shipment). I deliberately did NOT change that handler because at PI-succeeded time the shipment row genuinely doesn't exist yet — Path B would still miss. The reconciliation dashboard's PI-side Path B JOIN already handles that read-path correctly. Future-me may want the same helper for other webhook arms; keeping it in `_shared/` makes that one import away.
+
+**Tests shipped:** [`tests/unit/intents.test.ts`](tests/unit/intents.test.ts) — 11 unit tests:
+- 7 for `resolvePiContextWithFallback`: null piId, empty-string piId, happy path (intent row has shipment_id → no fallback query), the YPPY9AK scenario (intent row exists but shipment_id is null → fallback succeeds), entirely-absent intent row, both-lookups-miss, defensive shipments-row-missing-sendmo_links-join.
+- 4 for the 076bf75 webhook payload-shape resolution (companion section): shape (a) Shipment-object → use `result.id`, shape (b) Refund-object → use `result.shipment_id` (the YPPY9AK case), `shipment_id` wins disambiguation when both fields present, both missing → undefined.
+
+**Suite health:** **466 passed / 41 files** (11 new). `npx tsc -b` clean.
+
+**Manual unstick required for YPPY9AK (must be run by John via Dashboard SQL Editor — Supabase MCP is read-only for this project):**
+
+```sql
+UPDATE shipments SET refund_status = 'refunded' WHERE public_code = 'YPPY9AK' AND refund_status = 'submitted';
+-- Verify:
+SELECT public_code, status, refund_status, easypost_refund_status FROM shipments WHERE public_code = 'YPPY9AK';
+-- Expected: status='cancelled', refund_status='refunded', easypost_refund_status='refunded'
+```
+
+**Email B intentionally not retroactively sent for YPPY9AK** — the webhook bug missed the send window; sending now ~1hr later would land out-of-order if there's a stale Stripe webhook still in retry. John can decide whether to send a one-off via support if the recipient pings. The Stripe refund itself is complete and will post to the recipient's card per Stripe's normal 5–10 business-day window.
+
+**Also fixed by this turn (no code change — diagnosis only):**
+- The "F1 still renders for status=cancelled" symptom John reported is **not a bug in the family selector**. `TrackingPage.tsx`'s `isTerminalStatus('cancelled') → true` correctly routes to F3 — verified live on /t/YPPY9AK (DOM snapshot below). The stale-F1 render John saw was caused by the c01334e linkRow TDZ — cancel-label returned 500 after updating the DB row, so the client never refetched and kept rendering the pre-cancel `data`. c01334e (already deployed) is the actual fix.
+
+**Process gotcha for future agents — refund.successful won't redeliver:**
+EasyPost's `refund.successful` for YPPY9AK fired at 19:28 UTC, we 200'd (with the payload-shape bug pre-076bf75 in flight). EP won't redeliver. The tracking-poll path is the resilient backstop — any future `/t/<code>` page view for a `refund_status='submitted'` shipment GETs `/v2/shipments/<id>` and fires `createRefund` if EP says `refund_status='refunded'`. This is what unstuck YPPY9AK during diagnosis (single curl against the tracking endpoint at 19:59 UTC was enough — see the `cancel.stripe_refund_initiated` + `ledger.easypost_refund_recorded` + `stripe.charge_refunded` event_logs cluster at 19:59:57–19:59:58).
+
+**Files changed:**
+- `supabase/functions/_shared/intents.ts` (new, ~55 LOC) — `resolvePiContextWithFallback` helper
+- `supabase/functions/stripe-webhook/index.ts` (+5 / -22) — import + two arm rewrites
+- `tests/unit/intents.test.ts` (new, ~210 LOC) — 11 unit tests
+
+**Deploy:** `npx supabase functions deploy stripe-webhook` (no migration needed).
+
+**Browser-verified:**
+  mcp-session: live /t/YPPY9AK reload at port 5173 (dev server against prod Supabase) — DOM snapshot + screenshot confirm F3 banner ("This label was voided"), F3 DetailsCard, PrintAnotherLabelCTA, refund-pending chip; no F1 Print/Download/Cancel elements present. Companion /t/PBDKCPB (status='label_created' → auto-advanced to 'delivered' by EasyPost test mode) → F2 post-delivery renders.
+  variants-covered: [shipment.status='cancelled' (live) → F3; shipment.status='delivered' (test-mode auto-advance) → F2 post-delivery. F1 pre-dropoff selector path is unchanged (no code touched) and is exercised by tests/e2e/tracking-lifecycle-states.spec.ts.]
+
+---
+
 ### [2026-05-24] Pre-launch P1 wrap-up — bundle complete, HMAC was already live, supersede the old followups handoff
 
 **Category:** docs | process | Launch
