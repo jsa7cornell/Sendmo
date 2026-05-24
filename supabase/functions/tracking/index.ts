@@ -585,6 +585,28 @@ serve(async (req: Request) => {
   const senderAddr = (shipment as { sender_address?: { city?: string; state?: string } | null }).sender_address ?? null;
   const recipientAddr = (shipment as { recipient_address?: { city?: string; state?: string } | null }).recipient_address ?? null;
 
+  // ─── Receipt amount lookup (payer only) ──────────────────────────────────
+  // Sum `charge` rows for this shipment's PI from the transactions ledger.
+  // Required for the /t/ receipt block to render the actual paid amount
+  // instead of $0.00. Pattern D (decided 2026-05-16) was supposed to wire
+  // this — the placeholder `null` lingered until 2026-05-24 when the first
+  // live charge surfaced the gap.
+  //
+  // Anonymous viewers continue to see null per the leak-zero gate below.
+  // The sum is signed-positive (charge rows are written as positive
+  // amount_cents — customer cash IN to SendMo).
+  let amountPaidCents: number | null = null;
+  if (viewerRole === "payer" && shipment.stripe_payment_intent_id) {
+    const { data: chargeRows } = await supabase
+      .from("transactions")
+      .select("amount_cents")
+      .eq("stripe_intent_id", shipment.stripe_payment_intent_id)
+      .eq("type", "charge");
+    if (chargeRows && chargeRows.length > 0) {
+      amountPaidCents = chargeRows.reduce((sum, r) => sum + (r.amount_cents ?? 0), 0);
+    }
+  }
+
   return new Response(
     JSON.stringify({
       tracking_number: shipment.tracking_number,
@@ -648,9 +670,7 @@ serve(async (req: Request) => {
       paid: viewerRole === "payer"
         ? (shipment.stripe_payment_intent_id != null)
         : false,
-      amount_paid_cents: viewerRole === "payer"
-        ? (null as number | null)
-        : null,
+      amount_paid_cents: viewerRole === "payer" ? amountPaidCents : null,
       // EasyPost test-mode shipments use synthetic tracking numbers that look
       // real (USPS format) but never hit the actual carrier. Surfacing this
       // flag lets the UI render a TEST banner and hide things that would
