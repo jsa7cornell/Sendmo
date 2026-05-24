@@ -395,6 +395,13 @@ serve(async (req: Request) => {
             );
         }
 
+        // Unwrap the embedded sendmo_links join for downstream use (Email A
+        // payer lookup in Stage 3b + Stage 4 link revival). Declared once
+        // here, used in both stages. (Previously declared at Stage 4 only,
+        // which caused a TDZ ReferenceError on the Email A path — surfaced
+        // 2026-05-24 during the first live cancel test on YPPY9AK.)
+        const linkRow = (shipment as { sendmo_links?: { id?: string; status?: string; short_code?: string; user_id?: string } }).sendmo_links;
+
         // ── Stage 3b: Email A — refund submitted notification ──────────
         // Only sent when the refund is in 'submitted' state (has a Stripe PI
         // and EP void was accepted). Comp/not_applicable and rejected voids
@@ -505,7 +512,7 @@ serve(async (req: Request) => {
         // the EP refund call), the worst case is two real labels exist and
         // recipient gets charged twice. John accepted this tradeoff.
         let linkRevived = false;
-        const linkRow = (shipment as { sendmo_links?: { id?: string; status?: string; short_code?: string; user_id?: string } }).sendmo_links;
+        // linkRow declared at Stage 3b above; reused here.
         if (linkRow?.id) {
             const { data: otherActive } = await supabase
                 .from("shipments")
