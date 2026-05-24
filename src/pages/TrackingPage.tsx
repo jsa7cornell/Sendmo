@@ -288,9 +288,9 @@ export default function TrackingPage() {
     return data.viewer_is_recipient ? "payer" : "anonymous";
   })();
 
-  // Fire the print-log POST on Print click + optimistically bump the chip.
-  // Rollback on failure (N3) — silent revert, no toast; the user's primary
-  // task (opening the PDF) succeeded in parallel via target="_blank".
+  // Fire the print-log POST on Print click + optimistically bump the chip,
+  // then refetch tracking data so data.print_count reflects truth (the
+  // optimistic bump was unreliable across new-tab + back-navigation flows).
   async function handlePrintClick() {
     if (!code) return;
     setOptimisticPrintBump(b => b + 1);
@@ -301,10 +301,35 @@ export default function TrackingPage() {
         accessToken: session?.access_token,
         cancelToken: cancelToken ?? undefined,
       });
+      // Refetch tracking to pick up the new server-side print_count.
+      // Reset optimistic bump on the next data load so we don't double-count.
+      setRefetchTick(t => t + 1);
+      setOptimisticPrintBump(0);
     } catch {
-      // Rollback the optimistic bump. Refetch isn't necessary — server state
-      // didn't move, so the next tracking GET will return the same count.
+      // Rollback the optimistic bump. Server state didn't move; no refetch.
       setOptimisticPrintBump(b => Math.max(0, b - 1));
+    }
+  }
+
+  // Download the label as a true file download (cross-origin = the HTML5
+  // <a download> attribute is ignored by browsers, so we fetch the PDF as a
+  // blob and trigger download from a same-origin blob URL).
+  async function handleDownloadClick(labelUrl: string, publicCode: string) {
+    try {
+      const res = await fetch(labelUrl);
+      if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = `sendmo-${publicCode}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      // Fallback: open in a new tab so the user can save via browser menu.
+      window.open(labelUrl, "_blank", "noopener,noreferrer");
     }
   }
 
@@ -463,13 +488,16 @@ export default function TrackingPage() {
             </Button>
           </a>
 
-          {/* Download button */}
-          <a href={data.label_url} download className="block">
-            <Button variant="outline" className="w-full rounded-xl py-5 text-sm font-semibold">
-              <Download className="w-4 h-4 mr-2" />
-              Download
-            </Button>
-          </a>
+          {/* Download button — fetches PDF as blob to force download
+              (cross-origin <a download> attribute is ignored by browsers). */}
+          <Button
+            variant="outline"
+            className="w-full rounded-xl py-5 text-sm font-semibold"
+            onClick={() => data.label_url && code && handleDownloadClick(data.label_url, code)}
+          >
+            <Download className="w-4 h-4 mr-2" />
+            Download
+          </Button>
         </div>
 
         {/* Print-count line below the row */}
