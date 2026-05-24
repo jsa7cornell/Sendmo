@@ -20,7 +20,7 @@ import { ArrowLeft, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/contexts/AuthContext";
-import { cn } from "@/lib/utils";
+import { cn, carrierDisplayName } from "@/lib/utils";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -255,7 +255,7 @@ export default function AdminShipmentDetail() {
         </div>
 
         <p className="text-muted-foreground -mt-2">
-          <strong>{detail.carrier ?? "Unknown carrier"} {detail.service ?? ""}</strong>
+          <strong>{detail.carrier ? carrierDisplayName(detail.carrier) : "Unknown carrier"} {detail.service ?? ""}</strong>
           {detail.tracking_number && detail.tracking_number !== "—" && <> · tracking <strong>{detail.tracking_number}</strong></>}
           {detail.delivered_at && <> · delivered {fmtDateShort(detail.delivered_at)}</>}
           {detail.link_short_code && (
@@ -436,7 +436,7 @@ export default function AdminShipmentDetail() {
                       <div className="w-2.5 h-2.5 rounded-full bg-amber-500 mt-1 flex-none" />
                       <div>
                         <p className="font-semibold">Carrier adjustment posted</p>
-                        <p className="text-muted-foreground text-xs">{fmtDate(adj.created_at)} · {detail.carrier} {adj.reason ?? "adjustment"}</p>
+                        <p className="text-muted-foreground text-xs">{fmtDate(adj.created_at)} · {detail.carrier ? carrierDisplayName(detail.carrier) : ""} {adj.reason ?? "adjustment"}</p>
                       </div>
                     </li>
                   ))}

@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { cn } from "@/lib/utils";
+import { cn, carrierDisplayName } from "@/lib/utils";
 import SendMoLogo from "@/components/SendMoLogo";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
@@ -895,7 +895,7 @@ export default function Dashboard() {
                               {toCity && <span className="text-xs text-muted-foreground">{toCity}</span>}
                             </div>
                           </td>
-                          <td className="px-5 py-3 text-muted-foreground">{s.carrier}</td>
+                          <td className="px-5 py-3 text-muted-foreground">{s.carrier ? carrierDisplayName(s.carrier) : ""}</td>
                           <td className="px-5 py-3">
                             <div className="flex flex-col gap-0.5">
                               <span className={cn(
@@ -918,7 +918,7 @@ export default function Dashboard() {
                                 <Link
                                   to={`/t/${s.public_code}`}
                                   className="text-primary text-xs font-mono flex items-center gap-1 hover:underline"
-                                  title={s.tracking_number ? `${s.carrier} #${s.tracking_number}` : undefined}
+                                  title={s.tracking_number && s.carrier ? `${carrierDisplayName(s.carrier)} #${s.tracking_number}` : undefined}
                                 >
                                   {s.public_code}
                                   <ChevronRight className="w-3 h-3" />
@@ -978,7 +978,7 @@ export default function Dashboard() {
                       <p className="text-xs text-muted-foreground">{statusWithDate(s.status, s.created_at, s.updated_at)}</p>
                       {refundBadge(s.refund_status)}
                       <div className="flex items-center justify-between text-xs">
-                        <span className="text-muted-foreground">{s.carrier}</span>
+                        <span className="text-muted-foreground">{s.carrier ? carrierDisplayName(s.carrier) : ""}</span>
                         <span className="font-medium text-foreground">{formatCents(s.display_price_cents)}</span>
                       </div>
                       {s.public_code && s.tracking_number !== "TEST" ? (

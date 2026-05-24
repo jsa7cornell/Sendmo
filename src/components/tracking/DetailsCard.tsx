@@ -1,3 +1,5 @@
+import { carrierDisplayName } from "@/lib/utils";
+
 // Per-family Details renderer for /t/<public_code>.
 // Decided 2026-05-13 — tracking-page-ia-polish.
 //
@@ -65,7 +67,7 @@ export default function DetailsCard({ family, data }: Props) {
         {!fromLoc && toLoc && <Row label="To" value={toLoc} />}
 
         {data.carrier && (
-          <Row label="Carrier" value={data.service ? `${data.carrier} · ${data.service}` : data.carrier} />
+          <Row label="Carrier" value={data.service ? `${carrierDisplayName(data.carrier)} · ${data.service}` : carrierDisplayName(data.carrier)} />
         )}
 
         {/* F2 surfaces the carrier tracking # — actionable for "View on USPS".

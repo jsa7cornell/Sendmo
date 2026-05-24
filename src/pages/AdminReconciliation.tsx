@@ -22,7 +22,7 @@ import { Link } from "react-router-dom";
 import { AlertTriangle, RefreshCw, FileText, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { cn } from "@/lib/utils";
+import { cn, carrierDisplayName } from "@/lib/utils";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -279,7 +279,7 @@ function RejectedRefundsPanel({ session }: { session: { access_token: string } |
                       )}
                     </p>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                      {row.carrier ?? "Unknown carrier"} ·{" "}
+                      {row.carrier ? carrierDisplayName(row.carrier) : "Unknown carrier"} ·{" "}
                       {row.rate_cents != null ? `$${(row.rate_cents / 100).toFixed(2)}` : "—"} ·{" "}
                       <span className={cn("font-semibold", isTimeout ? "text-amber-700" : "text-red-600")}>
                         {isTimeout ? "Timed out after 21 days" : "Hard rejected by carrier"}
@@ -641,7 +641,7 @@ export default function AdminReconciliation({ session, envFilter = "all" }: Admi
                     <>
                       <p className="text-sm font-bold">Chargeback filed — respond before the deadline</p>
                       <p className="text-xs text-muted-foreground mt-0.5">
-                        <strong>{item.shipment_public}</strong> · {item.carrier} · disputed <strong>{fmt(item.amount_cents ?? 0)}</strong> + ~$15 Stripe dispute fee
+                        <strong>{item.shipment_public}</strong> · {item.carrier ? carrierDisplayName(item.carrier) : ""} · disputed <strong>{fmt(item.amount_cents ?? 0)}</strong> + ~$15 Stripe dispute fee
                       </p>
                     </>
                   )}
@@ -651,7 +651,7 @@ export default function AdminReconciliation({ session, envFilter = "all" }: Admi
                         Carrier adjustment over $10 — review before charging the customer
                       </p>
                       <p className="text-xs text-muted-foreground mt-0.5">
-                        <strong>{item.shipment_public}</strong> · {item.carrier} · {item.reason ?? "reweigh"} ·{" "}
+                        <strong>{item.shipment_public}</strong> · {item.carrier ? carrierDisplayName(item.carrier) : ""} · {item.reason ?? "reweigh"} ·{" "}
                         <strong>{fmt(item.delta_cents ?? 0)}</strong>
                         {item.claimed_weight_oz != null && item.captured_weight_oz != null && (
                           <> · declared {(item.claimed_weight_oz / 16).toFixed(1)} lb, carrier captured {(item.captured_weight_oz / 16).toFixed(1)} lb</>
@@ -673,7 +673,7 @@ export default function AdminReconciliation({ session, envFilter = "all" }: Admi
                     <>
                       <p className="text-sm font-bold">Refund stuck at "submitted" past 3 weeks</p>
                       <p className="text-xs text-muted-foreground mt-0.5">
-                        <strong>{item.shipment_public}</strong> · {item.carrier} · voided{" "}
+                        <strong>{item.shipment_public}</strong> · {item.carrier ? carrierDisplayName(item.carrier) : ""} · voided{" "}
                         {item.days_since_submitted} days ago · EasyPost still reports submitted
                       </p>
                     </>
@@ -812,7 +812,7 @@ export default function AdminReconciliation({ session, envFilter = "all" }: Admi
                       )}
                     </td>
                     {/* Carrier */}
-                    <td className="px-3 py-2 text-muted-foreground">{row.carrier ?? "—"}</td>
+                    <td className="px-3 py-2 text-muted-foreground">{row.carrier ? carrierDisplayName(row.carrier) : "—"}</td>
                     {/* Timeline */}
                     <td className="px-3 py-2 border-l-2 border-border/30 font-mono">{fmtDate(row.label_created_at)}</td>
                     <td className="px-3 py-2 font-mono">
