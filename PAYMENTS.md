@@ -505,3 +505,13 @@ Three customer-facing emails fire at `refund_status` transitions. Dedup via `not
 
 `supabase/migrations/035_refund_cron_state.sql` — Block 1 applies the `recon_state` cursor seed + the `idx_notifications_log_refund_dedup` partial unique index. Block 2 (deferred) is the pg_cron registration for the daily 04:30 UTC sweep.
 
+---
+
+## 13. Reconciliation interpretation notes
+
+### 13.1 Admin-comp labels are intentionally absent from charge reconciliation
+
+LIVE shipments where `sendmo_links.is_test=true` and `shipments.stripe_payment_intent_id IS NULL` are **admin-path comp labels** — labels John issues directly via the admin path against a real carrier, with no Stripe involvement by design. They don't have a `charge` ledger row (there was no Stripe Charge), so the reconciliation report's per-shipment `Paid` / `Stripe fee` / `Refund to customer` columns correctly render `$0`. The carrier-side ledger (`label_cost` + eventual `easypost_refund`) covers their financial truth.
+
+Pattern to recognize: the four 2026-05-12/13 cancelled live shipments (`NEC7J3E`, `RA2W2NG`, `RPSAZXG`, `ECWHJES`) — all owned by `jsa7cornell@gmail.com`, `link_is_test=true`, `is_live=true`. Diagnosed 2026-05-24; no remediation needed. Do not insert synthetic `charge` rows for these — the ledger correctly reflects "SendMo paid EasyPost; no customer was ever charged."
+

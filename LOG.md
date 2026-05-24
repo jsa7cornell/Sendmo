@@ -12,6 +12,47 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-05-24] Pre-launch P1 wrap-up — bundle complete, HMAC was already live, supersede the old followups handoff
+
+**Category:** docs | process | Launch
+**Cross-link:** handoff [proposals/2026-05-23_pre-launch-handoff-plan.md](proposals/2026-05-23_pre-launch-handoff-plan.md) (the H1–H5 dispatch artifact) | superseded handoff [proposals/2026-05-19_payments-golive-followups-handoff.md](proposals/2026-05-19_payments-golive-followups-handoff.md) (banner added) | PAYMENTS.md §13 (new) | retracts the "Outstanding (John): set EASYPOST_WEBHOOK_HMAC_SECRET" line in the [2026-05-21 STATUS_MAP gaps entry](#2026-05-21-easypost-webhook-status_map-gaps--no-easypost-event-was-ever-processed)
+
+**What this entry does:**
+
+1. **Marks the P1 launch bundle complete.** H1 (ledger foundation) + H2 (carrier adjustments + save-card + Risk-Intel shipping) + H3 (`/refunds` + partial plumbing + `charge.refund.updated`) + H4 (reconciliation dashboard + sweep + admin-recon-action) + H5 (refund emails + cron + rejected queue) — all on `main`. Plus the post-H5 correctness layer: Stripe fee writer + buy-time rate gate + Smart Post denylist + admin user-detail page + parcel-dims fix + PI↔shipment Path B + React #310 fix + three historical backfills (charge-shipment links, Stripe fees, parcel dims) + the per-shipment recon empty-columns fix. Code on `main`, edge functions deployed, Vercel green.
+
+2. **Retracts the EASYPOST_WEBHOOK_HMAC_SECRET "unset" claim.** The 2026-05-21 LOG entry's "Outstanding (John): … verification is currently skipped (events accepted unsigned)" was incorrect. Verified 2026-05-24 against `event_logs`:
+   - 2026-05-13 04:40–05:24 — four `webhook.hmac_invalid` reason=`signature_mismatch` (the secret was set; value was rotated and didn't yet match — temporary).
+   - 2026-05-13 09:37 onward — `webhook.easypost_*` info rows with no hmac_invalid (verification passing).
+   - 2026-05-22 15:13 and 2026-05-24 15:24 — `webhook.hmac_invalid` reason=`missing_signature_header` (unsigned probes correctly rejected; one was a deliberate curl test from the nerve-center session).
+
+   HMAC verification has been live since 2026-05-13 evening. John confirms the secret has been in Supabase since 2026-05-12. The 2026-05-21 LOG was looking at a stale or wrong signal.
+
+3. **Documents the admin-comp pattern.** New PAYMENTS.md §13.1 explains why four 2026-05-12/13 LIVE shipments (`NEC7J3E`, `RA2W2NG`, `RPSAZXG`, `ECWHJES`) have no `charge` ledger row — they're admin-path comp labels (no Stripe involvement by design), correctly absent from charge reconciliation. Closes a parallel-session investigation. Pattern to recognize: `is_live=true` + `sendmo_links.is_test=true` + `stripe_payment_intent_id IS NULL`. Do not insert synthetic `charge` rows for these — the carrier-side ledger (`label_cost` + `easypost_refund`) is their financial truth.
+
+4. **Supersedes the old payments-golive followups handoff.** Banner added to [proposals/2026-05-19_payments-golive-followups-handoff.md](proposals/2026-05-19_payments-golive-followups-handoff.md). It's preserved for institutional memory but no longer the source of truth — agents starting payments work should read the pre-launch handoff plan + recent LOG entries.
+
+**What's still on John (not agent work):**
+
+1. **Risk-Intel B1** — Stripe Dashboard config (recommended block rules + card-testing protection, both modes). ~1 hr.
+2. **Job 3 Step 4** — live ~$7–12 label end-to-end. Exercises payments → save-card → rate gate → label-buy → ledger writers → Stripe shipping signal.
+3. **Job 3 Step 5** — live cancel + admin refund. Exercises cancel-label → Email A → carrier-confirm → Email B → ledger refund row → `charge.refund.updated` (if applicable).
+4. **Final launch-crossed LOG entry** — after smoke tests pass, write the entry that says "live mode opened to customers." This entry is the P1-build-complete marker, not the launch-crossed marker.
+
+**Fast-follows (intentional, post-launch):**
+
+- Enable `pg_cron` + `pg_net` extensions + register both cron jobs (reconciliation-sweep daily 04:00 UTC + cron-refund-sweep daily 04:30 UTC). Steps documented in migrations 034 and 035. Sweeps are admin-triggerable from the Reconciliation tab meanwhile.
+- Migrate edge-function imports off `esm.sh` → JSR (deferred per [proposals/2026-05-23_edge-function-import-resilience.md](proposals/2026-05-23_edge-function-import-resilience.md) OQ1 decision).
+- Auth-then-capture redesign (only if real-world data shows >1 hard refund per week sustained; current baseline: 0).
+- Investigate the H4/H5 hung Playwright e2e workflow (the in_progress runs that linger ~34 min). Likely `tests/e2e/admin-reconciliation.spec.ts` or pre-existing `tests/e2e/label-flow.spec.ts` breakage.
+- 14 historical `charge` rows still have `shipment_id IS NULL` (Path B forward-stitches new shipments only; back-filling old ledger rows would require an UPDATE which Rule 16 forbids — acceptable per the Reconciliation LOG).
+
+**Browser-verified:**
+  n/a-category: docs
+  n/a-reason: PAYMENTS.md §13.1 + supersede banner + this LOG entry — pure documentation, no DOM/wire-shape consumer. HMAC verification status was verified via SQL against `event_logs` (see #2 above), not a fresh DOM session.
+
+---
+
 ### [2026-05-23] Pre-launch correctness bundle — Stripe fee writer + buy-time rate gate + Smart Post denylist + admin user page + React #310 fix
 
 **Category:** feat | fix | Ledger | Edge Functions | Admin | Rates | UX
