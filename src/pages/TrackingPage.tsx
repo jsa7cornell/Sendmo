@@ -354,13 +354,14 @@ export default function TrackingPage() {
         setRefetchTick(t => t + 1);
       }
     } catch (err) {
-      // Surface as a cancel-specific banner above the label section. Do NOT
-      // touch the page-level `error` — that's reserved for "tracking GET
-      // itself failed" and rendering that here wipes out the whole page
-      // (the cancel succeeded server-side or didn't — either way, the
-      // tracking data is still valid to show).
+      // Set cancelError + leave the modal OPEN so the error renders inline
+      // inside the dialog (the user sees the result in the same place they
+      // took the action). Previously the modal closed and a banner appeared
+      // at the top of the page — the user often missed it because they were
+      // scrolled to the modal area. Modal still renders the top-of-page
+      // banner too as a backup once they close.
       setCancelError(err instanceof Error ? err.message : "Cancel failed");
-      setConfirmMode(null);
+      // Do NOT setConfirmMode(null) here — keep the modal open.
     }
   }
 
@@ -688,11 +689,20 @@ export default function TrackingPage() {
               {/* Cancel / Change confirmation dialog (modal — position-agnostic) */}
               <CancelLabelDialog
                 open={confirmMode !== null}
-                onOpenChange={(o) => !o && setConfirmMode(null)}
+                onOpenChange={(o) => {
+                  if (!o) {
+                    setConfirmMode(null);
+                    // Clear the error when the user closes the modal — they've
+                    // acknowledged it. The top-of-page banner already renders
+                    // the same error for users who scroll up.
+                    setCancelError(null);
+                  }
+                }}
                 mode={confirmMode ?? "cancel"}
                 paid={data.paid ?? false}
                 amountPaidCents={data.amount_paid_cents ?? null}
                 onConfirm={handleCancelConfirm}
+                errorMessage={cancelError}
               />
 
               {/* ── TERMINAL (F3): cancelled / return_to_sender ────────────

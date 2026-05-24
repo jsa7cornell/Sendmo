@@ -3,7 +3,7 @@ import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Loader2 } from "lucide-react";
+import { Loader2, AlertCircle } from "lucide-react";
 
 interface Props {
   open: boolean;
@@ -16,6 +16,11 @@ interface Props {
   /** Fired when the user confirms; should perform the actual cancel call.
    *  Component sets submitting state around the await. */
   onConfirm: () => Promise<void>;
+  /** Error message from a prior cancel attempt. When set, renders inline
+   *  inside the modal and the primary CTA switches to "Try again." Surfaces
+   *  carrier rejections (UPS/USPS refused the void) without dismissing the
+   *  modal — the user sees the result in the same place they took the action. */
+  errorMessage?: string | null;
 }
 
 function formatRefundCopy(paid: boolean, amountPaidCents: number | null): string {
@@ -33,7 +38,7 @@ function formatRefundCopy(paid: boolean, amountPaidCents: number | null): string
 //
 // Decided proposal: 2026-05-11_label-cancel-and-change_decided-2026-05-12.
 export default function CancelLabelDialog({
-  open, onOpenChange, mode, paid, amountPaidCents, onConfirm,
+  open, onOpenChange, mode, paid, amountPaidCents, onConfirm, errorMessage,
 }: Props) {
   const [submitting, setSubmitting] = useState(false);
 
@@ -44,7 +49,10 @@ export default function CancelLabelDialog({
     : "We'll take you back to the start so you can ship again. This can't be undone.";
   const description = `${refundLine} ${tail}`;
 
-  const confirmLabel = mode === "cancel" ? "Yes, cancel" : "Yes, start over";
+  const hasError = !!errorMessage;
+  const confirmLabel = hasError
+    ? "Try again"
+    : (mode === "cancel" ? "Yes, cancel" : "Yes, start over");
 
   async function handleConfirm() {
     setSubmitting(true);
@@ -62,13 +70,22 @@ export default function CancelLabelDialog({
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
+        {hasError && (
+          <div className="bg-destructive/5 border border-destructive/30 rounded-lg p-3 flex items-start gap-2">
+            <AlertCircle className="w-4 h-4 text-destructive flex-shrink-0 mt-0.5" />
+            <div className="flex-1 text-xs">
+              <p className="font-semibold text-foreground">Couldn't cancel this label</p>
+              <p className="text-muted-foreground mt-0.5">{errorMessage}</p>
+            </div>
+          </div>
+        )}
         <DialogFooter className="gap-2">
           <Button
             variant="outline"
             disabled={submitting}
             onClick={() => onOpenChange(false)}
           >
-            Keep label
+            {hasError ? "Close" : "Keep label"}
           </Button>
           <Button
             variant={mode === "cancel" ? "destructive" : "default"}

@@ -138,3 +138,21 @@ Items deferred from the [unify-confirmation-into-tracking proposal](proposals/20
 > See [proposals/2026-05-21_payments-risk-intelligence_reviewed-2026-05-22_decided-2026-05-22.md](proposals/2026-05-21_payments-risk-intelligence_reviewed-2026-05-22_decided-2026-05-22.md).
 
 - [ ] **Turnstile (CAPTCHA) on account signup** — Cloudflare Turnstile on the Supabase Auth OTP/signup path as a bot-farm speed bump. **Parked here 2026-05-22:** John does not want signup friction, and per the risk-intelligence proposal §4.4 the load-bearing bot-farm defense is making a farmed account *unable to move money* (Radar at PM-add + the velocity hierarchy), **not** blocking signups. Turnstile is free and mostly invisible (managed mode), and Supabase Auth has native Turnstile support — a config flip + a widget, not a vendor integration. Revisit if real bot-farm activity shows up in `velocity.limit_hit` or signup telemetry.
+
+---
+
+## Added 2026-05-24 — multi-card lifecycle (cross-PM cancellation safety)
+
+> Surfaced during John's first live label-buy + cancel test. Refunds-on-cancel already work correctly today (Stripe routes refunds to the original charge's PM automatically regardless of current Customer state — verified semantics, not just hope). The real architectural gap is on **carrier-adjustment auto-recharge** + **user-side card deletion**.
+
+- [ ] **Multi-card lifecycle: charge adjustments to original-shipment PM + soft-detach on user-side delete** — Two related changes that protect against a user-side card change between buy-time and a post-pickup carrier adjustment.
+
+  **(1) Adjustment recharges target the original shipment's PM, not the user's current default.** H2's `_shared/adjustments.ts:resolveRecovery` today reads `payment_methods` for the user's current default and charges that. If the user has added a new card and demoted the old one between buy-time and a carrier reweigh, the recharge would hit the NEW card — architecturally wrong (the adjustment is correction-of-original-shipment) and user-confusing. Fix: denormalize `payment_method_id` onto `shipments` at buy time (sourced from the PI's payment method via `stripe_intents.payment_method_id`, which we already have). `resolveRecovery` then prefers `shipment.original_pm_id` and only falls back to the current default if the original PM is no longer attached (e.g. bank closed the card).
+
+  **(2) `DELETE /payment-methods/:id` soft-demotes, not detaches.** Today the endpoint calls Stripe's `detach` immediately, which fully removes the PM from the Customer. That makes the original card unavailable for both (a) the adjustment recharge above and (b) the My Wallet "card on file" display next to historical receipts. New behavior: set `is_default=false` locally (demote), keep the PM attached to the Stripe Customer. Stripe Customers naturally hold multiple PMs simultaneously — this just stops actively detaching them. Real detach can be reserved for an explicit "remove permanently" admin action (or a periodic sweep that detaches PMs with no shipments referencing them in the last 90 days).
+
+  **Why not urgent:** refund-on-cancel routing already works (Stripe handles it). The adjustment-recharge concern requires (a) a carrier-adjustment fires AND (b) the user changes their card between buy-time and the reweigh — both rare alone, vanishingly rare combined at launch volume. Defer to a focused post-launch proposal once real-world data clarifies the size of the gap.
+
+  **Files involved:** `_shared/adjustments.ts` (resolveRecovery PM-selection logic), `payment-methods/index.ts` (DELETE handler), `shipments` schema (new `original_payment_method_id` column via migration), `payments/index.ts` + `labels/index.ts` (capture + persist `original_payment_method_id` at buy time).
+
+  Surfaced by John 2026-05-24 during the first live label-buy + cancel test.
