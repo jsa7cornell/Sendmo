@@ -499,8 +499,16 @@ serve(async (req: Request) => {
     // (same behaviour as for tracker.updated — rollout-safe).
     if (description === "refund.successful") {
       const supabase = getSupabase();
-      // result.id is the EasyPost Shipment ID for the refunded shipment.
-      const epShipmentId: string | undefined = result.id;
+      // EasyPost has historically shipped this event with two payload shapes
+      // (verified against live webhook at 19:28 UTC 2026-05-24 on YPPY9AK):
+      //   (a) result IS the Shipment    → result.id = shp_…, result.refunds = [{id: 'rfnd_…', ...}]
+      //   (b) result IS the Refund      → result.id = rfnd_…, result.shipment_id = 'shp_…'
+      // Detect shape (b) first by checking for shipment_id; fall back to
+      // result.id (shape a). Without this, shape (b) deliveries log
+      // 'webhook.easypost_refund_shipment_not_found' and the entire push
+      // refund path is dead — exactly what we hit on the first live cancel.
+      const epShipmentId: string | undefined =
+        (result.shipment_id as string | undefined) ?? (result.id as string | undefined);
       if (!epShipmentId) {
         log({
           event_type: "webhook.easypost_refund_no_shipment_id",
@@ -634,21 +642,30 @@ serve(async (req: Request) => {
       });
 
       // ── H1: easypost_refund ledger row ──────────────────────────────────
-      // The refund.successful event delivers the EasyPost Shipment as
-      // result (body.result). The Refund objects are at result.refunds[].
-      // Shape: { id: 'rfnd_…', amount: 8.50, status: 'refunded', … }
+      // EasyPost ships this event with three observed payload shapes:
+      //   (a) Shipment with refunds[] array — result.refunds = [{id:'rfnd_…', amount, ...}]
+      //   (b) Shipment with refund singular — result.refund = {id:'rfnd_…', amount, ...}
+      //   (c) Refund object directly        — result.id = 'rfnd_…', result.amount = ..., result.shipment_id = 'shp_…'
+      // Detect (c) by presence of result.shipment_id — the top-level result
+      // IS the Refund object. We already used this signal above to resolve
+      // epShipmentId; here we also use it to source the refund object id +
+      // amount.
       // Idempotency key = 'easypost_refund_<rfnd_id>' — same key the
       // tracking lazy-poll would use, so whichever writer lands first wins
       // and the second sees a safe UNIQUE collision no-op (B4 fix).
       {
         const refundObjects = (result.refunds as Array<{ id: string; amount: string | number }> | null) ?? [];
         const refundObj = refundObjects[0] ?? null;
-        // Fallback: if EasyPost ships refunds at result.refund (object, not array),
-        // check that too (EasyPost API has varied this historically).
         const refundObjFallback = !refundObj && result.refund
           ? (result.refund as { id: string; amount: string | number })
           : null;
-        const effectiveRefundObj = refundObj ?? refundObjFallback;
+        // Shape (c): result IS the Refund object. result.shipment_id is the
+        // discriminator; if present, treat result.id + result.amount as the
+        // refund-object identity.
+        const refundObjFromTopLevel = (!refundObj && !refundObjFallback && result.shipment_id && result.id)
+          ? { id: result.id as string, amount: (result.amount as string | number) ?? 0 }
+          : null;
+        const effectiveRefundObj = refundObj ?? refundObjFallback ?? refundObjFromTopLevel;
         const refundObjId: string = effectiveRefundObj?.id ?? `shp_fallback_${epShipmentId}`;
         const refundAmountCents: number = effectiveRefundObj?.amount
           ? Math.round(parseFloat(String(effectiveRefundObj.amount)) * 100)
