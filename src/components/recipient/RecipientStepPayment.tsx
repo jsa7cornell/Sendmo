@@ -104,6 +104,11 @@ export default function RecipientStepPayment({ state, onUpdate, onBack, liveMode
         // function stamp shipments.user_id from auth.uid() instead of the
         // system placeholder.
         session?.access_token,
+        // Pass the item description from the Magic Guestimator / manual entry
+        // through to the labels function so shipments.item_description gets
+        // populated (was being dropped before — flex path SenderFlow.tsx:173
+        // already does this correctly; the full-label call site was missing it).
+        { description: state.itemDescription ?? undefined },
       );
 
       onUpdate({ paymentStatus: "succeeded", labelResult: result });
