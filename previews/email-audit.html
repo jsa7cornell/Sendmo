@@ -1,0 +1,1133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SendMo — Transactional Email Audit</title>
+<style>
+  :root {
+    --bg: #f4f5f7;
+    --card: #fff;
+    --ink: #1a1d21;
+    --muted: #6b7280;
+    --line: #e5e7eb;
+    --green: #16a34a;
+    --green-bg: #dcfce7;
+    --green-light: #f0fdf4;
+    --amber: #b45309;
+    --amber-bg: #fef3c7;
+    --amber-light: #fffbeb;
+    --red: #dc2626;
+    --red-bg: #fee2e2;
+    --blue: #2563eb;
+    --blue-bg: #dbeafe;
+    --blue-light: #eff6ff;
+    --purple: #7c3aed;
+    --purple-bg: #ede9fe;
+    --gray-bg: #f9fafb;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Top bar */
+  .topbar {
+    background: var(--card);
+    border-bottom: 1px solid var(--line);
+    padding: 0 32px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    height: 54px;
+  }
+  .brand { font-weight: 800; font-size: 16px; letter-spacing: -.3px; }
+  .brand span { color: var(--blue); }
+  .topbar-badge {
+    background: var(--amber-bg);
+    color: var(--amber);
+    font-size: 11px;
+    font-weight: 700;
+    padding: 2px 10px;
+    border-radius: 20px;
+    border: 1px solid #f3c96b;
+    text-transform: uppercase;
+    letter-spacing: .5px;
+  }
+  .topbar-right { margin-left: auto; color: var(--muted); font-size: 13px; }
+
+  /* Layout */
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 36px 24px 80px; }
+
+  /* Hero */
+  .hero { margin-bottom: 32px; }
+  .hero h1 { font-size: 28px; font-weight: 800; letter-spacing: -.5px; line-height: 1.2; }
+  .hero .meta { color: var(--muted); font-size: 13px; margin-top: 6px; }
+
+  /* Summary strip */
+  .summary-strip {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-bottom: 32px;
+  }
+  .summary-tile {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 16px 18px;
+  }
+  .summary-tile .num { font-size: 28px; font-weight: 800; color: var(--blue); letter-spacing: -1px; }
+  .summary-tile .label { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+  /* TL;DR callout */
+  .tldr {
+    background: var(--ink);
+    color: #fff;
+    border-radius: 14px;
+    padding: 24px 28px;
+    margin-bottom: 32px;
+  }
+  .tldr .label {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .8px;
+    color: #9ca3af;
+    margin-bottom: 10px;
+  }
+  .tldr p { font-size: 15px; line-height: 1.6; color: #f9fafb; }
+  .tldr ul { padding-left: 20px; margin-top: 10px; }
+  .tldr ul li { font-size: 14px; color: #f3f4f6; line-height: 1.7; }
+
+  /* Section */
+  .section { margin-bottom: 44px; }
+  .section-header {
+    font-size: 18px;
+    font-weight: 700;
+    margin-bottom: 16px;
+    padding-bottom: 10px;
+    border-bottom: 2px solid var(--line);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .section-num {
+    background: var(--blue);
+    color: #fff;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    font-size: 13px;
+    font-weight: 700;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  /* Email card */
+  .email-card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    margin-bottom: 20px;
+    overflow: hidden;
+  }
+  .email-card-header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 18px 22px 14px;
+    border-bottom: 1px solid var(--line);
+    background: var(--gray-bg);
+  }
+  .email-id {
+    background: var(--blue);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 800;
+    padding: 3px 10px;
+    border-radius: 6px;
+    letter-spacing: .5px;
+    flex-shrink: 0;
+  }
+  .email-name {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--ink);
+    flex: 1;
+  }
+  .status-chip {
+    font-size: 11px;
+    font-weight: 700;
+    padding: 3px 10px;
+    border-radius: 20px;
+    border: 1px solid;
+    flex-shrink: 0;
+    letter-spacing: .3px;
+  }
+  .status-fired { background: var(--green-bg); color: var(--green); border-color: #86efac; }
+  .status-wired { background: var(--blue-bg); color: var(--blue); border-color: #93c5fd; }
+  .status-partial { background: var(--amber-bg); color: var(--amber); border-color: #fcd34d; }
+  .status-dead { background: var(--red-bg); color: var(--red); border-color: #fca5a5; }
+
+  .email-body { padding: 20px 22px; }
+  .email-grid {
+    display: grid;
+    grid-template-columns: 200px 1fr;
+    gap: 0;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    overflow: hidden;
+    margin-bottom: 16px;
+  }
+  .email-row {
+    display: contents;
+  }
+  .email-row > .k {
+    background: var(--gray-bg);
+    padding: 9px 14px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: .4px;
+    border-bottom: 1px solid var(--line);
+    border-right: 1px solid var(--line);
+  }
+  .email-row > .v {
+    padding: 9px 14px;
+    font-size: 13px;
+    color: var(--ink);
+    border-bottom: 1px solid var(--line);
+    line-height: 1.5;
+  }
+  .email-row:last-child > .k,
+  .email-row:last-child > .v { border-bottom: none; }
+
+  .copy-box {
+    background: var(--gray-bg);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 14px 16px;
+    font-size: 13px;
+    color: #374151;
+    line-height: 1.7;
+    margin-top: 12px;
+  }
+  .copy-box .copy-label {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .6px;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+  .copy-box p { margin-bottom: 6px; }
+  .copy-box p:last-child { margin-bottom: 0; }
+  .copy-box .subject-line {
+    font-weight: 700;
+    color: var(--ink);
+    font-size: 14px;
+    margin-bottom: 10px;
+  }
+
+  code {
+    font-family: "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
+    font-size: 12px;
+    background: #f3f4f6;
+    border: 1px solid #e5e7eb;
+    border-radius: 4px;
+    padding: 1px 5px;
+    color: #374151;
+  }
+
+  /* Fired-from section */
+  .fire-list { margin-top: 10px; }
+  .fire-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 4px;
+    line-height: 1.5;
+  }
+  .fire-item .arrow { color: var(--blue); font-weight: 700; flex-shrink: 0; margin-top: 1px; }
+
+  /* Log evidence */
+  .log-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    background: var(--green-light);
+    color: var(--green);
+    border: 1px solid #86efac;
+    border-radius: 6px;
+    padding: 2px 8px;
+    font-weight: 600;
+    margin-top: 6px;
+    margin-right: 4px;
+  }
+  .log-chip.never { background: #fff1f0; color: #b91c1c; border-color: #fca5a5; }
+  .log-chip.partial { background: var(--amber-bg); color: var(--amber); border-color: #fcd34d; }
+
+  /* Gap cards */
+  .gap-card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 18px 20px;
+    margin-bottom: 14px;
+  }
+  .gap-card-header { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+  .gap-name { font-size: 15px; font-weight: 700; flex: 1; }
+  .priority-chip {
+    font-size: 11px;
+    font-weight: 700;
+    padding: 3px 10px;
+    border-radius: 20px;
+    border: 1px solid;
+    flex-shrink: 0;
+  }
+  .priority-critical { background: var(--red-bg); color: var(--red); border-color: #fca5a5; }
+  .priority-high { background: var(--amber-bg); color: var(--amber); border-color: #fcd34d; }
+  .priority-medium { background: var(--blue-bg); color: var(--blue); border-color: #93c5fd; }
+  .priority-low { background: #f3f4f6; color: #374151; border-color: #d1d5db; }
+  .gap-card p { font-size: 14px; color: #374151; line-height: 1.6; margin-bottom: 6px; }
+  .gap-card p:last-child { margin-bottom: 0; }
+  .gap-card strong { color: var(--ink); }
+
+  /* YPPY9AK diagnosis */
+  .diag-box {
+    background: var(--amber-light);
+    border: 2px solid var(--amber);
+    border-radius: 12px;
+    padding: 20px 24px;
+    margin-bottom: 32px;
+  }
+  .diag-box h3 { font-size: 16px; font-weight: 700; color: var(--amber); margin-bottom: 10px; }
+  .diag-box p { font-size: 14px; color: #78350f; line-height: 1.7; margin-bottom: 8px; }
+  .diag-box p:last-child { margin-bottom: 0; }
+  .diag-box ul { padding-left: 20px; }
+  .diag-box ul li { font-size: 14px; color: #78350f; line-height: 1.7; }
+
+  /* Timeline */
+  .timeline { margin: 12px 0; }
+  .tl-item {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 6px;
+    font-size: 13px;
+    align-items: flex-start;
+  }
+  .tl-time {
+    font-family: monospace;
+    font-size: 11px;
+    color: var(--muted);
+    background: #f3f4f6;
+    border-radius: 4px;
+    padding: 2px 6px;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+  .tl-event { color: #374151; line-height: 1.5; }
+  .tl-event .miss { color: var(--red); font-weight: 700; }
+  .tl-event .ok { color: var(--green); font-weight: 700; }
+
+  /* Alert */
+  .alert {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    border-radius: 10px;
+    padding: 14px 18px;
+    margin-bottom: 16px;
+    border: 1px solid;
+  }
+  .alert-icon { font-size: 18px; flex-shrink: 0; margin-top: 2px; }
+  .alert-body { font-size: 14px; line-height: 1.6; }
+  .alert.info { background: var(--blue-light); border-color: #93c5fd; }
+  .alert.info .alert-body { color: #1e3a5f; }
+  .alert.warn { background: var(--amber-bg); border-color: #fcd34d; }
+  .alert.warn .alert-body { color: #78350f; }
+  .alert.danger { background: var(--red-bg); border-color: #fca5a5; }
+  .alert.danger .alert-body { color: #7f1d1d; }
+
+  /* Footer nav */
+  .toc {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 18px 22px;
+    margin-bottom: 32px;
+  }
+  .toc h3 { font-size: 14px; font-weight: 700; margin-bottom: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+  .toc-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .toc-link { font-size: 13px; color: var(--blue); text-decoration: none; }
+  .toc-link:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">Send<span>Mo</span></div>
+  <div class="topbar-badge">Email Audit</div>
+  <div class="topbar-right">Generated 2026-05-27 &nbsp;·&nbsp; Pre-launch diagnostic</div>
+</div>
+
+<div class="wrap">
+
+  <!-- Hero -->
+  <div class="hero">
+    <h1>Transactional Email Audit</h1>
+    <div class="meta">Full catalog of every email SendMo sends — triggers, copy, dedup, send status — plus gap analysis for pre-launch decisions.</div>
+  </div>
+
+  <!-- Summary tiles -->
+  <div class="summary-strip">
+    <div class="summary-tile">
+      <div class="num">11</div>
+      <div class="label">Emails cataloged</div>
+    </div>
+    <div class="summary-tile">
+      <div class="num">3</div>
+      <div class="label">Confirmed firing (30d)</div>
+    </div>
+    <div class="summary-tile">
+      <div class="num">8</div>
+      <div class="label">Wired, not yet live-fired</div>
+    </div>
+    <div class="summary-tile">
+      <div class="num">9</div>
+      <div class="label">Gaps identified</div>
+    </div>
+  </div>
+
+  <!-- TL;DR -->
+  <div class="tldr">
+    <div class="label">TL;DR</div>
+    <p>SendMo has 11 cataloged transactional emails across auth, label lifecycle, tracking, refunds, risk, and admin. The two types confirmed firing in the last 30 days are <strong>label confirmation</strong> and <strong>tracking updates</strong> (in_transit / out_for_delivery / delivered). The H5 refund lifecycle emails (A/B/C), risk-intel emails, and carrier adjustment email are all wired but have not yet fired against live shipments.</p>
+    <ul>
+      <li>The OTP/magic-link email is handled by Supabase Auth via Resend SMTP — <em>not</em> the custom template. The template exists but has no wired send-site.</li>
+      <li>H5 did not fire for YPPY9AK because the carrier rejected both void attempts (UPS "Void not available at this time") — Email A's gate requires <code>refund_status='submitted'</code> which was never written.</li>
+      <li>Top pre-launch gaps: welcome/first-label email, Stripe-branded receipt, and shipment status tracking for the <em>sender</em> (link owner).</li>
+    </ul>
+  </div>
+
+  <!-- TOC -->
+  <div class="toc">
+    <h3>Jump to section</h3>
+    <div class="toc-grid">
+      <a href="#e1" class="toc-link">E1 — OTP / Magic Link</a>
+      <a href="#e2" class="toc-link">E2 — Label Confirmation</a>
+      <a href="#e3" class="toc-link">E3 — Tracking: In Transit</a>
+      <a href="#e4" class="toc-link">E4 — Tracking: Out for Delivery</a>
+      <a href="#e5" class="toc-link">E5 — Tracking: Delivered</a>
+      <a href="#e6" class="toc-link">E6 — Payment Declined (Reactivate)</a>
+      <a href="#e7" class="toc-link">E7 — Budget Reached</a>
+      <a href="#e8" class="toc-link">E8 — Radar Block Alert</a>
+      <a href="#e9" class="toc-link">E9 — Carrier Adjustment</a>
+      <a href="#e10" class="toc-link">E10 — Refund Submitted (H5-A)</a>
+      <a href="#e11" class="toc-link">E11 — Refund Completed (H5-B)</a>
+      <a href="#e12" class="toc-link">E12 — Refund Unsuccessful (H5-C)</a>
+      <a href="#e13" class="toc-link">E13 — Admin: Refund Failed Alert</a>
+      <a href="#yppy9ak" class="toc-link">YPPY9AK Diagnosis</a>
+      <a href="#gaps" class="toc-link">Gap Analysis</a>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- SECTION 1: Catalog -->
+  <!-- ============================================================ -->
+  <div class="section" id="catalog">
+    <div class="section-header"><span class="section-num">1</span> Email Catalog</div>
+
+    <!-- E1: OTP -->
+    <div class="email-card" id="e1">
+      <div class="email-card-header">
+        <div class="email-id">E1</div>
+        <div class="email-name">OTP / Magic Link (Supabase Auth)</div>
+        <div class="status-chip status-partial">Partial — template orphaned</div>
+      </div>
+      <div class="email-body">
+        <div class="email-grid">
+          <div class="email-row"><div class="k">Template</div><div class="v"><code>otpEmail(code)</code> — <code>supabase/functions/_shared/email-templates.ts:41</code></div></div>
+          <div class="email-row"><div class="k">Trigger</div><div class="v">User calls <code>supabase.auth.signInWithOtp()</code> — login page, RecipientStepAddress, RecipientStepEmailVerifyFlex / Supabase</div></div>
+          <div class="email-row"><div class="k">Send-site</div><div class="v"><strong>Supabase Auth built-in mailer</strong> via SMTP (<code>supabase/config.toml [auth.email.smtp]</code> → Resend SMTP). The custom <code>otpEmail</code> template has <strong>no current send-site</strong> — no edge function calls it today. It fired exactly once on 2026-03-18 from an early dev version of an edge function that no longer exists.</div></div>
+          <div class="email-row"><div class="k">Recipient</div><div class="v">The email address passed to <code>signInWithOtp</code></div></div>
+          <div class="email-row"><div class="k">Subject</div><div class="v">"Your SendMo verification code" (custom template) / Supabase default OTP subject (live delivery)</div></div>
+          <div class="email-row"><div class="k">Dedup</div><div class="v">Supabase Auth rate-limiting (not in our control)</div></div>
+          <div class="email-row"><div class="k">Proposal</div><div class="v">None</div></div>
+        </div>
+        <div class="copy-box">
+          <div class="copy-label">Custom template copy (orphaned — not currently delivered)</div>
+          <div class="subject-line">Your SendMo verification code</div>
+          <p><strong>Verify your email</strong></p>
+          <p>Enter this code to verify your email address. It expires in 10 minutes.</p>
+          <p>[Large code display — 6 digits, blue on light-blue background]</p>
+          <p>If you didn't request this code, you can safely ignore this email.</p>
+        </div>
+        <div class="alert warn" style="margin-top:12px;">
+          <div class="alert-icon">⚠</div>
+          <div class="alert-body">The custom <code>otpEmail</code> template is defined but <strong>not wired</strong>. Auth OTP is delivered via Supabase's built-in mailer using Resend SMTP, which sends a default Supabase-branded email with the code. The custom template would require a Supabase Auth hook (<code>[auth.hook.send_email]</code>) to replace it. This is a pre-launch UX gap — the OTP email recipients see Supabase branding, not SendMo.</div>
+        </div>
+        <div>
+          <span class="log-chip partial">1 send — 2026-03-18 (old code)</span>
+          <span class="log-chip never">0 sends in last 30 days via custom template</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- E2: Label Confirmation -->
+    <div class="email-card" id="e2">
+      <div class="email-card-header">
+        <div class="email-id">E2</div>
+        <div class="email-name">Label Confirmation</div>
+        <div class="status-chip status-fired">Confirmed firing</div>
+      </div>
+      <div class="email-body">
+        <div class="email-grid">
+          <div class="email-row"><div class="k">Template</div><div class="v"><code>labelConfirmationEmail(params)</code> — <code>_shared/email-templates.ts:63</code></div></div>
+          <div class="email-row"><div class="k">Trigger</div><div class="v">Label successfully purchased + DB row persisted (<code>labels/index.ts</code> post-persist)</div></div>
+          <div class="email-row"><div class="k">Send-site</div><div class="v"><code>supabase/functions/labels/index.ts:1396–1431</code> — fire-and-forget after <code>label.db_persisted</code> event</div></div>
+          <div class="email-row"><div class="k">Recipient</div><div class="v"><code>recipient_email</code> from the label request body — the link owner (payer). Must be a string; anon label buys without a collected email don't trigger this.</div></div>
+          <div class="email-row"><div class="k">Subject</div><div class="v">"A label was printed using your prepaid link — SendMo"</div></div>
+          <div class="email-row"><div class="k">Dedup</div><div class="v">None — fire-and-forget, no <code>notifications_log</code> entry. Idempotency not enforced (a retry of the labels function could send twice if the DB persisted on the first attempt but the response was lost).</div></div>
+          <div class="email-row"><div class="k">Proposal</div><div class="v">None for the email specifically; <code>previews/label-confirmation-email-variants.html</code> has design variants</div></div>
+        </div>
+        <div class="copy-box">
+          <div class="copy-label">Copy</div>
+          <div class="subject-line">A label was printed using your prepaid link — SendMo</div>
+          <p><strong>Label created!</strong></p>
+          <p>A shipping label has been purchased for your SendMo link. Here are the details:</p>
+          <p>[Card showing: SendMo tracking code (public_code, large blue); carrier # (secondary); From (sender name, if provided); Item (truncated to 40 chars); Amount (display price); Carrier; Estimated Delivery]</p>
+          <p>[Track Package button]</p>
+          <p>You'll receive updates as your package moves through the shipping network.</p>
+        </div>
+        <div>
+          <span class="log-chip">9 sends in last 30 days (2026-05-13 to 2026-05-24)</span>
+        </div>
+        <div class="fire-list">
+          <div class="fire-item"><span class="arrow">→</span><span>Recent: YPPY9AK (2026-05-24 18:18), Q1CRQTS (2026-05-23 18:48), PBDKCPB (2026-05-20 17:56), GC37EXG (2026-05-20 17:48), J7JHTY2 (2026-05-20), B3SVDKG (2026-05-19), P6C3Q5S (2026-05-18), CW4YBAC (2026-05-18), AMG5408 (2026-05-15), Z7BCPTY (2026-05-13), CG7FWV3 (2026-05-13)</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- E3: Tracking In Transit -->
+    <div class="email-card" id="e3">
+      <div class="email-card-header">
+        <div class="email-id">E3</div>
+        <div class="email-name">Tracking — In Transit</div>
+        <div class="status-chip status-fired">Confirmed firing</div>
+      </div>
+      <div class="email-body">
+        <div class="email-grid">
+          <div class="email-row"><div class="k">Template</div><div class="v"><code>trackingUpdateEmail('in_transit', ...)</code> — <code>_shared/email-templates.ts:154</code></div></div>
+          <div class="email-row"><div class="k">Trigger</div><div class="v">EasyPost <code>tracker.updated</code> webhook with <code>status='in_transit'</code></div></div>
+          <div class="email-row"><div class="k">Send-site</div><div class="v"><code>supabase/functions/webhooks/index.ts:848</code> → <code>dispatchNotifications()</code> → <code>_shared/notifications.ts:38</code></div></div>
+          <div class="email-row"><div class="k">Recipient</div><div class="v">All entries in <code>notification_contacts</code> for the shipment (role: sender or recipient). Contacts stored by <code>labels/index.ts:1436</code> at label buy time — recipient_email + sender_email if provided.</div></div>
+          <div class="email-row"><div class="k">Subject</div><div class="v">"📦 Your package is In Transit — SendMo" (recipient) / "📦 Package you sent is In Transit — SendMo" (sender)</div></div>
+          <div class="email-row"><div class="k">Dedup</div><div class="v"><code>notifications_log</code> UNIQUE index on <code>(shipment_id, contact_id, event_type)</code> — checked before send; skips if <code>status='sent'</code> row exists.</div></div>
+          <div class="email-row"><div class="k">Proposal</div><div class="v">None</div></div>
+        </div>
+        <div class="copy-box">
+          <div class="copy-label">Copy (recipient role)</div>
+          <div class="subject-line">📦 Your package is In Transit — SendMo</div>
+          <p>[Large 📦 emoji]</p>
+          <p><strong>In Transit</strong></p>
+          <p>Your package is on its way.</p>
+          <p>[Card: SendMo tracking code; Carrier; Estimated Delivery (if available)]</p>
+          <p>[Track Package button]</p>
+        </div>
+        <div>
+          <span class="log-chip">2 sends in last 30 days</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- E4: Out for Delivery -->
+    <div class="email-card" id="e4">
+      <div class="email-card-header">
+        <div class="email-id">E4</div>
+        <div class="email-name">Tracking — Out for Delivery</div>
+        <div class="status-chip status-fired">Confirmed firing</div>
+      </div>
+      <div class="email-body">
+        <div class="email-grid">
+          <div class="email-row"><div class="k">Template</div><div class="v"><code>trackingUpdateEmail('out_for_delivery', ...)</code> — <code>_shared/email-templates.ts:154</code></div></div>
+          <div class="email-row"><div class="k">Trigger</div><div class="v">EasyPost <code>tracker.updated</code> webhook with <code>status='out_for_delivery'</code></div></div>
+          <div class="email-row"><div class="k">Send-site</div><div class="v"><code>webhooks/index.ts:848</code> → <code>dispatchNotifications()</code></div></div>
+          <div class="email-row"><div class="k">Recipient</div><div class="v">All contacts in <code>notification_contacts</code></div></div>
+          <div class="email-row"><div class="k">Subject</div><div class="v">"🚚 Your package is Out for Delivery — SendMo" / "🚚 Package you sent is Out for Delivery — SendMo"</div></div>
+          <div class="email-row"><div class="k">Dedup</div><div class="v">Same <code>notifications_log</code> dedup as E3</div></div>
+          <div class="email-row"><div class="k">Proposal</div><div class="v">None</div></div>
+        </div>
+        <div class="copy-box">
+          <div class="copy-label">Copy (recipient role)</div>
+          <div class="subject-line">🚚 Your package is Out for Delivery — SendMo</div>
+          <p>[Large 🚚 emoji]</p>
+          <p><strong>Out for Delivery</strong></p>
+          <p>Your package is out for delivery and should arrive today.</p>
+          <p>[Card: SendMo tracking code; Carrier]</p>
+          <p>[Track Package button]</p>
+        </div>
+        <div>
+          <span class="log-chip">1 send in last 30 days (2026-05-23)</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- E5: Delivered -->
+    <div class="email-card" id="e5">
+      <div class="email-card-header">
+        <div class="email-id">E5</div>
+        <div class="email-name">Tracking — Delivered</div>
+        <div class="status-chip status-fired">Confirmed firing</div>
+      </div>
+      <div class="email-body">
+        <div class="email-grid">
+          <div class="email-row"><div class="k">Template</div><div class="v"><code>trackingUpdateEmail('delivered', ...)</code> — <code>_shared/email-templates.ts:154</code></div></div>
+          <div class="email-row"><div class="k">Trigger</div><div class="v">EasyPost <code>tracker.updated</code> webhook with <code>status='delivered'</code></div></div>
+          <div class="email-row"><div class="k">Send-site</div><div class="v"><code>webhooks/index.ts:848</code> → <code>dispatchNotifications()</code></div></div>
+          <div class="email-row"><div class="k">Recipient</div><div class="v">All contacts in <code>notification_contacts</code> (sender + recipient roles, where stored)</div></div>
+          <div class="email-row"><div class="k">Subject</div><div class="v">"✅ Your package is Delivered — SendMo" / "✅ Package you sent is Delivered — SendMo"</div></div>
+          <div class="email-row"><div class="k">Dedup</div><div class="v">Same <code>notifications_log</code> dedup as E3</div></div>
+          <div class="email-row"><div class="k">Proposal</div><div class="v">None</div></div>
+        </div>
+        <div class="copy-box">
+          <div class="copy-label">Copy (recipient role)</div>
+          <div class="subject-line">✅ Your package is Delivered — SendMo</div>
+          <p>[Large ✅ emoji]</p>
+          <p><strong>Delivered</strong></p>
+          <p>Your package has been delivered!</p>
+          <p>[Card: SendMo tracking code; Carrier; Estimated Delivery]</p>
+          <p>[Track Package button]</p>
+        </div>
+        <div>
+          <span class="log-chip">9 sends in last 30 days (2026-05-13 to 2026-05-24)</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- E6: Payment Declined -->
+    <div class="email-card" id="e6">
+      <div class="email-card-header">
+        <div class="email-id">E6</div>
+        <div class="email-name">Payment Declined — Reactivate Link</div>
+        <div class="status-chip status-wired">Wired, not live-fired yet</div>
+      </div>
+      <div class="email-body">
+        <div class="email-grid">
+          <div class="email-row"><div class="k">Template</div><div class="v"><code>paymentDeclinedReactivateEmail(params)</code> — <code>_shared/email-templates.ts:241</code></div></div>
+          <div class="email-row"><div class="k">Trigger</div><div class="v">Stripe <code>payment_intent.payment_failed</code> on a flex off_session charge — non-Radar decline path (Radar block goes to E8 instead)</div></div>
+          <div class="email-row"><div class="k">Send-site</div><div class="v"><code>stripe-webhook/index.ts:614</code> — inside <code>payment_intent.payment_failed</code> handler, within the flex-link decline branch (non-radar, link resolved, dedup check passed)</div></div>
+          <div class="email-row"><div class="k">Recipient</div><div class="v">Link owner (payer) email — resolved via <code>sendmo_links → profiles.email</code></div></div>
+          <div class="email-row"><div class="k">Subject</div><div class="v">"Action needed — your SendMo link needs payment update"</div></div>
+          <div class="email-row"><div class="k">Dedup</div><div class="v"><code>sendmo_links.last_decline_email_at</code> — one email per link per calendar day (set on successful send; checked at top of handler)</div></div>
+          <div class="email-row"><div class="k">Proposal</div><div class="v">Pattern D proposal (2026-05-16 payments pivot) — "decline-recovery email" §2.1 exact copy</div></div>
+        </div>
+        <div class="copy-box">
+          <div class="copy-label">Copy</div>
+          <div class="subject-line">Action needed — your SendMo link needs payment update</div>
+          <p><strong>Your payment needs an update</strong></p>
+          <p>Your payment failed when [sender name or "a sender"] was printing a shipping label using your link. We've temporarily deactivated the link. Click below to update your payment information and reactivate the link.</p>
+          <p>[Update payment button → /dashboard?reactivate=&lt;link_id&gt;]</p>
+          <p>Link: sendmo.co/s/&lt;short_code&gt;</p>
+        </div>
+        <div>
+          <span class="log-chip never">0 sends (no live flex payment failures yet)</span>
+        </div>
+        <div class="alert info" style="margin-top:12px;">
+          <div class="alert-icon">ℹ</div>
+          <div class="alert-body">Note: <code>senderName</code> is always passed as <code>null</code> at this send-site — the webhook event doesn't carry the sender's name from the label flow. This means the email always reads "a sender" rather than a personalized name.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- E7: Budget Reached -->
+    <div class="email-card" id="e7">
+      <div class="email-card-header">
+        <div class="email-id">E7</div>
+        <div class="email-name">Account Budget Reached</div>
+        <div class="status-chip status-wired">Wired, not live-fired yet</div>
+      </div>
+      <div class="email-body">
+        <div class="email-grid">
+          <div class="email-row"><div class="k">Template</div><div class="v"><code>budgetReachedEmail(params)</code> — <code>_shared/email-templates.ts:271</code></div></div>
+          <div class="email-row"><div class="k">Trigger</div><div class="v">Account budget check fails — attempted charge would exceed daily or weekly limit. <strong>Two send-sites:</strong> flex link flow (<code>labels/index.ts:528</code>) and full-label payment flow (<code>payments/index.ts:288</code>)</div></div>
+          <div class="email-row"><div class="k">Send-site 1</div><div class="v"><code>supabase/functions/labels/index.ts:528–550</code> — flex flow budget gate; sends to <code>recipient_email</code> (link owner)</div></div>
+          <div class="email-row"><div class="k">Send-site 2</div><div class="v"><code>supabase/functions/payments/index.ts:288–301</code> — full-label PI creation budget gate; sends to <code>body.receipt_email</code></div></div>
+          <div class="email-row"><div class="k">Recipient</div><div class="v">Account holder (link owner / payer) — whichever email is on file at time of blocked charge</div></div>
+          <div class="email-row"><div class="k">Subject</div><div class="v">"Your SendMo account reached its daily spending limit" or "...weekly spending limit"</div></div>
+          <div class="email-row"><div class="k">Dedup</div><div class="v">None — no <code>notifications_log</code> entry, no throttle. If the same link is hit twice in a row while at budget, two emails fire.</div></div>
+          <div class="email-row"><div class="k">Proposal</div><div class="v">B5 in <code>proposals/2026-05-21_refund-system-implementation_...</code> (Risk-Intel emails, shipped 2026-05-22)</div></div>
+        </div>
+        <div class="copy-box">
+          <div class="copy-label">Copy (daily example)</div>
+          <div class="subject-line">Your SendMo account reached its daily spending limit</div>
+          <p><strong>Daily spending limit reached</strong></p>
+          <p>A recent charge to your SendMo account would have exceeded your daily spending limit of <strong>$X.XX</strong>. The charge was not processed.</p>
+          <p>If you need a higher limit, reply to this email and we'll raise it for you. This guardrail protects your account from runaway charges; we tune it case by case rather than auto-raising.</p>
+          <p>[Open your dashboard link]</p>
+        </div>
+        <div>
+          <span class="log-chip never">0 sends (no budget-tripped charges yet)</span>
+        </div>
+        <div class="alert warn" style="margin-top:12px;">
+          <div class="alert-icon">⚠</div>
+          <div class="alert-body"><strong>No dedup:</strong> repeated budget hits on the same link/payment flow will send multiple emails. Low-severity since budgets are rarely reached, but worth noting pre-launch.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- E8: Radar Block -->
+    <div class="email-card" id="e8">
+      <div class="email-card-header">
+        <div class="email-id">E8</div>
+        <div class="email-name">Radar Block Alert (Link Owner)</div>
+        <div class="status-chip status-wired">Wired, not live-fired yet</div>
+      </div>
+      <div class="email-body">
+        <div class="email-grid">
+          <div class="email-row"><div class="k">Template</div><div class="v"><code>radarBlockedPayerEmail(params)</code> — <code>_shared/email-templates.ts:533</code></div></div>
+          <div class="email-row"><div class="k">Trigger</div><div class="v">Stripe <code>payment_intent.payment_failed</code> where <code>last_payment_error.code='fraudulent'</code> or Radar rule blocked the charge (flex off_session path only)</div></div>
+          <div class="email-row"><div class="k">Send-site</div><div class="v"><code>stripe-webhook/index.ts:541</code> — 5s AbortController timeout on send</div></div>
+          <div class="email-row"><div class="k">Recipient</div><div class="v">Link owner email — <code>sendmo_links → profiles.email</code></div></div>
+          <div class="email-row"><div class="k">Subject</div><div class="v">"A charge on your SendMo link was blocked as suspicious"</div></div>
+          <div class="email-row"><div class="k">Dedup</div><div class="v">None — fires on every Radar block event for this link. No throttle or <code>notifications_log</code> entry.</div></div>
+          <div class="email-row"><div class="k">Proposal</div><div class="v">B4 / O7 in risk-intel proposal (shipped 2026-05-22)</div></div>
+        </div>
+        <div class="copy-box">
+          <div class="copy-label">Copy</div>
+          <div class="subject-line">A charge on your SendMo link was blocked as suspicious</div>
+          <p><strong>A charge on your link was blocked</strong></p>
+          <p>Stripe's fraud detection blocked a recent attempt to use your SendMo link <code>sendmo.co/s/&lt;short_code&gt;</code>. <strong>Your card is fine and no money was charged.</strong> No action is required.</p>
+          <p>We're letting you know in case you'd like to review where your link is shared — if it's been posted somewhere public and you're seeing repeated blocks, you can rotate or cancel the link from your dashboard.</p>
+          <p>[Open dashboard button]</p>
+        </div>
+        <div>
+          <span class="log-chip never">0 sends (no Radar blocks on live flex links yet)</span>
+        </div>
+        <div class="alert warn" style="margin-top:12px;">
+          <div class="alert-icon">⚠</div>
+          <div class="alert-body"><strong>No dedup:</strong> every Radar block on the same link fires a fresh email. If a link is being hammered by a bad actor, the legitimate owner could receive many emails in succession. A per-link daily cap (like E6's <code>last_decline_email_at</code> pattern) would be appropriate pre-launch.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- E9: Carrier Adjustment -->
+    <div class="email-card" id="e9">
+      <div class="email-card-header">
+        <div class="email-id">E9</div>
+        <div class="email-name">Carrier Adjustment (Auto-Recharge)</div>
+        <div class="status-chip status-wired">Wired, not live-fired yet</div>
+      </div>
+      <div class="email-body">
+        <div class="email-grid">
+          <div class="email-row"><div class="k">Template</div><div class="v"><code>carrierAdjustmentEmail(params)</code> — <code>_shared/email-templates.ts:305</code></div></div>
+          <div class="email-row"><div class="k">Trigger</div><div class="v">Carrier adjustment auto-recharge succeeds (decision='recharge', delta > $1.00, delta ≤ $10.00, within per-card/per-user caps) — after the off_session recharge PI returns <code>succeeded</code></div></div>
+          <div class="email-row"><div class="k">Send-site</div><div class="v"><code>_shared/adjustments.ts:617</code> — <code>sendCarrierAdjustmentEmail()</code> helper (lines 579–672), called from <code>resolveRecovery()</code>. Wired into EasyPost invoice webhook at <code>webhooks/index.ts:453</code></div></div>
+          <div class="email-row"><div class="k">Recipient</div><div class="v"><code>receiptEmail</code> — account holder's profile email, resolved from <code>profiles.email</code> where <code>id = shipment.user_id</code></div></div>
+          <div class="email-row"><div class="k">Subject</div><div class="v">"A small carrier adjustment of $X.XX — SendMo"</div></div>
+          <div class="email-row"><div class="k">Dedup</div><div class="v"><code>notifications_log</code> row with <code>event_type='carrier_adjustment.recharged:&lt;carrier_adjustment_id&gt;'</code> — checked before send via SELECT (not INSERT-based). Prevents resend on webhook retry.</div></div>
+          <div class="email-row"><div class="k">Proposal</div><div class="v">H2 N5 — <code>proposals/2026-05-22_reconciliation-and-carrier-adjustments_...</code> §2.4</div></div>
+        </div>
+        <div class="copy-box">
+          <div class="copy-label">Copy</div>
+          <div class="subject-line">A small carrier adjustment of $X.XX — SendMo</div>
+          <p><strong>Carrier adjustment — $X.XX</strong></p>
+          <p>Heads up — [carrier] re-rated your shipment after pickup (reason: [reason]) and billed us a bit more than the label price. We covered it and charged your saved card to balance it out.</p>
+          <p>[Table: Carrier adjustment $X.XX / Handling fee $1.00 / Total charged $X.XX]</p>
+          <p>Carriers sometimes reweigh or remeasure packages on their own scales after pickup. If we get charged more than the label price, we pass through the difference plus a small handling fee.</p>
+          <p>[View shipment button]</p>
+          <p>SendMo tracking: [public_code]</p>
+        </div>
+        <div>
+          <span class="log-chip never">0 sends (no carrier adjustments via live webhook yet)</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- E10: H5-A Refund Submitted -->
+    <div class="email-card" id="e10">
+      <div class="email-card-header">
+        <div class="email-id">E10</div>
+        <div class="email-name">H5-A — Refund Submitted</div>
+        <div class="status-chip status-wired">Wired, not live-fired yet</div>
+      </div>
+      <div class="email-body">
+        <div class="email-grid">
+          <div class="email-row"><div class="k">Template</div><div class="v"><code>refundSubmittedEmail(params)</code> — <code>_shared/email-templates.ts:392</code></div></div>
+          <div class="email-row"><div class="k">Trigger</div><div class="v">Label cancel succeeds, EasyPost void accepted, <code>refund_status</code> set to <code>'submitted'</code>, AND <code>stripe_payment_intent_id</code> is non-null (Stripe-paid shipments only — comp/not_applicable don't get this email)</div></div>
+          <div class="email-row"><div class="k">Send-site</div><div class="v"><code>cancel-label/index.ts:412–493</code> — Stage 3b of cancel flow, after void + status update. Fire-and-forget; email failure logs but does not fail the cancel response.</div></div>
+          <div class="email-row"><div class="k">Recipient</div><div class="v">Link owner (payer) email — <code>shipment → sendmo_links.user_id → profiles.email</code></div></div>
+          <div class="email-row"><div class="k">Subject</div><div class="v">"Your $X.XX refund is on its way — SendMo"</div></div>
+          <div class="email-row"><div class="k">Dedup</div><div class="v"><code>notifications_log</code> INSERT with <code>contact_id=NULL</code>, <code>provider_id=stripe_payment_intent_id</code>, <code>event_type='refund.submitted'</code>. Partial unique index <code>idx_notifications_log_refund_dedup</code> (migration 035). On failure: log row patched to <code>'failed'</code> to allow retry.</div></div>
+          <div class="email-row"><div class="k">Proposal</div><div class="v">H5 D5 — <code>proposals/2026-05-21_refund-system-implementation_reviewed-2026-05-21_decided-2026-05-22.md</code> Author Response § "Email A"</div></div>
+        </div>
+        <div class="copy-box">
+          <div class="copy-label">Copy (payer cancelled, UPS carrier)</div>
+          <div class="subject-line">Your $X.XX refund is on its way — SendMo</div>
+          <p><strong>Refund submitted</strong></p>
+          <p>[If someone else cancelled: "Your label was cancelled by the person using your shared link." / "Your label was cancelled by our team." / omitted if payer cancelled themselves]</p>
+          <p>We submitted a refund request of <strong>$X.XX</strong> to the carrier on your behalf. Most refunds are confirmed within 1–2 weeks. Once the carrier confirms, we'll issue your refund automatically to the original payment method. [USPS variant: "USPS refunds typically take 2–4 weeks to process."]</p>
+          <p>Carriers sometimes take a bit longer during busy periods — we'll update you the moment it's confirmed.</p>
+          <p>[View shipment button]</p>
+          <p>SendMo tracking: [public_code]</p>
+        </div>
+        <div>
+          <span class="log-chip never">0 sends in last 30 days (YPPY9AK void was carrier-rejected, not submitted)</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- E11: H5-B Refund Completed -->
+    <div class="email-card" id="e11">
+      <div class="email-card-header">
+        <div class="email-id">E11</div>
+        <div class="email-name">H5-B — Refund Completed</div>
+        <div class="status-chip status-wired">Wired, not live-fired yet</div>
+      </div>
+      <div class="email-body">
+        <div class="email-grid">
+          <div class="email-row"><div class="k">Template</div><div class="v"><code>refundCompletedEmail(params)</code> — <code>_shared/email-templates.ts:449</code></div></div>
+          <div class="email-row"><div class="k">Trigger</div><div class="v">Three paths: (1) Stripe <code>charge.refunded</code> webhook, shipment has <code>refund_status='submitted'</code>; (2) <code>cron-refund-sweep</code> finds EP-refunded shipment past 21 days; (3) <code>cron-refund-sweep</code> manually triggered from admin</div></div>
+          <div class="email-row"><div class="k">Send-site 1</div><div class="v"><code>stripe-webhook/index.ts:792</code> — <code>charge.refunded</code> arm. Resolves payer via <code>resolvePiContextWithFallback()</code> → <code>sendmo_links → profiles.email</code></div></div>
+          <div class="email-row"><div class="k">Send-site 2</div><div class="v"><code>cron-refund-sweep/index.ts:113–160</code> — <code>sendEmailB()</code> helper. Dedup INSERT-first pattern.</div></div>
+          <div class="email-row"><div class="k">Recipient</div><div class="v">Link owner / payer email</div></div>
+          <div class="email-row"><div class="k">Subject</div><div class="v">"Your $X.XX refund has been issued — SendMo"</div></div>
+          <div class="email-row"><div class="k">Dedup</div><div class="v"><code>notifications_log</code> INSERT with <code>provider_id=stripe_refund_id</code> (unique per Stripe refund object). N2 fix: two partial refunds → two emails (correct — different refund IDs). Duplicate Stripe webhook retries deduplicated by same refund ID.</div></div>
+          <div class="email-row"><div class="k">Proposal</div><div class="v">H5 D5 — same proposal, "Email B"</div></div>
+        </div>
+        <div class="copy-box">
+          <div class="copy-label">Copy (with last4)</div>
+          <div class="subject-line">Your $X.XX refund has been issued — SendMo</div>
+          <p><strong>Refund issued — $X.XX</strong></p>
+          <p>Great news — the carrier confirmed the cancellation and we've issued your refund.</p>
+          <p>The refund has been issued to the card ending in <strong>XXXX</strong>. Please allow 5–10 business days for it to appear on your statement — this is standard bank processing time, not a SendMo delay. [Without last4: "...to your original payment method."]</p>
+          <p>[View shipment button]</p>
+          <p>SendMo tracking: [public_code]</p>
+        </div>
+        <div>
+          <span class="log-chip never">0 sends (YPPY9AK: charge.refunded fired but shipment_id was NULL — bug fixed in 44da65e)</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- E12: H5-C Refund Unsuccessful -->
+    <div class="email-card" id="e12">
+      <div class="email-card-header">
+        <div class="email-id">E12</div>
+        <div class="email-name">H5-C — Refund Unsuccessful</div>
+        <div class="status-chip status-wired">Wired, not live-fired yet</div>
+      </div>
+      <div class="email-body">
+        <div class="email-grid">
+          <div class="email-row"><div class="k">Template</div><div class="v"><code>refundUnsuccessfulEmail(params)</code> — <code>_shared/email-templates.ts:490</code></div></div>
+          <div class="email-row"><div class="k">Trigger</div><div class="v">Two paths: (1) Tracking page poll finds EasyPost <code>refund_status='rejected'</code>; (2) <code>cron-refund-sweep</code> resolves EP-rejected or 21-day timeout</div></div>
+          <div class="email-row"><div class="k">Send-site 1</div><div class="v"><code>tracking/index.ts:370</code> — async fire-and-forget closure, must not block tracking page response. Dedup INSERT-first.</div></div>
+          <div class="email-row"><div class="k">Send-site 2</div><div class="v"><code>cron-refund-sweep/index.ts:45–98</code> — <code>sendEmailC()</code> helper, handles both carrier-rejected and timeout paths</div></div>
+          <div class="email-row"><div class="k">Recipient</div><div class="v">Link owner / payer email</div></div>
+          <div class="email-row"><div class="k">Subject</div><div class="v">"Refund unsuccessful — $X.XX — SendMo"</div></div>
+          <div class="email-row"><div class="k">Dedup</div><div class="v"><code>notifications_log</code> INSERT with <code>provider_id=stripe_payment_intent_id</code>, <code>event_type='refund.unsuccessful'</code>. Both send-sites use the same key so whichever fires first wins.</div></div>
+          <div class="email-row"><div class="k">Proposal</div><div class="v">H5 D4 + D5 — same proposal. D4 chose customer-facing word "Refund unsuccessful" (not "Refund rejected").</div></div>
+        </div>
+        <div class="copy-box">
+          <div class="copy-label">Copy (with reason)</div>
+          <div class="subject-line">Refund unsuccessful — $X.XX — SendMo</div>
+          <p><strong>Refund unsuccessful</strong></p>
+          <p>We submitted a void request for your label and followed up on your behalf, but unfortunately [carrier] did not return the shipping cost to us. Because the carrier didn't credit us, we're unable to issue a refund for this shipment.</p>
+          <p>[If reason available: "Carrier note: [reason from EasyPost]"]</p>
+          <p>We know this isn't the outcome you were hoping for. If you believe this was a carrier error, please <a href="mailto:support@sendmo.co">contact us</a> and we'll review the details.</p>
+          <p>[View shipment button]</p>
+          <p>SendMo tracking: [public_code]</p>
+        </div>
+        <div>
+          <span class="log-chip never">0 sends (no rejected refunds in last 30 days)</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- E13: Admin Refund Failed Alert -->
+    <div class="email-card" id="e13">
+      <div class="email-card-header">
+        <div class="email-id">E13</div>
+        <div class="email-name">Admin Alert — Stripe Refund Delivery Failed</div>
+        <div class="status-chip status-wired">Wired, not live-fired yet</div>
+      </div>
+      <div class="email-body">
+        <div class="email-grid">
+          <div class="email-row"><div class="k">Template</div><div class="v">Inline HTML (no named template function) — <code>stripe-webhook/index.ts:968–986</code></div></div>
+          <div class="email-row"><div class="k">Trigger</div><div class="v">Stripe <code>charge.refund.updated</code> webhook where <code>refund.status='failed'</code> — Stripe could not deliver the refund to the customer's card (rare: card closed, bank rejection, etc.)</div></div>
+          <div class="email-row"><div class="k">Send-site</div><div class="v"><code>stripe-webhook/index.ts:969</code> — inline <code>sendEmail()</code> call, no AbortController timeout on this path</div></div>
+          <div class="email-row"><div class="k">Recipient</div><div class="v"><code>SENDMO_ADMIN_EMAIL</code> env var, falling back to <code>jsa7cornell@gmail.com</code></div></div>
+          <div class="email-row"><div class="k">Subject</div><div class="v">"[SendMo ALERT] Refund failed — manual resolution required"</div></div>
+          <div class="email-row"><div class="k">Dedup</div><div class="v">None — fires on every <code>charge.refund.updated</code> with status=failed. Stripe webhooks have their own retry schedule so this could fire multiple times for the same event.</div></div>
+          <div class="email-row"><div class="k">Proposal</div><div class="v">H3 refund plumbing</div></div>
+        </div>
+        <div class="copy-box">
+          <div class="copy-label">Copy</div>
+          <div class="subject-line">[SendMo ALERT] Refund failed — manual resolution required</div>
+          <p>⚠️ <strong>Refund Failed — Action Required</strong></p>
+          <p>A Stripe refund could not be delivered to the customer's card. The customer has not received their money. <strong>Manual resolution required.</strong></p>
+          <p>[Table: Refund ID / Amount / Failure reason / PaymentIntent / Mode]</p>
+          <p>[View refund in Stripe Dashboard link]</p>
+        </div>
+        <div>
+          <span class="log-chip never">0 sends (no failed Stripe refund deliveries)</span>
+        </div>
+        <div class="alert warn" style="margin-top:12px;">
+          <div class="alert-icon">⚠</div>
+          <div class="alert-body">No dedup and no retry deduplification. Stripe retries webhooks for 72h — if this fires once, it could fire several times for the same event. Not a customer-facing issue but a noisy admin inbox problem. Easy fix: add a <code>webhook_events</code> dedup check like other handlers use.</div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- end section 1 -->
+
+  <!-- ============================================================ -->
+  <!-- YPPY9AK Diagnosis -->
+  <!-- ============================================================ -->
+  <div class="section" id="yppy9ak">
+    <div class="section-header"><span class="section-num">2</span> Why H5 Emails Did Not Fire for YPPY9AK</div>
+
+    <div class="diag-box">
+      <h3>Root Cause: UPS Rejected Both Void Attempts (Carrier-Side, Not a Code Bug)</h3>
+      <p>The event_logs tell the full story. H5 emails A/B/C are all gated on the cancel path succeeding at the carrier level. For YPPY9AK, the carrier rejected both void attempts — so Email A's prerequisite (<code>refund_status='submitted'</code>) was never written, and the entire H5 email chain never started.</p>
+    </div>
+
+    <div class="email-card">
+      <div class="email-card-header">
+        <div class="email-name">YPPY9AK ($9.18 UPS DAP — 2026-05-24)</div>
+      </div>
+      <div class="email-body">
+        <div class="timeline">
+          <div class="tl-item"><span class="tl-time">18:18 UTC</span><span class="tl-event"><span class="ok">OK</span> — Label purchased. <code>email.label_confirmation_sent</code> fires (E2). <code>notification_contacts</code> row inserted (count=1).</span></div>
+          <div class="tl-item"><span class="tl-time">18:32 UTC</span><span class="tl-event">Label printed by admin from print queue.</span></div>
+          <div class="tl-item"><span class="tl-time">18:46 UTC</span><span class="tl-event"><span class="miss">CARRIER REJECT</span> — First cancel attempt. <code>cancel.carrier_rejected</code> logged: "UPS returned the error message: Void not available at this time. Please try again later." No <code>refund_status</code> update. No Email A.</span></div>
+          <div class="tl-item"><span class="tl-time">18:54 UTC</span><span class="tl-event"><span class="miss">CARRIER REJECT</span> — Second cancel attempt. Same UPS rejection. Still no <code>refund_status</code> update.</span></div>
+          <div class="tl-item"><span class="tl-time">19:28 UTC</span><span class="tl-event"><span class="miss">WEBHOOK MISS</span> — EasyPost <code>refund.successful</code> arrives with shape (b) payload (<code>result.id='rfnd_dcda5a...'</code>). Pre-076bf75 bug: the webhooks fn reads <code>result.id</code> as the EasyPost shipment ID (it's actually a refund ID), fails lookup, logs <code>webhook.easypost_refund_shipment_not_found</code>, 200s. No Stripe refund initiated, no Email A/B.</span></div>
+          <div class="tl-item"><span class="tl-time">19:59 UTC</span><span class="tl-event"><span class="ok">UNSTUCK</span> — Admin curl against tracking endpoint for YPPY9AK triggers lazy-poll path. EP returns <code>refund_status='refunded'</code>. Stripe refund initiated (<code>pi_2TagbWxS6gsndgF32zGP8SHp</code>). EasyPost refund ledger row written.</span></div>
+          <div class="tl-item"><span class="tl-time">19:59 UTC</span><span class="tl-event"><span class="miss">EMAIL B MISS</span> — <code>stripe.charge_refunded</code> fires in stripe-webhook with <code>shipment_id=NULL</code> (pre-44da65e bug: <code>resolvePiContextWithFallback</code> not yet deployed). Email B gated on shipment resolution → skipped.</span></div>
+          <div class="tl-item"><span class="tl-time">20:05 UTC</span><span class="tl-event">Subsequent tracking polls: Stripe refund idempotency key reused → <code>cancel.stripe_refund_failed</code> (expected — refund already issued). No new email triggers.</span></div>
+          <div class="tl-item"><span class="tl-time">20:06 UTC</span><span class="tl-event"><span class="ok">OK</span> — Delivery webhook fires for a different shipment. YPPY9AK <code>refund_status</code> now manually set to 'refunded' per LOG guidance.</span></div>
+        </div>
+
+        <div style="margin-top:16px;">
+          <p style="font-size:14px;color:#374151;line-height:1.6;"><strong>Three bugs compounded:</strong></p>
+          <ol style="padding-left:22px;margin-top:8px;">
+            <li style="font-size:14px;color:#374151;line-height:1.7;"><strong>c01334e (TDZ crash)</strong> — This was fixed before the first live cancel; the event_logs show no TDZ error for YPPY9AK. <em>This bug was NOT a contributing factor for this specific shipment.</em></li>
+            <li style="font-size:14px;color:#374151;line-height:1.7;"><strong>076bf75 (webhook payload-shape miss)</strong> — EasyPost's shape-(b) refund.successful was misidentified as a shipment lookup. This killed the push-path unstick. <em>Root cause for the 35-min delay.</em></li>
+            <li style="font-size:14px;color:#374151;line-height:1.7;"><strong>44da65e (PI↔shipment Path B miss)</strong> — When the lazy-poll triggered the Stripe refund, <code>charge.refunded</code> couldn't resolve <code>shipment_id</code> from <code>stripe_intents</code> (null by design) and skipped Email B. <em>Root cause for Email B never firing.</em></li>
+          </ol>
+          <p style="font-size:14px;color:#374151;line-height:1.6;margin-top:10px;"><strong>Email A specifically:</strong> Never triggered because both UPS voids were rejected — <code>refund_status</code> was never written as <code>'submitted'</code>. This is correct behavior: Email A is intentionally gated on a successful void. The underlying issue is that YPPY9AK was a carrier-rejection, not a code bug in Email A's path.</p>
+          <p style="font-size:14px;color:#374151;line-height:1.6;margin-top:6px;"><strong>Both 076bf75 and 44da65e are now deployed.</strong> The next live cancel-and-refund cycle should fire Email A (if void succeeds), B, and C correctly.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- SECTION 3: Gap Analysis -->
+  <!-- ============================================================ -->
+  <div class="section" id="gaps">
+    <div class="section-header"><span class="section-num">3</span> Gap Analysis — Emails SendMo Should Arguably Send</div>
+
+    <div class="alert info">
+      <div class="alert-icon">ℹ</div>
+      <div class="alert-body">Gaps below are rated on two axes: <strong>urgency</strong> (security / customer-experience / nice-to-have) and <strong>timing</strong> (pre-launch vs. post-launch). John makes the final calls.</div>
+    </div>
+
+    <!-- G1: Welcome / First Label -->
+    <div class="gap-card">
+      <div class="gap-card-header">
+        <div class="gap-name">G1 — Welcome / First-Label Email</div>
+        <div class="priority-chip priority-high">High — CX</div>
+      </div>
+      <p>No welcome email exists. The first time someone creates a SendMo link or buys their first label, they get no "here's what you just set up" message. This is a standard onboarding touchpoint that sets expectations, explains the dashboard, and gives support contact info.</p>
+      <p><strong>Trigger candidates:</strong> (a) first link created, (b) first label purchased, (c) account created (see G2). Option (b) is the highest-intent moment.</p>
+      <p><strong>Pre-launch recommendation:</strong> At minimum, a post-first-label email: "Your first SendMo shipment is on its way — here's how to use your dashboard, track it, and what happens next." 1-2 hours of work. Dedup: check <code>shipment_count = 1</code> at send time.</p>
+    </div>
+
+    <!-- G2: Account Created / OTP Branding -->
+    <div class="gap-card">
+      <div class="gap-card-header">
+        <div class="gap-name">G2 — Branded OTP / Account-Created Email</div>
+        <div class="priority-chip priority-high">High — Brand</div>
+      </div>
+      <p>Auth OTPs are delivered by Supabase's built-in mailer via Resend SMTP — but <strong>using Supabase's default template design</strong>, not the custom <code>otpEmail</code> template in <code>email-templates.ts</code>. Users see generic Supabase branding during signup. The custom template exists but has no current send-site (template is orphaned).</p>
+      <p><strong>Fix:</strong> Configure a Supabase Auth <code>[auth.hook.send_email]</code> hook (a Deno edge function) that receives the OTP and sends it via the custom <code>otpEmail</code> template through Resend. This is a ~1hr task. Without it, every new user sees "Supabase" during signup, not "SendMo."</p>
+      <p><strong>Pre-launch recommendation: Yes.</strong> Brand trust during signup is foundational. The template is already written — it just needs the hook wire-up.</p>
+    </div>
+
+    <!-- G3: Password Reset / Sign-In Link -->
+    <div class="gap-card">
+      <div class="gap-card-header">
+        <div class="gap-name">G3 — Password Reset / Sign-In Magic Link</div>
+        <div class="priority-chip priority-medium">Medium — Auth UX</div>
+      </div>
+      <p>SendMo uses passwordless auth (OTP + Google OAuth). There is no separate "password reset" because there are no passwords. Magic links are sent by Supabase's built-in mailer when <code>signInWithOtp</code> is called with <code>shouldCreateUser: false</code>.</p>
+      <p><strong>Status:</strong> Handled by Supabase. Same branding gap as G2 — Supabase default template. The fix is the same auth hook approach.</p>
+      <p><strong>Pre-launch recommendation:</strong> Subsumed by G2. One auth hook handles both OTP and magic-link scenarios.</p>
+    </div>
+
+    <!-- G4: Email-Change Confirmation -->
+    <div class="gap-card">
+      <div class="gap-card-header">
+        <div class="gap-name">G4 — Email Change / Sensitive Action Confirmation</div>
+        <div class="priority-chip priority-medium">Medium — Security</div>
+      </div>
+      <p>When a user changes their email address, Supabase Auth handles the confirmation email automatically (sends to the new address). No custom handling exists or is needed at the app layer.</p>
+      <p><strong>Status:</strong> Handled by Supabase Auth's built-in flow. Same Supabase branding gap as G2/G3. No gap in security logic — the confirm-before-switch behavior is correct. Branding fix is the same hook approach.</p>
+      <p><strong>Pre-launch recommendation:</strong> Subsumed by G2 auth hook. Not a separate pre-launch item.</p>
+    </div>
+
+    <!-- G5: Payment Method Added -->
+    <div class="gap-card">
+      <div class="gap-card-header">
+        <div class="gap-name">G5 — Payment Method Added Notification</div>
+        <div class="priority-chip priority-high">High — Security</div>
+      </div>
+      <p>When a customer saves a card (SetupIntent via <code>/payment-methods</code>), no email is sent. Industry standard: "A new card ending in XXXX was added to your SendMo account. If this wasn't you, contact us immediately."</p>
+      <p><strong>Why it matters:</strong> SendMo's flex link model means a saved card is charged off-session whenever someone uses the link. If an attacker gains account access and saves a new card, the account holder has no way to know until they see the charge. This email is a standard account-security notification.</p>
+      <p><strong>Pre-launch recommendation: Yes.</strong> Security-tier email. Low effort — fire from <code>payment-methods/index.ts</code> after successful SetupIntent confirm. No custom template exists; needs to be written.</p>
+    </div>
+
+    <!-- G6: Payment Method Removed -->
+    <div class="gap-card">
+      <div class="gap-card-header">
+        <div class="gap-name">G6 — Payment Method Removed Notification</div>
+        <div class="priority-chip priority-medium">Medium — Security</div>
+      </div>
+      <p>No email when a saved card is removed (DELETE <code>/payment-methods/:pm_id</code>). Same security rationale as G5 — if someone removes a card without the owner's knowledge, they'd want to know.</p>
+      <p><strong>Pre-launch recommendation:</strong> Nice-to-have. Lower priority than G5 (removal is less dangerous than addition). Post-launch acceptable.</p>
+    </div>
+
+    <!-- G7: Stripe Receipt -->
+    <div class="gap-card">
+      <div class="gap-card-header">
+        <div class="gap-name">G7 — Stripe-Branded Receipt at Charge Time</div>
+        <div class="priority-chip priority-medium">Medium — CX</div>
+      </div>
+      <p>Stripe can send an automatic receipt email when a PaymentIntent is captured if <code>receipt_email</code> is set on the PI. SendMo passes <code>receipt_email</code> to the <code>payments</code> function for full-label flows. It's unclear whether Stripe receipts are actively enabled on the account.</p>
+      <p><strong>The current situation:</strong> SendMo's label confirmation email (E2) fills this role — it fires after label purchase and includes the amount paid. It's a branded alternative to a bare Stripe receipt. Whether Stripe's unbranded receipt is also sending is not auditable from this codebase (it's a Stripe dashboard setting).</p>
+      <p><strong>Pre-launch recommendation:</strong> Verify in Stripe Dashboard whether automatic receipts are enabled. If yes, decide whether to disable them (to avoid double-email) or customize the Stripe receipt template. If no, E2 is the de-facto receipt — confirm it always includes the price (currently gated on <code>displayPriceCents != null</code>).</p>
+    </div>
+
+    <!-- G8: Shipment Carrier-Scan (in_transit for sender) -->
+    <div class="gap-card">
+      <div class="gap-card-header">
+        <div class="gap-name">G8 — Sender (Link Owner) Tracking Notifications</div>
+        <div class="priority-chip priority-medium">Medium — CX</div>
+      </div>
+      <p>The <code>dispatchNotifications</code> system (E3/E4/E5) supports a <code>role: "sender"</code> in <code>notification_contacts</code>. The <code>labels/index.ts</code> stores a sender contact if <code>sender_email</code> is provided in the request. The email template has sender-aware copy ("The package you sent is In Transit").</p>
+      <p><strong>Gap:</strong> In practice, the flex link flow doesn't currently collect or pass a sender email at label-buy time — the "sender" is the anonymous person using the link, who may or may not have an email. Only one or zero contacts are typically stored. This is not a bug per se, but the link <em>owner</em> (payer) has no systematic way to track all shipments made against their link unless they check the dashboard.</p>
+      <p><strong>Pre-launch recommendation:</strong> Post-launch. The label confirmation email (E2) already notifies the link owner on label creation. A full shipped/delivered loop for the link owner is a product-polish feature.</p>
+    </div>
+
+    <!-- G9: Cancel Label failure -->
+    <div class="gap-card">
+      <div class="gap-card-header">
+        <div class="gap-name">G9 — Carrier Void Rejection Customer Notification</div>
+        <div class="priority-chip priority-high">High — CX</div>
+      </div>
+      <p>When the carrier rejects a void request (as happened with YPPY9AK — "UPS Void not available at this time"), the customer is not notified. Email A is gated on <code>refund_status='submitted'</code> — so a failed void gets no email at all. The UX from the customer's perspective: they requested a cancel, nothing happened visually, and they have to check the dashboard or wait indefinitely.</p>
+      <p><strong>Contrast:</strong> E12 (Refund Unsuccessful) covers the case where the void is submitted but then rejected by the carrier post-submission. But there's no email for the case where the void is rejected immediately at the API call level.</p>
+      <p><strong>Pre-launch recommendation:</strong> Worth considering. A short "we tried to void your label but [carrier] rejected it — we'll keep trying or you can contact us" email would prevent confusion in the YPPY9AK scenario. Low-effort template + single send-site in <code>cancel-label/index.ts</code>.</p>
+    </div>
+
+  </div><!-- end section 3 -->
+
+  <!-- ============================================================ -->
+  <!-- Summary Table -->
+  <!-- ============================================================ -->
+  <div class="section">
+    <div class="section-header"><span class="section-num">4</span> Pre-Launch Priority Summary</div>
+
+    <table style="width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden;font-size:13px;">
+      <thead>
+        <tr style="background:var(--gray-bg);">
+          <th style="padding:10px 14px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);font-weight:700;border-bottom:2px solid var(--line);">Item</th>
+          <th style="padding:10px 14px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);font-weight:700;border-bottom:2px solid var(--line);">Type</th>
+          <th style="padding:10px 14px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);font-weight:700;border-bottom:2px solid var(--line);">Priority</th>
+          <th style="padding:10px 14px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);font-weight:700;border-bottom:2px solid var(--line);">Timing</th>
+          <th style="padding:10px 14px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);font-weight:700;border-bottom:2px solid var(--line);">Effort</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr style="border-bottom:1px solid var(--line);">
+          <td style="padding:10px 14px;font-weight:600;">G2 — Branded OTP email (auth hook)</td>
+          <td style="padding:10px 14px;">Brand / Auth</td>
+          <td style="padding:10px 14px;"><span class="priority-chip priority-high" style="font-size:11px;">High</span></td>
+          <td style="padding:10px 14px;">Pre-launch</td>
+          <td style="padding:10px 14px;">~1 hr</td>
+        </tr>
+        <tr style="border-bottom:1px solid var(--line);">
+          <td style="padding:10px 14px;font-weight:600;">G5 — Payment method added security email</td>
+          <td style="padding:10px 14px;">Security</td>
+          <td style="padding:10px 14px;"><span class="priority-chip priority-high" style="font-size:11px;">High</span></td>
+          <td style="padding:10px 14px;">Pre-launch</td>
+          <td style="padding:10px 14px;">~2 hrs</td>
+        </tr>
+        <tr style="border-bottom:1px solid var(--line);">
+          <td style="padding:10px 14px;font-weight:600;">G1 — Welcome / first-label email</td>
+          <td style="padding:10px 14px;">Onboarding CX</td>
+          <td style="padding:10px 14px;"><span class="priority-chip priority-high" style="font-size:11px;">High</span></td>
+          <td style="padding:10px 14px;">Pre-launch (soft)</td>
+          <td style="padding:10px 14px;">~2 hrs</td>
+        </tr>
+        <tr style="border-bottom:1px solid var(--line);">
+          <td style="padding:10px 14px;font-weight:600;">G9 — Carrier void rejection notification</td>
+          <td style="padding:10px 14px;">Cancel CX</td>
+          <td style="padding:10px 14px;"><span class="priority-chip priority-high" style="font-size:11px;">High</span></td>
+          <td style="padding:10px 14px;">Pre-launch (soft)</td>
+          <td style="padding:10px 14px;">~2 hrs</td>
+        </tr>
+        <tr style="border-bottom:1px solid var(--line);">
+          <td style="padding:10px 14px;font-weight:600;">G7 — Stripe receipt verification</td>
+          <td style="padding:10px 14px;">Receipts</td>
+          <td style="padding:10px 14px;"><span class="priority-chip priority-medium" style="font-size:11px;">Medium</span></td>
+          <td style="padding:10px 14px;">Pre-launch check</td>
+          <td style="padding:10px 14px;">30 min (Stripe dashboard)</td>
+        </tr>
+        <tr style="border-bottom:1px solid var(--line);">
+          <td style="padding:10px 14px;font-weight:600;">E8 — Radar block dedup cap</td>
+          <td style="padding:10px 14px;">Bug fix</td>
+          <td style="padding:10px 14px;"><span class="priority-chip priority-medium" style="font-size:11px;">Medium</span></td>
+          <td style="padding:10px 14px;">Pre-launch</td>
+          <td style="padding:10px 14px;">&lt;1 hr</td>
+        </tr>
+        <tr style="border-bottom:1px solid var(--line);">
+          <td style="padding:10px 14px;font-weight:600;">E13 — Admin refund alert dedup</td>
+          <td style="padding:10px 14px;">Bug fix</td>
+          <td style="padding:10px 14px;"><span class="priority-chip priority-medium" style="font-size:11px;">Medium</span></td>
+          <td style="padding:10px 14px;">Pre-launch</td>
+          <td style="padding:10px 14px;">&lt;1 hr</td>
+        </tr>
+        <tr style="border-bottom:1px solid var(--line);">
+          <td style="padding:10px 14px;font-weight:600;">G6 — Payment method removed email</td>
+          <td style="padding:10px 14px;">Security</td>
+          <td style="padding:10px 14px;"><span class="priority-chip priority-medium" style="font-size:11px;">Medium</span></td>
+          <td style="padding:10px 14px;">Post-launch</td>
+          <td style="padding:10px 14px;">~1 hr</td>
+        </tr>
+        <tr>
+          <td style="padding:10px 14px;font-weight:600;">G8 — Link owner tracking notifications</td>
+          <td style="padding:10px 14px;">CX polish</td>
+          <td style="padding:10px 14px;"><span class="priority-chip priority-low" style="font-size:11px;">Low</span></td>
+          <td style="padding:10px 14px;">Post-launch</td>
+          <td style="padding:10px 14px;">~3 hrs</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+</div><!-- end .wrap -->
+</body>
+</html>
