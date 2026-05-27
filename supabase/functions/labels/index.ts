@@ -581,6 +581,11 @@ serve(async (req: Request) => {
                         ...(sender_email ? { sender_email: String(sender_email) } : {}),
                         ...(recipient_email ? { recipient_email: String(recipient_email) } : {}),
                     },
+                    // Link short code as suffix → "SENDMO* YPPY9AK" on bank statements.
+                    // Ties the bank statement entry directly to a trackable shipment.
+                    // Requires account-level statement descriptor = "SENDMO" in Dashboard.
+                    // See proposals/2026-05-27_business-identifier-sweep-handoff.md.
+                    statement_descriptor_suffix: resolvedLink.short_code,
                     // shipping — destination address as a Radar signal (B2).
                     ...(to_address?.street1
                         ? {

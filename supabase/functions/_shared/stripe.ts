@@ -162,6 +162,11 @@ export function createPaymentIntent(params: {
     // (master proposal §3.7) without a re-prompt.
     setup_future_usage?: "off_session" | "on_session";
     shipping?: ShippingDetails;
+    // Appended to the account-level statement descriptor so customers can
+    // identify the charge on their bank statement. E.g. "LABEL" produces
+    // "SENDMO* LABEL". 1–22 ASCII chars, no < > \ ' " *. See
+    // proposals/2026-05-27_business-identifier-sweep-handoff.md.
+    statement_descriptor_suffix?: string;
     idempotency_key: string;
     liveMode: boolean;
 }): Promise<PaymentIntent> {
@@ -175,6 +180,9 @@ export function createPaymentIntent(params: {
             automatic_payment_methods: { enabled: true, allow_redirects: "never" },
             metadata: params.metadata,
             receipt_email: params.receipt_email,
+            ...(params.statement_descriptor_suffix
+                ? { statement_descriptor_suffix: params.statement_descriptor_suffix }
+                : {}),
             ...(params.shipping ? { shipping: params.shipping } : {}),
             // When set, PaymentElement renders saved PMs for this Customer as
             // the top option (with an inline "use a different card" fallback).
@@ -310,6 +318,11 @@ export function createOffSessionShipmentPI(params: {
     payment_method: string;
     metadata: Record<string, string>;
     shipping?: ShippingDetails;
+    // Appended to the account-level statement descriptor. E.g. a link short
+    // code like "YPPY9AK" produces "SENDMO* YPPY9AK" on bank statements.
+    // 1–22 ASCII chars, no < > \ ' " *. See
+    // proposals/2026-05-27_business-identifier-sweep-handoff.md.
+    statement_descriptor_suffix?: string;
     idempotency_key: string;
     liveMode: boolean;
 }): Promise<PaymentIntent> {
@@ -325,6 +338,9 @@ export function createOffSessionShipmentPI(params: {
             confirm: true,
             // NB: no automatic_payment_methods. See helper-level comment.
             metadata: params.metadata,
+            ...(params.statement_descriptor_suffix
+                ? { statement_descriptor_suffix: params.statement_descriptor_suffix }
+                : {}),
             ...(params.shipping ? { shipping: params.shipping } : {}),
         },
         idempotencyKey: params.idempotency_key,
@@ -381,6 +397,9 @@ export function createAdjustmentRecharge(params: {
             attempt: String(params.attempt),
             ...(params.reason ? { reason: params.reason } : {}),
         },
+        // Public code as suffix → "SENDMO* YPPY9AK" — same logic as the
+        // flex-shipment PI. Customer can look up the shipment from their statement.
+        statement_descriptor_suffix: params.publicCode,
         idempotency_key: idempotencyKey,
         liveMode: params.liveMode,
     });
@@ -440,6 +459,9 @@ export function retrieveCustomer(params: {
 
 export function createCustomer(params: {
     email?: string;
+    // Customer's full name. Appears on Stripe receipts and the Dashboard
+    // customer list. Set from profiles.full_name or display_name when known.
+    name?: string;
     metadata?: Record<string, string>;
     liveMode: boolean;
 }): Promise<Customer> {
@@ -447,6 +469,7 @@ export function createCustomer(params: {
         method: "POST",
         body: {
             email: params.email,
+            ...(params.name ? { name: params.name } : {}),
             metadata: params.metadata,
         },
         liveMode: params.liveMode,

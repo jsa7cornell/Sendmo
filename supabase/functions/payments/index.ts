@@ -68,6 +68,7 @@ async function getOrCreateCustomerForUser(
     userId: string,
     email: string | null,
     liveMode: boolean,
+    fullName?: string | null,
 ): Promise<string> {
     const col = liveMode ? "stripe_customer_id_live" : "stripe_customer_id_test";
     const { data: row } = await supabase
@@ -81,6 +82,9 @@ async function getOrCreateCustomerForUser(
 
     const customer = await createCustomer({
         email: email || undefined,
+        // Set the customer name so Stripe receipts and the Dashboard show the
+        // recipient's real name instead of just their email address.
+        name: fullName || undefined,
         metadata: { sendmo_user_id: userId, mode: liveMode ? "live" : "test" },
         liveMode,
     });
@@ -191,6 +195,7 @@ serve(async (req: Request) => {
         let customerIdTest: string | null = null;
         let customerIdLive: string | null = null;
         let userEmail: string | null = null;
+        let userFullName: string | null = null;
         const sbUrl = Deno.env.get("SUPABASE_URL") || Deno.env.get("VITE_SUPABASE_URL");
         const sbKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || Deno.env.get("SB_SERVICE_ROLE_KEY");
         const sbAdmin = sbUrl && sbKey
@@ -205,7 +210,7 @@ serve(async (req: Request) => {
                 resolvedUserId = userResp.user.id;
                 const { data: profile } = await sbAdmin
                     .from("profiles")
-                    .select("role, admin_active_mode, stripe_customer_id_test, stripe_customer_id_live, email")
+                    .select("role, admin_active_mode, stripe_customer_id_test, stripe_customer_id_live, email, full_name")
                     .eq("id", resolvedUserId)
                     .maybeSingle();
                 callerRole = (profile?.role as string) ?? null;
@@ -213,6 +218,7 @@ serve(async (req: Request) => {
                 customerIdTest = (profile?.stripe_customer_id_test as string) ?? null;
                 customerIdLive = (profile?.stripe_customer_id_live as string) ?? null;
                 userEmail = (profile?.email as string) ?? null;
+                userFullName = (profile?.full_name as string) ?? null;
             }
         }
 
@@ -317,7 +323,7 @@ serve(async (req: Request) => {
         if (resolvedUserId && sbAdmin && !customerForPi) {
             try {
                 customerForPi = await getOrCreateCustomerForUser(
-                    sbAdmin, resolvedUserId, userEmail, isLive,
+                    sbAdmin, resolvedUserId, userEmail, isLive, userFullName,
                 );
             } catch (custErr) {
                 // Fall back to anonymous PI (no save-card) on Customer create
@@ -360,6 +366,10 @@ serve(async (req: Request) => {
             ...(customerForPi ? { setup_future_usage: "off_session" as const } : {}),
             // Risk-Intel B2 destination-address signal (now wired — Job 3).
             ...(shipping ? { shipping } : {}),
+            // "SENDMO* LABEL" on bank statements (requires account-level
+            // statement descriptor = "SENDMO" set in Stripe Dashboard).
+            // See proposals/2026-05-27_business-identifier-sweep-handoff.md.
+            statement_descriptor_suffix: "LABEL",
             metadata: {
                 easypost_shipment_id: body.easypost_shipment_id,
                 session_id: sessionId,

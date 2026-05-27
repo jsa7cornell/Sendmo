@@ -39,6 +39,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 async function resolveCaller(req: Request): Promise<{
     userId: string;
     email: string | null;
+    fullName: string | null;
     role: string | null;
     adminActiveMode: string;
     liveMode: boolean;
@@ -60,7 +61,7 @@ async function resolveCaller(req: Request): Promise<{
 
     const { data: profile } = await supabase
         .from("profiles")
-        .select("id, email, role, admin_active_mode")
+        .select("id, email, role, admin_active_mode, full_name")
         .eq("id", user.id)
         .maybeSingle();
 
@@ -71,6 +72,7 @@ async function resolveCaller(req: Request): Promise<{
     return {
         userId: user.id,
         email: (profile?.email as string) || user.email || null,
+        fullName: (profile?.full_name as string) || null,
         role,
         adminActiveMode,
         liveMode,
@@ -83,6 +85,7 @@ async function ensureCustomer(
     userId: string,
     email: string | null,
     liveMode: boolean,
+    fullName?: string | null,
 ): Promise<string> {
     const col = liveMode ? "stripe_customer_id_live" : "stripe_customer_id_test";
     const { data: row } = await supabase
@@ -96,6 +99,9 @@ async function ensureCustomer(
 
     const customer = await createCustomer({
         email: email || undefined,
+        // Set customer name so Stripe receipts and Dashboard show the
+        // recipient's real name rather than just their email address.
+        name: fullName || undefined,
         metadata: { sendmo_user_id: userId, mode: liveMode ? "live" : "test" },
         liveMode,
     });
@@ -187,7 +193,7 @@ serve(async (req: Request) => {
             }
 
             const customerId = await ensureCustomer(
-                caller.supabase, caller.userId, caller.email, caller.liveMode,
+                caller.supabase, caller.userId, caller.email, caller.liveMode, caller.fullName,
             );
 
             const idempotencyKey = `seti_create:${caller.userId}:${mode}:retry-${retryN}`;
