@@ -81,6 +81,22 @@ function RefundChip({ status, amountPaidCents }: { status: Props["refundStatus"]
   return null;
 }
 
+function bodyCopy(status: Props["refundStatus"]): string {
+  switch (status) {
+    case "refunded":
+      return "The shipment will not ship. Your refund has been issued — it typically appears on your statement within 5–10 business days.";
+    case "submitted":
+      return "The shipment will not ship. Your refund is being processed and will appear on your SendMo account within 1–2 weeks.";
+    case "rejected":
+      return "The shipment will not ship. We weren't able to issue a refund automatically — please contact support and we'll make it right.";
+    case "not_applicable":
+      return "The shipment will not ship. No charge was made for this label.";
+    case "none":
+    default:
+      return "The shipment will not ship.";
+  }
+}
+
 export default function CancelledShipmentBanner({
   cancelledAt,
   actor,
@@ -95,9 +111,7 @@ export default function CancelledShipmentBanner({
         <AlertCircle className="w-5 h-5 text-destructive flex-shrink-0 mt-0.5" />
         <div className="flex-1">
           <h2 className="text-base font-semibold text-foreground">This label was voided</h2>
-          <p className="text-sm text-muted-foreground">
-            The shipment will not ship. If a refund is due, it'll appear on your SendMo account within 2–4 weeks.
-          </p>
+          <p className="text-sm text-muted-foreground">{bodyCopy(refundStatus)}</p>
         </div>
       </div>
 

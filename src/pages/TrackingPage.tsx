@@ -748,12 +748,15 @@ export default function TrackingPage() {
                     status={data.status}
                   />
 
-                  {/* Payer-only condensed receipt at bottom of F3 */}
+                  {/* Payer-only condensed receipt at bottom of F3.
+                      refundStatus drives refund-aware copy ("Refunded $X
+                      back to ••••5001" instead of "Charged"). */}
                   {effectiveViewerRole === "payer" && (
                     <ReceiptBlock
                       mode="condensed"
                       totalCents={data.amount_paid_cents ?? 0}
                       chargedAt={data.created_at}
+                      refundStatus={data.refund_status ?? "none"}
                     />
                   )}
                 </>

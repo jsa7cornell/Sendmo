@@ -14,6 +14,10 @@ interface ReceiptBlockProps {
   paymentMethodLast4?: string;  // e.g. "4242" — displayed as "•••• 4242"
   chargedAt: string;            // ISO date or formatted string
   receiptPdfUrl?: string;
+  /** When set to 'refunded', the receipt renders refund-aware copy ("Refunded
+   *  $X.XX on …" instead of "Charged $X.XX") and adds a Refund line in full
+   *  mode. Other states are treated as no-refund (charge as-is). */
+  refundStatus?: "none" | "submitted" | "refunded" | "rejected" | "not_applicable";
 }
 
 /** Returns "Month Day" (e.g. "May 19") if the string parses as a valid Date;
@@ -54,8 +58,10 @@ export default function ReceiptBlock({
   paymentMethodLast4,
   chargedAt,
   receiptPdfUrl,
+  refundStatus,
 }: ReceiptBlockProps) {
   const card = maskedCard(paymentMethodLast4);
+  const isRefunded = refundStatus === "refunded";
 
   return (
     <div className="bg-card border border-border rounded-2xl shadow-sm p-4 mb-3">
@@ -94,26 +100,53 @@ export default function ReceiptBlock({
               </div>
             )}
 
-            {/* Charged-to total — bordered top */}
+            {/* Charged-to total — bordered top. Renders the original charge
+                even when refunded (the refund is shown as a separate row). */}
             <div className="flex justify-between items-baseline text-[13px] border-t border-border mt-[6px] pt-2">
               <dt className="text-muted-foreground m-0">Charged to {card}</dt>
               <dd className="m-0 font-semibold">{formatCents(totalCents)}</dd>
             </div>
+
+            {/* Refund row — only when refund completed */}
+            {isRefunded && (
+              <>
+                <div className="flex justify-between items-baseline text-[13px] py-[3px]">
+                  <dt className="text-emerald-700 m-0">Refunded</dt>
+                  <dd className="m-0 font-medium text-emerald-700">−{formatCents(totalCents)}</dd>
+                </div>
+                <div className="flex justify-between items-baseline text-[13px] border-t border-border mt-[6px] pt-2">
+                  <dt className="text-muted-foreground m-0">Net</dt>
+                  <dd className="m-0 font-semibold">{formatCents(0)}</dd>
+                </div>
+              </>
+            )}
           </dl>
 
           {/* Timestamp */}
           <p className="text-xs text-muted-foreground mt-1.5 m-0">
             {formatChargedAt(chargedAt)}
+            {isRefunded && " · refund issued"}
           </p>
         </>
       )}
 
       {mode === "condensed" && (
         <p className="text-[13px] text-foreground m-0">
-          {formatCents(totalCents)}
-          {" · "}charged to {card}
-          {" · "}
-          {formatMonthDay(chargedAt)}
+          {isRefunded ? (
+            <>
+              <span className="text-emerald-700 font-medium">Refunded {formatCents(totalCents)}</span>
+              {" · "}back to {card}
+              {" · "}
+              {formatMonthDay(chargedAt)}
+            </>
+          ) : (
+            <>
+              {formatCents(totalCents)}
+              {" · "}charged to {card}
+              {" · "}
+              {formatMonthDay(chargedAt)}
+            </>
+          )}
         </p>
       )}
     </div>
