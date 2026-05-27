@@ -180,3 +180,18 @@ verify_jwt = true
 [functions.cron-refund-sweep]
 enabled = true
 verify_jwt = true
+
+# G2 — Supabase Auth Send Email Hook (pre-launch branded OTP/login emails).
+# Wires custom SendMo-branded otpEmail template into signup / login /
+# magiclink / recovery / email_change flows. Without this hook, Supabase
+# Auth sends default Supabase-branded emails (zero SendMo branding).
+# Verifies HMAC signature against SEND_EMAIL_HOOK_SECRET per the Standard
+# Webhooks spec — NOT a user JWT (Supabase Auth doesn't send one for hooks).
+# Registration:
+#   1. Set SEND_EMAIL_HOOK_SECRET in Supabase Function Secrets
+#   2. Supabase Dashboard → Authentication → Hooks → Send Email Hook:
+#        URI: https://<project>.supabase.co/functions/v1/auth-email-hook
+#        Secret: same `v1,whsec_<base64>` value
+[functions.auth-email-hook]
+enabled = true
+verify_jwt = false
