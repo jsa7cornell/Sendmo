@@ -64,7 +64,8 @@ describe("CancelledShipmentBanner", () => {
 
   it("renders not_applicable chip for comp shipments", () => {
     render(<CancelledShipmentBanner {...base} refundStatus="not_applicable" />);
-    expect(screen.getByText(/no charge was made/i)).toBeInTheDocument();
+    // Exact match targets the chip, not the body copy ("...No charge was made for this label.")
+    expect(screen.getByText("No charge was made")).toBeInTheDocument();
   });
 
   it("gracefully renders with no timestamp + no actor", () => {
