@@ -12,6 +12,51 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-06-28] Label-confirmation email by role — payer-only creation email, routed through dispatchNotifications
+
+**Category:** feat | Emails | Labels
+**Cross-link:** [proposals/2026-06-27_label-confirmation-email-by-role_reviewed-2026-06-27_decided-2026-06-27.md](proposals/2026-06-27_label-confirmation-email-by-role_reviewed-2026-06-27_decided-2026-06-27.md) | [PR #34](https://github.com/jsa7cornell/Sendmo/pull/34) | dispatcher [_shared/notifications.ts](supabase/functions/_shared/notifications.ts) | template [_shared/email-templates.ts](supabase/functions/_shared/email-templates.ts) | [labels/index.ts](supabase/functions/labels/index.ts)
+
+**What was wrong:** `labelConfirmationEmail` hardcoded shared-link copy ("A label was printed using your prepaid link" / "purchased for your SendMo link") and was sent once to `recipient_email` for **every** label — so a self-created Full Prepaid Label got recipient-of-a-link wording. Surfaced when John dogfooded a live-charge full label (2026-06-27). "printed" was also wrong — it's the creation email.
+
+**What shipped (package-centric model, decided 2026-06-27):**
+- **Only the payer** gets a label-creation email. Recipients / flex link-users get **no** creation email — their first touchpoint is the existing `in_transit` package tracking email ("Your package is on its way"), which already fans out correctly and needed no copy change.
+- Routed through the existing `dispatchNotifications` fan-out as a new `LABEL_CREATED_EVENT` (reuse, not a parallel loop — Rule 6), gated to the **payer-role contact**.
+- **The trap (load-bearing):** "payer" maps to a *different* `notification_contacts` role per flow — `sender` for full-label, `recipient` for flex (the link owner prepays, [labels/index.ts:218](supabase/functions/labels/index.ts)). `payerRole = resolvedLink ? "recipient" : "sender"` in both the dispatcher and the contact-build dedupe. A naive "payer→sender" map silently mis-routes flex.
+- **Payer email resolved server-side** from the authed user (`callerEmail`) — the full-label client sends an empty `sender_email` for authed buys, which is why John's dogfood stored only 1 contact and he'd have gotten no payer email otherwise.
+- Template gains `variant: "full_label" | "flex"` (required, no default).
+
+**Review caught a real blind spot:** the first draft hand-rolled a fan-out loop, unaware `dispatchNotifications` already did role-keyed fan-out + a `notifications_log` send-once guard. Pivoted to reuse it (Rule 6). Code-review (medium) then surfaced two fixes folded in before merge: (1) **fallback direct-send** to the payer if the `notification_contacts` insert fails — the dispatcher reads rows from the DB, so without a fallback an insert hiccup would silently drop a paid label's confirmation; (2) **flex self-send dedupe** now keeps the surviving contact on the payer's role per flow (was hardcoded `sender`, which dropped a flex owner's email when they ship to themselves).
+
+**Gotcha for future agents:** the old `email.label_confirmation_sent` / `email.label_confirmation_error` event_logs are **gone**. Confirmation send success/failure now logs as `notification.email_sent` / `notification.email_failed` with `properties.event = "label_created"` (plus `email.label_confirmation_fallback_sent` on the degraded direct-send path). Any monitoring/backfill keyed on the old event types reads empty for labels created after 2026-06-28.
+
+**Deploy:** PR #34 squash-merged to `main` 2026-06-28 12:29 UTC → `deploy-edge-functions.yml` redeployed **all 26 functions** (triggered by the `_shared/` change; run 28322248853 green, `labels` 199 kB confirmed). Vercel frontend unaffected (no `src/` changes).
+
+**Browser-verified:** spec: [tests/unit/emailTemplates.test.ts](tests/unit/emailTemplates.test.ts), [tests/unit/notifications.test.ts](tests/unit/notifications.test.ts) | variants-covered: full_label-payer-copy, flex-payer-copy, identical-details-block, payer-only-routing (full-label sender / flex recipient), payer-email-server-resolution, self-send-dedupe (full-label + flex regression). Email *dispatch* is not browser-renderable; the contract (which copy, to whom) is unit-covered. **Operational confirmation still pending:** a live test-mode full-label buy → confirm the payer inbox gets "Your label is ready" and the recipient gets no creation email (John's to run — needs his account + inbox + prod `event_logs`).
+
+---
+
+### [2026-06-27] Login "broken" = Supabase project auto-paused → ERR_NAME_NOT_RESOLVED (diagnosis only, no code change)
+
+**Category:** fix | Auth | Infra | Gotcha
+**Cross-link:** [proposals/2026-05-14_oauth-and-session-handoff.md](proposals/2026-05-14_oauth-and-session-handoff.md) (prior OAuth-bounce investigation) | migration [016_add_profile_role.sql](supabase/migrations/016_add_profile_role.sql) (admin bootstrap) | AuthContext [src/contexts/AuthContext.tsx](src/contexts/AuthContext.tsx) | AdminModeToolbar [src/components/AdminModeToolbar.tsx](src/components/AdminModeToolbar.tsx)
+
+**Symptom John reported:** "issues when logging in" — error right after clicking **Continue with Google**. Network tab showed the `/auth/v1/authorize?provider=google` navigation **failing with `net::ERR_NAME_NOT_RESOLVED`**.
+
+**Root cause (NOT OAuth):** the Supabase project `fkxykvzsqdjzhurntgah` had **auto-paused** (Free tier pauses after ~7 days idle). A paused project's `*.supabase.co` hostname **stops resolving in DNS** — so the failure surfaces as a DNS error, and because OAuth is a full-page navigation it's the *visible* symptom while background data calls (profile reads, email-OTP path) fail silently against the same dead host. **Counterintuitive:** I expected a paused project to resolve-and-return-HTTP-error; it actually fails name resolution like a deleted host. Don't let `ERR_NAME_NOT_RESOLVED` on the auth endpoint send you down the OAuth-config / Google-Console rabbit hole — **check project pause state first.**
+
+**Decisive test (bypasses the app + any cache):** load `https://<ref>.supabase.co/auth/v1/health` in a fresh tab. DNS error → project paused/gone. `{"message":"No API key found in request"}` → host is alive (that response = success here).
+
+**Two follow-on traps hit during recovery:**
+1. **Negative DNS cache** — after un-pausing, John's browser kept serving the stale "doesn't resolve" answer. Fix: Chrome `chrome://net-internals/#dns` → Clear host cache, + `sudo dscacheutil -flushcache; sudo killall -HUP mDNSResponder`. A stuck Google "Continuing…" handoff screen is the same cache biting the OAuth *callback* host.
+2. **Admin toolbar gone after re-login** — `AdminModeToolbar` self-gates on `profileLoaded && isAdmin`; John's `profiles.role` was `'user'`. Migration 016's bootstrap `UPDATE ... WHERE email='jsa7cornell@gmail.com'` only flips rows that existed when it ran — a profile row created later by the `handle_new_user` trigger gets the default `role='user'` and is never re-flipped. Fix run by John in Dashboard SQL Editor: `update profiles set role='admin' where email='jsa7cornell@gmail.com';` then reload (ensureProfile re-reads role → toolbar appears).
+
+**Prevention (open, John's call):** Free-tier auto-pause is wrong for a launched product taking payments — **upgrade the SendMo Supabase project to Pro** to remove auto-pause. Stopgap is a daily keep-alive cron ping, but that masks the tier mismatch.
+
+**Browser-verified:** n/a-category: infra-config | n/a-reason: no code changed — diagnosis + DB role fix + infra (un-pause) only; John confirmed login + admin toolbar + onboarding-to-payment all working end-to-end on sendmo.co.
+
+---
+
 ### [2026-05-24] charge.refunded Path B — stripe-webhook resolves shipment via shipments.stripe_payment_intent_id fallback (YPPY9AK unstick)
 
 **Category:** fix | Payments | Webhooks | Refunds
@@ -2472,7 +2517,7 @@ All three new discoveries are filed in `WISHLIST.md` as launch blockers and are 
 7. Generate one Live Comp label end-to-end; verify exactly one new `transactions` row appears with `type='comp_grant'` and negative `amount_cents`.
 
 **Why the migration step is John's (not the agent's):**
-Per `~/AI Brain/CLAUDE.md` Rule 0.5, irreversible production DB ops have severity equal to Rule 0 (leaked secrets). Both are non-undoable. After the 2026-05-04 prod-DB-wipe incident, agents do not execute `DROP TABLE` / `TRUNCATE` / `prisma migrate reset` / hand-rolled `psql` against production. The migration file is the agent's deliverable; running it against `fkxykvzsqdjzhurntgah` is John's step.
+Per `~/AI-Brain/CLAUDE.md` Rule 0.5, irreversible production DB ops have severity equal to Rule 0 (leaked secrets). Both are non-undoable. After the 2026-05-04 prod-DB-wipe incident, agents do not execute `DROP TABLE` / `TRUNCATE` / `prisma migrate reset` / hand-rolled `psql` against production. The migration file is the agent's deliverable; running it against `fkxykvzsqdjzhurntgah` is John's step.
 
 **What this unblocks:**
 - **Phase B** (save card on file via SetupIntent) — no remaining decisions.

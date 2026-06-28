@@ -2,9 +2,9 @@
 title: Label-confirmation email — correct copy per flow, separate sender + recipient emails
 slug: label-confirmation-email-by-role
 project: sendmo
-status: decided
+status: shipped
 created: 2026-06-27
-last_updated: 2026-06-27 22:05
+last_updated: 2026-06-28 12:35
 reviewed: 2026-06-27
 decided: 2026-06-27
 author: Claude (Opus 4.8) — session debugging John's live-charge dogfood, 2026-06-27; found the wrong-copy email while investigating a self-created full-label
