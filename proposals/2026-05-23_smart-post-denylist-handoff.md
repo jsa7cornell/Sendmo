@@ -1,6 +1,6 @@
 # Handoff — FedEx Smart Post denylist + buy-time-rate-gate follow-up
 
-> Paste the body below into a fresh Claude Code session at `~/AI Brain/sendmo/`.
+> Paste the body below into a fresh Claude Code session at `~/AI-Brain/sendmo/`.
 > This continues investigation of the FedEx Smart Post quote-vs-buy divergence
 > originally surfaced by GC37EXG ($9.61 charged / $19.23 billed). The denylist
 > patch is in the working tree; what remains is a small set of deploy +

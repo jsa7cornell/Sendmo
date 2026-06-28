@@ -11,12 +11,12 @@
 
 Read these **in order** before touching code. Skipping the proposals = re-deciding decided questions:
 
-1. `~/AI Brain/CLAUDE.md` — global agent rules. **Rule 0** (don't echo secrets) and **Rule 0.5** (agents don't write to prod DB — migrations through John).
-2. `~/AI Brain/sendmo/PLAYBOOK.md` — project rules. Pay attention to **Rule 7** (never expose recipient address in sender UI), **Rule 14** (server-side state for critical decisions), and the white-label policy in §"Label Cancellation / Void" (never surface carrier branding when SendMo has its own identifier).
-3. `~/AI Brain/sendmo/SPEC.md` §13.1 (Label Void & Refund Policy), §16 (Email Notifications), §18 (Mobile & Accessibility).
-4. `~/AI Brain/sendmo/proposals/2026-05-11_sender-flow-wizard_reviewed-2026-05-11_decided-2026-05-11.md` — Round 2 established `/t/<public_code>` as *the* shipment page. Read the "privacy" decision (anyone-with-URL can see Print/Download — Option (a)).
-5. `~/AI Brain/sendmo/proposals/2026-05-11_label-cancel-and-change_reviewed-2026-05-12_decided-2026-05-12.md` — full architecture of cancel: three-path auth, async refund state machine, link lifecycle, audit-log shape. **This is your contract — don't break it.**
-6. The last ~6 entries of `~/AI Brain/sendmo/LOG.md` — especially "2026-05-13 Test-mode visibility," "2026-05-13 Cancel-flow Phase B slice 1," and "2026-05-13 Orphan-shipment recovery." They tell you what just shipped and the shape of the state machine.
+1. `~/AI-Brain/CLAUDE.md` — global agent rules. **Rule 0** (don't echo secrets) and **Rule 0.5** (agents don't write to prod DB — migrations through John).
+2. `~/AI-Brain/sendmo/PLAYBOOK.md` — project rules. Pay attention to **Rule 7** (never expose recipient address in sender UI), **Rule 14** (server-side state for critical decisions), and the white-label policy in §"Label Cancellation / Void" (never surface carrier branding when SendMo has its own identifier).
+3. `~/AI-Brain/sendmo/SPEC.md` §13.1 (Label Void & Refund Policy), §16 (Email Notifications), §18 (Mobile & Accessibility).
+4. `~/AI-Brain/sendmo/proposals/2026-05-11_sender-flow-wizard_reviewed-2026-05-11_decided-2026-05-11.md` — Round 2 established `/t/<public_code>` as *the* shipment page. Read the "privacy" decision (anyone-with-URL can see Print/Download — Option (a)).
+5. `~/AI-Brain/sendmo/proposals/2026-05-11_label-cancel-and-change_reviewed-2026-05-12_decided-2026-05-12.md` — full architecture of cancel: three-path auth, async refund state machine, link lifecycle, audit-log shape. **This is your contract — don't break it.**
+6. The last ~6 entries of `~/AI-Brain/sendmo/LOG.md` — especially "2026-05-13 Test-mode visibility," "2026-05-13 Cancel-flow Phase B slice 1," and "2026-05-13 Orphan-shipment recovery." They tell you what just shipped and the shape of the state machine.
 
 ## The deliverable (three asks, prioritized)
 

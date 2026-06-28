@@ -1,11 +1,4 @@
 # SendMo — Project Playbook
-> **Agents: read before every session:**
-> 1. Read `../CLAUDE.md` (AI Brain global context) — services, credentials protocol, global rules.
-> 2. Read this entire file (`PLAYBOOK.md`) — developer instructions, architecture, rules.
-> 3. Read `SPEC.md` — product requirements, flows, acceptance criteria.
-> 4. Read `LOG.md` — *why* decisions were made, integration gotchas, hard-won debugging knowledge.
->
-> At the **end of every session**, propose updates to `LOG.md`, `PLAYBOOK.md`, or `../CLAUDE.md` for anything new discovered. If nothing changed, say "No doc updates needed this session."
 
 ## What is SendMo?
 
@@ -416,17 +409,7 @@ npm run test:e2e          # playwright tests
 - `tests/e2e/global-setup.ts` mints a real Supabase session for a dedicated test user (GoTrue password grant) → `playwright/.auth/user.json` (gitignored — it holds a real token).
 - Requires `E2E_TEST_USER_EMAIL` / `E2E_TEST_USER_PASSWORD` in `.env.local` + CI secrets. Absent → `global-setup` is a no-op and authed `describe`s skip themselves; the suite stays green. Pattern: the `/links/new` describe in `phone-gate.spec.ts`.
 
-### Suite health & known gaps (snapshot 2026-05-20, post-de-rot)
-
-The locator-drift de-rot pass is **complete** — the mocked e2e suite is green (38 passed / 6 skipped / 0 failed). Triage:
-
-- **Green / trustworthy:** the full mocked suite — `phone-gate`, `onboarding` (now also carries the consolidated full-label coverage: validation gates, Magic Guestimator, back-nav), `auth`, `auth-section-and-flex-otp`, `admin`, `not-found`, `label-flow`, `sender-flow`, `tracking-lifecycle-states`, `tracking-anonymous-payment-gating`, `home`.
-- **Deleted:** `full-label-flow.spec.ts` — overlapped `onboarding.spec.ts`; unique coverage was moved there, then it was removed.
-- **Not part of the mocked suite — leave alone:** `url-step-routing.spec.ts` (churn from in-progress `feat/url-step-routing` work); `buy_label_debug.spec.ts`, `playwright_verify.spec.ts`, `cors_verify.spec.ts` (hit real services).
-- **Honestly skipped:** `sender-flow` valid-link tests (need `SENDMO_TEST_LINK_CODE`); the authed `/links/new` + `tracking-anonymous-payment-gating` describes (need `E2E_TEST_USER_*` / real services).
-- **Coverage gaps:** the OTP → payment → label tail of full-label onboarding (needs OTP interception); `/admin`'s reporting page (needs an admin-role session, not just any authed user); `/label-test`'s label step is broken against the live backend — the `labels` function now requires `payment_intent_id` (see LOG 2026-05-20).
-
-**Rule:** a red e2e spec is worse than none — people stop trusting the suite. When you touch a flow, fix or honestly scope its spec; never leave it red.
+**Rule:** a red e2e spec is worse than none — people stop trusting the suite. When you touch a flow, fix or honestly scope its spec; never leave it red. See `TESTING.md` for current suite health.
 
 ## EasyPost Test Data
 
@@ -638,26 +621,4 @@ WHERE severity = 'error'
 ORDER BY created_at DESC;
 ```
 
-### Future: ClickHouse Migration Path
-
-When `event_logs` exceeds ~5M rows or query performance degrades, migrate to ClickHouse Cloud.
-**Recommended path (Option B):** add a pg_cron export job that batches new rows to ClickHouse HTTP API every 5 minutes.
-No changes to the `ingest` function or Edge Function instrumentation.
-See SPEC.md §23 for full architecture.
-
 ---
-
-*Last updated: 2026-03-30 | SPEC version: 6.1*
-
-## Documentation Structure
-
-**Four-file knowledge system:**
-
-| File | Purpose |
-|------|---------|
-| `SPEC.md` | Product specifications — vision, flows, UI specs, rate tables, phased execution |
-| `PLAYBOOK.md` | Developer instructions — tech stack, repo structure, env vars, design tokens, agent roles |
-| `LOG.md` | Decision & deploy log — *why* choices were made, integration gotchas, hard-won debugging knowledge, and deployment history |
-| `CLAUDE.md` (thin harness) | Claude agent entry point — links to Brain-level context and project PLAYBOOK |
-
-Archived reference docs live in `_archive/` — see SPEC.md Appendix B for index.

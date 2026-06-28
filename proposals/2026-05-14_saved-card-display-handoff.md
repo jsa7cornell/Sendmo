@@ -1,6 +1,6 @@
 # Handoff — Saved-card display in sender-flow PaymentElement
 
-> Paste the body below into a fresh Claude Code session at `~/AI Brain/sendmo/`. The work is small, the trap is specific, and most of the surrounding plumbing already landed yesterday — don't reinvent it.
+> Paste the body below into a fresh Claude Code session at `~/AI-Brain/sendmo/`. The work is small, the trap is specific, and most of the surrounding plumbing already landed yesterday — don't reinvent it.
 
 ---
 
@@ -12,11 +12,11 @@ The gap is one specific Stripe parameter. **The first agent (me, 2026-05-14) gue
 
 ## Read these first, in order
 
-1. **`~/AI Brain/CLAUDE.md`** — global agent rules. Rule 0 (don't echo secrets), Rule 0.5 (no destructive DB ops without verification).
-2. **`~/AI Brain/sendmo/PLAYBOOK.md`** — project rules. Rule 14 (server-side state), Rule 19 (browser-verify product-surface fixes with structured `Browser-verified:` block in LOG entries).
-3. **`~/AI Brain/sendmo/LOG.md`** — most recent entries especially `[2026-05-14] Phase B/C/D pre-prod sweep`. That entry documents everything that's already shipped + the open gap you're closing.
-4. **`~/AI Brain/sendmo/wallofshame.md`** — the entry about `allow_redisplay` parameter-path guessing. Read it. It's literally about not repeating the bug you're fixing.
-5. **`~/AI Brain/sendmo/proposals/2026-04-26_stripe-integration-plan_reviewed-2026-04-26_decided-2026-05-11.md`** — master Phase B/C/D plan. The saved-card-on-checkout feature lives under Phase D.
+1. **`~/AI-Brain/CLAUDE.md`** — global agent rules. Rule 0 (don't echo secrets), Rule 0.5 (no destructive DB ops without verification).
+2. **`~/AI-Brain/sendmo/PLAYBOOK.md`** — project rules. Rule 14 (server-side state), Rule 19 (browser-verify product-surface fixes with structured `Browser-verified:` block in LOG entries).
+3. **`~/AI-Brain/sendmo/LOG.md`** — most recent entries especially `[2026-05-14] Phase B/C/D pre-prod sweep`. That entry documents everything that's already shipped + the open gap you're closing.
+4. **`~/AI-Brain/sendmo/wallofshame.md`** — the entry about `allow_redisplay` parameter-path guessing. Read it. It's literally about not repeating the bug you're fixing.
+5. **`~/AI-Brain/sendmo/proposals/2026-04-26_stripe-integration-plan_reviewed-2026-04-26_decided-2026-05-11.md`** — master Phase B/C/D plan. The saved-card-on-checkout feature lives under Phase D.
 
 ## You have Stripe MCP and Supabase MCP access
 

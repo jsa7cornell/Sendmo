@@ -1,6 +1,6 @@
 # Handoff — OAuth + session length investigation
 
-> Paste the body below into a fresh Claude Code session at `~/AI Brain/sendmo/`. Two related but distinct auth bugs to investigate. Diagnose first, fix second — don't shotgun changes.
+> Paste the body below into a fresh Claude Code session at `~/AI-Brain/sendmo/`. Two related but distinct auth bugs to investigate. Diagnose first, fix second — don't shotgun changes.
 
 ---
 
@@ -56,10 +56,10 @@ async function handleGoogle() {
 
 ## Read these first, in order
 
-1. **`~/AI Brain/CLAUDE.md`** — global agent rules (Rule 0: secrets, Rule 0.5: destructive DB ops)
-2. **`~/AI Brain/sendmo/PLAYBOOK.md`** — project rules. Rule 19 (browser-verify product-surface fixes)
-3. **`~/AI Brain/sendmo/LOG.md`** — most recent entries for context on what's stable
-4. **`~/AI Brain/sendmo/WISHLIST.md`** — search "auth", "session", "OAuth", "magic link" for prior observations
+1. **`~/AI-Brain/CLAUDE.md`** — global agent rules (Rule 0: secrets, Rule 0.5: destructive DB ops)
+2. **`~/AI-Brain/sendmo/PLAYBOOK.md`** — project rules. Rule 19 (browser-verify product-surface fixes)
+3. **`~/AI-Brain/sendmo/LOG.md`** — most recent entries for context on what's stable
+4. **`~/AI-Brain/sendmo/WISHLIST.md`** — search "auth", "session", "OAuth", "magic link" for prior observations
 5. **This file** for scope
 
 ## Tools available

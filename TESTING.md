@@ -32,7 +32,7 @@ you mean to.
 ### 2. Integration tests — `tests/integration/` ⚠️
 - **Runner:** Vitest (`vitest.integration.config.ts`) for the API tests; a plain Node script (`easypost-test.mjs`) for the EasyPost checks.
 - **Scope:** real round-trips against the database and the EasyPost **test** API — flex-link API, recipient-flow API, label rating.
-- **⚠️ Danger:** these connect to a **real database**. On 2026-05-04 an integration run pointed at a *production* connection string truncated every row in prod. Before running, verify the target DB is local/test (see `~/AI Brain/CLAUDE.md` → Credential Access Protocol → Rule 0.5). Never run these against prod.
+- **⚠️ Danger:** these connect to a **real database**. On 2026-05-04 an integration run pointed at a *production* connection string truncated every row in prod. Before running, verify the target DB is local/test (see `~/AI-Brain/CLAUDE.md` → Credential Access Protocol → Rule 0.5). Never run these against prod.
 
 ### 3. End-to-end tests — `tests/e2e/`
 - **Runner:** Playwright (`playwright.config.ts`), real Chromium. The dev server (`npm run dev`, port 5173) is started automatically.

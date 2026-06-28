@@ -1,7 +1,7 @@
 # Handoff — pre-launch P1 build
 
 > Paste the relevant **Package** section's "spawn prompt" into a fresh Claude Code
-> session at `~/AI Brain/sendmo/`. This doc partitions the launch-blocking
+> session at `~/AI-Brain/sendmo/`. This doc partitions the launch-blocking
 > implementation into **5 self-contained packages** so agents can work in waves.
 > Author's context window is full — this is the dispatch artifact.
 
@@ -29,11 +29,11 @@ Already shipped to `main` (parallel risk-intel work — out of these packages' s
 
 ## Read first (every package agent — common reads)
 
-1. **`~/AI Brain/sendmo/CLAUDE.md`** + `PLAYBOOK.md` — project entry + rules. **Especially Rule 16** (`transactions` is append-only, sole-writer; the two decided proposals here amend the writer map — read the amendments).
-2. **`~/AI Brain/sendmo/PAYMENTS.md`** — operational reference, all 10 sections. §10 covers the risk-intel that just shipped and matters for coordination.
-3. **`~/AI Brain/sendmo/RISKMANAGEMENT.html`** — browser-friendly overview of the risk-intel controls that are already live.
+1. **`~/AI-Brain/sendmo/CLAUDE.md`** + `PLAYBOOK.md` — project entry + rules. **Especially Rule 16** (`transactions` is append-only, sole-writer; the two decided proposals here amend the writer map — read the amendments).
+2. **`~/AI-Brain/sendmo/PAYMENTS.md`** — operational reference, all 10 sections. §10 covers the risk-intel that just shipped and matters for coordination.
+3. **`~/AI-Brain/sendmo/RISKMANAGEMENT.html`** — browser-friendly overview of the risk-intel controls that are already live.
 4. **The decided proposal(s) cited in the package** — each package lists which ones to read in full.
-5. **`~/AI Brain/sendmo/LOG.md`** top entries (last ~10) — recent shipped work + the test-writing pattern (`import type` from `_shared/` for Vitest; see 2026-05-23 entry).
+5. **`~/AI-Brain/sendmo/LOG.md`** top entries (last ~10) — recent shipped work + the test-writing pattern (`import type` from `_shared/` for Vitest; see 2026-05-23 entry).
 
 ---
 
@@ -89,7 +89,7 @@ Total: ~2–3 weeks if 2 agents alternate waves.
 - **Apply migration 032 to prod BEFORE pushing the edge-function code** — same deploy-order lesson from migration 031 (see followups handoff "Critical: deploy-order check").
 
 **Spawn prompt:**
-> You're picking up Handoff Package **H1 — Bidirectional ledger foundation** from `~/AI Brain/sendmo/proposals/2026-05-23_pre-launch-handoff-plan.md`. Read that doc's "Read first" + the H1 section, plus the decided proposal `2026-05-22_reconciliation-and-carrier-adjustments_..._decided.md` §2.1 / §2.2 / §3 Database + Edge Functions sections + `## Decision` D2 (the blocker fixes). Build migration 032 + the ledger writers. Apply 032 to prod first, then push the edge-function code as a single commit. End with a LOG.md entry cross-linking the decided proposal + the migration ID. Don't touch H2, H3, H4, H5 scope.
+> You're picking up Handoff Package **H1 — Bidirectional ledger foundation** from `~/AI-Brain/sendmo/proposals/2026-05-23_pre-launch-handoff-plan.md`. Read that doc's "Read first" + the H1 section, plus the decided proposal `2026-05-22_reconciliation-and-carrier-adjustments_..._decided.md` §2.1 / §2.2 / §3 Database + Edge Functions sections + `## Decision` D2 (the blocker fixes). Build migration 032 + the ledger writers. Apply 032 to prod first, then push the edge-function code as a single commit. End with a LOG.md entry cross-linking the decided proposal + the migration ID. Don't touch H2, H3, H4, H5 scope.
 
 ---
 
@@ -128,7 +128,7 @@ Total: ~2–3 weeks if 2 agents alternate waves.
 - **Adjustment recharges bypass `checkAccountBudget`** per the build-LOG amendment from the proposal close-out — the adjustment-specific caps govern; document this in the LOG entry that lands H2.
 
 **Spawn prompt:**
-> You're picking up Handoff Package **H2 — Carrier-adjustment detection + recovery + full-label save-card** from `~/AI Brain/sendmo/proposals/2026-05-23_pre-launch-handoff-plan.md`. **Confirm H1 has landed first** (migration 032 applied + `label_cost`/`easypost_refund` writers deployed). Read the H1 + H2 sections, the full decided proposal `2026-05-22_reconciliation-and-carrier-adjustments_..._decided.md`, PAYMENTS.md §10 (risk-intel context), and the dashboard mockup `previews/reconciliation-dashboard.html`. Build per the H2 file-by-file plan. Bundle the risk-intel Job 3 `shipping` field while you're in `payments/index.ts`. End with a LOG.md entry cross-linking the decided proposal + noting the "adjustment recharges bypass `checkAccountBudget`" design call.
+> You're picking up Handoff Package **H2 — Carrier-adjustment detection + recovery + full-label save-card** from `~/AI-Brain/sendmo/proposals/2026-05-23_pre-launch-handoff-plan.md`. **Confirm H1 has landed first** (migration 032 applied + `label_cost`/`easypost_refund` writers deployed). Read the H1 + H2 sections, the full decided proposal `2026-05-22_reconciliation-and-carrier-adjustments_..._decided.md`, PAYMENTS.md §10 (risk-intel context), and the dashboard mockup `previews/reconciliation-dashboard.html`. Build per the H2 file-by-file plan. Bundle the risk-intel Job 3 `shipping` field while you're in `payments/index.ts`. End with a LOG.md entry cross-linking the decided proposal + noting the "adjustment recharges bypass `checkAccountBudget`" design call.
 
 ---
 
@@ -161,7 +161,7 @@ Total: ~2–3 weeks if 2 agents alternate waves.
 - **`stripe-webhook/index.ts`** shared with risk-intel's Radar-block routing — new `charge.refund.updated` case is additive.
 
 **Spawn prompt:**
-> You're picking up Handoff Package **H3 — Refund admin `/refunds` tool + partial-refund plumbing** from `~/AI Brain/sendmo/proposals/2026-05-23_pre-launch-handoff-plan.md`. Independent of H1/H2 in code paths; can start day one. Read the H3 section + the decided proposal `2026-05-21_refund-system-implementation_..._decided-2026-05-22.md` end-to-end. Build per the H3 plan. End with a LOG entry cross-linking the decided proposal. Don't touch H5 scope (emails / cron / rejected queue) — that's a separate package.
+> You're picking up Handoff Package **H3 — Refund admin `/refunds` tool + partial-refund plumbing** from `~/AI-Brain/sendmo/proposals/2026-05-23_pre-launch-handoff-plan.md`. Independent of H1/H2 in code paths; can start day one. Read the H3 section + the decided proposal `2026-05-21_refund-system-implementation_..._decided-2026-05-22.md` end-to-end. Build per the H3 plan. End with a LOG entry cross-linking the decided proposal. Don't touch H5 scope (emails / cron / rejected queue) — that's a separate package.
 
 ---
 
@@ -196,7 +196,7 @@ Total: ~2–3 weeks if 2 agents alternate waves.
 - The reviewer's N3 finding — **add "Dispute window: X days remaining"** to >$10 flagged Needs-Attention rows (USPS 60d, UPS 120d, FedEx 90d, computed from `carrier_adjustments.created_at`).
 
 **Spawn prompt:**
-> You're picking up Handoff Package **H4 — Reconciliation dashboard + sweep + admin actions** from `~/AI Brain/sendmo/proposals/2026-05-23_pre-launch-handoff-plan.md`. **Confirm H1 has landed** (the ledger writers); H3 ideally landed too so Admin.tsx coordination is one-pass. Read the H4 section, the full decided proposal `2026-05-22_reconciliation-and-carrier-adjustments_..._decided.md`, and **open `previews/reconciliation-dashboard.html` + `previews/shipment-detail.html` in a browser** to ground the design — port them to React preserving the column structure + Net-margin identity. End with LOG entry cross-linking the decided proposal.
+> You're picking up Handoff Package **H4 — Reconciliation dashboard + sweep + admin actions** from `~/AI-Brain/sendmo/proposals/2026-05-23_pre-launch-handoff-plan.md`. **Confirm H1 has landed** (the ledger writers); H3 ideally landed too so Admin.tsx coordination is one-pass. Read the H4 section, the full decided proposal `2026-05-22_reconciliation-and-carrier-adjustments_..._decided.md`, and **open `previews/reconciliation-dashboard.html` + `previews/shipment-detail.html` in a browser** to ground the design — port them to React preserving the column structure + Net-margin identity. End with LOG entry cross-linking the decided proposal.
 
 ---
 
@@ -237,7 +237,7 @@ Total: ~2–3 weeks if 2 agents alternate waves.
 - **`stripe-webhook/index.ts`** shared with H3 (`charge.refund.updated`) and risk-intel (Radar-block routing). Email B is added inside the existing `charge.refunded` arm — be careful not to break Radar-block logic.
 
 **Spawn prompt:**
-> You're picking up Handoff Package **H5 — Refund lifecycle emails + cron sweep + admin rejected queue** from `~/AI Brain/sendmo/proposals/2026-05-23_pre-launch-handoff-plan.md`. **Confirm H3 has landed** (the refund state machine). Read the H5 section + the decided proposal `2026-05-21_refund-system-implementation_..._decided-2026-05-22.md`, especially the `## Author response` B3/D5 (approved email copy). Build per the H5 plan. End with LOG entry cross-linking the decided proposal.
+> You're picking up Handoff Package **H5 — Refund lifecycle emails + cron sweep + admin rejected queue** from `~/AI-Brain/sendmo/proposals/2026-05-23_pre-launch-handoff-plan.md`. **Confirm H3 has landed** (the refund state machine). Read the H5 section + the decided proposal `2026-05-21_refund-system-implementation_..._decided-2026-05-22.md`, especially the `## Author response` B3/D5 (approved email copy). Build per the H5 plan. End with LOG entry cross-linking the decided proposal.
 
 ---
 
@@ -299,7 +299,7 @@ Admin: Reconciliation tab (H4) + Refund button (H3) + Account-Budget setter (alr
 
 ## Spawn-prompt template (generic — for any package)
 
-> You're picking up Handoff Package **HX** from `~/AI Brain/sendmo/proposals/2026-05-23_pre-launch-handoff-plan.md`. Read that doc's framing + the HX section + the decided proposal(s) it cites. Verify HX's dependencies have landed (per the dependency graph). Build per the file-by-file plan. Write the listed tests. Verify per the listed steps. End with a LOG.md entry that cross-links the decided proposal + names what shipped. Don't expand into other packages' scope.
+> You're picking up Handoff Package **HX** from `~/AI-Brain/sendmo/proposals/2026-05-23_pre-launch-handoff-plan.md`. Read that doc's framing + the HX section + the decided proposal(s) it cites. Verify HX's dependencies have landed (per the dependency graph). Build per the file-by-file plan. Write the listed tests. Verify per the listed steps. End with a LOG.md entry that cross-links the decided proposal + names what shipped. Don't expand into other packages' scope.
 
 ---
 

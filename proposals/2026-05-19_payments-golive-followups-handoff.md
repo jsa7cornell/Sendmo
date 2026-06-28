@@ -2,7 +2,7 @@
 
 > **SUPERSEDED 2026-05-24** by [`2026-05-23_pre-launch-handoff-plan.md`](2026-05-23_pre-launch-handoff-plan.md) — the pre-launch P1 build (H1–H5 + correctness layer: Stripe fee writer, buy-time rate gate, Smart Post denylist, admin user page, parcel-dims fix, PI↔shipment Path B, fee/charge/parcel backfills) is complete. EasyPost webhook HMAC verification confirmed live since 2026-05-13. This older handoff is preserved for institutional memory — agents picking up payments work should start from the pre-launch plan + the most recent `LOG.md` entries instead.
 
-> Paste the body below into a fresh Claude Code session at `~/AI Brain/sendmo/`.
+> Paste the body below into a fresh Claude Code session at `~/AI-Brain/sendmo/`.
 > This continues the payments thread after a long 2026-05-19 session. The goal
 > is **getting payments wired up for live mode** — most code is in place; what
 > remains is verification, a few open bugs, and live-mode infra config.

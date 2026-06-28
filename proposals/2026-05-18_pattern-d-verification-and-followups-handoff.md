@@ -7,7 +7,7 @@
 > tracking unification, etc. — see LOG.md). Read the new handoff first; keep
 > this one for the verification-step detail + debugging cheat-sheet.
 
-> Paste the body below into a fresh Claude Code session at `~/AI Brain/sendmo/`. Pattern D shipped 2026-05-18 (commit `69ac58b`); the migration was applied manually by John. This handoff covers what still needs to happen.
+> Paste the body below into a fresh Claude Code session at `~/AI-Brain/sendmo/`. Pattern D shipped 2026-05-18 (commit `69ac58b`); the migration was applied manually by John. This handoff covers what still needs to happen.
 
 ---
 

@@ -1,6 +1,6 @@
 # Handoff — Payments risk-intelligence follow-ups
 
-> Paste the body below into a fresh Claude Code session at `~/AI Brain/sendmo/`.
+> Paste the body below into a fresh Claude Code session at `~/AI-Brain/sendmo/`.
 > This continues the payments work after the 2026-05-22 risk-intelligence push
 > (commit `397530c`). The decided proposal shipped end-to-end; what remains is
 > a small set of fast-follows.

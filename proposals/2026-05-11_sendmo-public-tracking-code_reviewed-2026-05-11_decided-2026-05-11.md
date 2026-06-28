@@ -227,7 +227,7 @@ const { data: shipment, error } = await lookup.limit(1).single();
 
 ## Reconciliation with prior decided proposals
 
-Scanned `~/AI Brain/sendmo/proposals/`:
+Scanned `~/AI-Brain/sendmo/proposals/`:
 - **`2026-04-26_links-manager_decided`** — scoped to `/links/new` + `/links/:id/edit` and component refactors. No overlap with shipment tracking URLs.
 - **`2026-04-26_stripe-integration-plan`** — Stripe + ledger + reconciliation. No overlap.
 
@@ -287,7 +287,7 @@ The product direction is right and the proposal is solid on the high-leverage pa
 - §2: "32 chars, excludes I/L/O/U to dodge ambiguity with 1/0 and obscenities" — Crockford excludes I/L/O/U specifically, and U is excluded to avoid accidental obscenities; this is correct, but worth noting the alphabet you wrote `0123456789ABCDEFGHJKMNPQRSTVWXYZ` does correctly drop I/L/O/U. Sanity check: 10 digits + 22 letters = 32. ✓
 - §3 example code: `query.eq("public_code", code)` after `.select("...new field list including public_code...")` — write out the actual select string so the reviewer (and future implementer) can verify no field is dropped from the response shape that the frontend already consumes.
 - §6 step 1: `select count(*) from shipments where public_code is null` — good check; also verify uniqueness with `select public_code, count(*) from shipments group by 1 having count(*) > 1;` returns zero rows.
-- LOG cross-link: when this ships, the LOG entry should back-link this proposal filename per the convention in `/Users/ja/AI Brain/PROPOSAL-REVIEW-PROTOCOL.md`.
+- LOG cross-link: when this ships, the LOG entry should back-link this proposal filename per the convention in `/Users/ja/AI-Brain/PROPOSAL-REVIEW-PROTOCOL.md`.
 
 ### Predicted pitfalls
 

@@ -379,7 +379,7 @@ End-to-end after implementation:
 
 ---
 
-**Proposal file:** `/Users/ja/AI Brain/sendmo/proposals/2026-05-12_shipping-insurance.md`
+**Proposal file:** `/Users/ja/AI-Brain/sendmo/proposals/2026-05-12_shipping-insurance.md`
 
 **Three questions I most want the reviewer to focus on:**
 
