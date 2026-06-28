@@ -108,3 +108,104 @@ describe("Notification dispatch logic", () => {
     expect(contacts[0].role).toBe("recipient");
   });
 });
+
+// ─── label_created routing (2026-06-27 — confirmation-email-by-role) ──────────
+// Locks the role↔payer asymmetry: the label-created email goes only to the
+// PAYER, whose contact role differs by flow. Full-label payer = `sender`;
+// flex payer (the link owner) = `recipient`.
+describe("label_created — payer-only routing + variant", () => {
+  // Mirrors dispatchNotifications: payerRole = is_flex ? "recipient" : "sender",
+  // and label_created skips any contact whose role !== payerRole.
+  const payerRole = (isFlex: boolean) => (isFlex ? "recipient" : "sender");
+  const variantFor = (isFlex: boolean) => (isFlex ? "flex" : "full_label");
+
+  it("full-label: payer is the sender role", () => {
+    expect(payerRole(false)).toBe("sender");
+    expect(variantFor(false)).toBe("full_label");
+  });
+
+  it("flex: payer is the recipient role (the link owner)", () => {
+    expect(payerRole(true)).toBe("recipient");
+    expect(variantFor(true)).toBe("flex");
+  });
+
+  it("full-label: only the sender contact receives label_created (recipient excluded)", () => {
+    const contacts = [
+      { role: "sender", address: "payer@test.com" },
+      { role: "recipient", address: "dest@test.com" },
+    ];
+    const got = contacts.filter((c) => c.role === payerRole(false));
+    expect(got).toHaveLength(1);
+    expect(got[0].address).toBe("payer@test.com");
+  });
+
+  it("flex: only the owner (recipient role) receives label_created (link-user excluded)", () => {
+    const contacts = [
+      { role: "recipient", address: "owner@test.com" }, // link owner = payer
+      { role: "sender", address: "linkuser@test.com" }, // used the link
+    ];
+    const got = contacts.filter((c) => c.role === payerRole(true));
+    expect(got).toHaveLength(1);
+    expect(got[0].address).toBe("owner@test.com");
+  });
+});
+
+// ─── full-label contact build: payer email resolution + self-send dedupe ──────
+// Mirrors labels/index.ts: senderAddr = body sender_email || (full-label only)
+// callerEmail; if payer == recipient inbox, store ONLY the sender/payer contact.
+describe("full-label contact build", () => {
+  const build = (opts: {
+    recipientEmail: string | null;
+    bodySenderEmail: string | null;
+    callerEmail: string | null;
+    resolvedLink: boolean;
+  }) => {
+    const { recipientEmail, bodySenderEmail, callerEmail, resolvedLink } = opts;
+    const recipientAddr = recipientEmail || null;
+    const senderAddr = bodySenderEmail || (resolvedLink ? null : callerEmail);
+    // Payer role differs by flow (mirrors labels/index.ts): full-label payer is
+    // `sender`, flex payer (the owner) is `recipient`.
+    const payerRole = resolvedLink ? "recipient" : "sender";
+    const payerAddr = resolvedLink ? recipientAddr : senderAddr;
+    const contacts: Array<{ role: string; address: string }> = [];
+    const sameInbox = !!senderAddr && !!recipientAddr
+      && senderAddr.toLowerCase() === recipientAddr.toLowerCase();
+    if (sameInbox) {
+      contacts.push({ role: payerRole, address: (payerAddr ?? senderAddr)! });
+    } else {
+      if (recipientAddr) contacts.push({ role: "recipient", address: recipientAddr });
+      if (senderAddr) contacts.push({ role: "sender", address: senderAddr });
+    }
+    return contacts;
+  };
+
+  it("authed full-label payer (empty body sender_email) → payer resolved from callerEmail", () => {
+    const c = build({ recipientEmail: "dest@test.com", bodySenderEmail: null, callerEmail: "payer@test.com", resolvedLink: false });
+    expect(c).toEqual([
+      { role: "recipient", address: "dest@test.com" },
+      { role: "sender", address: "payer@test.com" },
+    ]);
+  });
+
+  it("flex does NOT fall back to callerEmail for the sender contact", () => {
+    // recipient (owner) is added elsewhere (line ~218); here body sender_email
+    // absent + resolvedLink → no sender contact from callerEmail.
+    const c = build({ recipientEmail: "owner@test.com", bodySenderEmail: null, callerEmail: "someone@test.com", resolvedLink: true });
+    expect(c).toEqual([{ role: "recipient", address: "owner@test.com" }]);
+  });
+
+  it("self-send (payer == recipient) dedupes to a single payer/sender contact", () => {
+    const c = build({ recipientEmail: "me@test.com", bodySenderEmail: null, callerEmail: "ME@test.com", resolvedLink: false });
+    expect(c).toEqual([{ role: "sender", address: "ME@test.com" }]);
+  });
+
+  it("flex self-send dedupes onto the RECIPIENT role (the owner is the payer), so the creation email still routes", () => {
+    // Flex owner ships to themselves via their own link: resolved recipient
+    // (owner) == body sender_email. The surviving contact must be `recipient`,
+    // because dispatch routes flex label_created to payerRole='recipient'.
+    // (Regression for the code-review #2 finding: dedupe used to hardcode
+    // `sender`, which dropped the flex owner's creation email.)
+    const c = build({ recipientEmail: "owner@test.com", bodySenderEmail: "owner@test.com", callerEmail: null, resolvedLink: true });
+    expect(c).toEqual([{ role: "recipient", address: "owner@test.com" }]);
+  });
+});

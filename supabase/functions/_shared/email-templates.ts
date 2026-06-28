@@ -69,6 +69,12 @@ export function labelConfirmationEmail(params: {
   senderName?: string | null;
   itemDescription?: string | null;
   displayPriceCents?: number | null;
+  // Which creation flow produced this label. Decides the copy: a full-label
+  // payer created the label themselves ("Your label is ready"); a flex link
+  // owner had a label created via their prepaid link. Required — no default —
+  // so a future caller can't silently inherit the wrong wording.
+  // (Decided 2026-06-27: proposals/2026-06-27_label-confirmation-email-by-role…)
+  variant: "full_label" | "flex";
 }): { subject: string; html: string } {
   const {
     publicCode,
@@ -79,7 +85,24 @@ export function labelConfirmationEmail(params: {
     senderName,
     itemDescription,
     displayPriceCents,
+    variant,
   } = params;
+
+  // Copy by flow. Only the payer receives this email (the dispatcher routes
+  // label_created to the payer-role contact only — full-label sender, flex
+  // owner), so both variants are payer-facing. Recipients are NOT emailed at
+  // creation; their first touchpoint is the in_transit package email.
+  const copy = variant === "flex"
+    ? {
+        subject: "A label was created with your prepaid link — SendMo",
+        headline: "Label created!",
+        intro: "A shipping label was just created using your SendMo prepaid link. Here are the details:",
+      }
+    : {
+        subject: "Your SendMo label is ready",
+        headline: "Your label is ready!",
+        intro: "Your prepaid shipping label has been created. Here are the details:",
+      };
 
   const trimmedSender = senderName?.trim();
   const trimmedItem = itemDescription?.trim();
@@ -103,11 +126,11 @@ export function labelConfirmationEmail(params: {
   const amountRow = priceDisplay ? summaryRow("Amount", priceDisplay) : "";
 
   return {
-    subject: "A label was printed using your prepaid link — SendMo",
+    subject: copy.subject,
     html: layout(`
-      <h2 style="margin:0 0 8px;font-size:20px;font-weight:600;color:#111827;">Label created!</h2>
+      <h2 style="margin:0 0 8px;font-size:20px;font-weight:600;color:#111827;">${copy.headline}</h2>
       <p style="margin:0 0 24px;font-size:14px;color:${GRAY_600};line-height:1.5;">
-        A shipping label has been purchased for your SendMo link. Here are the details:
+        ${copy.intro}
       </p>
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 24px;background-color:#f9fafb;border-radius:8px;border:1px solid #e5e7eb;">
         <tr>

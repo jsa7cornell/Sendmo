@@ -495,17 +495,17 @@
         <div class="email-grid">
           <div class="email-row"><div class="k">Template</div><div class="v"><code>labelConfirmationEmail(params)</code> — <code>_shared/email-templates.ts:63</code></div></div>
           <div class="email-row"><div class="k">Trigger</div><div class="v">Label successfully purchased + DB row persisted (<code>labels/index.ts</code> post-persist)</div></div>
-          <div class="email-row"><div class="k">Send-site</div><div class="v"><code>supabase/functions/labels/index.ts:1396–1431</code> — fire-and-forget after <code>label.db_persisted</code> event</div></div>
-          <div class="email-row"><div class="k">Recipient</div><div class="v"><code>recipient_email</code> from the label request body — the link owner (payer). Must be a string; anon label buys without a collected email don't trigger this.</div></div>
-          <div class="email-row"><div class="k">Subject</div><div class="v">"A label was printed using your prepaid link — SendMo"</div></div>
-          <div class="email-row"><div class="k">Dedup</div><div class="v">None — fire-and-forget, no <code>notifications_log</code> entry. Idempotency not enforced (a retry of the labels function could send twice if the DB persisted on the first attempt but the response was lost).</div></div>
-          <div class="email-row"><div class="k">Proposal</div><div class="v">None for the email specifically; <code>previews/label-confirmation-email-variants.html</code> has design variants</div></div>
+          <div class="email-row"><div class="k">Send-site</div><div class="v"><code>supabase/functions/labels/index.ts</code> — routed through <code>dispatchNotifications(…, LABEL_CREATED_EVENT, …)</code> after <code>notification_contacts</code> is written (fire-and-forget). <em>Updated 2026-06-27 (proposals/2026-06-27_label-confirmation-email-by-role…): was a direct single send to <code>recipient_email</code> at lines 1396–1431.</em></div></div>
+          <div class="email-row"><div class="k">Recipient</div><div class="v"><strong>The payer only.</strong> Routed to the payer-role contact: <code>sender</code> role for full-label (payer email resolved server-side from the authed user), <code>recipient</code> role for flex (the link owner). The package recipient and flex link-user get <strong>no</strong> creation email — their first touchpoint is the E3 <code>in_transit</code> package email.</div></div>
+          <div class="email-row"><div class="k">Subject</div><div class="v">full-label: "Your SendMo label is ready" · flex: "A label was created with your prepaid link — SendMo"</div></div>
+          <div class="email-row"><div class="k">Dedup</div><div class="v">Enforced via <code>notifications_log</code> (the dispatcher's per-(shipment, contact, event) send-once guard) since 2026-06-27 — a labels-function retry no longer double-sends.</div></div>
+          <div class="email-row"><div class="k">Proposal</div><div class="v"><code>proposals/2026-06-27_label-confirmation-email-by-role_reviewed-2026-06-27_decided-2026-06-27.md</code> (copy-by-flow + payer-only routing). Design variants: <code>previews/label-confirmation-email-variants.html</code></div></div>
         </div>
         <div class="copy-box">
-          <div class="copy-label">Copy</div>
-          <div class="subject-line">A label was printed using your prepaid link — SendMo</div>
-          <p><strong>Label created!</strong></p>
-          <p>A shipping label has been purchased for your SendMo link. Here are the details:</p>
+          <div class="copy-label">Copy (full-label payer)</div>
+          <div class="subject-line">Your SendMo label is ready</div>
+          <p><strong>Your label is ready!</strong></p>
+          <p>Your prepaid shipping label has been created. Here are the details:</p>
           <p>[Card showing: SendMo tracking code (public_code, large blue); carrier # (secondary); From (sender name, if provided); Item (truncated to 40 chars); Amount (display price); Carrier; Estimated Delivery]</p>
           <p>[Track Package button]</p>
           <p>You'll receive updates as your package moves through the shipping network.</p>
@@ -908,7 +908,7 @@
       </div>
       <div class="email-body">
         <div class="timeline">
-          <div class="tl-item"><span class="tl-time">18:18 UTC</span><span class="tl-event"><span class="ok">OK</span> — Label purchased. <code>email.label_confirmation_sent</code> fires (E2). <code>notification_contacts</code> row inserted (count=1).</span></div>
+          <div class="tl-item"><span class="tl-time">18:18 UTC</span><span class="tl-event"><span class="ok">OK</span> — Label purchased. E2 confirmation fired (this run pre-2026-06-27 logged <code>email.label_confirmation_sent</code>; since 2026-06-27 E2 routes through the dispatcher and logs <code>notification.email_sent</code> with <code>properties.event = "label_created"</code>). <code>notification_contacts</code> row inserted (count=1).</span></div>
           <div class="tl-item"><span class="tl-time">18:32 UTC</span><span class="tl-event">Label printed by admin from print queue.</span></div>
           <div class="tl-item"><span class="tl-time">18:46 UTC</span><span class="tl-event"><span class="miss">CARRIER REJECT</span> — First cancel attempt. <code>cancel.carrier_rejected</code> logged: "UPS returned the error message: Void not available at this time. Please try again later." No <code>refund_status</code> update. No Email A.</span></div>
           <div class="tl-item"><span class="tl-time">18:54 UTC</span><span class="tl-event"><span class="miss">CARRIER REJECT</span> — Second cancel attempt. Same UPS rejection. Still no <code>refund_status</code> update.</span></div>

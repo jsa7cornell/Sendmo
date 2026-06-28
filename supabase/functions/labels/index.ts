@@ -3,7 +3,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { log } from "../_shared/logger.ts";
 import { sendEmail } from "../_shared/resend.ts";
-import { labelConfirmationEmail, budgetReachedEmail } from "../_shared/email-templates.ts";
+import { budgetReachedEmail, labelConfirmationEmail } from "../_shared/email-templates.ts";
+import { dispatchNotifications, LABEL_CREATED_EVENT } from "../_shared/notifications.ts";
 import { checkAccountBudget } from "../_shared/budget.ts";
 import { writeLabelCost } from "../_shared/ledger.ts";
 import {
@@ -341,6 +342,10 @@ serve(async (req: Request) => {
         // unauthenticated callers (admin comp without resolvedLink, legacy
         // anon flows during the rollout window).
         let callerUserId: string | null = null;
+        // callerEmail — the authenticated payer's email. For full-label this is
+        // the address the label-created confirmation goes to (the client sends
+        // an empty sender_email for authed users; the real email is on the JWT).
+        let callerEmail: string | null = null;
         {
             const ah = req.headers.get("Authorization") || req.headers.get("authorization") || "";
             const tok = ah.replace(/^Bearer\s+/i, "");
@@ -348,6 +353,7 @@ serve(async (req: Request) => {
             if (tok && tok !== anon && supabase) {
                 const { data: userResp } = await supabase.auth.getUser(tok);
                 if (userResp?.user?.id) callerUserId = userResp.user.id;
+                if (userResp?.user?.email) callerEmail = userResp.user.email;
             }
         }
 
@@ -1389,62 +1395,67 @@ serve(async (req: Request) => {
                             }
                         });
 
-                        // Send label-confirmation email now that we have a public_code
-                        // and the shipment row is persisted. Synchronizing email send
-                        // with DB persist (instead of doing both as siblings) fixes a
-                        // latent bug where the email could fire even when persist failed.
-                        if (publicCode && recipient_email && typeof recipient_email === "string") {
-                            const eta = buyData.selected_rate?.delivery_days
-                                ? `${buyData.selected_rate.delivery_days} business days`
-                                : "Estimated upon pickup";
-                            const trackingUrl = `https://sendmo.co/t/${publicCode}`;
-                            const template = labelConfirmationEmail({
-                                publicCode,
-                                carrierTracking: trackingNumber || "Pending",
-                                carrier: carrier || "Standard",
-                                eta,
-                                trackingUrl,
-                                senderName: from_address?.name ?? null,
-                                itemDescription: typeof parcel?.description === "string" ? parcel.description : null,
-                                displayPriceCents: typeof display_price_cents === "number" ? display_price_cents : null,
-                            });
-                            sendEmail({
-                                to: recipient_email,
-                                subject: template.subject,
-                                html: template.html,
-                            })
-                                .then(({ id }) => {
-                                    log({
-                                        event_type: "email.label_confirmation_sent",
-                                        session_id: sessionId,
-                                        severity: "info",
-                                        entity_type: "label",
-                                        entity_id: easypost_shipment_id,
-                                        properties: { resend_id: id, public_code: publicCode },
-                                    });
-                                })
-                                .catch((err) => {
-                                    console.error("Failed to send label confirmation email:", err);
-                                    log({
-                                        event_type: "email.label_confirmation_error",
-                                        session_id: sessionId,
-                                        severity: "error",
-                                        entity_type: "label",
-                                        entity_id: easypost_shipment_id,
-                                        properties: { error_message: err instanceof Error ? err.message : String(err) },
-                                    });
-                                });
-                        }
+                        // Label-confirmation email is sent below via dispatchNotifications
+                        // (the LABEL_CREATED_EVENT), AFTER notification_contacts is written —
+                        // so it reuses the role-keyed fan-out + notifications_log send-once
+                        // guard the tracking emails already use. The payer is the only
+                        // recipient of the creation email; everyone else first hears about
+                        // the package via the in_transit tracking email. Decided 2026-06-27:
+                        // proposals/2026-06-27_label-confirmation-email-by-role…
 
-                        // Store notification contacts for this shipment
+                        // Store notification contacts for this shipment.
                         if (shipmentId) {
                             const contacts: Array<{ shipment_id: string; role: string; channel: string; address: string }> = [];
-                            if (recipient_email && typeof recipient_email === "string") {
-                                contacts.push({ shipment_id: shipmentId, role: "recipient", channel: "email", address: recipient_email });
+                            const recipientAddr = (recipient_email && typeof recipient_email === "string") ? recipient_email : null;
+                            // Payer email for the `sender` contact: the client-supplied
+                            // sender_email if present, else (full-label only) the authed
+                            // caller's email — full-label authed users send an empty
+                            // sender_email, so without this the payer has no contact and
+                            // never gets the label-created email. Flex resolves its payer
+                            // (the owner) into the `recipient` role at line ~218, so the
+                            // fallback is gated to the non-flex path (resolvedLink === null).
+                            const senderAddr = (sender_email && typeof sender_email === "string")
+                                ? sender_email
+                                : (resolvedLink ? null : callerEmail);
+                            // The payer's contact role differs by flow: full-label payer is
+                            // the `sender`; flex payer (the link owner) is the `recipient`.
+                            // Mirrors the dispatcher's payerRole logic — used by both the
+                            // self-send dedupe and the creation-email fallback below.
+                            const payerRole = resolvedLink ? "recipient" : "sender";
+                            const payerAddr = resolvedLink ? recipientAddr : senderAddr;
+                            // OQ4 dedupe: if payer and recipient are the same inbox, store a
+                            // single contact on the PAYER's role (not always `sender`) so the
+                            // payer still receives the creation email in BOTH flows — a flex
+                            // owner shipping to themselves lives on `recipient`, not `sender`.
+                            const sameInbox = !!senderAddr && !!recipientAddr
+                                && senderAddr.toLowerCase() === recipientAddr.toLowerCase();
+                            if (sameInbox) {
+                                contacts.push({ shipment_id: shipmentId, role: payerRole, channel: "email", address: (payerAddr ?? senderAddr)! });
+                            } else {
+                                if (recipientAddr) {
+                                    contacts.push({ shipment_id: shipmentId, role: "recipient", channel: "email", address: recipientAddr });
+                                }
+                                if (senderAddr) {
+                                    contacts.push({ shipment_id: shipmentId, role: "sender", channel: "email", address: senderAddr });
+                                }
                             }
-                            if (sender_email && typeof sender_email === "string") {
-                                contacts.push({ shipment_id: shipmentId, role: "sender", channel: "email", address: sender_email });
-                            }
+
+                            // The label-created confirmation context, shared by the durable
+                            // dispatch path and the direct-send fallback below.
+                            const labelCreatedCtx = {
+                                tracking_number: trackingNumber || "Pending",
+                                public_code: publicCode,
+                                carrier: carrier || "Standard",
+                                estimated_delivery: buyData.selected_rate?.delivery_days
+                                    ? `${buyData.selected_rate.delivery_days} business days`
+                                    : "Estimated upon pickup",
+                                tracking_url: `https://sendmo.co/t/${publicCode}`,
+                                is_flex: resolvedLink !== null,
+                                sender_name: from_address?.name ?? null,
+                                item_description: typeof parcel?.description === "string" ? parcel.description : null,
+                                display_price_cents: typeof display_price_cents === "number" ? display_price_cents : null,
+                            };
+
                             if (contacts.length > 0) {
                                 const { error: ncErr } = await supabase.from("notification_contacts").insert(contacts);
                                 if (ncErr) {
@@ -1458,6 +1469,43 @@ serve(async (req: Request) => {
                                         duration_ms: 0,
                                         properties: { error_message: ncErr.message, count: contacts.length },
                                     });
+                                    // Durable fan-out is unavailable (the insert is atomic, so
+                                    // on error there are no contact rows for dispatch to read).
+                                    // Best-effort direct send to the one address we know in
+                                    // memory — the payer — so a notifications-table hiccup
+                                    // doesn't cost them the confirmation for a label they paid
+                                    // for. One email to one known address (not a parallel
+                                    // fan-out); no notifications_log guard on this degraded path.
+                                    if (payerAddr) {
+                                        const tpl = labelConfirmationEmail({
+                                            publicCode,
+                                            carrierTracking: labelCreatedCtx.tracking_number,
+                                            carrier: labelCreatedCtx.carrier,
+                                            eta: labelCreatedCtx.estimated_delivery,
+                                            trackingUrl: labelCreatedCtx.tracking_url,
+                                            senderName: labelCreatedCtx.sender_name,
+                                            itemDescription: labelCreatedCtx.item_description,
+                                            displayPriceCents: labelCreatedCtx.display_price_cents,
+                                            variant: resolvedLink ? "flex" : "full_label",
+                                        });
+                                        sendEmail({ to: payerAddr, subject: tpl.subject, html: tpl.html })
+                                            .then(({ id }) => log({
+                                                event_type: "email.label_confirmation_fallback_sent",
+                                                session_id: sessionId,
+                                                severity: "warn",
+                                                entity_type: "shipment",
+                                                entity_id: shipmentId,
+                                                properties: { resend_id: id, public_code: publicCode, reason: "notification_contacts_insert_failed" },
+                                            }))
+                                            .catch((err) => log({
+                                                event_type: "email.label_confirmation_error",
+                                                session_id: sessionId,
+                                                severity: "error",
+                                                entity_type: "shipment",
+                                                entity_id: shipmentId,
+                                                properties: { error_message: err instanceof Error ? err.message : String(err), public_code: publicCode },
+                                            }));
+                                    }
                                 } else {
                                     log({
                                         event_type: "label.notification_contacts_stored",
@@ -1468,6 +1516,18 @@ serve(async (req: Request) => {
                                         duration_ms: 0,
                                         properties: { count: contacts.length },
                                     });
+
+                                    // Fire the label-created confirmation to the payer.
+                                    // dispatchNotifications reads the contacts we just wrote
+                                    // and routes LABEL_CREATED_EVENT to the payer-role contact
+                                    // only (sender for full-label, recipient/owner for flex).
+                                    // Fire-and-forget, matching tracking/webhooks. Its
+                                    // notifications_log guard dedupes per (shipment, contact,
+                                    // event), so it's robust to a re-dispatch of the SAME
+                                    // contact rows; it does NOT dedupe across a labels-function
+                                    // retry that re-inserts fresh contact rows (no unique
+                                    // constraint on notification_contacts — see OQ3, deferred).
+                                    dispatchNotifications(supabase, shipmentId, LABEL_CREATED_EVENT, labelCreatedCtx);
                                 }
                             } else {
                                 log({
@@ -1477,7 +1537,7 @@ serve(async (req: Request) => {
                                     entity_type: "shipment",
                                     entity_id: shipmentId,
                                     duration_ms: 0,
-                                    properties: { recipient_email_provided: !!recipient_email, sender_email_provided: !!sender_email },
+                                    properties: { recipient_email_provided: !!recipientAddr, sender_email_provided: !!senderAddr },
                                 });
                             }
                         }
