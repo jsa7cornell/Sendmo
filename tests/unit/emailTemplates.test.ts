@@ -41,11 +41,36 @@ describe("labelConfirmationEmail", () => {
     carrier: "UPS",
     eta: "3 business days",
     trackingUrl: "https://sendmo.co/t/ABC1234",
+    variant: "full_label" as const,
   };
 
-  it("subject matches the prepaid link copy", () => {
+  it("full_label variant: payer-facing 'label is ready' copy, no 'link' wording", () => {
     const result = labelConfirmationEmail(baseParams);
-    expect(result.subject).toContain("A label was printed using your prepaid link");
+    expect(result.subject).toBe("Your SendMo label is ready");
+    expect(result.html).toContain("Your label is ready!");
+    expect(result.html).toContain("Your prepaid shipping label has been created");
+    // Regression: the old link-flow wording must be gone for full-label.
+    expect(result.subject).not.toContain("prepaid link");
+    expect(result.html).not.toContain("printed using your prepaid link");
+    expect(result.html).not.toContain("purchased for your SendMo link");
+  });
+
+  it("flex variant: link-owner copy that references the prepaid link", () => {
+    const result = labelConfirmationEmail({ ...baseParams, variant: "flex" });
+    expect(result.subject).toBe("A label was created with your prepaid link — SendMo");
+    expect(result.html).toContain("Label created!");
+    expect(result.html).toContain("using your SendMo prepaid link");
+    // Even flex no longer says "printed" — this is the creation email.
+    expect(result.subject).not.toContain("printed");
+  });
+
+  it("details block is identical across variants (only headline/subject/intro differ)", () => {
+    const full = labelConfirmationEmail(baseParams).html;
+    const flex = labelConfirmationEmail({ ...baseParams, variant: "flex" }).html;
+    for (const token of ["ABC1234", "1Z999AA10123456784", "UPS", "3 business days", "Track Package", "https://sendmo.co/t/ABC1234"]) {
+      expect(full).toContain(token);
+      expect(flex).toContain(token);
+    }
   });
 
   it("embeds public code, carrier tracking number, carrier, and ETA", () => {
