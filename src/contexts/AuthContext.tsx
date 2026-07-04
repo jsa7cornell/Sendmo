@@ -1,8 +1,9 @@
 import { createContext, useContext, useEffect, useState, useCallback } from "react";
 import type { User, Session } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
+import { deriveClientLiveMode, type AdminMode } from "@/lib/mode";
 
-export type AdminMode = "test" | "live_comp" | "live_charge";
+export type { AdminMode };
 
 interface AuthContextValue {
   user: User | null;
@@ -195,7 +196,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return { error: null };
   }, [adminActiveMode]);
 
-  const liveMode = isAdmin && (adminActiveMode === "live_comp" || adminActiveMode === "live_charge");
+  // Gate A (customer-live-payments): admins follow the toolbar; everyone
+  // else follows the environment. VITE_SENDMO_LIVE_DEFAULT is set ="true"
+  // only on the production Vercel deploy — unset, customers resolve test
+  // (today's behavior). Policy + truth-table test live in @/lib/mode.
+  const liveMode = deriveClientLiveMode({
+    isAdmin,
+    adminActiveMode,
+    envLiveDefault: import.meta.env.VITE_SENDMO_LIVE_DEFAULT === "true",
+  });
   const compMode = isAdmin && adminActiveMode === "live_comp";
 
   return (

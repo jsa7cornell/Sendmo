@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { isUsablePhone } from "../_shared/phone.ts";
+import { resolveLiveMode } from "../_shared/mode.ts";
 
 // ─── Short code generator ───────────────────────────────────
 const SAFE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
@@ -487,19 +488,40 @@ serve(async (req: Request) => {
             // skips the inline SetupIntent. Webhooks own all other transitions.
             initial_status,
         } = body;
+
+        // ─── Link mode derivation (T1-1 gate D, review B3) ──────
+        // is_test is derived from the creator's identity via resolveLiveMode
+        // — no longer left to the column default (TRUE). Admin in live_comp
+        // keeps is_test=true (isLive is false; comp labels use the live
+        // EasyPost key via the labels comp leg, matching the historical
+        // admin-comp pattern — PAYMENTS.md §13.1). Only live_charge (admin)
+        // or customer-with-SENDMO_LIVE_DEFAULT produce is_test=false.
+        const { data: creatorProfile } = await supabase
+            .from("profiles")
+            .select("role, admin_active_mode")
+            .eq("id", user.id)
+            .maybeSingle();
+        const creatorMode = resolveLiveMode({
+            callerRole: (creatorProfile?.role as string) ?? null,
+            callerAdminMode: (creatorProfile?.admin_active_mode as string) ?? null,
+            isAuthenticated: true,
+        });
+        const linkIsTest = !creatorMode.isLive;
+
         let startStatus: "draft" | "active";
         if (initial_status === "draft") {
             startStatus = "draft";
         } else if (initial_status === "auto") {
-            // Mirror the is_funded logic in GET /links?code= : the link is
-            // created with is_test=TRUE (column default), so we look up the
-            // user's default PM in test mode with un-expired stored expiry.
+            // Mirror the is_funded logic in GET /links?code= : look up the
+            // user's default PM in the LINK's derived mode (was hardcoded
+            // "test" when is_test always came from the column default —
+            // review B3) with un-expired stored expiry.
             const now = new Date();
             const { data: defaultPm } = await supabase
                 .from("payment_methods")
                 .select("exp_year, exp_month")
                 .eq("user_id", user.id)
-                .eq("mode", "test")
+                .eq("mode", linkIsTest ? "test" : "live")
                 .eq("is_default", true)
                 .is("deleted_at", null)
                 .maybeSingle();
@@ -594,6 +616,8 @@ serve(async (req: Request) => {
                 short_code: shortCode,
                 link_type: "flexible",
                 status: startStatus,
+                // Explicit — the column default (TRUE) no longer decides (T1-1 gate D).
+                is_test: linkIsTest,
                 recipient_address_id: address.id,
                 max_price_cents: Math.round(priceCap * 100),
                 preferred_speed: speed_preference || null,

@@ -15,6 +15,8 @@ import {
 } from "../_shared/stripe.ts";
 import { checkRateLimit } from "../_shared/ratelimit.ts";
 import { sendAdminAlert } from "../_shared/alert.ts";
+import { resolveLiveMode } from "../_shared/mode.ts";
+import { assertKeysMatchEnv } from "../_shared/env-guard.ts";
 
 // Pricing markup MUST stay in sync with supabase/functions/rates/index.ts.
 // Server-derives display_price_cents from EasyPost rate for the flex-link
@@ -46,6 +48,19 @@ serve(async (req: Request) => {
             status: 405,
             headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
+    }
+
+    // T2-4 key-mismatch guard — refuse to serve the money path when a test
+    // key is present in production (keyed on SENDMO_ENV, not the kill switch).
+    try {
+        assertKeysMatchEnv();
+    } catch (guardErr) {
+        const guardMsg = guardErr instanceof Error ? guardErr.message : "Environment key mismatch";
+        console.error("[labels] env-guard:", guardMsg);
+        return new Response(
+            JSON.stringify({ error: guardMsg }),
+            { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
     }
 
     const sessionId = req.headers.get("x-session-id") || "unknown";
@@ -108,7 +123,16 @@ serve(async (req: Request) => {
             }
         }
 
-        const isLive = live_mode === true;
+        // isLive starts from the client hint but is RE-DERIVED server-side
+        // before any money or EasyPost-key decision (T1-1):
+        //   • flex leg  — from the link's is_test (assigned below, once the
+        //     link resolves; the link is the source of truth — review B2).
+        //   • full-label leg — from the caller's profile via resolveLiveMode
+        //     (assigned after the caller-identity block below).
+        //   • comp leg (no link) — keeps the client hint, unchanged: the comp
+        //     gate already requires an admin JWT, and admin live_comp buys
+        //     REAL EasyPost labels (the historical admin-comp pattern).
+        let isLive = live_mode === true;
         const isComp = comp === true;
 
         // Service-role Supabase client (shared between link resolution and
@@ -215,32 +239,14 @@ serve(async (req: Request) => {
                 is_test: link.is_test === true,
             };
 
-            // Mode-mismatch defense (Pattern D, Phase F): link.is_test is the
-            // server-side source of truth for whether this link runs in test
-            // or live mode. The sender's `live_mode` request body field is
-            // public input and can't be trusted. If the sender request's
-            // isLive doesn't match the link's is_test, reject — otherwise
-            // the off_session PM lookup would pick the wrong-mode PM (or
-            // none) and return a misleading 402.
-            const linkIsLive = !resolvedLink.is_test;
-            if (linkIsLive !== isLive) {
-                log({
-                    event_type: "label.flex_mode_mismatch",
-                    session_id: sessionId,
-                    severity: "warn",
-                    entity_type: "label",
-                    entity_id: easypost_shipment_id,
-                    properties: {
-                        link_short_code,
-                        link_is_test: resolvedLink.is_test,
-                        request_is_live: isLive,
-                    },
-                });
-                return new Response(
-                    JSON.stringify({ error: "Link mode mismatch" }),
-                    { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-                );
-            }
+            // Link-derived mode (T1-1, review B2): link.is_test is the
+            // server-side source of truth — the anonymous sender has no
+            // caller identity to branch on, and their `live_mode` body field
+            // is public input. The former `linkIsLive !== isLive`
+            // mismatch-reject is retired: it existed to catch client/link
+            // disagreement, which can't happen once the client value is
+            // simply ignored on this leg.
+            isLive = !resolvedLink.is_test;
 
             // Server-derive display_price_cents from EasyPost rate (B5).
             // Client-supplied value is used only for audit logging; the gate
@@ -336,6 +342,10 @@ serve(async (req: Request) => {
         // the address the label-created confirmation goes to (the client sends
         // an empty sender_email for authed users; the real email is on the JWT).
         let callerEmail: string | null = null;
+        // callerRole / callerAdminMode — feed resolveLiveMode for the
+        // full-label leg and the kill switch's admin exemption (T1-1).
+        let callerRole: string | null = null;
+        let callerAdminMode: string | null = null;
         {
             const ah = req.headers.get("Authorization") || req.headers.get("authorization") || "";
             const tok = ah.replace(/^Bearer\s+/i, "");
@@ -344,7 +354,28 @@ serve(async (req: Request) => {
                 const { data: userResp } = await supabase.auth.getUser(tok);
                 if (userResp?.user?.id) callerUserId = userResp.user.id;
                 if (userResp?.user?.email) callerEmail = userResp.user.email;
+                if (callerUserId) {
+                    const { data: callerProfile } = await supabase
+                        .from("profiles")
+                        .select("role, admin_active_mode")
+                        .eq("id", callerUserId)
+                        .maybeSingle();
+                    callerRole = (callerProfile?.role as string) ?? null;
+                    callerAdminMode = (callerProfile?.admin_active_mode as string) ?? null;
+                }
             }
+        }
+
+        // Full-label mode derivation (T1-1): no link to consult, so the
+        // caller's profile decides. Anonymous callers always resolve test
+        // (decided OQ3). The comp-without-link leg keeps the client hint —
+        // see the isLive declaration comment above.
+        if (!resolvedLink && !isComp) {
+            isLive = resolveLiveMode({
+                callerRole,
+                callerAdminMode,
+                isAuthenticated: !!callerUserId,
+            }).isLive;
         }
 
         // ─── Comp-gate hardening (proposal §3.5) ────────────────
@@ -549,6 +580,26 @@ serve(async (req: Request) => {
                         error: "This link has reached its spending limit. The link owner needs to contact SendMo to raise it.",
                     }),
                     { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+
+            // Kill switch (T1-1, review B4): a live link keeps driving live
+            // off-session charges even after SENDMO_LIVE_DEFAULT is flipped
+            // off — the link-derived mode never consults the env var. Check
+            // it explicitly before any live charge so the one-flip halt
+            // covers the flex path too.
+            if (isLive && Deno.env.get("SENDMO_LIVE_DEFAULT") !== "true") {
+                log({
+                    event_type: "payment.live_paused_by_kill_switch",
+                    session_id: sessionId,
+                    severity: "warn",
+                    entity_type: "sendmo_link",
+                    entity_id: resolvedLink.short_code,
+                    properties: { link_short_code: resolvedLink.short_code, flow: "flex" },
+                });
+                return new Response(
+                    JSON.stringify({ error: "Payments are temporarily paused. Please try again soon." }),
+                    { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
                 );
             }
 
@@ -762,6 +813,27 @@ serve(async (req: Request) => {
                 return new Response(
                     JSON.stringify({ error: "Missing required field: payment_intent_id" }),
                     { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+            // Kill switch (T1-1, review B4) — also covers live full-label
+            // buys. Admins in live_charge are exempt so a fix can be
+            // verified end-to-end while customer payments are paused.
+            if (
+                isLive &&
+                Deno.env.get("SENDMO_LIVE_DEFAULT") !== "true" &&
+                !(callerRole === "admin" && callerAdminMode === "live_charge")
+            ) {
+                log({
+                    event_type: "payment.live_paused_by_kill_switch",
+                    session_id: sessionId,
+                    severity: "warn",
+                    entity_type: "label",
+                    entity_id: easypost_shipment_id,
+                    properties: { flow: "full_label", user_id: callerUserId },
+                });
+                return new Response(
+                    JSON.stringify({ error: "Payments are temporarily paused. Please try again soon." }),
+                    { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
                 );
             }
             try {

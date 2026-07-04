@@ -12,6 +12,40 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-07-04] T1-1 IMPLEMENTED (ships inert) — env-driven live mode across 6 gates + T2-4 key guard
+
+**Category:** ship | Launch | Payments | Security
+**Cross-link:** decided proposal [proposals/2026-07-04_customer-live-payments_reviewed-2026-07-04_decided-2026-07-04.md](proposals/2026-07-04_customer-live-payments_reviewed-2026-07-04_decided-2026-07-04.md) (the Author-response section is the binding spec) | PRE-LAUNCH T1-1 / T2-4 | decision entry below
+
+**INERT ON MERGE:** with `SENDMO_LIVE_DEFAULT` / `SENDMO_ENV` / `VITE_SENDMO_LIVE_DEFAULT` all unset, every non-admin resolves test everywhere (today's behavior) and the admin toolbar is unchanged. The flip is §5 of the proposal — env vars only, no deploy.
+
+**Server (new `_shared/mode.ts` — the single policy):** admin follows toolbar (live_charge→live, live_comp→comp); authenticated customer follows `SENDMO_LIVE_DEFAULT==="true"`; **anonymous always test** (OQ3). New `_shared/env-guard.ts:assertKeysMatchEnv` (T2-4) throws on test keys when `SENDMO_ENV==="production"` — called at the top of payments / labels / stripe-webhook (500 JSON, never a crash); also checks `STRIPE_SECRET_KEY_LIVE` since `_shared/stripe.ts` prefers it.
+
+**The six gates:**
+- **B `payments`** — `resolveLiveMode` replaces the admin-only derivation; client `live_mode` no longer read server-side. Admin allowlist (`PAYMENTS_ALLOWED_USERS`, empty=closed) unchanged; NEW customer ramp: `PAYMENTS_LIVE_ALLOWLIST_ONLY==="true"` requires membership in the same list (reason `customer_not_allowlisted`, same `payment.live_charge_blocked` log shape).
+- **C `labels`** — flex leg: `isLive = !link.is_test` (link is the source of truth; the `label.flex_mode_mismatch` reject is **retired** — no client handled that error string, grep-verified). Full-label leg: `resolveLiveMode` from the caller profile (one added `profiles` select per authed call) + the existing PI-verified-in-claimed-mode defense. **Kill switch (B4):** `SENDMO_LIVE_DEFAULT !== "true"` ⇒ 503 "Payments are temporarily paused" + `payment.live_paused_by_kill_switch` before any live flex off-session PI or live full-label buy (admin-in-live_charge exempt on full-label; flex senders are anonymous, no exemption possible). Comp leg untouched.
+- **D `links`** — `is_test: !resolveLiveMode(creator).isLive` set explicitly on INSERT (column default no longer decides); the `initial_status:"auto"` PM lookup uses the derived mode (was hardcoded `"test"`). Admin live_comp still mints `is_test=true` (historical admin-comp pattern, PAYMENTS.md §13.1).
+- **E `payment-methods`** — `resolved.isLive || resolved.isComp` (deliberate: admin card-save mode follows EasyPost-live-ness, preserving live_comp behavior bit-for-bit; customers get `SENDMO_LIVE_DEFAULT` so flex cards land `mode='live'` in prod — the review-B1 fix).
+- **F `rates`** — link-derived when `link_short_code` resolves (`is_test` added to the existing lookup, no second query); client hint otherwise (quote-only).
+- **A client** — `deriveClientLiveMode` extracted pure ([src/lib/mode.ts](src/lib/mode.ts)); `AuthContext.liveMode = isAdmin ? toolbar : VITE_SENDMO_LIVE_DEFAULT==="true"`. Badge + 4242 test-copy now **admin-only** in StripePaymentForm / FlexPaymentStep / AddCardModal (review N1 — customers were seeing an amber "Test Mode" badge). `api.ts` omits `live_mode` on flex-path `buyLabel`/`fetchSenderRates` (server ignores it there).
+
+**Behavior changes visible BEFORE the flip (deliberate, per decided design):**
+1. Customers stop seeing the "Test Mode" badge + 4242 hint immediately on deploy.
+2. An admin in **live_charge** now mints `is_test=false` links; anonymous senders on such a link hit the kill-switch 503 until `SENDMO_LIVE_DEFAULT=true`. Dogfood flex links should be created in **Test** toolbar mode.
+3. An admin in live_charge whose client somehow sent `live_mode:false` previously resolved test; now resolves live (server no longer reads the client value). Unreachable from the real client.
+
+**Gotcha for future agents:** new event types `payment.live_paused_by_kill_switch` (warn) and `payment.live_charge_blocked` reason `customer_not_allowlisted`; `label.flex_mode_mismatch` will never fire again. The client/server mode policies are hand-mirrored (N4) — change `_shared/mode.ts` and `src/lib/mode.ts` together, and keep `tests/unit/mode.test.ts` + `tests/unit/clientMode.test.ts` in lockstep.
+
+**Tests:** `mode.test.ts` (17 — full server truth table) · `env-guard.test.ts` (9) · `clientMode.test.ts` (9 — mirrored client table incl. the de-roled-admin case) · `StripePaymentFormBadge.test.tsx` (5 — DOM render, admin×customer × test×live). Suite: **532 passed / 47 files**. `npx tsc -b --noEmit` clean.
+
+**Deploy:** via PR (money-path change — John merges). On merge, the `_shared/` change redeploys all edge functions. Next per the decided rollout: **security review of this diff before the flip**, then John's §5 env-var steps + the N3 runbook item (expire the 2 non-admin test flex links).
+
+**Browser-verified:**
+  spec: tests/unit/StripePaymentFormBadge.test.tsx
+  variants-covered: [checkout badge/test-copy: {admin, customer} × {test, live} on StripePaymentForm (DOM render); FlexPaymentStep + AddCardModal carry the identical two-line isAdmin gate — code-read + tsc only, no DOM render (heavier mount); consent disclosure asserted unaffected. Mode derivation: full truth tables server (17 cases) + client (9 cases). Server gates are wire-shape covered by mode/env-guard tests; live-path 503/allowlist branches are env-gated and unreachable in prod until the flip — exercised in the §5 step-4 live smoke tests.]
+
+---
+
 ### [2026-07-04] T1-1 DECIDED — approve-with-changes accepted in full; implementation begins (ships inert)
 
 **Category:** docs | Launch | Payments | decision
@@ -45,11 +79,12 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 **Why:** SendMo was living in the throwaway "Prototypes" org; going to launch, it needed to be a real Pro project (backups, no auto-pause).
 
-**Parallel change in the agentenvoy account (context, not SendMo code):** the two orgs were also rebalanced — the **old calendar/scheduler DB** (`kvdjfqzgiqwcosaxxjew`) was renamed `agentenvoy` → **`agentenvoyschedule`** and **retired** into the Prototypes (Free) org; the **live lounge DB** (`wafvtnocszkjmdcksrzt`) was renamed `agent-lounge` → **`agentenvoy`**. Renames are cosmetic (refs unchanged). ~30 `agentenvoy/` repo docs still use the old names — sweep pending.
+**Parallel change in the agentenvoy account (context, not SendMo code):** the two orgs were also rebalanced — the **old calendar/scheduler DB** (`kvdjfqzgiqwcosaxxjew`) was renamed `agentenvoy` → **`agentenvoyschedule`** and **retired** into the Prototypes (Free) org; the **live lounge DB** (`wafvtnocszkjmdcksrzt`) was renamed `agent-lounge` → **`agentenvoy`**. Renames are cosmetic (refs unchanged). Doc sweep done: only `agentenvoy/HOME-UX-HANDOFF.md` genuinely named the *Supabase* project (updated); the other ~77 "agent-lounge" mentions are the *Vercel* project name or historical LOG entries — left intact.
 
-**Still open (deferred — Supabase MCP disconnected at wrap-up):**
-- Trigger the free Micro compute upgrade for SendMo.
-- **Enable RLS on SendMo** — RLS is currently **off on every public table** (Supabase advisor: critical). SendMo ships a browser-side anon key, so this is the top hardening item. Do it policy-first (RLS-on-without-policies blocks all access), review, then apply.
+**Still open:**
+- Trigger the free Micro compute upgrade for SendMo (Nano→Micro, free with the Pro move; needs a ~2-min restart of the live DB).
+
+**Correction (2026-07-04):** an earlier draft of this entry claimed SendMo had RLS off — **false**. Verified via `list_tables` once SendMo joined the Projects org: **all 18 SendMo tables have `rls_enabled: true`** (matches PRE-LAUNCH.md:284 "do not re-litigate" + migration 027). The RLS-disabled advisories seen this session were from the *other* org projects — the live lounge DB (`wafvtnocszkjmdcksrzt`, now named `agentenvoy`) and `livecal` — **not** SendMo. Those are genuine (browser-side anon key + RLS off) but belong to those repos' own processes.
 
 ---
 

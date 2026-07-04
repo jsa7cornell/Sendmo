@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { formatCents, createPaymentIntent } from "@/lib/api";
 import { getStripeForMode } from "@/lib/stripeClient";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface StripePaymentFormProps {
   totalCents: number;
@@ -124,6 +125,9 @@ function InnerPaymentForm({
 }) {
   const stripe = useStripe();
   const elements = useElements();
+  // Mode badge + test-card hint are admin dogfood affordances — customers
+  // see a plain checkout (customer-live-payments review N1).
+  const { isAdmin } = useAuth();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -186,12 +190,14 @@ function InnerPaymentForm({
           <CreditCard className="w-4 h-4 text-primary" />
           <h3 className="text-sm font-semibold text-foreground">Payment</h3>
         </div>
-        <Badge
-          variant="outline"
-          className={`text-xs ${liveMode ? "border-destructive/50 text-destructive bg-destructive/10" : "border-amber-300 text-amber-700 bg-amber-50"}`}
-        >
-          {liveMode ? "LIVE" : "Test Mode"}
-        </Badge>
+        {isAdmin && (
+          <Badge
+            variant="outline"
+            className={`text-xs ${liveMode ? "border-destructive/50 text-destructive bg-destructive/10" : "border-amber-300 text-amber-700 bg-amber-50"}`}
+          >
+            {liveMode ? "LIVE" : "Test Mode"}
+          </Badge>
+        )}
       </div>
 
       <PaymentElement
@@ -209,7 +215,7 @@ function InnerPaymentForm({
         We'll save your card to handle any carrier adjustments after delivery — usually a few dollars.
       </p>
 
-      {!liveMode && (
+      {isAdmin && !liveMode && (
         <p className="text-[11px] text-muted-foreground mt-3">
           Test mode — use card <code className="font-mono">4242 4242 4242 4242</code>, any future expiry, any 3-digit CVC.
         </p>

@@ -110,6 +110,11 @@ serve(async (req: Request) => {
         // even though /shipments accepts it and returns rates. Mirrors the
         // labels function's server-resolve pattern (proposal §3.5/B3).
         let to_address = bodyToAddress;
+        // T1-1 gate F (review B2/N2): when a flex link resolves below, its
+        // is_test drives the EasyPost key choice and the client live_mode is
+        // ignored on that path. Non-link callers keep the client hint —
+        // quote-only exposure; the buy-side gates protect the money.
+        let linkIsTest: boolean | null = null;
         if (link_short_code && typeof link_short_code === "string") {
             const sbUrl = Deno.env.get("SUPABASE_URL") || Deno.env.get("VITE_SUPABASE_URL");
             const sbKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || Deno.env.get("SB_SERVICE_ROLE_KEY");
@@ -120,7 +125,7 @@ serve(async (req: Request) => {
                 const { data: link } = await supabase
                     .from("sendmo_links")
                     .select(`
-                        status, link_type,
+                        status, link_type, is_test,
                         recipient_address:addresses!recipient_address_id (
                             name, street1, street2, city, state, zip, country, phone
                         )
@@ -157,6 +162,7 @@ serve(async (req: Request) => {
                         // recipient address row so the rate call carries it.
                         phone: addr.phone ?? undefined,
                     };
+                    linkIsTest = link.is_test === true;
                 }
             }
         }
@@ -200,7 +206,7 @@ serve(async (req: Request) => {
             );
         }
 
-        const isLive = live_mode === true;
+        const isLive = linkIsTest !== null ? !linkIsTest : live_mode === true;
         const apiKey = Deno.env.get(isLive ? "EASYPOST_API_KEY" : "EASYPOST_TEST_API_KEY");
         if (!apiKey) {
             logRateError("easypost_key_missing", "error", { live_mode: isLive });
