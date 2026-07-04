@@ -12,10 +12,37 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-07-04] T1-1 proposal review — approve-with-changes; gate map grows from 4 sites to 6; live flex path has never executed
+
+**Category:** docs | Launch | Payments | review
+**Cross-link:** [proposals/2026-07-04_customer-live-payments_reviewed-2026-07-04.md](proposals/2026-07-04_customer-live-payments_reviewed-2026-07-04.md) (review appended, file renamed per protocol) | PRE-LAUNCH.md T1-1 | sibling entry below (the readiness review that authored the proposal)
+
+**What this is:** the fresh-eyes review of the T1-1 customer-live-payments proposal, per PROPOSAL-REVIEW-PROTOCOL. Verdict: **approve-with-changes** — the environment-driven design is right; the gate map was incomplete. Every claim was verified against code at HEAD plus a read-only prod DB query.
+
+**Load-bearing findings (full detail in the proposal's ## Review):**
+1. **`payment-methods/index.ts` is a fifth role-driven gate the proposal missed** (lines 25-26, 64-70). Without fixing it, a customer's flex card saves `mode='test'` while their link is live → `is_funded` never true → the flex product silently breaks for customers on flip day.
+2. **The live flex sender path has never executed.** `SenderFlow.tsx:163` hardcodes `live_mode: false`, and the prod DB has **zero `is_test=false` links ever** (queried 2026-07-04). Gate C is being built for the first time, not opened.
+3. **Gate C must derive live-ness from `link.is_test`, not `resolveLiveMode(callerRole)`** — senders are anonymous; the caller-derived helper would mode-mismatch-reject every sender on an admin's test link (dogfood breaks) and was already rejecting live links.
+4. **`links/index.ts:493-514` (`initial_status:"auto"`) hardcodes a test-mode PM lookup** — gate D needs this too or dashboard "+ New Link" misclassifies customer links as draft.
+5. **Kill-switch hole:** `SENDMO_LIVE_DEFAULT=false` doesn't stop live off-session charges driven by already-live links; labels must consult the switch before any live charge.
+6. **OQ1 pushback:** using one var as both environment identity and kill switch disarms the T2-4 key guard exactly during an incident. Recommend `SENDMO_ENV` (identity) + `SENDMO_LIVE_DEFAULT` (kill switch).
+
+**OQ recommendations for John (one pass):** OQ1 two vars · OQ2 yes, keep the closed-beta lever · OQ3 yes, require auth for live charges (verified: anonymous live payers would bypass `checkAccountBudget` entirely — `payments/index.ts:267`) · OQ4 yes, single project + env flag suffices for launch.
+
+**Security-audit timing (John asked):** run `/security-review` on the T1-1 diff **between rollout step 1 (inert land) and step 3 (flip)** — that's when the full money-path surface exists in code but nothing is exposed. A lighter re-check after the allowlist ramp opens.
+
+**Next:** author session responds to the review; John answers OQ1–OQ4; no gate code moves until then.
+
+**Browser-verified:**
+  n/a-category: docs
+  n/a-reason: review section + README/LOG cross-link updates only — no code changed. Findings grounded in code reads of 9 files + 1 read-only prod SQL query (counts cited in the review).
+
+---
+
 ### [2026-07-04] Pre-launch readiness review → PRE-LAUNCH.md checklist + customer-live-payments proposal (docs bundle)
 
 **Category:** docs | Launch | process
-**Cross-link:** [PRE-LAUNCH.md](PRE-LAUNCH.md) (new) | [proposals/2026-07-04_customer-live-payments.md](proposals/2026-07-04_customer-live-payments.md) (new, in-review) | corrects the stale "stub" block in [PLAYBOOK.md](PLAYBOOK.md) | builds on the 2026-05-24 "Pre-launch P1 wrap-up"
+**Cross-link:** [PRE-LAUNCH.md](PRE-LAUNCH.md) (new) | [proposals/2026-07-04_customer-live-payments.md](proposals/2026-07-04_customer-live-payments_reviewed-2026-07-04.md) (new, in-review) | corrects the stale "stub" block in [PLAYBOOK.md](PLAYBOOK.md) | builds on the 2026-05-24 "Pre-launch P1 wrap-up"
 
 **What this is:** a full launch-readiness review (code + test/CI + operational surveys) answering "what stands between admin dogfood and opening live payments to real customers." No code changed — three doc artifacts + this entry.
 
