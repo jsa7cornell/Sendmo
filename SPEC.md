@@ -918,9 +918,19 @@ Reference: [proposals/2026-05-23_buy-time-rate-gate.md](proposals/2026-05-23_buy
 | `POST /api/email/verify/confirm` | 5 attempts | 10 min | IP + email |
 | `POST /api/addresses/verify` | 20 req | 1 min | IP |
 | `POST /api/rates` | 10 req | 1 min | IP |
+| `POST /api/guestimate` | 10 req | 1 min | IP |
+| `POST /api/autocomplete` | 60 req | 1 min | IP |
+| `POST /api/place-details` | 20 req | 1 min | IP |
 | `POST /api/labels` | 5 req | 1 min | IP + link_id |
 | `POST /api/links` | 3 req | 1 hour | user_id |
 | `GET /api/links/:shortCode` | 30 req | 1 min | IP |
+
+> Implemented 2026-07-04 (PRE-LAUNCH T2-3) via the shared sliding-window limiter
+> `supabase/functions/_shared/ratelimit.ts` for: addresses, rates, guestimate,
+> autocomplete, place-details (all keyed on IP), plus the pre-existing limits in
+> cancel-label / labels-flex / refunds / label-print. Buckets are per-isolate
+> (speed bump, not a hard guarantee). Email OTP limits are handled by Supabase
+> Auth since the 2026-05-11/15 migration to `signInWithOtp`.
 
 ---
 
