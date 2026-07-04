@@ -13,6 +13,7 @@ import {
     createOffSessionShipmentPI,
     cancelPaymentIntent,
 } from "../_shared/stripe.ts";
+import { checkRateLimit } from "../_shared/ratelimit.ts";
 
 // Pricing markup MUST stay in sync with supabase/functions/rates/index.ts.
 // Server-derives display_price_cents from EasyPost rate for the flex-link
@@ -25,26 +26,14 @@ function applyMarkup(rateDollars: number): number {
     return Math.round(rateDollars * 100 * MARKUP_MULTIPLIER) + MARKUP_FLAT_CENTS;
 }
 
-// In-memory rate limit for the flex sender path (Pattern D, Phase F).
-// 5 requests / 60s per (IP + link_short_code) — matches existing
-// cancel-label/index.ts:41-53 pattern. Mitigates the labels-fn-as-back-gate
-// fraud surface: under Pattern D, labels does a Stripe call on every public
-// sender confirm, so an attacker who knows a short_code could spam the
-// endpoint to probe the recipient's card state. The rate limit kicks in
-// well before the attack rate becomes meaningful.
-const FLEX_RATE_LIMIT_MAX = 5;
-const FLEX_RATE_LIMIT_WINDOW_MS = 60_000;
-const flexRateBucket = new Map<string, number[]>();
-function isFlexRateLimited(key: string, now: number): boolean {
-    const arr = (flexRateBucket.get(key) || []).filter((t) => now - t < FLEX_RATE_LIMIT_WINDOW_MS);
-    if (arr.length >= FLEX_RATE_LIMIT_MAX) {
-        flexRateBucket.set(key, arr);
-        return true;
-    }
-    arr.push(now);
-    flexRateBucket.set(key, arr);
-    return false;
-}
+// Rate limit for the flex sender path (Pattern D, Phase F) — shared
+// _shared/ratelimit.ts. 5 requests / 60s per (IP + link_short_code).
+// Mitigates the labels-fn-as-back-gate fraud surface: under Pattern D,
+// labels does a Stripe call on every public sender confirm, so an attacker
+// who knows a short_code could spam the endpoint to probe the recipient's
+// card state. The rate limit kicks in well before the attack rate becomes
+// meaningful.
+const FLEX_RATE_LIMIT = { max: 5, windowMs: 60_000 };
 
 serve(async (req: Request) => {
     // Handle CORS preflight
@@ -102,7 +91,7 @@ serve(async (req: Request) => {
         // path (link_short_code present, no JWT, no comp) is hit here.
         if (link_short_code && !comp) {
             const rateKey = `${senderIp}:${link_short_code}`;
-            if (isFlexRateLimited(rateKey, Date.now())) {
+            if (checkRateLimit(rateKey, FLEX_RATE_LIMIT)) {
                 log({
                     event_type: "label.flex_rate_limited",
                     session_id: sessionId,

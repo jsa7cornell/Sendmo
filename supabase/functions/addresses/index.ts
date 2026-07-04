@@ -1,6 +1,11 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { log } from "../_shared/logger.ts";
+import { checkRateLimit, clientIpKey } from "../_shared/ratelimit.ts";
+
+// PRE-LAUNCH T2-3: public endpoint, burns EasyPost verification quota.
+// 20 req/min/IP per SPEC §14's rate-limit table.
+const RATE_LIMIT = { max: 20, windowMs: 60_000 };
 
 // ─── Address classification helpers ──────────────────────────
 
@@ -52,6 +57,13 @@ serve(async (req: Request) => {
     }
 
     const sessionId = req.headers.get("x-session-id") || "unknown";
+
+    if (checkRateLimit(clientIpKey(req), RATE_LIMIT)) {
+        return new Response(
+            JSON.stringify({ error: "Too many requests. Try again in a moment." }),
+            { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+    }
 
     try {
         const body = await req.json();

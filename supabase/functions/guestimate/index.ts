@@ -1,6 +1,11 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { log } from "../_shared/logger.ts";
+import { checkRateLimit, clientIpKey } from "../_shared/ratelimit.ts";
+
+// PRE-LAUNCH T2-3: public endpoint, burns Anthropic API spend. Button-driven
+// (one click per guess), so 10/min/IP is generous for legitimate use.
+const RATE_LIMIT = { max: 10, windowMs: 60_000 };
 
 const MODEL = "claude-haiku-4-5-20251001";
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
@@ -54,6 +59,13 @@ serve(async (req: Request) => {
 
     const sessionId = req.headers.get("x-session-id") || "unknown";
     const start = Date.now();
+
+    if (checkRateLimit(clientIpKey(req), RATE_LIMIT)) {
+        return new Response(
+            JSON.stringify({ error: "Too many requests. Try again in a moment." }),
+            { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+    }
 
     try {
         const { description } = await req.json();

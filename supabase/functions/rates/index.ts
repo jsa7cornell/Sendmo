@@ -3,6 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { log } from "../_shared/logger.ts";
 import { isUsablePhone } from "../_shared/phone.ts";
+import { checkRateLimit, clientIpKey } from "../_shared/ratelimit.ts";
 
 const MARKUP_MULTIPLIER = 1.15;
 const MARKUP_FLAT_CENTS = 100; // $1.00 flat fee on top of the percentage markup
@@ -47,6 +48,10 @@ const SERVICE_DENYLIST: Array<{ carrier: string; service: string }> = [
     { carrier: "fedex", service: "SMART_POST" },          // defensive — covers either FedEx EP carrier-account label
 ];
 
+// PRE-LAUNCH T2-3: public endpoint, burns EasyPost rate-shop quota (and can
+// be pointed at the LIVE key via live_mode). 10 req/min/IP per SPEC §14.
+const RATE_LIMIT = { max: 10, windowMs: 60_000 };
+
 serve(async (req: Request) => {
     // Handle CORS preflight
     const corsResponse = handleCors(req);
@@ -78,6 +83,13 @@ serve(async (req: Request) => {
             properties: { reason, ...extra },
         });
     };
+
+    if (checkRateLimit(clientIpKey(req), RATE_LIMIT)) {
+        return new Response(
+            JSON.stringify({ error: "Too many requests. Try again in a moment." }),
+            { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+    }
 
     try {
         const { from_address, to_address: bodyToAddress, parcel, live_mode, preferred_carrier, preferred_speed, max_price_cents, link_short_code } = await req.json();

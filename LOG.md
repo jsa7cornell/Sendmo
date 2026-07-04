@@ -12,6 +12,28 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-07-04] T2-3 — shared rate limiter (`_shared/ratelimit.ts`) + IP limits on the 5 public endpoints
+
+**Category:** ship | Security | Edge Functions
+**Cross-link:** [PRE-LAUNCH.md](PRE-LAUNCH.md) T2-3 (now `[x]`) | SPEC §14 rate-limit table | Rule 6 (extend, don't invent)
+
+**What shipped:**
+- **`_shared/ratelimit.ts`** (new) — `checkRateLimit(key, {max, windowMs}, now?)` sliding-window limiter + `clientIpKey(req)` helper. Pure TS (no Deno APIs) so Vitest imports it directly (budget.ts/ledger.ts pattern). Adds a 10k-key prune so long-lived isolates don't grow unboundedly. Injectable `now` for tests.
+- **Refactored the 4 functions that inlined the identical limiter** (identical limits, identical behavior, ~60 LOC of duplication deleted): `cancel-label` (5/min ip+code), `labels` flex path (5/min ip+short_code), `refunds` (5/min ip), `label-print` (10/min ip+code).
+- **Applied IP rate limits to the previously-unprotected public endpoints:** `addresses` 20/min (SPEC §14), `rates` 10/min (SPEC §14), `guestimate` 10/min (button-driven, burns Anthropic spend), `autocomplete` 60/min (keystroke-driven, paid Google API), `place-details` 20/min (selection-driven, paid Google API). All return the standard 429 body.
+
+**Correction to the PRE-LAUNCH T2-3 text:** it said *5* functions inline the limiter including `payment-methods` — actually **4**; `payment-methods` never had one (it's JWT-authenticated and covered by the PM-add breaker per RISKMANAGEMENT). No limiter added there; out of T2-3's public-endpoint scope.
+
+**Known limitation (unchanged from the inline originals, documented in the module):** buckets are per-isolate — cold starts and concurrent instances don't share state. This is a speed bump against quota burn, not a hard guarantee; escalate to DB/Upstash-backed if real abuse appears (WISHLIST-class).
+
+**Tests:** `tests/unit/ratelimit.test.ts` — 9 tests (window slide, rejected-requests-don't-consume-slots, per-key isolation, per-call options, IP-header parsing/fallbacks). Suite: **485 passed / 42 files** (was 476/41). `npx tsc -b --noEmit` clean.
+
+**Browser-verified:**
+  spec: tests/unit/ratelimit.test.ts
+  variants-covered: [under-limit allow, over-limit 429, window-slide recovery, rejected-requests-no-slot-consumption, multi-key isolation, per-endpoint options (5/10/20/60 per min), x-forwarded-for first-hop, x-real-ip fallback, unknown fallback]
+
+---
+
 ### [2026-07-04] T1-1 proposal review — approve-with-changes; gate map grows from 4 sites to 6; live flex path has never executed
 
 **Category:** docs | Launch | Payments | review

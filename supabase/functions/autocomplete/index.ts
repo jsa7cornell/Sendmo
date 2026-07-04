@@ -1,5 +1,10 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
+import { checkRateLimit, clientIpKey } from "../_shared/ratelimit.ts";
+
+// PRE-LAUNCH T2-3: public endpoint, proxies a paid Google API. Higher cap
+// than the other public endpoints because autocomplete fires per keystroke.
+const RATE_LIMIT = { max: 60, windowMs: 60_000 };
 
 /**
  * Autocomplete edge function — proxies Google Places API (New).
@@ -15,6 +20,13 @@ serve(async (req: Request) => {
     if (req.method !== "POST") {
         return new Response(JSON.stringify({ error: "Method not allowed" }), {
             status: 405,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+    }
+
+    if (checkRateLimit(clientIpKey(req), RATE_LIMIT)) {
+        return new Response(JSON.stringify({ error: "Too many requests. Try again in a moment." }), {
+            status: 429,
             headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
     }

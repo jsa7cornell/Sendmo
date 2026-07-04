@@ -4,6 +4,7 @@ import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { log } from "../_shared/logger.ts";
 import { sendEmail } from "../_shared/resend.ts";
 import { refundSubmittedEmail } from "../_shared/email-templates.ts";
+import { checkRateLimit } from "../_shared/ratelimit.ts";
 // createRefund import retired 2026-05-13 — Stripe refund is now triggered
 // by tracking/index.ts's lazy poll once EasyPost confirms the carrier
 // refund (two-step refund safety). See the comment at the refund_status
@@ -39,20 +40,8 @@ import { refundSubmittedEmail } from "../_shared/email-templates.ts";
 // test EasyPost key.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// ── In-memory rate limit: 5 requests / 60s per (ip + public_code) ──
-const RATE_LIMIT_MAX = 5;
-const RATE_LIMIT_WINDOW_MS = 60_000;
-const rateBucket = new Map<string, number[]>();
-function isRateLimited(key: string, now: number): boolean {
-    const arr = (rateBucket.get(key) || []).filter(t => now - t < RATE_LIMIT_WINDOW_MS);
-    if (arr.length >= RATE_LIMIT_MAX) {
-        rateBucket.set(key, arr);
-        return true;
-    }
-    arr.push(now);
-    rateBucket.set(key, arr);
-    return false;
-}
+// ── Rate limit: 5 requests / 60s per (ip + public_code) — _shared/ratelimit.ts ──
+const RATE_LIMIT = { max: 5, windowMs: 60_000 };
 
 // Constant-time hex compare (32-byte tokens → 64-char hex). Returns false
 // quickly on length mismatch; same-length compares run in constant time.
@@ -118,7 +107,7 @@ serve(async (req: Request) => {
         // ── Rate limit: keyed on IP + identifier ─────────────────────
         const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
         const rateKey = `${ip}:${public_code ?? bodyShipmentId}`;
-        if (isRateLimited(rateKey, Date.now())) {
+        if (checkRateLimit(rateKey, RATE_LIMIT)) {
             return new Response(
                 JSON.stringify({ error: "Too many requests. Try again in a moment." }),
                 { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }

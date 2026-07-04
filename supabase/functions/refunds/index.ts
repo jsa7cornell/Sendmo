@@ -4,6 +4,7 @@ import { requireAdmin } from "../_shared/auth.ts";
 import { createRefund } from "../_shared/stripe.ts";
 import { getRefundableBalanceForPI } from "../_shared/refunds.ts";
 import { log } from "../_shared/logger.ts";
+import { checkRateLimit } from "../_shared/ratelimit.ts";
 
 // POST /refunds
 //
@@ -31,20 +32,8 @@ import { log } from "../_shared/logger.ts";
 // see a stale balance; the admin button is disabled for ~10s after success to
 // reduce the chance of a double-partial race.
 
-// ── In-memory rate limit: 5 requests / 60s per ip ──────────────────────────
-const RATE_LIMIT_MAX = 5;
-const RATE_LIMIT_WINDOW_MS = 60_000;
-const rateBucket = new Map<string, number[]>();
-function isRateLimited(key: string, now: number): boolean {
-  const arr = (rateBucket.get(key) || []).filter((t) => now - t < RATE_LIMIT_WINDOW_MS);
-  if (arr.length >= RATE_LIMIT_MAX) {
-    rateBucket.set(key, arr);
-    return true;
-  }
-  arr.push(now);
-  rateBucket.set(key, arr);
-  return false;
-}
+// ── Rate limit: 5 requests / 60s per ip — _shared/ratelimit.ts ─────────────
+const RATE_LIMIT = { max: 5, windowMs: 60_000 };
 
 // Map admin_override (our UI label) to the Stripe enum value.
 function mapReason(r: string): "requested_by_customer" | "duplicate" | "fraudulent" {
@@ -67,7 +56,7 @@ serve(async (req: Request) => {
 
   // ── Rate limit ────────────────────────────────────────────────────────────
   const ip = req.headers.get("x-forwarded-for") ?? "unknown";
-  if (isRateLimited(ip, Date.now())) {
+  if (checkRateLimit(ip, RATE_LIMIT)) {
     return new Response(JSON.stringify({ error: "Rate limit exceeded — slow down" }), {
       status: 429,
       headers: { ...corsHeaders, "Content-Type": "application/json" },

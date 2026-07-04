@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { deriveActor } from "../_shared/actor.ts";
+import { checkRateLimit } from "../_shared/ratelimit.ts";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // label-print — Phase 2 print logging
@@ -28,19 +29,7 @@ import { deriveActor } from "../_shared/actor.ts";
 // Print, then re-clicks Print to verify, etc.).
 // ─────────────────────────────────────────────────────────────────────────────
 
-const RATE_LIMIT_MAX = 10;
-const RATE_LIMIT_WINDOW_MS = 60_000;
-const rateBucket = new Map<string, number[]>();
-function isRateLimited(key: string, now: number): boolean {
-  const arr = (rateBucket.get(key) || []).filter(t => now - t < RATE_LIMIT_WINDOW_MS);
-  if (arr.length >= RATE_LIMIT_MAX) {
-    rateBucket.set(key, arr);
-    return true;
-  }
-  arr.push(now);
-  rateBucket.set(key, arr);
-  return false;
-}
+const RATE_LIMIT = { max: 10, windowMs: 60_000 };
 
 serve(async (req: Request) => {
   const corsResponse = handleCors(req);
@@ -85,7 +74,7 @@ serve(async (req: Request) => {
 
     // Rate limit before any DB work — protects against a forwarded URL
     // being weaponized to spam the event_logs table.
-    if (isRateLimited(`${ip}:${public_code}`, Date.now())) {
+    if (checkRateLimit(`${ip}:${public_code}`, RATE_LIMIT)) {
       return new Response(
         JSON.stringify({ error: "Too many requests. Try again in a moment." }),
         { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
