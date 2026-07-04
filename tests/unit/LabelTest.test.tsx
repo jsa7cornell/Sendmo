@@ -1,6 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+
+// StripePaymentForm gained useAuth() for the T1-1 admin-badge gate, which
+// pulls @/contexts/AuthContext → @/lib/supabase (module-scope createClient)
+// into this page's import graph. CI has no VITE_SUPABASE_URL for unit tests,
+// so mock the context boundary (same pattern as RecipientStepAddress.test).
+vi.mock("@/contexts/AuthContext", () => ({
+    useAuth: () => ({ isAdmin: false }),
+}));
+
 import LabelTest from "@/pages/LabelTest";
 
 // ─── Helpers ─────────────────────────────────────────────────
