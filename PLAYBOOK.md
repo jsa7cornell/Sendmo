@@ -263,10 +263,11 @@ When working as a Claude Code agent, you may be assigned one of these roles:
 - [x] **Stripe Phase C — live charge dogfood gate** (shipped 2026-05-13): `payments/index.ts` now derives `isLive` server-side from `profile.admin_active_mode === 'live_charge'` (no longer trusts the client `live_mode` param per Rule 14) AND enforces a `PAYMENTS_ALLOWED_USERS` env-var allowlist of UIDs allowed to charge live. Empty allowlist = closed. The manual dogfood half of Phase C (5 successful self-charges, penny-correct reconciliation, void→refund test) is John's bar to meet — code in place.
 - [x] Server-side admin token validation — `requireAdmin` helper + `profiles.role` (shipped 2026-05-11 via migration 016)
 
-**What exists on disk but is a stub**:
-- `src/pages/SenderFlow.tsx` — placeholder text (needs 5-step sender wizard)
-- `src/components/sender/` — empty directory
-- `src/components/recipient/RecipientStepFlexPayment.tsx` — Stripe payment stubbed with mock form
+**Formerly-stub surfaces — now shipped** (corrected 2026-07-04; the entries below were stale and are kept for provenance):
+- `src/pages/SenderFlow.tsx` — **shipped.** Real 5-step sender wizard (Intro → Package → Rates → Review → Done) at `/s/:shortCode`, calls the real rates/labels Edge Functions. Components in `src/components/sender/` (SenderStepIntro / Package / Rates / Review + SenderProgressBar + senderState). Decided proposal [2026-05-11_sender-flow-wizard](proposals/2026-05-11_sender-flow-wizard_reviewed-2026-05-11_decided-2026-05-11.md).
+- `src/components/recipient/RecipientStepFlexPayment.tsx` — **shipped.** Thin wrapper around the shared `<FlexPaymentStep>` — real Stripe Elements + SetupIntent + off-session charge ("Pattern D"). Decided proposal [2026-05-16_flex-payment-pattern-d-execution](proposals/2026-05-16_flex-payment-pattern-d-execution_reviewed-2026-05-16_decided-2026-05-18.md).
+
+No production-path stubs remain. (Minor non-production leftovers: `src/pages/SenderPreview.tsx` "Label generation coming soon" is a preview page, not the live `/s/:shortCode` path; `LinksTab.tsx` has a placeholder detail view.) **The live-payment path itself is deliberately admin-gated pending launch** — a real customer currently transacts in test mode. See [PRE-LAUNCH.md](PRE-LAUNCH.md) T1-1 for the rework that opens it.
 
 **Live production URL**: https://sendmo.co (auto-deploys from GitHub `main`, also accessible at sendmo.vercel.app)
 **Loveable prototype reference**: https://sendmo.lovable.app (still live, use for visual reference only — production builds from SPEC specs)

@@ -12,6 +12,28 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-07-04] Pre-launch readiness review → PRE-LAUNCH.md checklist + customer-live-payments proposal (docs bundle)
+
+**Category:** docs | Launch | process
+**Cross-link:** [PRE-LAUNCH.md](PRE-LAUNCH.md) (new) | [proposals/2026-07-04_customer-live-payments.md](proposals/2026-07-04_customer-live-payments.md) (new, in-review) | corrects the stale "stub" block in [PLAYBOOK.md](PLAYBOOK.md) | builds on the 2026-05-24 "Pre-launch P1 wrap-up"
+
+**What this is:** a full launch-readiness review (code + test/CI + operational surveys) answering "what stands between admin dogfood and opening live payments to real customers." No code changed — three doc artifacts + this entry.
+
+**The load-bearing finding — no real customer can pay today.** Live-vs-test is **role-driven**: `isLive` requires `callerRole === "admin"` ([payments/index.ts:226](supabase/functions/payments/index.ts)); the client sets `liveMode = isAdmin && …` ([AuthContext.tsx:198](src/contexts/AuthContext.tsx)); `sendmo_links.is_test` defaults TRUE ([links/index.ts:495](supabase/functions/links/index.ts)). A non-admin falls through to **test mode** (fake label, no money). John's proven golden path ran as an admin in Live Charge mode. "Going live" = decoupling live-mode from admin-role across four gate sites — the riskiest item on the list, and it has never run for a non-admin in prod.
+
+**Artifacts:**
+- **PRE-LAUNCH.md** (new) — 3-tier executable checklist. T1 blockers: open the payment path (T1-1) · Supabase Pro (T1-2, John in progress) · monitoring+alerting (T1-3). T2: register crons · verify live cancel/refund + carrier-adjustment · rate-limit public endpoints · key-mismatch guard. T3: e2e-suite trust · failure-mode emails · public polish · signed label URL. Each item carries owner / files+lines / steps / verification / gotcha. Appendix A maps the live/test architecture.
+- **proposals/2026-07-04_customer-live-payments.md** (new, in-review) — the T1-1 rework: environment-driven live mode (`SENDMO_LIVE_DEFAULT` server + `VITE_SENDMO_LIVE_DEFAULT` client, must agree), a shared `_shared/mode.ts:resolveLiveMode` across the four gates, admin-badge-leak fix, env-var kill switch, ships inert behind the unset signal. OQ1–OQ4 await John.
+- **PLAYBOOK.md** — corrected the stale "What exists on disk but is a stub" block; `SenderFlow.tsx` (347 LOC), `src/components/sender/` (6 files), and `RecipientStepFlexPayment.tsx` (Pattern D wrapper) all shipped weeks ago.
+
+**Not-launched status confirmed:** the 3 original launch blockers are closed and the H1–H5 P1 build is done, but the launch-crossed LOG entry ("live mode opened to customers") is still unwritten — this project has been reserving it since 2026-05-24. Writing it is gated on PRE-LAUNCH Tier 1.
+
+**Browser-verified:**
+  n/a-category: docs
+  n/a-reason: three markdown artifacts (checklist + in-review proposal + PLAYBOOK correction) + this entry — no DOM/wire-shape consumer. Findings grounded in code reads of the four gate sites (payments/labels/links/AuthContext) + three read-only surveys, cited in-doc.
+
+---
+
 ### [2026-06-28] Label-confirmation email by role — payer-only creation email, routed through dispatchNotifications
 
 **Category:** feat | Emails | Labels
