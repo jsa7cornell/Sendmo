@@ -2,11 +2,11 @@
 title: Open the live-payment path to real customers (decouple live-mode from admin-role)
 slug: customer-live-payments
 project: sendmo
-status: reviewed
+status: decided
 created: 2026-07-04
-last_updated: 2026-07-04 (review appended)
+last_updated: 2026-07-04 (author response + decision recorded)
 reviewed: 2026-07-04
-decided:
+decided: 2026-07-04
 author: Claude (Opus 4.8) — pre-launch readiness review, 2026-07-04; found the admin-only payment gate while mapping what stands between dogfood and launch
 reviewer: Claude (Fable 5) — fresh-eyes pre-launch session, 2026-07-04; verified every gate site against code + prod DB
 outcome: approve-with-changes
@@ -441,3 +441,87 @@ from preference to risk decision — see recommendation below.
   the compensating control; a real staging project is a post-launch nicety. (With the
   OQ1 two-var split, a staging project later just sets `SENDMO_ENV=staging` — the design
   extends cleanly.)
+
+---
+
+## Author response
+
+> **Process note (recorded for honesty):** John directed the reviewer session to also
+> write the author response after he accepted the review's recommendations wholesale —
+> the normal two-session back-and-forth is collapsed by the tie-breaker having already
+> decided. Every acceptance below carries the implementation choice it commits to, so
+> the executing agents have an unambiguous spec.
+
+**B1 (payment-methods is a fifth gate) — ✅ accept.** `payment-methods/index.ts` adopts
+`resolveLiveMode` exactly like gate B. The §2 table is now read as six sites: A client,
+B `payments`, C `labels`, D `links`, E `payment-methods`, F `rates` (F quote-only).
+Test plan gains: customer SetupIntent in prod-signal mode lands `mode='live'`.
+
+**B2 (gate C derives from the link, not the caller) — ✅ accept.** When
+`link_short_code` is present, `labels` and `rates` set `isLive = !link.is_test`
+server-side and ignore the client `live_mode` field; `SenderFlow` stops sending it.
+The `linkIsLive !== isLive` mismatch-reject is retired on that path (superseded by
+link-derived mode); the full-label leg keeps caller-derived mode + the existing
+PI-verified-in-claimed-mode defense.
+
+**B3 (links "auto" hardcodes test PM lookup) — ✅ accept.** The `is_test` insert value
+and the `initial_status:"auto"` PM-lookup mode both derive from the same
+`resolveLiveMode` result.
+
+**B4 (kill switch must cover link-driven charges) — ✅ accept.** Defined semantics:
+before any **live** charge (off-session flex or full-label PI verification), `labels`
+checks `SENDMO_LIVE_DEFAULT`; if it is not `"true"` and the caller is not an admin in
+`live_charge`, return a clean 503 "payments are temporarily paused" + an
+`event_logs` row (`payment.live_paused_by_kill_switch`). Admin dogfood is exempt so
+John can verify a fix while paused.
+
+**B5 (split identity from kill switch) — ✅ accept.** Two server vars:
+`SENDMO_ENV=production` (identity, set once; T2-4 keys off it) and
+`SENDMO_LIVE_DEFAULT` (customer-live gate / kill switch). Client keeps the single
+`VITE_SENDMO_LIVE_DEFAULT` (it only selects the publishable key).
+
+**N1 (badge leak ×3) — ✅ accept.** Badge + test-card copy gate on `isAdmin` in
+`StripePaymentForm`, `FlexPaymentStep`, and `AddCardModal`.
+
+**N2 (rates trusts client) — ✅ accept** as scoped in B2: link-derived when
+`link_short_code` present; client-hint otherwise (quote-only; buy-side gates protect
+money). T2-3 rate limiting (shipped 2026-07-04) bounds the quota-burn volume.
+
+**N3 (2 stranded non-admin test links) — ✅ accept.** Flip-day runbook item, not code:
+expire both links + email the owners to recreate. Recorded in §5 rollout below.
+
+**N4 (client/server policy duplication) — ✅ accept.** `_shared/mode.ts` is server-only;
+`AuthContext` carries the mirrored policy with a **mirrored truth-table unit test on
+each side** asserting identical outcomes. Paired env vars documented in PLAYBOOK's
+environment section.
+
+**N5 (two allowlist mechanisms) — ✅ accept, reuse-the-list variant.**
+`PAYMENTS_ALLOWED_USERS` remains the single UID list. Existing semantics unchanged for
+admin live charges (empty = closed). New boolean `PAYMENTS_LIVE_ALLOWLIST_ONLY`: when
+`true`, non-admin live charges also require membership in that same list; when
+`false`/unset, any authenticated customer may charge live (subject to the kill switch).
+
+**N6 / OQ3 (anonymous live) — ✅ accept.** `resolveLiveMode` returns test for
+anonymous callers unconditionally — an unauthenticated API caller can never resolve
+live. Zero UX cost (the UI OTPs everyone before payment) and guarantees Account Budget
+coverage on every live charge.
+
+**Nits — all accepted** (comp authz stays out of `resolveLiveMode`; security review
+scheduled between inert-land and flip; filename convention followed).
+
+## Decision
+
+**Decided 2026-07-04 by John: approve-with-changes accepted in full — implementation
+begins immediately, shipping inert.**
+
+- **OQ1:** two server signals — `SENDMO_ENV` (identity, powers T2-4) +
+  `SENDMO_LIVE_DEFAULT` (kill switch). Client: `VITE_SENDMO_LIVE_DEFAULT`.
+- **OQ2:** keep the closed-beta lever (`PAYMENTS_LIVE_ALLOWLIST_ONLY`, reusing the
+  `PAYMENTS_ALLOWED_USERS` list per N5).
+- **OQ3:** auth required for any live charge; anonymous always resolves test.
+- **OQ4:** single Supabase project, env-gated; staging project is post-launch.
+- T1-2 (Supabase Pro) completed by John 2026-07-04. Admin-alert fallback to John's
+  Gmail is the *intended* configuration (not a gap).
+- Rollout stays §5 as written, plus: **N3 runbook item** (expire the 2 non-admin test
+  flex links + owner emails) and a **security review of the full diff between §5
+  step 1 (inert land) and step 3 (flip)**.

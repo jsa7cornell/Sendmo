@@ -12,6 +12,47 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-07-04] T1-1 DECIDED — approve-with-changes accepted in full; implementation begins (ships inert)
+
+**Category:** docs | Launch | Payments | decision
+**Cross-link:** [proposals/2026-07-04_customer-live-payments_reviewed-2026-07-04_decided-2026-07-04.md](proposals/2026-07-04_customer-live-payments_reviewed-2026-07-04_decided-2026-07-04.md) (author response + Decision recorded) | PRE-LAUNCH T1-1 `[~]` / T1-2 `[x]` / T2-4 bundled
+
+**John's decisions (2026-07-04):** all four OQs per the review's recommendations —
+- **OQ1:** two server signals: `SENDMO_ENV` (identity, set once, powers the T2-4 key guard) + `SENDMO_LIVE_DEFAULT` (customer-live gate / kill switch). Client: `VITE_SENDMO_LIVE_DEFAULT` (publishable-key selection only).
+- **OQ2:** keep the closed-beta lever — new boolean `PAYMENTS_LIVE_ALLOWLIST_ONLY`, reusing the existing `PAYMENTS_ALLOWED_USERS` UID list (one list, two consumers; admin semantics unchanged).
+- **OQ3:** anonymous callers can never resolve live — auth required for any live charge (guarantees Account Budget coverage).
+- **OQ4:** single Supabase project, env-gated; staging project post-launch.
+
+**Also:** T1-2 Supabase Pro complete (John — see the infra entry below). Admin-alert fallback to John's Gmail confirmed as intended config. Flip-day runbook additions: expire the 2 non-admin test flex links + email owners (review N3); security review of the full diff between inert-land and flip.
+
+**Implementation spec = the proposal's Author response section** (B1–B5 + N1–N6 acceptances, each with its committed implementation choice). Six gate sites: A AuthContext · B payments · C labels (link-derived flex mode + kill-switch check) · D links (insert + auto-PM-lookup) · E payment-methods · F rates (quote-only). Ships inert: with `SENDMO_LIVE_DEFAULT` unset, non-admins resolve test everywhere; admin toolbar unchanged.
+
+**Browser-verified:**
+  n/a-category: docs
+  n/a-reason: decision record + checklist/README updates only; implementation lands in its own entry with tests.
+
+---
+
+### [2026-07-04] Infra — SendMo promoted from a "Prototypes" Supabase project to a true Pro project
+
+**Category:** ops | Infra | Supabase
+**Cross-link:** agentenvoy repo (parallel rename swap — see note below) | Supabase org "John Anderson's projects" (Pro) vs "John Anderson's Prototypes" (Free)
+
+**What changed (all via the Supabase dashboard — driven through the browser, no repo code touched):**
+- **SendMo's Supabase project was transferred** from the **"John Anderson's Prototypes"** org (Free) → **"John Anderson's projects"** org (Pro). Ref is **unchanged** (`fkxykvzsqdjzhurntgah`, region us-west-2), so **every connection string, key, and env var still works — nothing in the app or on Vercel changed.** SendMo had no Supabase↔Vercel marketplace link, so the transfer had no Vercel side-effect.
+- **Cost:** +**$10/month** on the Pro org (each additional Pro project bills its own compute). Now in effect.
+- **Unlocked by the promotion (Pro tier):** daily backups, no more Free-tier auto-pause, and a **free Nano→Micro compute bump** (offered during transfer; **NOT yet triggered** — needs a ~2-min restart in Compute & Disk).
+
+**Why:** SendMo was living in the throwaway "Prototypes" org; going to launch, it needed to be a real Pro project (backups, no auto-pause).
+
+**Parallel change in the agentenvoy account (context, not SendMo code):** the two orgs were also rebalanced — the **old calendar/scheduler DB** (`kvdjfqzgiqwcosaxxjew`) was renamed `agentenvoy` → **`agentenvoyschedule`** and **retired** into the Prototypes (Free) org; the **live lounge DB** (`wafvtnocszkjmdcksrzt`) was renamed `agent-lounge` → **`agentenvoy`**. Renames are cosmetic (refs unchanged). ~30 `agentenvoy/` repo docs still use the old names — sweep pending.
+
+**Still open (deferred — Supabase MCP disconnected at wrap-up):**
+- Trigger the free Micro compute upgrade for SendMo.
+- **Enable RLS on SendMo** — RLS is currently **off on every public table** (Supabase advisor: critical). SendMo ships a browser-side anon key, so this is the top hardening item. Do it policy-first (RLS-on-without-policies blocks all access), review, then apply.
+
+---
+
 ### [2026-07-04] T1-3 (code half) — `_shared/alert.ts:sendAdminAlert` + alerts on the money-path error sites
 
 **Category:** ship | Monitoring | Edge Functions | Payments
@@ -62,7 +103,7 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 ### [2026-07-04] T1-1 proposal review — approve-with-changes; gate map grows from 4 sites to 6; live flex path has never executed
 
 **Category:** docs | Launch | Payments | review
-**Cross-link:** [proposals/2026-07-04_customer-live-payments_reviewed-2026-07-04.md](proposals/2026-07-04_customer-live-payments_reviewed-2026-07-04.md) (review appended, file renamed per protocol) | PRE-LAUNCH.md T1-1 | sibling entry below (the readiness review that authored the proposal)
+**Cross-link:** [proposals/2026-07-04_customer-live-payments_reviewed-2026-07-04.md](proposals/2026-07-04_customer-live-payments_reviewed-2026-07-04_decided-2026-07-04.md) (review appended, file renamed per protocol) | PRE-LAUNCH.md T1-1 | sibling entry below (the readiness review that authored the proposal)
 
 **What this is:** the fresh-eyes review of the T1-1 customer-live-payments proposal, per PROPOSAL-REVIEW-PROTOCOL. Verdict: **approve-with-changes** — the environment-driven design is right; the gate map was incomplete. Every claim was verified against code at HEAD plus a read-only prod DB query.
 
@@ -89,7 +130,7 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 ### [2026-07-04] Pre-launch readiness review → PRE-LAUNCH.md checklist + customer-live-payments proposal (docs bundle)
 
 **Category:** docs | Launch | process
-**Cross-link:** [PRE-LAUNCH.md](PRE-LAUNCH.md) (new) | [proposals/2026-07-04_customer-live-payments.md](proposals/2026-07-04_customer-live-payments_reviewed-2026-07-04.md) (new, in-review) | corrects the stale "stub" block in [PLAYBOOK.md](PLAYBOOK.md) | builds on the 2026-05-24 "Pre-launch P1 wrap-up"
+**Cross-link:** [PRE-LAUNCH.md](PRE-LAUNCH.md) (new) | [proposals/2026-07-04_customer-live-payments.md](proposals/2026-07-04_customer-live-payments_reviewed-2026-07-04_decided-2026-07-04.md) (new, in-review) | corrects the stale "stub" block in [PLAYBOOK.md](PLAYBOOK.md) | builds on the 2026-05-24 "Pre-launch P1 wrap-up"
 
 **What this is:** a full launch-readiness review (code + test/CI + operational surveys) answering "what stands between admin dogfood and opening live payments to real customers." No code changed — three doc artifacts + this entry.
 

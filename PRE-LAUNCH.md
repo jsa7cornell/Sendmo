@@ -43,7 +43,7 @@ T2-4. See **Appendix A** for the full architecture map.
 ## 🔴 Tier 1 — Launch blockers (nothing but John transacts until these land)
 
 ### T1-1 🤖 Open the live-payment path to real customers  ⬅ the launch switch
-**Status:** `[ ]` not started · **Needs a proposal first** (money path, security boundary).
+**Status:** `[~]` **decided 2026-07-04, implementation in progress (ships inert).** Proposal reviewed (approve-with-changes) + decided same day — gate map is **6 sites** (adds `payment-methods` + `rates`); flex mode derives from `link.is_test`, not caller role; two env signals (`SENDMO_ENV` identity + `SENDMO_LIVE_DEFAULT` kill switch); anonymous never resolves live. See [proposals/2026-07-04_customer-live-payments_reviewed-2026-07-04_decided-2026-07-04.md](proposals/2026-07-04_customer-live-payments_reviewed-2026-07-04_decided-2026-07-04.md). T2-4 key guard lands in the same change, keyed on `SENDMO_ENV`. Flip-day runbook: expire the 2 non-admin test flex links + owner emails; security review of the diff before the flip.
 
 **Why it matters:** the entire live/test split assumes "admin in an admin mode." Real
 customers currently get test-mode labels. This is the single change that makes SendMo a
@@ -87,7 +87,7 @@ live link will collide with a test-mode buy and reject.
 ---
 
 ### T1-2 👤 Upgrade Supabase to Pro (kill Free-tier auto-pause)
-**Status:** `[ ]` **in progress (John, 2026-07-04)**
+**Status:** `[x]` **done (John, 2026-07-04)** — Pro active; auto-pause gone; daily backups now available. Unblocks T2-1 (cron registration).
 
 **Why it matters:** on **2026-06-27 the entire app went dark** — the Free-tier project
 auto-paused after ~7 days idle and its `*.supabase.co` host stopped resolving (DNS
@@ -108,7 +108,7 @@ schedule. No keep-alive cron exists in-repo (grep-confirmed), so nothing to remo
 ---
 
 ### T1-3 🤖🔧 Wire error monitoring + failure alerting (stop flying blind)
-**Status:** `[~]` **code half done 2026-07-04** — `_shared/alert.ts:sendAdminAlert` shipped and fired from `label.buy_error`, `label.auto_refund_failed` (both sites), `label.flex_off_session_error`, and the refactored stripe-webhook refund-failed path (see LOG). Remaining: Sentry (`@sentry/react` init + 👤 DSN), 👤 PostHog key, optionally 👤 set `SENDMO_ADMIN_EMAIL` as a Supabase secret (fallback works today).
+**Status:** `[~]` **code half done 2026-07-04** — `_shared/alert.ts:sendAdminAlert` shipped and fired from `label.buy_error`, `label.auto_refund_failed` (both sites), `label.flex_off_session_error`, and the refactored stripe-webhook refund-failed path (see LOG). Remaining: Sentry (`@sentry/react` init + 👤 DSN), 👤 PostHog key. `SENDMO_ADMIN_EMAIL` fallback to John's Gmail is the **intended** config (John, 2026-07-04) — no secret needed.
 
 **Why it matters:** [`PLAYBOOK.md`](PLAYBOOK.md) lists Sentry + PostHog but **neither is in
 the code** (zero imports in `src/`). Across **26 edge functions**, a 500 or a failed charge
@@ -223,7 +223,7 @@ DB/Upstash-backed limiter (note in WISHLIST).
 ---
 
 ### T2-4 🤖 Key-mismatch safety rail (test key in prod = hard fail)
-**Status:** `[ ]` not started · **depends on the T1-1 production signal**
+**Status:** `[~]` **bundled into T1-1 implementation (2026-07-04)** — keyed on `SENDMO_ENV=production` (the identity signal, NOT the kill switch, so an incident flip never disarms the guard — see proposal review B5).
 
 **Why it matters:** [`STAGING_PLAN.md`](STAGING_PLAN.md) §5 specified a guard that throws
 if a test key runs in production; it was never built. One misconfigured secret could
