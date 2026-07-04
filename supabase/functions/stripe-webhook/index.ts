@@ -6,6 +6,7 @@ import { verifyAndParseWebhook, retrieveCharge } from "../_shared/stripe.ts";
 import { writeStripeFee } from "../_shared/ledger.ts";
 import { resolvePiContextWithFallback } from "../_shared/intents.ts";
 import { sendEmail } from "../_shared/resend.ts";
+import { sendAdminAlert } from "../_shared/alert.ts";
 import {
     paymentDeclinedReactivateEmail,
     radarBlockedPayerEmail,
@@ -959,43 +960,32 @@ serve(async (req: Request) => {
                     });
 
                     // (2) Alert email to admin — manual resolution path.
-                    // SENDMO_ADMIN_EMAIL env var; falls back to John's email.
-                    const adminEmail = Deno.env.get("SENDMO_ADMIN_EMAIL") || "jsa7cornell@gmail.com";
+                    // sendAdminAlert never throws (its internal catch writes
+                    // the documented refund.failed_alert_email_error row).
                     const stripeDashboardUrl = liveMode
                         ? `https://dashboard.stripe.com/refunds/${refundObj.id}`
                         : `https://dashboard.stripe.com/test/refunds/${refundObj.id}`;
-                    const amountDollars = (refundObj.amount / 100).toFixed(2);
-                    try {
-                        await sendEmail({
-                            to: adminEmail,
-                            subject: `[SendMo ALERT] Refund failed — manual resolution required`,
-                            html: `<!DOCTYPE html><html><body style="font-family:sans-serif;padding:24px;">
-<h2 style="color:#DC2626;">&#x26A0;&#xFE0F; Refund Failed — Action Required</h2>
-<p>A Stripe refund could not be delivered to the customer's card.
-The customer has not received their money. <strong>Manual resolution required.</strong></p>
-<table style="border-collapse:collapse;width:100%;max-width:480px;">
-  <tr><td style="padding:6px 0;color:#6B7280;width:180px;">Refund ID</td><td style="padding:6px 0;font-family:monospace;">${refundObj.id}</td></tr>
-  <tr><td style="padding:6px 0;color:#6B7280;">Amount</td><td style="padding:6px 0;">$${amountDollars}</td></tr>
-  <tr><td style="padding:6px 0;color:#6B7280;">Failure reason</td><td style="padding:6px 0;">${refundObj.failure_reason ?? "unknown"}</td></tr>
-  <tr><td style="padding:6px 0;color:#6B7280;">PaymentIntent</td><td style="padding:6px 0;font-family:monospace;">${refundObj.payment_intent ?? "—"}</td></tr>
-  <tr><td style="padding:6px 0;color:#6B7280;">Mode</td><td style="padding:6px 0;">${liveMode ? "LIVE" : "Test"}</td></tr>
-</table>
-<p><a href="${stripeDashboardUrl}" style="color:#2563EB;">View refund in Stripe Dashboard</a></p>
-<p style="font-size:13px;color:#9CA3AF;margin-top:24px;">SendMo automated alert — stripe-webhook charge.refund.updated handler</p>
-</body></html>`,
-                        });
-                    } catch (emailErr) {
-                        // Never let email failure block the webhook response.
-                        const msg = emailErr instanceof Error ? emailErr.message : String(emailErr);
-                        console.error("[stripe-webhook] refund.failed alert email failed:", msg);
-                        log({
+                    await sendAdminAlert({
+                        subject: "Refund failed — manual resolution required",
+                        heading: "Refund Failed — Action Required",
+                        intro: "A Stripe refund could not be delivered to the customer's card. " +
+                            "The customer has not received their money. <strong>Manual resolution required.</strong>",
+                        rows: [
+                            { label: "Refund ID", value: refundObj.id },
+                            { label: "Amount", value: `$${(refundObj.amount / 100).toFixed(2)}` },
+                            { label: "Failure reason", value: refundObj.failure_reason ?? "unknown" },
+                            { label: "PaymentIntent", value: refundObj.payment_intent ?? "—" },
+                            { label: "Mode", value: liveMode ? "LIVE" : "Test" },
+                        ],
+                        actionUrl: stripeDashboardUrl,
+                        actionLabel: "View refund in Stripe Dashboard",
+                        source: "stripe-webhook charge.refund.updated handler",
+                        failureLog: {
                             event_type: "refund.failed_alert_email_error",
-                            severity: "error",
                             entity_type: "refund",
                             entity_id: refundObj.id,
-                            properties: { error_message: msg },
-                        });
-                    }
+                        },
+                    });
 
                     log({
                         event_type: "stripe.refund_failed_alerted",

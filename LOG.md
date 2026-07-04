@@ -12,6 +12,31 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-07-04] T1-3 (code half) — `_shared/alert.ts:sendAdminAlert` + alerts on the money-path error sites
+
+**Category:** ship | Monitoring | Edge Functions | Payments
+**Cross-link:** [PRE-LAUNCH.md](PRE-LAUNCH.md) T1-3 (code half done; Sentry/PostHog keys remain John's half) | extraction source: the inline refund-failed alert in [stripe-webhook/index.ts](supabase/functions/stripe-webhook/index.ts) | Rule 6
+
+**What shipped:**
+- **`_shared/alert.ts`** (new) — `sendAdminAlert({subject, heading, intro, rows?, actionUrl?, source, failureLog?})`. Sends to `SENDMO_ADMIN_EMAIL` (falls back to John's email — parity with the inline original). **Never throws**: internal catch → console.error + an `event_logs` row (`alert.email_failed` by default; callers can override via `failureLog` to preserve documented event types). Row values HTML-escaped (error messages can carry markup).
+- **stripe-webhook refactored** — the `charge.refund.updated` refund-failed alert now goes through the helper; the documented `refund.failed_alert_email_error` failure event survives via `failureLog`. Email content unchanged.
+- **New alert sites in `labels`** (previously event_logs-only):
+  - `label.auto_refund_failed` × 2 (rate-gate trip + buy-failure) — *customer charged, no label, refund failed* — the manual-intervention case that must reach a human.
+  - `label.buy_error` — EasyPost refused the buy; alert notes the auto-refund runs next.
+  - `label.flex_off_session_error` — off-session charge failure. **Deliberately includes ordinary declines at launch scale** (a failed flex charge deactivates the customer's link — worth same-day awareness; dial back if it becomes noise).
+
+**Gotcha for future agents:** the new event type `alert.email_failed` is the generic alert-failure record; `refund.failed_alert_email_error` remains only for the stripe-webhook refund path (backward compat with the PLAYBOOK taxonomy). Alerts are `await`ed on error paths (rare; reliability > latency there — and edge runtimes don't guarantee post-response work).
+
+**John's half (unchanged, still open on PRE-LAUNCH T1-3):** Sentry DSN (`VITE_SENTRY_DSN` in Vercel + `@sentry/react` init — not yet coded), PostHog key, and optionally setting `SENDMO_ADMIN_EMAIL` as a Supabase secret (works today via the fallback).
+
+**Tests:** `tests/unit/alert.test.ts` — 7 tests (env routing + fallback, subject prefix, rows/action rendering, HTML-escaping, never-throws + default failure event, `failureLog` override). Suite: **492 passed / 43 files**. `npx tsc -b --noEmit` clean.
+
+**Browser-verified:**
+  spec: tests/unit/alert.test.ts
+  variants-covered: [env-set vs fallback recipient, send-success vs send-failure, default vs overridden failure event, escaped vs plain row values; call sites (buy_error, auto_refund_failed ×2, flex_off_session_error, refund.failed) are wiring into an email side-channel with no DOM/wire-shape consumer]
+
+---
+
 ### [2026-07-04] T2-3 — shared rate limiter (`_shared/ratelimit.ts`) + IP limits on the 5 public endpoints
 
 **Category:** ship | Security | Edge Functions

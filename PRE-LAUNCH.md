@@ -108,7 +108,7 @@ schedule. No keep-alive cron exists in-repo (grep-confirmed), so nothing to remo
 ---
 
 ### T1-3 🤖🔧 Wire error monitoring + failure alerting (stop flying blind)
-**Status:** `[ ]` not started
+**Status:** `[~]` **code half done 2026-07-04** — `_shared/alert.ts:sendAdminAlert` shipped and fired from `label.buy_error`, `label.auto_refund_failed` (both sites), `label.flex_off_session_error`, and the refactored stripe-webhook refund-failed path (see LOG). Remaining: Sentry (`@sentry/react` init + 👤 DSN), 👤 PostHog key, optionally 👤 set `SENDMO_ADMIN_EMAIL` as a Supabase secret (fallback works today).
 
 **Why it matters:** [`PLAYBOOK.md`](PLAYBOOK.md) lists Sentry + PostHog but **neither is in
 the code** (zero imports in `src/`). Across **26 edge functions**, a 500 or a failed charge
@@ -200,7 +200,7 @@ dashboard shows net margin correct.
 ---
 
 ### T2-3 🤖 Rate-limit the public unauthenticated endpoints
-**Status:** `[ ]` not started
+**Status:** `[x]` **done 2026-07-04** — `_shared/ratelimit.ts` extracted; the **4** inlining functions refactored (checklist said 5 — `payment-methods` never had one; it's JWT-gated + PM-add breaker); IP limits applied: addresses 20/min · rates 10/min (SPEC §14) · guestimate 10/min · autocomplete 60/min · place-details 20/min. 9 unit tests. See LOG.
 
 **Why it matters:** `addresses`, `rates`, `guestimate`, `autocomplete`, `place-details`
 have **no rate limiting** — anyone can spray them and burn your EasyPost/Google quota. The

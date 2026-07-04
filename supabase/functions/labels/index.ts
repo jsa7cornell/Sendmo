@@ -14,6 +14,7 @@ import {
     cancelPaymentIntent,
 } from "../_shared/stripe.ts";
 import { checkRateLimit } from "../_shared/ratelimit.ts";
+import { sendAdminAlert } from "../_shared/alert.ts";
 
 // Pricing markup MUST stay in sync with supabase/functions/rates/index.ts.
 // Server-derives display_price_cents from EasyPost rate for the flex-link
@@ -729,6 +730,25 @@ serve(async (req: Request) => {
                         live_mode: isLive,
                     },
                 });
+                // T1-3: off-session charge failure — includes ordinary
+                // declines (deliberate at launch scale: a failed flex charge
+                // deactivates the customer's link, which is worth knowing
+                // about same-day; dial back if volume makes it noise).
+                await sendAdminAlert({
+                    subject: "Flex off-session charge failed — link deactivated",
+                    heading: "Off-Session Charge Failed",
+                    intro: "A sender confirmed a flex shipment but the recipient's saved card could not be charged. " +
+                        "The link is now inactive and the recipient was emailed to update their card — no action needed unless this repeats.",
+                    rows: [
+                        { label: "Link", value: String(link_short_code ?? "—") },
+                        { label: "EasyPost shipment", value: easypost_shipment_id },
+                        { label: "Error", value: msg },
+                        { label: "Stripe code", value: errAny.stripeCode ?? "—" },
+                        { label: "Decline code", value: errAny.stripeDeclineCode ?? "—" },
+                        { label: "Mode", value: isLive ? "LIVE" : "Test" },
+                    ],
+                    source: "labels flex off-session charge (label.flex_off_session_error)",
+                });
                 return new Response(
                     JSON.stringify({
                         error: "Your payment couldn't be processed right now. The link's been deactivated and we've notified the recipient.",
@@ -991,6 +1011,23 @@ serve(async (req: Request) => {
                                     requires_manual_intervention: true,
                                 },
                             });
+                            // T1-3: customer is charged with no label and the
+                            // automatic refund failed — the manual-intervention
+                            // case must reach a human, not just event_logs.
+                            await sendAdminAlert({
+                                subject: "Auto-refund FAILED after rate-gate trip — customer charged, no label",
+                                heading: "Auto-Refund Failed — Manual Refund Required",
+                                intro: "The buy-time rate gate refused a label buy, but the automatic Stripe refund failed. " +
+                                    "The customer has been charged and has no label. Refund manually in Stripe.",
+                                rows: [
+                                    { label: "PaymentIntent", value: verifiedPaymentIntent.id },
+                                    { label: "EasyPost shipment", value: easypost_shipment_id },
+                                    { label: "Refund error", value: refundErrorMsg },
+                                    { label: "Reason", value: "buy_time_rate_exceeded" },
+                                    { label: "Mode", value: isLive ? "LIVE" : "Test" },
+                                ],
+                                source: "labels buy-time rate gate (label.auto_refund_failed)",
+                            });
                         }
                     }
 
@@ -1088,6 +1125,25 @@ serve(async (req: Request) => {
                 },
             });
 
+            // T1-3: EasyPost refused the buy after (for card flows) the
+            // customer was already charged. The auto-refund below usually
+            // makes it right; the alert exists so a spike is visible without
+            // SQL-querying event_logs.
+            await sendAdminAlert({
+                subject: "EasyPost label buy failed",
+                heading: "Label Buy Failed",
+                intro: "EasyPost refused a label purchase. If a payment was captured, the automatic refund path runs next — a follow-up alert fires only if that refund fails.",
+                rows: [
+                    { label: "EasyPost shipment", value: easypost_shipment_id },
+                    { label: "Rate", value: easypost_rate_id },
+                    { label: "Error", value: errorMsg },
+                    { label: "EasyPost code", value: String(buyData.error?.code ?? "unknown") },
+                    { label: "PaymentIntent", value: verifiedPaymentIntent?.id ?? "none (comp/flex pre-charge)" },
+                    { label: "Mode", value: isLive ? "LIVE" : "Test" },
+                ],
+                source: "labels EasyPost /buy handler (label.buy_error)",
+            });
+
             // Auto-refund the captured payment if EasyPost couldn't deliver
             // the label. The user has been charged but has nothing to ship,
             // so this is a hard failure mode we need to make right.
@@ -1126,6 +1182,22 @@ serve(async (req: Request) => {
                         entity_type: "payment_intent",
                         entity_id: verifiedPaymentIntent.id,
                         properties: { error_message: refundMsg, easypost_shipment_id },
+                    });
+                    // T1-3: charged, no label, refund failed — the worst
+                    // customer state this function can produce.
+                    await sendAdminAlert({
+                        subject: "Auto-refund FAILED after buy failure — customer charged, no label",
+                        heading: "Auto-Refund Failed — Manual Refund Required",
+                        intro: "EasyPost refused the label buy AND the automatic Stripe refund failed. " +
+                            "The customer has been charged and has nothing to ship. Refund manually in Stripe.",
+                        rows: [
+                            { label: "PaymentIntent", value: verifiedPaymentIntent.id },
+                            { label: "EasyPost shipment", value: easypost_shipment_id },
+                            { label: "Buy error", value: errorMsg },
+                            { label: "Refund error", value: refundMsg },
+                            { label: "Mode", value: isLive ? "LIVE" : "Test" },
+                        ],
+                        source: "labels EasyPost /buy auto-refund (label.auto_refund_failed)",
                     });
                     return new Response(
                         JSON.stringify({
