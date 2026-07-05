@@ -7,6 +7,7 @@ import { writeStripeFee } from "../_shared/ledger.ts";
 import { resolvePiContextWithFallback } from "../_shared/intents.ts";
 import { sendEmail } from "../_shared/resend.ts";
 import { sendAdminAlert } from "../_shared/alert.ts";
+import { assertKeysMatchEnv } from "../_shared/env-guard.ts";
 import {
     paymentDeclinedReactivateEmail,
     radarBlockedPayerEmail,
@@ -135,6 +136,19 @@ serve(async (req: Request) => {
     if (req.method !== "POST") {
         return new Response(JSON.stringify({ error: "Method not allowed" }), {
             status: 405,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+    }
+
+    // T2-4 key-mismatch guard — refuse to serve the money path when a test
+    // key is present in production (keyed on SENDMO_ENV, not the kill switch).
+    try {
+        assertKeysMatchEnv();
+    } catch (guardErr) {
+        const guardMsg = guardErr instanceof Error ? guardErr.message : "Environment key mismatch";
+        console.error("[stripe-webhook] env-guard:", guardMsg);
+        return new Response(JSON.stringify({ error: guardMsg }), {
+            status: 500,
             headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
     }

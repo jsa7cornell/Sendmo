@@ -400,7 +400,11 @@ export async function buyLabel(
     // and ignores any client-supplied value. Skip addressToApi validation so
     // a city-only stub doesn't throw before we even reach the network call.
     to_address: link?.short_code ? undefined : addressToApi(to),
-    live_mode: liveMode,
+    // B2 (customer-live-payments): on the flex path the server derives
+    // live-ness from the link itself (is_test), so omit live_mode entirely
+    // (undefined keys are dropped by JSON.stringify). Full-label buys keep
+    // sending it as a hint/key-selection signal.
+    live_mode: link?.short_code ? undefined : liveMode,
     recipient_email: contacts?.recipient_email,
     sender_email: contacts?.sender_email,
     link_short_code: link?.short_code,
@@ -684,7 +688,10 @@ export async function fetchSenderRates(
       height: parcel.height,
       weight_oz: parcel.weight,
     },
-    live_mode: liveMode,
+    // B2 (customer-live-payments): when quoting against a flex link the
+    // server derives mode from the link's is_test — omit live_mode
+    // (undefined is dropped by JSON.stringify).
+    live_mode: linkPrefs?.short_code ? undefined : liveMode,
     preferred_carrier: linkPrefs?.preferred_carrier || undefined,
     preferred_speed: linkPrefs?.preferred_speed || undefined,
     max_price_cents: linkPrefs?.max_price_cents || undefined,

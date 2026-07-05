@@ -26,7 +26,9 @@ interface Props {
 }
 
 export default function AddCardModal({ open, onClose, onSuccess }: Props) {
-  const { session, liveMode } = useAuth();
+  // isAdmin: mode badge + test-card hint are admin dogfood affordances —
+  // customers see a plain add-card form (customer-live-payments review N1).
+  const { session, liveMode, isAdmin } = useAuth();
   const [retryTrigger, setRetryTrigger] = useState(0);
   const idempotencyNonceRef = useRef<number>(0);
   const [clientSecret, setClientSecret] = useState<string | null>(null);
@@ -89,16 +91,18 @@ export default function AddCardModal({ open, onClose, onSuccess }: Props) {
           <div className="flex items-center gap-2">
             <CreditCard className="w-4 h-4 text-primary" />
             <h2 className="text-base font-semibold">Add a card</h2>
-            <Badge
-              variant="outline"
-              className={`text-[10px] ml-1 ${
-                liveMode
-                  ? "border-destructive/50 text-destructive bg-destructive/10"
-                  : "border-amber-300 text-amber-700 bg-amber-50"
-              }`}
-            >
-              {liveMode ? "LIVE" : "Test"}
-            </Badge>
+            {isAdmin && (
+              <Badge
+                variant="outline"
+                className={`text-[10px] ml-1 ${
+                  liveMode
+                    ? "border-destructive/50 text-destructive bg-destructive/10"
+                    : "border-amber-300 text-amber-700 bg-amber-50"
+                }`}
+              >
+                {liveMode ? "LIVE" : "Test"}
+              </Badge>
+            )}
           </div>
           <button
             type="button"
@@ -133,7 +137,7 @@ export default function AddCardModal({ open, onClose, onSuccess }: Props) {
             </Elements>
           )}
 
-          {!liveMode && (
+          {isAdmin && !liveMode && (
             <p className="text-[11px] text-muted-foreground mt-3">
               Test mode — use card <code className="font-mono">4242 4242 4242 4242</code>, any future expiry, any 3-digit CVC.
             </p>

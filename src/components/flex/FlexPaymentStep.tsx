@@ -107,7 +107,9 @@ export default function FlexPaymentStep({
   onEditDestination,
   onEditShipping,
 }: Props) {
-  const { session, liveMode } = useAuth();
+  // isAdmin: mode badge + test-card hint are admin dogfood affordances —
+  // customers see a plain checkout (customer-live-payments review N1).
+  const { session, liveMode, isAdmin } = useAuth();
   const estimate = getEstimate(input);
 
   const [linkId, setLinkId] = useState<string | null>(initialLinkId);
@@ -431,12 +433,14 @@ export default function FlexPaymentStep({
             <CreditCard className="w-4 h-4 text-primary" />
             <h3 className="text-sm font-semibold text-foreground">Payment method</h3>
           </div>
-          <Badge
-            variant="outline"
-            className={`text-xs ${liveMode ? "border-destructive/50 text-destructive bg-destructive/10" : "border-amber-300 text-amber-700 bg-amber-50"}`}
-          >
-            {liveMode ? "LIVE" : "Test Mode"}
-          </Badge>
+          {isAdmin && (
+            <Badge
+              variant="outline"
+              className={`text-xs ${liveMode ? "border-destructive/50 text-destructive bg-destructive/10" : "border-amber-300 text-amber-700 bg-amber-50"}`}
+            >
+              {liveMode ? "LIVE" : "Test Mode"}
+            </Badge>
+          )}
         </div>
 
         {error ? (
@@ -516,7 +520,7 @@ export default function FlexPaymentStep({
           </div>
         )}
 
-        {!liveMode && !error && useNewCard && (
+        {isAdmin && !liveMode && !error && useNewCard && (
           <p className="text-[11px] text-muted-foreground mt-3">
             Test mode — use card <code className="font-mono">4242 4242 4242 4242</code>, any future expiry, any 3-digit CVC.
           </p>

@@ -5,6 +5,8 @@ import { log } from "../_shared/logger.ts";
 import { sendEmail } from "../_shared/resend.ts";
 import { budgetReachedEmail } from "../_shared/email-templates.ts";
 import { checkAccountBudget } from "../_shared/budget.ts";
+import { resolveLiveMode } from "../_shared/mode.ts";
+import { assertKeysMatchEnv } from "../_shared/env-guard.ts";
 import {
     createPaymentIntent,
     createCustomerSession,
@@ -152,6 +154,16 @@ serve(async (req: Request) => {
         return jsonResponse({ error: "Method not allowed" }, 405);
     }
 
+    // T2-4 key-mismatch guard — refuse to serve the money path when a test
+    // key is present in production (keyed on SENDMO_ENV, not the kill switch).
+    try {
+        assertKeysMatchEnv();
+    } catch (guardErr) {
+        const guardMsg = guardErr instanceof Error ? guardErr.message : "Environment key mismatch";
+        console.error("[payments] env-guard:", guardMsg);
+        return jsonResponse({ error: guardMsg }, 500);
+    }
+
     const sessionId = req.headers.get("x-session-id") || "unknown";
     const start = Date.now();
 
@@ -173,7 +185,7 @@ serve(async (req: Request) => {
             );
         }
 
-        const { amount_cents, live_mode } = body;
+        const { amount_cents } = body;
         if (typeof amount_cents !== "number" || amount_cents < 50) {
             return jsonResponse({ error: "amount_cents must be a number >= 50" }, 400);
         }
@@ -183,7 +195,10 @@ serve(async (req: Request) => {
             );
         }
 
-        const clientWantsLive = live_mode === true;
+        // body.live_mode is deliberately NOT read here — T1-1 made the client
+        // value a hint the client uses only for its own publishable-key
+        // selection. The server derives mode from caller identity alone
+        // (Rule 14).
 
         // Resolve the calling user from the JWT, when present. Optional for
         // full-label — anonymous PIs are permitted but get no saved-PM display
@@ -222,31 +237,58 @@ serve(async (req: Request) => {
             }
         }
 
-        // Server-derived liveMode (PLAYBOOK Rule 14, master proposal §4.4).
-        const isLive = clientWantsLive && callerRole === "admin" && callerAdminMode === "live_charge";
+        // Server-derived liveMode (PLAYBOOK Rule 14, T1-1 customer-live-payments).
+        const { isLive } = resolveLiveMode({
+            callerRole,
+            callerAdminMode,
+            isAuthenticated: !!resolvedUserId,
+        });
 
-        // Live-charge allowlist gate (Phase C dogfood window).
+        // Live-charge allowlist gates (decided N5/OQ2):
+        //   admin    — PAYMENTS_ALLOWED_USERS, unchanged (empty = closed).
+        //   customer — only reachable when SENDMO_LIVE_DEFAULT === "true";
+        //              gated by the closed-beta lever PAYMENTS_LIVE_ALLOWLIST_ONLY,
+        //              which reuses the SAME UID list. When the lever is
+        //              false/unset, any authenticated customer may charge live.
         if (isLive) {
             const allowlist = (Deno.env.get("PAYMENTS_ALLOWED_USERS") || "")
                 .split(",").map((s) => s.trim()).filter(Boolean);
-            if (!resolvedUserId || !allowlist.includes(resolvedUserId)) {
-                log({
-                    event_type: "payment.live_charge_blocked",
-                    session_id: sessionId,
-                    severity: "warn",
-                    entity_type: "payment_intent",
-                    properties: {
-                        user_id: resolvedUserId,
-                        reason: !resolvedUserId
-                            ? "no_resolved_user"
-                            : allowlist.length === 0
-                                ? "allowlist_empty"
-                                : "user_not_allowlisted",
-                    },
-                });
-                return jsonResponse(
-                    { error: "Live charges are not enabled for this account." }, 403,
-                );
+            if (callerRole === "admin") {
+                if (!resolvedUserId || !allowlist.includes(resolvedUserId)) {
+                    log({
+                        event_type: "payment.live_charge_blocked",
+                        session_id: sessionId,
+                        severity: "warn",
+                        entity_type: "payment_intent",
+                        properties: {
+                            user_id: resolvedUserId,
+                            reason: !resolvedUserId
+                                ? "no_resolved_user"
+                                : allowlist.length === 0
+                                    ? "allowlist_empty"
+                                    : "user_not_allowlisted",
+                        },
+                    });
+                    return jsonResponse(
+                        { error: "Live charges are not enabled for this account." }, 403,
+                    );
+                }
+            } else if (Deno.env.get("PAYMENTS_LIVE_ALLOWLIST_ONLY") === "true") {
+                if (!resolvedUserId || !allowlist.includes(resolvedUserId)) {
+                    log({
+                        event_type: "payment.live_charge_blocked",
+                        session_id: sessionId,
+                        severity: "warn",
+                        entity_type: "payment_intent",
+                        properties: {
+                            user_id: resolvedUserId,
+                            reason: "customer_not_allowlisted",
+                        },
+                    });
+                    return jsonResponse(
+                        { error: "Live charges are not enabled for this account." }, 403,
+                    );
+                }
             }
         }
 

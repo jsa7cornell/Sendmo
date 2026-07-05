@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { log } from "../_shared/logger.ts";
+import { resolveLiveMode } from "../_shared/mode.ts";
 import {
     createCustomer,
     createSetupIntent,
@@ -22,10 +23,11 @@ import {
 //                       payment_methods row (idempotent; the webhook also
 //                       handles payment_method.detached as a backstop).
 //
-// Mode resolution: server reads `profiles.admin_active_mode` for the calling
-// user. Live mode IFF the user is admin AND admin_active_mode IN ('live_comp',
-// 'live_charge'). Non-admins are always test. The client sends NO mode param —
-// Rule 14, master proposal §4.4.
+// Mode resolution (T1-1 gate E, review B1): resolveLiveMode from the caller's
+// profile. Admins: live for live_comp OR live_charge (unchanged — see the
+// comment in resolveCaller). Customers: SENDMO_LIVE_DEFAULT decides, so a
+// customer's flex card lands mode='live' in prod and the links is_funded /
+// off-session PM lookups find it. The client sends NO mode param — Rule 14.
 
 const SYSTEM_USER_ID = "00000000-0000-0000-0000-000000000001";
 
@@ -67,7 +69,18 @@ async function resolveCaller(req: Request): Promise<{
 
     const adminActiveMode = (profile?.admin_active_mode as string) || "test";
     const role = (profile?.role as string) || null;
-    const liveMode = role === "admin" && (adminActiveMode === "live_comp" || adminActiveMode === "live_charge");
+    const resolved = resolveLiveMode({
+        callerRole: role,
+        callerAdminMode: adminActiveMode,
+        isAuthenticated: true,
+    });
+    // Deliberate difference from resolved.isLive alone: an admin's card-save
+    // mode follows EasyPost-live-ness — live_comp buys REAL labels against
+    // the live Stripe account, so cards saved in live_comp must land
+    // mode='live' (today's behavior, bit-for-bit). resolveLiveMode keeps
+    // isLive strictly "charges money" (live_charge only), hence the OR.
+    // Non-admins never get isComp, so for customers this is just isLive.
+    const liveMode = resolved.isLive || resolved.isComp;
 
     return {
         userId: user.id,

@@ -159,6 +159,9 @@ export default function SenderFlow() {
         // (addressToApi is skipped entirely when link.short_code is set, so the
         // stub's phone is never read — present only to satisfy AddressInput.)
         { name: linkData.recipient_name || "Recipient", street: "", city: linkData.recipient_city || "", state: linkData.recipient_state || "", zip: linkData.recipient_zip || "", phone: "" },
+        // liveMode — unused on this path: buyLabel omits live_mode from the
+        // request whenever link.short_code is set (B2, customer-live-payments);
+        // the server derives live-ness from the link's is_test instead.
         false,
         {
           sender_email: shareContact && senderEmail ? senderEmail : (senderEmail || undefined),
