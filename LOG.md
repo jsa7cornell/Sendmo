@@ -28,7 +28,7 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 **Fix (one line, fixes all 7 consumers):** stitch from `verifiedPaymentIntent?.id`, set on **both** legs (full-label = the verified request PI; flex = the off-session PI). Behavior-preserving for full-label (`verifiedPaymentIntent.id === payment_intent_id`); comp leaves it null (no stitch, correct). Plus: extracted the refund-status decision into pure `_shared/refunds.ts:resolveRefundStatus(epRefundStatus, hasPaymentIntent)` (Rule 6) and unit-pinned the invariant *"PI present ⇒ refundable"* (Rule 12) — `tests/unit/resolveRefundStatus.test.ts`.
 
-**Backfill (John runs — MCP is read-only for this project):** shipment 24W301E's PI is `pi_2TpscixS6gsndgF32l1WXD8R`.
+**Backfill — EXECUTED 2026-07-05** (agent, via the now-write-capable Supabase MCP; first scoped prod write under revised Rule 0.5 — stated + logged per the rule). Verified `24W301E.stripe_payment_intent_id = pi_2TpscixS6gsndgF32l1WXD8R`. **This backfill alone makes 24W301E cancellable-with-refund on the *currently deployed* cancel-label** (which already resolves `submitted` when a PI is present); PR #37 fixes *future* flex shipments so the stitch is automatic.
 ```sql
 UPDATE shipments SET stripe_payment_intent_id = 'pi_2TpscixS6gsndgF32l1WXD8R'
 WHERE public_code = '24W301E' AND stripe_payment_intent_id IS NULL;
