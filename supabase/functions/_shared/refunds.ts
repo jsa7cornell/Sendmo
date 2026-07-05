@@ -50,3 +50,27 @@ export async function getRefundableBalanceForPI(
 
   return (data ?? []).reduce((sum: number, r: { type: string; amount_cents: number }) => sum + r.amount_cents, 0);
 }
+
+/**
+ * Decide the shipment `refund_status` to write when a cancel/void succeeds.
+ *
+ * The load-bearing invariant: **a shipment that carries a PaymentIntent had a
+ * real charge and is refundable** ('submitted'); one without a PI is a comp
+ * label with no money to move ('not_applicable'). This is exactly the check
+ * that broke flex (Pattern D) shipments before the off-session PI was stitched
+ * onto `shipments.stripe_payment_intent_id` — a paid flex label read as `hasPI
+ * = false` and was wrongly marked 'not_applicable', skipping the refund. Kept
+ * as a pure helper so that contract is unit-pinned (Rule 12) and every caller
+ * decides identically (Rule 6).
+ *
+ * `epRefundStatus === "rejected"` (carrier refused the void) wins over both —
+ * there is nothing to refund if the label wasn't voided.
+ */
+export function resolveRefundStatus(
+  epRefundStatus: string,
+  hasPaymentIntent: boolean,
+): "submitted" | "not_applicable" | "rejected" {
+  if (epRefundStatus === "rejected") return "rejected";
+  if (!hasPaymentIntent) return "not_applicable";
+  return "submitted";
+}

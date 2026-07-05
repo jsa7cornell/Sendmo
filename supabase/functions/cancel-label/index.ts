@@ -5,6 +5,7 @@ import { log } from "../_shared/logger.ts";
 import { sendEmail } from "../_shared/resend.ts";
 import { refundSubmittedEmail } from "../_shared/email-templates.ts";
 import { checkRateLimit } from "../_shared/ratelimit.ts";
+import { resolveRefundStatus } from "../_shared/refunds.ts";
 // createRefund import retired 2026-05-13 — Stripe refund is now triggered
 // by tracking/index.ts's lazy poll once EasyPost confirms the carrier
 // refund (two-step refund safety). See the comment at the refund_status
@@ -322,15 +323,14 @@ serve(async (req: Request) => {
         //                                                   Stripe-refund; final state regardless
         //                                                   of what EasyPost's epRefundStatus says)
         //   has Stripe PI             → 'submitted'        (Phase E happy path)
-        let refundStatusToWrite: string;
-        if (epRefundStatus === "rejected") {
-            refundStatusToWrite = "rejected";
-        } else if (!shipment.stripe_payment_intent_id) {
-            refundStatusToWrite = "not_applicable";
-        } else {
-            refundStatusToWrite = "submitted";
-        }
-        const refundOutcome = refundStatusToWrite as "submitted" | "not_applicable" | "rejected";
+        // "has PI" ⇒ a real charge exists ⇒ refundable. Flex (Pattern D)
+        // shipments now carry their off-session PI via the labels forward-stitch
+        // (fixed 2026-07-05), so this correctly resolves 'submitted' for a paid
+        // flex label instead of the old 'not_applicable' that skipped the refund.
+        const refundOutcome = resolveRefundStatus(
+            epRefundStatus, !!shipment.stripe_payment_intent_id,
+        );
+        const refundStatusToWrite: string = refundOutcome;
 
         // 2026-05-13 evening regression fix — the two-step refund refactor
         // removed the `const now` declaration above this block while leaving

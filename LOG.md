@@ -12,6 +12,39 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-07-05] Money-path fix — flex shipments never stitched their PI → cancel skipped the refund (first live flex cancel)
+
+**Category:** fix | Payments | Refunds | Edge Functions
+**Cross-link:** found during the first live flex dogfood (shipment 24W301E) | root-cause sibling of the [2026-05-24 charge.refunded Path B entry](#) (that fixed the *webhook* resolver; this fixes the *stitch* + the *cancel/display* consumers) | PRE-LAUNCH T2-2 (non-happy-path live money — this is exactly the unverified flow it flagged)
+
+**The bug (caught by John's cancel test on a live flex label):** the `/t/` cancel dialog said *"No charge was made, so no refund is needed"* on a shipment that had a real $15.95 live charge. Worse than the copy: had he confirmed, `cancel-label` would have voided the label but written `refund_status='not_applicable'` and **never refunded the money.**
+
+**Root cause:** the forward-stitch in [labels/index.ts](supabase/functions/labels/index.ts) that populates `shipments.stripe_payment_intent_id` gated on the **request-body** `payment_intent_id` — a field only the *full-label* client sends. Flex (Pattern D) creates its own off-session PI server-side (`createOffSessionShipmentPI` → `verifiedPaymentIntent.id`), which the stitch never read. So **every flex shipment landed with `stripe_payment_intent_id = NULL`**, and all 7 consumers that use that column as the "was this paid?" signal mis-read a paid flex label as a comp label:
+- `cancel-label` (:328/:349) → `not_applicable`, refund skipped ← the money bug
+- `tracking` (:345 isComp, :599 amount, :656 paid) → "no charge" UI + no receipt
+- `cron-refund-sweep` (:59/:126), `webhooks` (:684), `_shared/adjustments` (:193), `reconciliation-report` join → all treated flex as comp
+
+**Why it never surfaced:** flex-live had never run until 2026-07-05 (T1-1 opened it hours earlier). Cancel had only ever been exercised on full-label (which stitches correctly) and comp.
+
+**Fix (one line, fixes all 7 consumers):** stitch from `verifiedPaymentIntent?.id`, set on **both** legs (full-label = the verified request PI; flex = the off-session PI). Behavior-preserving for full-label (`verifiedPaymentIntent.id === payment_intent_id`); comp leaves it null (no stitch, correct). Plus: extracted the refund-status decision into pure `_shared/refunds.ts:resolveRefundStatus(epRefundStatus, hasPaymentIntent)` (Rule 6) and unit-pinned the invariant *"PI present ⇒ refundable"* (Rule 12) — `tests/unit/resolveRefundStatus.test.ts`.
+
+**Backfill (John runs — MCP is read-only for this project):** shipment 24W301E's PI is `pi_2TpscixS6gsndgF32l1WXD8R`.
+```sql
+UPDATE shipments SET stripe_payment_intent_id = 'pi_2TpscixS6gsndgF32l1WXD8R'
+WHERE public_code = '24W301E' AND stripe_payment_intent_id IS NULL;
+```
+Audit confirmed 24W301E is the **only** paid live shipment with a null PI; the other 5 null-PI live rows are comp labels (no charge, already terminal — correctly null).
+
+**Deferred sibling (cosmetic, no money impact — filed as follow-up):** the `admin_insert_shipment` RPC mints a per-shipment `full_label` *viewer* link (for the `/t/` page + cancel token) and leaves its `is_test` at the column default `TRUE` even for live shipments — so a live shipment's viewer link reads `is_test=true`. Nothing consumes that field for money (cancel/refund/tracking all read `shipment.is_test`, which is correct), and it predates T1-1. The one-line fix (`is_test = NOT p_is_live` in the RPC's `sendmo_links` INSERT, migration 025) touches a 100+-line `SECURITY DEFINER` function — deliberately **not** rushed mid-launch to fix an inert field. Tracked for a careful follow-up.
+
+**Tests:** `tests/unit/resolveRefundStatus.test.ts` (4). Suite **547 / 49 files**. `npx tsc -b --noEmit` clean.
+
+**Browser-verified:**
+  spec: tests/unit/resolveRefundStatus.test.ts
+  variants-covered: [refund-status decision: PI-present→submitted (flex regression), no-PI→not_applicable (comp), carrier-rejected→rejected, paid-flex-not-not_applicable guard. The labels stitch is a DB-write with no DOM consumer; its effect is verified end-to-end by John's post-deploy live cancel of 24W301E (backfilled) → refund fires, closing PRE-LAUNCH T2-2.]
+
+---
+
 ### [2026-07-05] Security fix — flex-path live-charge allowlist gap (pre-flip review finding)
 
 **Category:** fix | Security | Payments | Edge Functions
