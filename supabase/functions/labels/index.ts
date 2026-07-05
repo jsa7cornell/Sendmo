@@ -17,6 +17,7 @@ import { checkRateLimit } from "../_shared/ratelimit.ts";
 import { sendAdminAlert } from "../_shared/alert.ts";
 import { resolveLiveMode } from "../_shared/mode.ts";
 import { assertKeysMatchEnv } from "../_shared/env-guard.ts";
+import { checkLiveChargeAllowed } from "../_shared/allowlist.ts";
 
 // Pricing markup MUST stay in sync with supabase/functions/rates/index.ts.
 // Server-derives display_price_cents from EasyPost rate for the flex-link
@@ -601,6 +602,35 @@ serve(async (req: Request) => {
                     JSON.stringify({ error: "Payments are temporarily paused. Please try again soon." }),
                     { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
                 );
+            }
+
+            // Closed-beta allowlist gate (security follow-up 2026-07-05):
+            // the flex sender is anonymous, so the vetted party is the LINK
+            // OWNER (resolvedLink.user_id) — the recipient who saved the card
+            // that moves money. Same lever as the full-label path in payments.
+            // Without this, a non-allowlisted customer could run the whole
+            // flex product live during the invite-only window.
+            if (isLive) {
+                const gate = checkLiveChargeAllowed("customer", resolvedLink.user_id);
+                if (!gate.allowed) {
+                    log({
+                        event_type: "payment.live_charge_blocked",
+                        session_id: sessionId,
+                        severity: "warn",
+                        entity_type: "sendmo_link",
+                        entity_id: resolvedLink.short_code,
+                        properties: {
+                            link_short_code: resolvedLink.short_code,
+                            link_owner: resolvedLink.user_id,
+                            reason: gate.reason,
+                            flow: "flex",
+                        },
+                    });
+                    return new Response(
+                        JSON.stringify({ error: "This link isn't accepting live payments yet." }),
+                        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                    );
+                }
             }
 
             // Create fresh off_session PI for the actual rate. Sender's IP

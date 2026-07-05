@@ -3,6 +3,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { isUsablePhone } from "../_shared/phone.ts";
 import { resolveLiveMode } from "../_shared/mode.ts";
+import { checkLiveChargeAllowed } from "../_shared/allowlist.ts";
+import { log } from "../_shared/logger.ts";
 
 // ─── Short code generator ───────────────────────────────────
 const SAFE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
@@ -501,12 +503,33 @@ serve(async (req: Request) => {
             .select("role, admin_active_mode")
             .eq("id", user.id)
             .maybeSingle();
+        const creatorRole = (creatorProfile?.role as string) ?? null;
         const creatorMode = resolveLiveMode({
-            callerRole: (creatorProfile?.role as string) ?? null,
+            callerRole: creatorRole,
             callerAdminMode: (creatorProfile?.admin_active_mode as string) ?? null,
             isAuthenticated: true,
         });
-        const linkIsTest = !creatorMode.isLive;
+        // Closed-beta allowlist gate (security follow-up 2026-07-05, defense in
+        // depth): don't even MINT a live link for a non-allowlisted customer
+        // under the invite-only lever — downgrade to a test link so the flex
+        // charge hole never opens upstream. The labels flex leg enforces the
+        // same gate at charge time; this just avoids a live link that would
+        // only 403 later. Admins are unaffected (their live charges are gated
+        // separately at the charge sites).
+        let linkIsTest = !creatorMode.isLive;
+        if (!linkIsTest && creatorRole !== "admin") {
+            const gate = checkLiveChargeAllowed("customer", user.id);
+            if (!gate.allowed) {
+                linkIsTest = true;
+                log({
+                    event_type: "link.live_downgraded_not_allowlisted",
+                    severity: "info",
+                    entity_type: "sendmo_link",
+                    entity_id: user.id,
+                    properties: { user_id: user.id, reason: gate.reason },
+                });
+            }
+        }
 
         let startStatus: "draft" | "active";
         if (initial_status === "draft") {
