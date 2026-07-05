@@ -12,6 +12,31 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-07-05] Security fix — flex-path live-charge allowlist gap (pre-flip review finding)
+
+**Category:** fix | Security | Payments | Edge Functions
+**Cross-link:** T1-1 decided proposal [proposals/2026-07-04_customer-live-payments_reviewed-2026-07-04_decided-2026-07-04.md](proposals/2026-07-04_customer-live-payments_reviewed-2026-07-04_decided-2026-07-04.md) §3.4/N5/OQ2 | the pre-flip `/security-review` that found it | fixes the T1-1 IMPLEMENTED entry below
+
+**The gap (found by the pre-flip security review, confirmed 8/10):** the closed-beta lever `PAYMENTS_LIVE_ALLOWLIST_ONLY` was enforced only in `payments/index.ts` (full-label PI). The **flex off-session charge** (`labels`), **live-link creation** (`links`), and **live card-save** (`payment-methods`) checked the kill switch but never the allowlist. During the intended invite-only window (`SENDMO_LIVE_DEFAULT=true` + `PAYMENTS_LIVE_ALLOWLIST_ONLY=true`), a **non-allowlisted** customer could save a live card → mint a live flex link → have anonymous senders drive real off-session charges — the whole flex product live, never touching the allowlist. The decided language (§3.4/N5: "non-admin **live charges** are restricted to allowlisted UIDs") is unqualified, so the flex leg being ungated was a deviation from spec, not an intended scoping. Latent (env vars unset today); Medium (Account Budget + per-shipment cap + Radar still backstop).
+
+**Fix (Rule 6 — one definition, every live-charge entry point):**
+- **New `_shared/allowlist.ts:checkLiveChargeAllowed(role, userId, getEnv?)`** — the single gate. Admin: always gated on `PAYMENTS_ALLOWED_USERS` (empty=closed), unchanged. Customer: gated only when `PAYMENTS_LIVE_ALLOWLIST_ONLY==="true"`. Pure TS (injectable env) — 11 unit tests.
+- **`payments`** refactored to call it (behavior-preserving; the inline admin+customer branches collapse into the helper).
+- **`labels` flex leg** — gate added right after the kill switch, keyed on **`resolvedLink.user_id`** (the link OWNER — the anonymous sender has no identity; the vetted party is the recipient whose card moves money). Non-allowlisted ⇒ 403 "This link isn't accepting live payments yet" + `payment.live_charge_blocked` (reason `customer_not_allowlisted`, flow `flex`).
+- **`links` creation** — defense in depth: a non-allowlisted **customer** creator under the lever gets their link **downgraded to test** (`is_test=true`) instead of minting a live link that would only 403 later; logs `link.live_downgraded_not_allowlisted`. Admins unaffected (their charges are gated at the charge sites).
+
+**Telemetry note for future agents:** the admin no-user reason string changed `no_resolved_user` → `no_user` in the refactor (the helper's shared enum). Nothing asserts the old string; it's an `event_logs.reason` value only. New event types: `payment.live_charge_blocked` now also fires from `labels` (flow `flex`); `link.live_downgraded_not_allowlisted` (info) from `links`.
+
+**Tests:** `tests/unit/allowlist.test.ts` (11 — customer×{lever on/off, allowlisted/not, empty list, null user} + admin×{allowlisted/not/empty/null} + list parsing). Suite: **543 passed / 48 files**. `npx tsc -b --noEmit` clean.
+
+**Still inert:** with the env vars unset, this changes nothing in prod — it closes the hole that opens when John flips into the beta.
+
+**Browser-verified:**
+  spec: tests/unit/allowlist.test.ts
+  variants-covered: [customer × {lever off, lever on + allowlisted, lever on + not-allowlisted, empty list, null user}; admin × {allowlisted, empty=closed, not-allowlisted, null}; list whitespace/empty-segment parsing. Server-side authz gate — no DOM consumer; the 403/downgrade branches are env-gated (unreachable until the beta flip) and exercised by John's §5 step-4 non-admin live smoke tests.]
+
+---
+
 ### [2026-07-04] T1-1 IMPLEMENTED (ships inert) — env-driven live mode across 6 gates + T2-4 key guard
 
 **Category:** ship | Launch | Payments | Security
