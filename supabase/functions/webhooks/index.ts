@@ -3,10 +3,10 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { log } from "../_shared/logger.ts";
 import { dispatchNotifications } from "../_shared/notifications.ts";
-import { createRefund } from "../_shared/stripe.ts";
 import { writeEasypostRefund } from "../_shared/ledger.ts";
 import { resolveRecovery, type AdjustmentShipment, type AdjustmentPaymentContext } from "../_shared/adjustments.ts";
-import { getRefundableBalanceForPI } from "../_shared/refunds.ts";
+import { initiateCancelRefund } from "../_shared/refunds.ts";
+import { runInBackground } from "../_shared/background.ts";
 
 /**
  * Webhook handler for EasyPost tracker updates.
@@ -185,7 +185,11 @@ serve(async (req: Request) => {
     });
   }
 
-  // Always respond 200 to webhooks to prevent retries (after auth)
+  // Deliberate no-op outcomes (dedup, malformed-skip, not-found, collision)
+  // return 200 inside the handler so EasyPost doesn't retry them. Genuine
+  // processing errors fall through to the catch below and return 500 so
+  // EasyPost DOES retry — swallowing them as 200 lost tracker updates and
+  // refund confirmations.
   try {
     const body = JSON.parse(rawBody);
     const description = body.description || "";
@@ -542,8 +546,10 @@ serve(async (req: Request) => {
         });
       }
 
-      // Idempotency: store webhook event.
-      const refundEventId = body.id || `ep_refund_${epShipmentId}_${Date.now()}`;
+      // Idempotency: store webhook event. Fallback id (body.id absent is
+      // abnormal) is deterministic — a Date.now() suffix could never match a
+      // prior insert, so dedup was structurally dead on that path.
+      const refundEventId = body.id || `ep_refund_${epShipmentId}`;
       const { error: refundDupeErr } = await supabase.from("webhook_events").insert({
         source: "easypost",
         event_id: refundEventId,
@@ -565,43 +571,39 @@ serve(async (req: Request) => {
       };
 
       if (refundShipment.stripe_payment_intent_id) {
-        // Stripe-paid shipment: fire the customer refund now (same logic as
-        // tracking/index.ts lazy-poll — idempotency key prevents double-refunds).
+        // Stripe-paid shipment: fire the customer refund now (same shared
+        // helper as tracking/index.ts lazy-poll and cron-refund-sweep —
+        // idempotency key prevents double-refunds).
         //
-        // H3 (N3 fix): compute remaining per-PI refundable balance before
-        // passing amount_cents. Without this, a partially-refunded PI would
-        // receive amount_cents=full-charge, which Stripe rejects as over-refund.
-        // getRefundableBalanceForPI throws on DB error — caught below.
+        // initiateCancelRefund computes the remaining per-PI refundable
+        // balance and SKIPS (never calls Stripe) when it is <= 0 — passing
+        // undefined amount_cents here used to mean "refund ALL remaining"
+        // on a zero-balance ledger. Throws on DB/Stripe error — caught below.
         try {
-          const refundableBalance = await getRefundableBalanceForPI(
+          const refundResult = await initiateCancelRefund({
             supabase,
-            refundShipment.stripe_payment_intent_id,
-          );
-          await createRefund({
-            payment_intent_id: refundShipment.stripe_payment_intent_id,
-            amount_cents: refundableBalance > 0 ? refundableBalance : undefined,
-            reason: "requested_by_customer",
-            metadata: {
-              shipment_id: refundShipment.id,
-              public_code: refundShipment.public_code,
-              trigger: "easypost_refund_webhook",
-            },
-            idempotency_key: `refund_${epShipmentId}_user_cancel`,
+            stripePaymentIntentId: refundShipment.stripe_payment_intent_id,
+            easypostShipmentId: epShipmentId,
+            shipmentId: refundShipment.id,
+            publicCode: refundShipment.public_code,
+            trigger: "easypost_refund_webhook",
             liveMode: !refundShipment.is_test,
           });
           // Leave refund_status='submitted' — stripe-webhook advances it to
           // 'refunded' when charge.refunded fires. Only update EP column here.
-          log({
-            event_type: "cancel.stripe_refund_initiated",
-            source: "webhook",
-            severity: "info",
-            entity_type: "shipment",
-            entity_id: refundShipment.id,
-            properties: {
-              payment_intent_id: refundShipment.stripe_payment_intent_id,
-              trigger: "easypost_refund_webhook",
-            },
-          });
+          if (!refundResult.skipped) {
+            log({
+              event_type: "cancel.stripe_refund_initiated",
+              source: "webhook",
+              severity: "info",
+              entity_type: "shipment",
+              entity_id: refundShipment.id,
+              properties: {
+                payment_intent_id: refundShipment.stripe_payment_intent_id,
+                trigger: "easypost_refund_webhook",
+              },
+            });
+          }
         } catch (stripeErr) {
           const msg = stripeErr instanceof Error ? stripeErr.message : String(stripeErr);
           log({
@@ -671,7 +673,11 @@ serve(async (req: Request) => {
           ? Math.round(parseFloat(String(effectiveRefundObj.amount)) * 100)
           : 0;
 
-        writeEasypostRefund({
+        // Awaited: ledger completeness matters more than one cheap DB write
+        // of latency, and an un-awaited promise can be cut off when the edge
+        // isolate is reclaimed after the response. writeEasypostRefund never
+        // throws by design — it catches internally and logs on failure.
+        await writeEasypostRefund({
           supabase,
           sessionId: body.id ?? "webhook",
           shipmentId: refundShipment.id,
@@ -683,8 +689,6 @@ serve(async (req: Request) => {
           mode: refundShipment.is_test ? "test" : "live",
           isComp: !refundShipment.stripe_payment_intent_id,
           source: "webhook",
-        }).catch((err) => {
-          console.error("[webhooks] writeEasypostRefund unexpected throw:", err);
         });
       }
 
@@ -767,8 +771,10 @@ serve(async (req: Request) => {
 
     const shipment = candidates[0];
 
-    // Idempotency: store webhook event
-    const eventId = body.id || `ep_${trackingCode}_${easypostStatus}_${Date.now()}`;
+    // Idempotency: store webhook event. Fallback id (body.id absent is
+    // abnormal) is deterministic — a Date.now() suffix could never match a
+    // prior insert, so dedup was structurally dead on that path.
+    const eventId = body.id || `ep_${trackingCode}_${easypostStatus}`;
     const { error: dupeErr } = await supabase.from("webhook_events").insert({
       source: "easypost",
       event_id: eventId,
@@ -844,14 +850,15 @@ serve(async (req: Request) => {
           })
         : undefined;
 
-      // Don't await — fire and forget
-      dispatchNotifications(supabase, shipment.id, easypostStatus, {
+      // Fire-and-forget via runInBackground — EdgeRuntime.waitUntil keeps the
+      // dispatch alive after the response instead of racing isolate reclamation.
+      runInBackground(dispatchNotifications(supabase, shipment.id, easypostStatus, {
         tracking_number: trackingCode,
         public_code: shipment.public_code,
         carrier: shipment.carrier || "",
         estimated_delivery: estDelivery,
         tracking_url: `${APP_URL}/t/${shipment.public_code}`,
-      });
+      }), "webhook_dispatch");
     }
 
     return new Response(JSON.stringify({ ok: true }), {
@@ -860,14 +867,16 @@ serve(async (req: Request) => {
     });
   } catch (err) {
     console.error("Webhook processing error:", err);
+    const errorMessage = err instanceof Error ? err.message : String(err);
     log({
       event_type: "webhook.processing_error",
       severity: "error",
       source: "webhook",
-      properties: { error_message: err instanceof Error ? err.message : String(err) },
+      properties: { error_message: errorMessage },
     });
-    return new Response(JSON.stringify({ ok: true }), {
-      status: 200,
+    // 500 so EasyPost retries — a 200 here permanently dropped the event.
+    return new Response(JSON.stringify({ error: errorMessage }), {
+      status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
