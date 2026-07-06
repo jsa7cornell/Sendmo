@@ -1469,21 +1469,32 @@ serve(async (req: Request) => {
                         }
 
                         // ── Forward stitch: shipments.stripe_payment_intent_id ──
-                        // The Stripe PI is created in payments/index.ts BEFORE
-                        // a shipments row exists, so the `charge` transaction
-                        // emitted by stripe-webhook on payment_intent.succeeded
-                        // lands with shipment_id IS NULL. The transactions
-                        // table is append-only (no UPDATE grant), so the join
-                        // must run the other way: reconciliation-report joins
-                        // charge/refund rows via t.stripe_intent_id ↔
-                        // s.stripe_payment_intent_id. Populating the shipments
-                        // side here is what makes that join resolvable.
+                        // The Stripe PI exists before the shipments row, so the
+                        // `charge` transaction emitted by stripe-webhook lands
+                        // with shipment_id IS NULL. The transactions table is
+                        // append-only (no UPDATE grant), so the join must run the
+                        // other way: reconciliation-report + cancel/refund + the
+                        // /t/ "paid?" display all resolve via t.stripe_intent_id ↔
+                        // s.stripe_payment_intent_id. Populating the shipments side
+                        // here is what makes that resolvable.
+                        //
+                        // Stitch from `verifiedPaymentIntent.id`, which is set on
+                        // BOTH legs — full-label (the request PI, verified above)
+                        // AND flex/off-session (the PI created here by
+                        // createOffSessionShipmentPI). The prior code stitched the
+                        // request-body `payment_intent_id`, which only the
+                        // full-label client sends — so every flex shipment landed
+                        // with a NULL PI and was mis-read as a comp label
+                        // (cancel skipped the refund, /t/ said "no charge"). Comp
+                        // labels leave verifiedPaymentIntent null → no stitch, as
+                        // intended. Fixed 2026-07-05 (first live flex cancel).
                         // try/catch — failure logs but never breaks label-buy.
-                        if (shipmentId && !isComp && payment_intent_id) {
+                        const stitchPiId = verifiedPaymentIntent?.id ?? null;
+                        if (shipmentId && !isComp && stitchPiId) {
                             try {
                                 const { error: shipErr } = await supabase
                                     .from('shipments')
-                                    .update({ stripe_payment_intent_id: payment_intent_id })
+                                    .update({ stripe_payment_intent_id: stitchPiId })
                                     .eq('id', shipmentId);
                                 if (shipErr) {
                                     console.error('[labels] forward-stitch shipments update:', shipErr);
