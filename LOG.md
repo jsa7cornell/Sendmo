@@ -30,6 +30,41 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
   n/a-category: agent-internal
   n/a-reason: Server-side ledger amount sourcing + sweep log emission; no DOM surface. The tighter alternative (unit tests) was implemented this time — sourcing was extracted into _shared/ledger.ts precisely so tests/unit/ledger-writes.test.ts covers it directly. Remaining unverified surface is edge-function wiring (payload → helper params), verified via esbuild parse + full unit suite; real-payload verification lands with the next live cancel or 04:00 UTC sweep.
 
+---
+
+### [2026-07-06] YPPY9AK missing `easypost_refund` ledger row backfilled (+711¢) — the recon sweep's first catch, closed (Rule 0.5 prod write)
+
+**Category:** fix | Payments | Ledger | ops
+**Cross-link:** T2-1 CLOSED status block below (the force-run catch that filed this) | [2026-05-24 charge.refunded Path B entry](#) (the buggy first live cancel this descends from) | `event_logs` `afc5127c` (recon flag) → `7990fe48` (backfill audit row) | [`_shared/ledger.ts:writeEasypostRefund`](supabase/functions/_shared/ledger.ts) (semantics replicated) | follow-up chip: webhooks writer 0¢-fallback asymmetry (below)
+
+**What happened:** closed the `recon.missing_easypost_refund_tx` flag from the 2026-07-06 14:56 UTC T2-1 force-run. YPPY9AK (the known-buggy 2026-05-24 first live cancel, $9.18 UPS DAP, fully refunded on both flags) had no correctly-keyed `easypost_refund` ledger row, under-stating EasyPost credits by 711¢.
+
+**Discovery correction to the T2-1 record:** the row wasn't entirely "never written" — the 2026-05-24 webhook wrote a **fallback-keyed row with `amount_cents=0`** (`easypost_refund_shp_fallback_shp_93c0…`, 19:59:57 UTC; `refunds[]` was empty in that payload). The sweep keys on the real `rfnd_…` id, so it correctly flagged the miss. Ledger is append-only → fix is an INSERT of the correctly-keyed row; the two rows **sum** to the right credit (`reconciliation-report` sums by type — no double-count).
+
+**Amount determination (the flagged `amount_cents=null`):** EasyPost's Refund object carries **no amount field** — confirmed empirically for this exact refund: the sweep computed `Math.round(r.amount*100)` from the live EasyPost payload on 2026-07-06 and logged `null`. A direct API re-fetch was attempted per the follow-up instruction but blocked: `op read` hit 3 authorization timeouts (1Password approval unavailable mid-autonomous-session) and the browser EasyPost dashboard session was unauthenticated. Amount therefore resolved by the writer's own documented semantics (`ledger.ts` + `tracking/index.ts:238`): **absent payload amount → `rate_cents` = 711¢**, which exactly offsets the `-711¢ label_cost` row — the correct economics of a full UPS void. If John wants belt-and-suspenders, the EasyPost dashboard billing/credits view for 2026-05-24 should show the $7.11 wallet credit.
+
+**Prod writes (Rule 0.5 — target SendMo PROD `fkxykvzsqdjzhurntgah`, via MCP `execute_sql`, no secrets involved):**
+```sql
+INSERT INTO transactions (user_id, shipment_id, link_id, type, amount_cents, funding_source, mode, idempotency_key, description)
+VALUES ('00de2967-adc6-42ea-80c8-36645f1ad27c', '5294ecf1-661b-4c2c-ba85-be483c86e20f',
+        '8ce8cebe-4a6e-457b-9b82-ed331cb6744c', 'easypost_refund', 711, NULL, 'live',
+        'easypost_refund_rfnd_dcda5a228d12466e91ac22810604eed5',
+        'EasyPost refund confirmed — rfnd_dcda5a228d12466e91ac22810604eed5 (shipment shp_93c0aca5021b4373a287c6745acd4e73)')
+ON CONFLICT (idempotency_key) DO NOTHING RETURNING id;
+-- → 996a0c90-6963-4fd5-9303-5bfcfebd471e (inserted, no conflict)
+```
+Plus one `event_logs` audit row mirroring `ledger.easypost_refund_recorded` (`session_id='manual_backfill_20260706'`, properties record the amount basis + the resolved recon event id) → `7990fe48`.
+
+**Verified (identity closes):** full YPPY9AK ledger (shipment-linked + PI-linked, per the `reconciliation-report` dedupe) is now `charge +918, fee_stripe −57, refund −918, label_cost −711, easypost_refund 0 (buggy legacy row), easypost_refund +711 (backfill)`. Net-margin identity = **−57¢ = exactly the non-returnable Stripe fee** — the true economics of a fully-refunded shipment (was −768¢, under-stated by the missing credit). EasyPost side nets to 0. Recon status classifies `reconciled` (no pending adjustments/chargebacks, refund complete). Future sweeps see the `rfnd_…` idempotency key and will not re-flag.
+
+**Follow-up filed (chip):** the two writers' fallbacks are asymmetric — `tracking/index.ts` falls back to `rate_cents`, but `webhooks/index.ts:686` falls back to **0¢**. Since EasyPost Refund objects never carry `amount`, every future *webhook-written* `easypost_refund` row will be 0¢, silently under-stating credits — and the sweep won't flag it (the idempotency key exists). Same defect class as this backfill; should be fixed at the source.
+
+**Browser-verified:**
+  n/a-category: migration
+  n/a-reason: prod data backfill (append-only INSERT) + audit event row; verified via in-DB identity recomputation replicating the reconciliation-report formula, no DOM/wire-shape consumer changed.
+
+---
+
 ### [2026-07-06] T2-1 cron sweeps ACTIVATED — `service_role_key` Vault secret set (Rule 0.5 prod-write log); T1-3 Sentry/PostHog fully deferred
 
 **Category:** ops | Infra | Payments | Security | Launch
