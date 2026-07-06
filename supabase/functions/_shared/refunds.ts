@@ -165,3 +165,35 @@ export function resolveRefundStatus(
   if (!hasPaymentIntent) return "not_applicable";
   return "submitted";
 }
+
+/**
+ * D4 guard — decide whether a `charge.refunded` event may advance a shipment's
+ * `refund_status` to 'refunded' (which also gates the "refund completed"
+ * Email B).
+ *
+ * `refund_status` is written by the cancel/void state machine:
+ *   - 'submitted'  → cancel-label got a successful Stripe createRefund; a
+ *                    customer refund is genuinely in flight. Always advance.
+ *   - 'rejected'   → OVERLOADED. Either a timeout-healed cancel (the day-21
+ *                    cron marked it 'rejected' but the carrier confirmed the
+ *                    void later, so `easypost_refund_status='refunded'`) OR a
+ *                    carrier-REFUSED void (never EP-refunded), where NO
+ *                    customer refund is owed. Advance ONLY the healed case —
+ *                    otherwise an admin goodwill partial refund on a
+ *                    carrier-refused shipment would flip it to 'refunded' and
+ *                    fire a false Email B.
+ *   - anything else (incl. 'refunded', 'not_applicable', null) → do not
+ *                    advance; no customer cancel flow to close.
+ *
+ * Pure so the D4 decision is unit-pinned (Rule 12) independent of the two
+ * sequential PostgREST updates that implement it in stripe-webhook (which
+ * express "submitted OR (rejected AND ep=refunded)" as attempt-then-fallback).
+ */
+export function shouldAdvanceRefundStatusOnChargeRefunded(
+  currentRefundStatus: string | null | undefined,
+  easypostRefundStatus: string | null | undefined,
+): boolean {
+  if (currentRefundStatus === "submitted") return true;
+  if (currentRefundStatus === "rejected") return easypostRefundStatus === "refunded";
+  return false;
+}
