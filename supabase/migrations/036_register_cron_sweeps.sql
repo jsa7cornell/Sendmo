@@ -13,11 +13,15 @@
 --   proposals/2026-05-23_pre-launch-handoff-plan.md §H4 (daily 04:00) + §H5 (04:30 offset)
 --
 -- Cadence (decided): reconciliation-sweep daily 04:00 UTC; cron-refund-sweep
--- daily 04:30 UTC (offset 30 min to avoid concurrent EasyPost list-load).
--- The weekly bulk reconciliation (Sundays 05:00 UTC) is DEFERRED per the
--- review (OQ4 / pitfall 5): heaviest job (EasyPost Reports + ~10 min in-function
--- poll), no live volume to justify it in week one. Add later as a one-liner:
---   SELECT cron.schedule('reconciliation-sweep-weekly','0 5 * * 0', <same body, {"mode":"weekly"}>);
+-- daily 04:30 UTC (offset 30 min to avoid concurrent EasyPost list-load);
+-- reconciliation-sweep weekly bulk Sundays 05:00 UTC.
+-- The weekly job was initially DEFERRED per this arc's review (OQ4 / pitfall 5:
+-- heaviest job — EasyPost Reports + ~10 min in-function poll — with no week-one
+-- volume), then REGISTERED 2026-07-06 per John's direct call during the
+-- parallel-arc takeover (see the proposal's takeover addendum). At current
+-- volume it no-ops and proves the path; the wall-clock-timeout risk under real
+-- volume is WISHLIST-tracked — if it bites, unschedule with one line:
+--   SELECT cron.unschedule('reconciliation-sweep-weekly');
 --
 -- ─── AUTH via Supabase Vault (NOT a GUC — see the amendment below) ────────────
 -- The original 034/035 sketch used `current_setting('app.service_role_key')`
@@ -73,6 +77,7 @@ DO $unsched$
 BEGIN
   PERFORM cron.unschedule(jobname) FROM cron.job WHERE jobname = 'reconciliation-sweep-daily';
   PERFORM cron.unschedule(jobname) FROM cron.job WHERE jobname = 'refund-cron-sweep-daily';
+  PERFORM cron.unschedule(jobname) FROM cron.job WHERE jobname = 'reconciliation-sweep-weekly';
 END
 $unsched$;
 
@@ -108,12 +113,32 @@ SELECT cron.schedule(
   $cron$
 );
 
+-- reconciliation-sweep — weekly bulk (mode=weekly, EasyPost Reports CSV),
+-- Sundays 05:00 UTC (30 min after the refund sweep; each job 30 min apart on
+-- Sundays: 04:00 / 04:30 / 05:00). Registered per John's takeover call —
+-- see the header note + the proposal's takeover addendum.
+SELECT cron.schedule(
+  'reconciliation-sweep-weekly',
+  '0 5 * * 0',
+  $cron$
+    SELECT net.http_post(
+      url := (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'supabase_url') || '/functions/v1/reconciliation-sweep',
+      headers := jsonb_build_object(
+        'Authorization', 'Bearer ' || (SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = 'service_role_key'),
+        'Content-Type', 'application/json'
+      ),
+      body := '{"mode":"weekly"}'::jsonb
+    );
+  $cron$
+);
+
 -- =============================================================
 -- VERIFICATION (run after apply; John's Vault secret needed for jobs to
 -- SUCCEED, not just register):
 --   SELECT jobname, schedule, active FROM cron.job ORDER BY jobname;
---     -> reconciliation-sweep-daily | 0 4 * * *  | t
---        refund-cron-sweep-daily    | 30 4 * * * | t
+--     -> reconciliation-sweep-daily  | 0 4 * * *  | t
+--        reconciliation-sweep-weekly | 0 5 * * 0  | t
+--        refund-cron-sweep-daily     | 30 4 * * * | t
 --   SELECT extname FROM pg_extension WHERE extname IN ('pg_cron','pg_net');
 --   SELECT name FROM vault.secrets WHERE name IN ('supabase_url','service_role_key');
 -- Health check = downstream state advancing (recon_state.last_run_at ~ now
