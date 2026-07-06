@@ -57,9 +57,19 @@ export function checkRateLimit(
  * one bucket (fail-closed-ish; acceptable for a speed bump).
  */
 export function clientIpKey(req: Request): string {
-    return req.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
-        || req.headers.get("x-real-ip")
-        || "unknown";
+    // SECURITY (pre-launch review 2026-07-06, M2): use the LAST x-forwarded-for
+    // hop, not the first. The list is `client, proxy1, …, edge` — an attacker
+    // can PREPEND arbitrary values, so the leftmost entry ([0], the old
+    // behavior) is client-controlled: a per-request random X-Forwarded-For
+    // landed every call in a fresh bucket and defeated the limiter entirely.
+    // The trusted edge appends the real observed IP last, so the rightmost hop
+    // is the spoof-resistant one to key on.
+    const xff = req.headers.get("x-forwarded-for");
+    if (xff) {
+        const parts = xff.split(",").map((s) => s.trim()).filter(Boolean);
+        if (parts.length > 0) return parts[parts.length - 1];
+    }
+    return req.headers.get("x-real-ip")?.trim() || "unknown";
 }
 
 /** Test-only: clear the shared bucket between test cases. */

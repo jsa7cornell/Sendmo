@@ -58,6 +58,36 @@ Connection was the session pooler as `postgres.fkxykvzsqdjzhurntgah` with `PGPAS
 
 ---
 
+### [2026-07-06] Security review of the opened live-payment surface — privilege-escalation blocker fixed in prod + 4 mediums
+
+**Category:** fix | Security | RLS | Auth | Edge Functions | Review
+**Cross-link:** the T1-1 security-review chip (PRE-LAUNCH T1-1) | complements the parallel [money-path-review-fixes](proposals/2026-07-06_money-path-review-fixes.md) entry below (that batch = payment/refund correctness D1–D4; this = authorization/RLS/public-surface, disjoint findings) | migrations [037](supabase/migrations/037_fix_profiles_privilege_escalation.sql) + [038](supabase/migrations/038_restrict_public_link_enumeration.sql)
+
+**What happened:** a full security pass over the just-opened live-payment surface (the 6 T1-1 gates, `_shared/{mode,allowlist,auth,env-guard}.ts`, all webhooks, public endpoints, RLS/grants verified against prod via the Supabase MCP). Two of my findings overlapped the parallel money-path effort (their D1 = my full-label underpayment; their D2 = a comp-via-flex-link free-label bypass I under-called as SAFE — credit to that review). The rest below are disjoint from D1–D4.
+
+**BLOCKER (fixed in prod) — profiles privilege escalation → self-serve admin.** The `profiles` UPDATE RLS policy (migration 001:196) is `USING (auth.uid() = id)` with **no `WITH CHECK`**, and `authenticated` held a **table-level UPDATE grant** (covers every column). Verified on prod: any signed-in user could `PATCH /rest/v1/profiles?id=eq.<own-uid> { "role":"admin", "admin_active_mode":"live_charge" }` and become admin → comp labels (free real EasyPost labels at SendMo cost), admin-report/admin-user-detail (all-customer PII, Rule 7), refunds, cancel-label. No trigger guarded `role`.
+- **Fix applied to prod 2026-07-06 via Supabase MCP** (non-destructive, reversible grant change; John authorized). Exact SQL run:
+  ```sql
+  REVOKE UPDATE ON public.profiles FROM anon, authenticated, public;
+  GRANT  UPDATE (full_name, avatar_url) ON public.profiles TO authenticated;
+  ```
+  Gotcha caught during verification: a **column-level** `REVOKE UPDATE (role)` is a no-op while a table-level UPDATE grant exists (`has_column_privilege` stays true) — the fix must revoke the table grant then re-grant only the two columns the client writes (`full_name`, `avatar_url` — the only ones AuthContext.tsx:85-89 touches). Post-fix verified: `has_column_privilege('authenticated','public.profiles','role','UPDATE')` = false; full_name/avatar_url = true. Durable record: migration 037 (renumbered from 036 — main claimed 036 for register_cron_sweeps the same day).
+
+**MEDIUMs — M5 fixed in prod; M1/M2/M4 landed in code in this PR:**
+- **M5 — anon could enumerate every active link.** Policy "Active links are publicly readable" (`status='active'`, role public) exposed all active `sendmo_links` (short_code, user_id, max_price_cents) to anon PostgREST. Nothing anonymous needs it (sender flow reads via the `links` edge fn = service role; owner reads are `auth.uid()`-scoped). **Fixed in prod 2026-07-06** — `DROP POLICY "Active links are publicly readable"` (migration 038, applied via MCP; verified only the owner-scoped policy remains).
+- **M1 — `addresses` trusted client `live_mode`** to pick the LIVE EasyPost key → anon live-quota burn. Fixed: `addresses/index.ts` forces `isLive=false` (verification is identical under the test key; no price impact). **`rates` deliberately NOT changed** — its non-link `live_mode` client-hint is the *decided* design (customer-live-payments review N2: quote-only, buy-side gates protect money, T2-3 bounds quota); forcing test there would drift from a decided proposal AND risk showing test rates to a live full-label customer.
+- **M4 — EasyPost webhook fails OPEN when `EASYPOST_WEBHOOK_HMAC_SECRET` is unset** (`webhooks/index.ts` `verifyEasypostHmac`). Telemetry confirms it's enforced in prod today (0 `hmac_skipped`), so latent — but a missing/rotated secret silently enables forged `refund.successful`/`shipment.invoice.created`. Fixed: fail closed when `SENDMO_ENV==='production'` (mirrors the T2-4 key guard); dev/preview still skip.
+- **M2 — rate-limit key was `X-Forwarded-For`-spoofable** (`_shared/ratelimit.ts:clientIpKey` took `[0]`, the client-controlled leftmost hop) → a per-request random XFF defeated T2-3 across all public endpoints. Fixed: key on the LAST (trusted edge-appended) hop; +regression test (`tests/unit/ratelimit.test.ts`, 10/10 green). Note: these in-memory limiters remain a per-isolate speed bump — a DB/Upstash-backed limiter is still the WISHLIST escalation for real abuse.
+
+**Deploy note:** M1/M2/M4 are edge-function code — they go live on the branch's merge→deploy (Rule 21). 037/038 are already live in prod (DB-side). The parallel money-path PR also touches `webhooks/index.ts` (200-on-error, a different region than M4's `verifyEasypostHmac`) — low conflict risk; sequence either PR first.
+
+**Ruled SAFE (verified):** Stripe + auth-email-hook signature verification (present, mandatory, fail-closed); ledger integrity (`transactions.idempotency_key` UNIQUE backstops webhook double-writes); flex mode/pricing (link-derived, server-derived cap, kill switch + allowlist); Rule 7 (recipient address server-resolved, not returned to sender; tracking withholds street1 + cancel_token); resolveLiveMode (anon always test); env-guard T2-4; SECURITY DEFINER RPCs (`set_account_budget`/`set_admin_active_mode` enforce admin internally; `resolve_recovery_lock` read-only); cross-tenant addresses/shipments scoped; no SSRF/SQLi.
+
+**Browser-verified:**
+  n/a-category: migration
+  n/a-reason: Prod RLS/grant change (037 + 038 both applied 2026-07-06) + edge-function auth logic; verified via SQL `has_column_privilege`/`pg_policies` checks, no DOM/wire-shape consumer.
+
+
 ### [2026-07-06] T1-3 flip ON HOLD (John) — no existing Sentry/PostHog accounts; paused before account creation
 
 **Category:** docs | Launch | Monitoring | decision

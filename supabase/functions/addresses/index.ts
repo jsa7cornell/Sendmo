@@ -67,7 +67,12 @@ serve(async (req: Request) => {
 
     try {
         const body = await req.json();
-        const isLive = body?.live_mode === true;
+        // SECURITY (pre-launch review 2026-07-06, M1): this public, unauth
+        // endpoint must NOT let a client pick the LIVE EasyPost key via a body
+        // field — that burns live rate/verify quota on the production account.
+        // Address verification returns identical results under the test key, so
+        // force test here unconditionally (Rule 14 — never trust client mode).
+        const isLive = false;
 
         const apiKey = Deno.env.get(isLive ? "EASYPOST_API_KEY" : "EASYPOST_TEST_API_KEY");
         if (!apiKey) {

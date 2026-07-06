@@ -103,7 +103,19 @@ async function verifyEasypostHmac(
   signatureHeader: string | null,
 ): Promise<{ ok: true; skipped?: boolean } | { ok: false; reason: string }> {
   const secret = Deno.env.get("EASYPOST_WEBHOOK_HMAC_SECRET");
-  if (!secret) return { ok: true, skipped: true };
+  if (!secret) {
+    // SECURITY (pre-launch review 2026-07-06, M4): fail CLOSED in production.
+    // An unset secret must never mean "accept unsigned" on this money-adjacent
+    // webhook — a forged refund.successful / shipment.invoice.created can write
+    // ledger rows and recharge a customer's card. Keyed on SENDMO_ENV
+    // (environment identity, like the T2-4 key guard), NOT the kill switch, so
+    // an incident flip can't disarm it. Dev/preview still skip so local testing
+    // isn't blocked.
+    if (Deno.env.get("SENDMO_ENV") === "production") {
+      return { ok: false, reason: "secret_not_configured_in_production" };
+    }
+    return { ok: true, skipped: true };
+  }
 
   if (!signatureHeader) {
     return { ok: false, reason: "missing_signature_header" };
