@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { requireAdmin } from "../_shared/auth.ts";
+import { isCronCall } from "../_shared/cron-auth.ts";
 import { createRefund } from "../_shared/stripe.ts";
 import { getRefundableBalanceForPI } from "../_shared/refunds.ts";
 import { writeEasypostRefund } from "../_shared/ledger.ts";
@@ -188,13 +189,21 @@ serve(async (req: Request) => {
 
   const sessionId = req.headers.get("x-session-id") || crypto.randomUUID();
 
-  // ── Auth: admin only ────────────────────────────────────────────────────────
-  let supabase: ReturnType<typeof createClient>;
-  try {
-    ({ supabase } = await requireAdmin(req, corsHeaders));
-  } catch (r) {
-    if (r instanceof Response) return r;
-    throw r;
+  // ── Auth: pg_cron (service-role Bearer) OR manual admin (user JWT) ──────────
+  // The cron path uses the service-role key as Bearer (isCronCall); the manual
+  // path is admin-gated via requireAdmin. Either is valid. Note: this function
+  // does NOT use the `supabase` client requireAdmin returns — it builds its own
+  // `serviceSupabase` below for all DB work — so the cron path needs no client
+  // binding here. (Fixes the silent-403-on-every-cron-run bug: previously this
+  // called requireAdmin unconditionally, so a service-role Bearer resolved to a
+  // principal with no profiles.role='admin' row → 403 → the sweep never ran.)
+  if (!isCronCall(req)) {
+    try {
+      await requireAdmin(req, corsHeaders);
+    } catch (r) {
+      if (r instanceof Response) return r;
+      throw r;
+    }
   }
 
   const sbUrl = Deno.env.get("SUPABASE_URL") || Deno.env.get("VITE_SUPABASE_URL");

@@ -12,6 +12,45 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-07-06] T2-1 — registered the pg_cron sweeps (reconciliation daily 04:00 + refund finalizer daily 04:30 UTC); fixed a silent-403 cron-auth bug; GUC→Vault forced by permissions
+
+**Category:** ship | Infra | Edge Functions | Payments (refund finalizer)
+**Cross-link:** decided proposal [proposals/2026-07-06_register-cron-sweeps_reviewed-2026-07-06_decided-2026-07-06.md](proposals/2026-07-06_register-cron-sweeps_reviewed-2026-07-06_decided-2026-07-06.md) | restores deferred Block 2 of migrations [034](supabase/migrations/034_reconciliation_cron.sql)/[035](supabase/migrations/035_refund_cron_state.sql) | PRE-LAUNCH **T2-1** | unblocked by T1-2 (Pro)
+
+**What shipped.** The two self-healing sweeps (`reconciliation-sweep`, `cron-refund-sweep`) were built + deployed weeks ago but never scheduled (pg_cron/pg_net weren't enabled on Free tier). Registered both on prod:
+- `reconciliation-sweep-daily` — `0 4 * * *`, body `{"mode":"daily"}`.
+- `refund-cron-sweep-daily` — `30 4 * * *`, body `{}` (offset 30 min to avoid concurrent EasyPost list-load).
+- **Weekly bulk recon (Sundays 05:00) DEFERRED** per review (heaviest job — Reports API + ~10 min in-function poll — re-exposes the reconciliation proposal's own decided Pitfall 4 with zero week-one benefit). One-liner to add later is in migration 036's header.
+
+**The bug found + fixed (the one genuinely-new finding).** `cron-refund-sweep` called `requireAdmin` **unconditionally** — no cron-auth-bypass branch (its sibling `reconciliation-sweep` has one). `requireAdmin` does `auth.getUser(token)` then requires a `profiles.role='admin'` row; a pg_cron service-role Bearer resolves to a principal with **no** profiles row → 403 "Profile not found". So scheduling it as-deployed would have made **every nightly run silently 403 and the refund finalizer never run** — the exact silent-failure T2-1 exists to close. Fix (Rule 6): new **`_shared/cron-auth.ts`** (`isCronCall(req)` + `getServiceRoleKey()`) imported by **both** sweeps — `cron-refund-sweep` gets the bypass; `reconciliation-sweep` refactored onto the shared helper, which also closes a verified env-read asymmetry (it read only `SUPABASE_SERVICE_ROLE_KEY`; the helper honors `SB_SERVICE_ROLE_KEY` too, matching `auth.ts` + `cron-refund-sweep`). Deployed via the "Deploy Supabase Edge Functions" CI workflow on this push.
+
+**Prod SQL executed (Rule 0.5 — target: SendMo PROD `fkxykvzsqdjzhurntgah`, via write-capable MCP `execute_sql`, staged to avoid half-apply):**
+1. `CREATE EXTENSION IF NOT EXISTS pg_cron; CREATE EXTENSION IF NOT EXISTS pg_net;` → both installed (pg_cron 1.6.4, pg_net 0.19.5); probed `SELECT count(*) FROM cron.job` (0) to confirm `cron` schema grants are wired.
+2. `SELECT vault.create_secret('https://fkxykvzsqdjzhurntgah.supabase.co','supabase_url', …);` → verified it decrypts back via `vault.decrypted_secrets`.
+3. The two `cron.schedule(...)` calls (idempotent: `PERFORM cron.unschedule(jobname) FROM cron.job WHERE jobname=…` first). Verified `SELECT jobname,schedule,active FROM cron.job` → both `active=t` with correct schedules + Vault-based bodies.
+
+**GUC → Vault (execution-time correction, self-decided).** Migrations 034/035 sketched `current_setting('app.service_role_key')` GUCs. **Impossible on this project:** `postgres` is `rolsuper=off`, so BOTH `ALTER DATABASE postgres SET app.*` and `ALTER ROLE postgres SET app.*` return `ERROR 42501: permission denied to set parameter`. Setting custom `app.*` GUCs is superuser-gated and Supabase doesn't expose it — for the agent OR John. Switched to the Supabase-canonical **Vault** pattern (confirmed via `search_docs` → "Scheduling Edge Functions"): the cron bodies read `supabase_url` + `service_role_key` from `vault.decrypted_secrets` at fire time (`postgres`, the pg_cron worker role, has SELECT on it — verified). This is a forced technical correction, not a design tradeoff — no John escalation.
+
+**Idle-fail-then-heal (register-before-key window, review N2).** The `service_role_key` Vault secret is John's step (below) and isn't set yet, so the jobs fire but the auth subquery returns NULL → `Bearer ` → the function 403s until John stores it. Any `failed`/403 rows in `cron.job_run_details` before John's step are **the documented idle-fail window, not a broken cron** — don't chase them.
+
+**REMAINING — John-only (secret, Rule 0):** store the service-role JWT in Vault so the jobs authenticate. Run in Dashboard → SQL Editor:
+```sql
+SELECT vault.create_secret('<service-role-jwt>', 'service_role_key', 'pg_cron sweep auth (T2-1)');
+```
+Value = Dashboard → Project `fkxykvzsqdjzhurntgah` → Settings → API (or the newer API Keys view) → the **`service_role`** secret (NOT anon/publishable). It **must equal the deployed `SUPABASE_SERVICE_ROLE_KEY` function secret byte-for-byte** (review B3), else `isCronCall` fails and runs 403. Do NOT paste it into chat. After it's set, the §6 money-safe force-run (below) is the proof: `succeeded` + `recon_state.reconciliation_daily.last_run_at ≈ now` = the whole chain works; a 403 = the Vault value ≠ the env secret.
+
+**Verification once John's secret is set (money-safe):** the reconciliation daily sweep is read-heavy/no-money — force one via a `* * * * *` one-off `cron.schedule` (unschedule after ~90s — **mandatory**), then confirm `cron.job_run_details.status='succeeded'` + `recon_state.reconciliation_daily.last_run_at` advanced. Do NOT force the refund sweep unless `SELECT count(*) FROM shipments WHERE refund_status='submitted' AND is_test=false AND refund_submitted_at < now()-interval '21 days' AND easypost_shipment_id IS NOT NULL` = 0 (else it finalizes real live refunds — let the natural 04:30 schedule be its first run). **Health signal for these jobs = downstream state advancing, NOT `job_run_details.status` alone** (pg_net is fire-and-forget; `succeeded` only means the SQL ran).
+
+**Migration tracker:** applied as raw DDL via `execute_sql`, NOT `apply_migration`, to preserve the established tracker state (001-016 registered; 017-035 went through the Dashboard SQL Editor and were never recorded). The repo file `036_register_cron_sweeps.sql` is the source record; the 017-036 tracker gap is intentional.
+
+**Tests:** none added — infra SQL + a one-branch auth change on Deno edge functions (no local Deno; covered by the CI edge-deploy typecheck/bundle + the mandatory post-key force-run). No `src/` changes; `tsc -b` unaffected.
+
+**Browser-verified:**
+  n/a-category: infra
+  n/a-reason: pg_cron registration + Vault secret + edge-function auth-gate change. No DOM/rendered surface or UI-consumed response shape changes — the two sweeps are server-to-server (pg_cron → net.http_post → Edge Function). End-to-end proof is the post-key reconciliation force-run advancing `recon_state.last_run_at`, per the LOG verification block, not a browser check.
+
+---
+
 ### [2026-07-05] Money-path fix — flex shipments never stitched their PI → cancel skipped the refund (first live flex cancel)
 
 **Category:** fix | Payments | Refunds | Edge Functions
