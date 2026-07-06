@@ -51,6 +51,23 @@ Value = Dashboard → Project `fkxykvzsqdjzhurntgah` → Settings → API (or th
 
 > **Takeover addendum (2026-07-06, second session).** Two sessions were dispatched onto T2-1 the same morning and independently ran the full proposal→review→decide arc, converging on the same bug, the same `_shared/cron-auth.ts` fix, and the same Vault call (this arc empirically — GUC impossible, `42501`; the second arc a priori — Vault is Supabase's current documented pattern). The second arc's owner discovered the concurrent prod state mid-execution (unexpected `cron.job` rows), stopped, and John directed "take over & finish." Deltas the takeover added: **(1)** `config.toml` `verify_jwt` pinned `false` for both sweeps — the previous `true` was dead config (CI always deploys `--no-verify-jwt`) that a *manual* `functions deploy` would have silently enforced on money-path cron targets; **(2)** `reconciliation-sweep-weekly` registered (**Rule 0.5 prod write, second session:** `PERFORM cron.unschedule(...)` guard + `SELECT cron.schedule('reconciliation-sweep-weekly','0 5 * * 0', <same Vault-read net.http_post body, {"mode":"weekly"}>)` — verified all 3 jobs `active=t`), overriding this arc's defer per John's direct call; wall-clock risk WISHLIST-tracked; **(3)** takeover addendum on the decided proposal records both arcs (the second arc's reviewed proposal survives in branch history, commits `e20db38`/`ca958f0`). The duplicated cycle is a dispatch-coordination lesson: check prod state + in-flight branches before starting a PRE-LAUNCH item.
 
+> **T2-1 FULL STATUS as of 2026-07-06 ~14:45 UTC (end of the takeover session).** Everything agent-side is done; the item closes on John's one Vault statement + the post-secret verification run.
+>
+> | Piece | Stage | Evidence |
+> |---|---|---|
+> | `pg_cron` 1.6.4 + `pg_net` 0.19.5 | **Deployed** (enabled on prod) | `pg_extension` query |
+> | Vault `supabase_url` (non-secret) | **Deployed** (agent-seeded) | `vault.secrets` → 1 row |
+> | `reconciliation-sweep-daily` `0 4 * * *` | **Deployed** (registered, `active=t`) | `cron.job` re-verified 14:40 UTC |
+> | `refund-cron-sweep-daily` `30 4 * * *` | **Deployed** (registered, `active=t`) | ditto |
+> | `reconciliation-sweep-weekly` `0 5 * * 0` | **Deployed** (registered, `active=t`; per John's takeover call) | ditto |
+> | cron-auth bug fix (`_shared/cron-auth.ts`, both sweeps) | **Deployed** (CI run green on `d451fe9`; sweeps at v12/v11, `verify_jwt:false`) | `list_edge_functions` + Deploy workflow success 13:17 UTC |
+> | Takeover deltas (config.toml pin, weekly in migration 036, docs) | **Merged** — [PR #40](https://github.com/jsa7cornell/Sendmo/pull/40) → `ca7eff7`; docs-only, correctly did NOT trigger a function redeploy | `gh run list` (no Deploy run post-13:17) |
+> | CI for `ca7eff7` ("Provide Tests") | in progress at entry time — Rule 21 owner: this session, fix-forward if red | `gh run list` |
+> | Vault `service_role_key` | **NOT SET — John's step, blocks the sweeps authenticating** | `vault.secrets` has only `supabase_url`; `cron.job_run_details` 0 rows (first fire 04:00 UTC 2026-07-07, will idle-fail until the secret lands — expected, don't chase) |
+> | Post-secret verification (force recon-daily → `recon_state.last_run_at` advances; refund sweep only if stale-live-refund count = 0) | **Not started** — gated on John's step | procedure in the REMAINING/Verification blocks above |
+>
+> **PRE-LAUNCH T2-1 stays `[~]` until:** John's `SELECT vault.create_secret('<service-role-jwt>', 'service_role_key', 'pg_cron sweep auth (T2-1)');` (Dashboard SQL Editor — value from Settings → API → `service_role`, must equal the deployed `SUPABASE_SERVICE_ROLE_KEY` byte-for-byte) → then the money-safe force-run above → then flip to `[x]` and note the first green nightly runs.
+
 ### [2026-07-06] T1-3 COMPLETE (code) — Sentry frontend error monitoring + CrashScreen boundary + PostHog pageview-only (ships inert)
 
 **Category:** ship | Launch | Monitoring | Frontend
