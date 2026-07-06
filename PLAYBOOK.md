@@ -94,6 +94,10 @@ RESEND_API_KEY=...              # Must also be set as Supabase secret for Edge F
 # App
 VITE_APP_URL=http://localhost:5173
 VITE_SHORT_LINK_BASE=sendmo.co/s   # Production domain is sendmo.co
+
+# Monitoring (T1-3 — both optional; unset = SDK never initializes)
+VITE_SENTRY_DSN=...             # Sentry frontend error monitoring (Vercel Production + Preview)
+VITE_POSTHOG_KEY=...            # PostHog analytics (pageview-only; Vercel Production)
 ```
 
 ## Design System (Strict)
@@ -355,6 +359,8 @@ No production-path stubs remain. (Minor non-production leftovers: `src/pages/Sen
 - `VITE_SUPABASE_ANON_KEY` — Supabase anon/publishable key
 - `VITE_APP_URL` — `https://sendmo.co`
 - `VITE_GOOGLE_MAPS_API_KEY` — Google Maps API key for address autocomplete
+- `VITE_SENTRY_DSN` — Sentry error monitoring (scope: Production + Preview; leave Development unset)
+- `VITE_POSTHOG_KEY` — PostHog analytics, pageview-only (scope: Production)
 
 **Important**: Vercel does NOT read `.env.local`. All `VITE_*` vars must be added via `vercel env add` or the Vercel dashboard. After adding/changing env vars, redeploy with `vercel --prod`.
 

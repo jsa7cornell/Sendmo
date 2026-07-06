@@ -2,9 +2,10 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { dispatchNotifications } from "../_shared/notifications.ts";
-import { createRefund } from "../_shared/stripe.ts";
 import { writeEasypostRefund } from "../_shared/ledger.ts";
-import { getRefundableBalanceForPI } from "../_shared/refunds.ts";
+import { initiateCancelRefund } from "../_shared/refunds.ts";
+import { getPaidAmountCentsForShipment } from "../_shared/paid-amount.ts";
+import { runInBackground } from "../_shared/background.ts";
 import { log } from "../_shared/logger.ts";
 import { sendEmail } from "../_shared/resend.ts";
 import { refundUnsuccessfulEmail } from "../_shared/email-templates.ts";
@@ -166,13 +167,13 @@ serve(async (req: Request) => {
                   day: "numeric",
                 })
               : undefined;
-            dispatchNotifications(supabase, shipment.id, liveStatus, {
+            runInBackground(dispatchNotifications(supabase, shipment.id, liveStatus, {
               tracking_number: shipment.tracking_number,
               public_code: shipment.public_code,
               carrier: shipment.carrier || "",
               estimated_delivery: estDeliveryFmt,
               tracking_url: `${APP_URL}/t/${shipment.public_code}`,
-            });
+            }), "tracking_dispatch");
           }
         }
       } catch {
@@ -244,47 +245,44 @@ serve(async (req: Request) => {
               // 05-13; Stripe dedupes on key so repeated polls in the window
               // before charge.refunded lands are no-ops.
               //
-              // H3 (N3 fix): compute the remaining per-PI refundable balance
-              // before passing amount_cents. Without this, a shipment that has
-              // already had a partial admin refund would send amount_cents=full
-              // charge to Stripe, which would reject with an over-refund error.
-              // getRefundableBalanceForPI throws on DB error (never silently
-              // returns 0) — caught below along with the Stripe call errors.
+              // Shared helper (Rule 6): initiateCancelRefund computes the
+              // remaining per-PI refundable balance and SKIPS (never calls
+              // Stripe) when it is <= 0 — passing undefined amount_cents here
+              // used to mean "refund ALL remaining" on a zero-balance ledger.
+              // It throws on DB/Stripe error (never silently returns 0) —
+              // caught below.
               try {
-                const refundableBalance = await getRefundableBalanceForPI(
+                const refundResult = await initiateCancelRefund({
                   supabase,
-                  shipment.stripe_payment_intent_id,
-                );
-                await createRefund({
-                  payment_intent_id: shipment.stripe_payment_intent_id,
-                  amount_cents: refundableBalance > 0 ? refundableBalance : undefined,
-                  reason: "requested_by_customer",
-                  metadata: {
-                    shipment_id: shipment.id,
-                    public_code: shipment.public_code,
-                    trigger: "tracking_poll",
-                  },
-                  idempotency_key: `refund_${shipment.easypost_shipment_id}_user_cancel`,
+                  stripePaymentIntentId: shipment.stripe_payment_intent_id,
+                  easypostShipmentId: shipment.easypost_shipment_id!,
+                  shipmentId: shipment.id,
+                  publicCode: shipment.public_code,
+                  trigger: "tracking_poll",
                   liveMode: !shipment.is_test,
                 });
                 // Persist the EP confirmation to easypost_refund_status
                 // (migration 030) so the admin dashboard shows 'refunded'
                 // immediately, before Stripe's charge.refunded webhook lands.
+                // Done for the skip case too — the carrier DID confirm the
+                // void; only the Stripe money-move was skipped.
                 await supabase
                   .from("shipments")
                   .update({ easypost_refund_status: "refunded" })
                   .eq("id", shipment.id);
-                log({
-                  event_type: "cancel.stripe_refund_initiated",
-                  source: "tracking",
-                  severity: "info",
-                  entity_type: "shipment",
-                  entity_id: shipment.id,
-                  properties: {
-                    payment_intent_id: shipment.stripe_payment_intent_id,
-                    trigger: "tracking_poll",
-                  },
-                });
+                if (!refundResult.skipped) {
+                  log({
+                    event_type: "cancel.stripe_refund_initiated",
+                    source: "tracking",
+                    severity: "info",
+                    entity_type: "shipment",
+                    entity_id: shipment.id,
+                    properties: {
+                      payment_intent_id: shipment.stripe_payment_intent_id,
+                      trigger: "tracking_poll",
+                    },
+                  });
+                }
                 // Leave refund_status='submitted' — stripe-webhook will
                 // advance to 'refunded' when charge.refunded fires.
               } catch (refundErr) {
@@ -325,14 +323,17 @@ serve(async (req: Request) => {
             }
 
             // ── H1: easypost_refund ledger row ──────────────────────────
-            // Fire-and-forget: a failed ledger write must not break the
-            // tracking page response. writeEasypostRefund catches internally
-            // and logs a severity=error event_logs row on failure.
+            // Awaited: a fire-and-forget promise still pending when the
+            // handler returns can be cut off when the edge isolate is
+            // reclaimed (the 2026-06-27 label_created email bug class), and
+            // ledger completeness matters more than the ~one cheap DB write
+            // of latency. writeEasypostRefund never throws by design — it
+            // catches internally and logs a severity=error event_logs row.
             // Idempotency key = 'easypost_refund_<refund_object_id>' prevents
             // duplicate rows when both the tracking poll and the refund.successful
             // webhook race to write the same event (B4 fix).
             const linkJoinForLedger = shipment.sendmo_links as unknown as { user_id?: string; id?: string } | null;
-            writeEasypostRefund({
+            await writeEasypostRefund({
               supabase,
               sessionId: req.headers.get("x-session-id") || "tracking",
               shipmentId: shipment.id,
@@ -344,8 +345,6 @@ serve(async (req: Request) => {
               mode: shipment.is_test ? "test" : "live",
               isComp: !shipment.stripe_payment_intent_id,
               source: "tracking_poll",
-            }).catch((err) => {
-              console.error("[tracking] writeEasypostRefund unexpected throw:", err);
             });
           } else if (epRefundStatus === "rejected") {
             // Carrier rejected the void (label was scanned). Terminal state.
@@ -368,9 +367,11 @@ serve(async (req: Request) => {
 
             // ── H5: Email C — refund unsuccessful ──────────────────────────
             // Send once per shipment (keyed on PI id) via notifications_log dedup.
-            // Fire-and-forget — tracking page response must not block on email.
+            // Fire-and-forget via runInBackground — tracking page response must
+            // not block on email, but EdgeRuntime.waitUntil keeps the send alive
+            // after the response instead of racing isolate reclamation.
             if (shipment.stripe_payment_intent_id) {
-              (async () => {
+              runInBackground((async () => {
                 try {
                   // Dedup: insert notifications_log row first.
                   const { error: logErr } = await supabase
@@ -408,8 +409,17 @@ serve(async (req: Request) => {
                   const rejectedRefund = refundObjects.find((r) => r.status === "rejected");
                   const reason = rejectedRefund?.message ?? null;
 
+                  // Quote what the CUSTOMER paid (the +charge ledger row),
+                  // not shipments.rate_cents (SendMo's EasyPost cost —
+                  // ~15%+$1 lower). Falls back to rate_cents when no charge
+                  // row exists (comp labels, webhook-lag window).
+                  const paidAmountCents = await getPaidAmountCentsForShipment(
+                    supabase,
+                    shipment.stripe_payment_intent_id,
+                    (shipment as { rate_cents?: number | null }).rate_cents ?? 0,
+                  );
                   const tpl = refundUnsuccessfulEmail({
-                    amount_cents: (shipment as { rate_cents?: number | null }).rate_cents ?? 0,
+                    amount_cents: paidAmountCents,
                     carrier: shipment.carrier ?? "the carrier",
                     public_code: shipment.public_code,
                     tracking_url: `${APP_URL}/t/${shipment.public_code}`,
@@ -441,7 +451,7 @@ serve(async (req: Request) => {
                     properties: { error_message: msg, trigger: "tracking_poll" },
                   });
                 }
-              })();
+              })(), "refund_unsuccessful_email");
             }
           }
           // epRefundStatus === 'submitted' → still waiting; no action

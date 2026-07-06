@@ -313,10 +313,6 @@ serve(async (req: Request) => {
       const paid = sumByType("charge");                          // + customer paid
       const stripeFee = Math.abs(sumByType("fee_stripe"));       // absolute (stored negative)
       const refundedToCustomer = Math.abs(sumByType("refund"));  // absolute (stored negative)
-      const adjustmentCollected = sumByType("carrier_adjustment") > 0
-        ? 0
-        : Math.abs(txs.filter((t) => t.type === "carrier_adjustment" && t.amount_cents > 0)
-            .reduce((sum, t) => sum + t.amount_cents, 0));
       // Adjustment collected = positive carrier_adjustment tx (re-charge rows)
       const adjCollected = txs
         .filter((t) => t.type === "carrier_adjustment" && t.amount_cents > 0)

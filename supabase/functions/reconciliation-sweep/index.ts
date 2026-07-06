@@ -31,6 +31,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 import { requireAdmin } from "../_shared/auth.ts";
+import { isCronCall, getServiceRoleKey } from "../_shared/cron-auth.ts";
 import { log } from "../_shared/logger.ts";
 import { resolveRecovery } from "../_shared/adjustments.ts";
 import type { AdjustmentShipment, AdjustmentPaymentContext } from "../_shared/adjustments.ts";
@@ -575,17 +576,16 @@ serve(async (req: Request) => {
   }
 
   // Auth — this endpoint is called by pg_cron (uses service role key as Bearer)
-  // AND can be called manually by admins. Both paths are valid.
-  const authHeader = req.headers.get("Authorization");
-  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+  // AND can be called manually by admins. Both paths are valid. The cron-path
+  // decision + service-role key read now live in _shared/cron-auth.ts so both
+  // sweeps read the key identically (getServiceRoleKey honors both env names).
   const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
 
   let supabase;
-  const isCronCall = authHeader === `Bearer ${serviceRoleKey}` && serviceRoleKey !== "";
-
-  if (isCronCall) {
+  const cronCall = isCronCall(req);
+  if (cronCall) {
     // Cron invocation — use service-role client directly.
-    supabase = createClient(supabaseUrl, serviceRoleKey);
+    supabase = createClient(supabaseUrl, getServiceRoleKey());
   } else {
     // Manual admin invocation — verify admin JWT.
     try {
@@ -611,7 +611,7 @@ serve(async (req: Request) => {
       event_type: "recon.sweep_started",
       session_id: sessionId,
       severity: "info",
-      properties: { mode, triggered_by: isCronCall ? "cron" : "admin" },
+      properties: { mode, triggered_by: cronCall ? "cron" : "admin" },
     });
 
     let result: object;

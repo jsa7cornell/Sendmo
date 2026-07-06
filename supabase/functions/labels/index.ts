@@ -18,6 +18,8 @@ import { sendAdminAlert } from "../_shared/alert.ts";
 import { resolveLiveMode } from "../_shared/mode.ts";
 import { assertKeysMatchEnv } from "../_shared/env-guard.ts";
 import { checkLiveChargeAllowed } from "../_shared/allowlist.ts";
+import { resolveGateBasisCents } from "../_shared/pricing.ts";
+import { runInBackground } from "../_shared/background.ts";
 
 // Pricing markup MUST stay in sync with supabase/functions/rates/index.ts.
 // Server-derives display_price_cents from EasyPost rate for the flex-link
@@ -151,8 +153,8 @@ serve(async (req: Request) => {
         //   3. Resolves recipient_email from sendmo_links.user_id → profiles.email
         //   4. Server-derives display_price_cents from EasyPost rate and
         //      compares to link.max_price_cents (cap re-check)
-        // The flex-link is the auth claim that authorizes the `comp` path —
-        // see comp gate below.
+        // A flex link does NOT authorize the `comp` path — comp is admin-JWT
+        // only (comp gate below, tightened 2026-07-06).
         let resolvedLink: {
             id: string;
             short_code: string;
@@ -379,11 +381,14 @@ serve(async (req: Request) => {
             }).isLive;
         }
 
-        // ─── Comp-gate hardening (proposal §3.5) ────────────────
-        // `comp: true` is now allowed only when EITHER (a) a valid active flex
-        // link authorized the call (resolvedLink !== null), OR (b) the caller
-        // has an admin JWT. Anonymous callers with comp=true are rejected.
-        if (isComp && !resolvedLink) {
+        // ─── Comp-gate hardening (proposal §3.5; tightened 2026-07-06) ─
+        // `comp: true` requires an admin JWT UNCONDITIONALLY. The old
+        // `&& !resolvedLink` carve-out was the pre-Pattern-D sender-flow
+        // design (comp-only era): once Pattern D made flex charge real money,
+        // a flex link no longer authorizes a free label — anyone holding a
+        // link URL could POST {comp:true, link_short_code} and skip payment,
+        // the kill switch, AND the allowlist. Anonymous callers rejected.
+        if (isComp) {
             const authHeader = req.headers.get("Authorization") || req.headers.get("authorization") || "";
             const token = authHeader.replace(/^Bearer\s+/i, "");
             const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || Deno.env.get("VITE_SUPABASE_ANON_KEY") || "";
@@ -395,7 +400,7 @@ serve(async (req: Request) => {
                     severity: "warn",
                     entity_type: "label",
                     entity_id: easypost_shipment_id,
-                    properties: { reason: "no_jwt_no_link" },
+                    properties: { reason: resolvedLink ? "link_no_admin" : "no_jwt_no_link" },
                 });
                 return new Response(
                     JSON.stringify({ error: "Comp labels require an admin session or a valid flex link" }),
@@ -427,7 +432,7 @@ serve(async (req: Request) => {
                     severity: "warn",
                     entity_type: "label",
                     entity_id: easypost_shipment_id,
-                    properties: { reason: "not_admin", user_id: userResp.user.id },
+                    properties: { reason: resolvedLink ? "link_no_admin" : "not_admin", user_id: userResp.user.id },
                 });
                 return new Response(
                     JSON.stringify({ error: "Comp labels require an admin session or a valid flex link" }),
@@ -986,7 +991,8 @@ serve(async (req: Request) => {
         //     refunded:false so the client shows honest copy.
         //   • Comp labels: exempt (SendMo absorbs EP cost by design).
         //
-        // Skipped when display_price_cents is missing or zero — can't compare.
+        // Skipped when the trusted price basis resolves to 0 — comp only,
+        // now that a verified PI amount always backstops the paid legs.
         const STRIPE_FEE_PCT = 0.029;
         const STRIPE_FEE_FLAT_CENTS = 30;
         const MIN_NET_MARGIN_PCT = parseFloat(
@@ -996,7 +1002,19 @@ serve(async (req: Request) => {
             Deno.env.get("LABEL_BUY_GATE_SOFT_DRIFT_PCT") ?? "0.05"
         );
 
-        const gateDisplayCents = typeof display_price_cents === "number" ? display_price_cents : 0;
+        // Trusted basis only (fix 2026-07-06): on the full-label leg the body
+        // display_price_cents is attacker-controlled (payments creates the PI
+        // for any amount ≥ 50¢), and a 0 skipped the gate entirely — pay 50¢,
+        // buy a $50 label. The basis is the server-derived rate when the flex
+        // leg set it (:307/:330), else the VERIFIED PI amount (what the
+        // customer actually paid IS the display price), else 0 (comp — no
+        // charge to compare). See _shared/pricing.ts + tests/unit/pricingGate.test.ts.
+        const gateDisplayCents = resolveGateBasisCents({
+            serverDerivedCents: resolvedLink && typeof display_price_cents === "number"
+                ? display_price_cents
+                : null,
+            verifiedPiAmountCents: verifiedPaymentIntent?.amount ?? null,
+        });
 
         if (gateDisplayCents > 0 && !isComp) {
             // Refetch rate — same fallback pattern as the flex-cap block above
@@ -1397,7 +1415,13 @@ serve(async (req: Request) => {
                     p_easypost_shipment_id: easypost_shipment_id,
                     p_easypost_tracker_id: buyData.tracker?.id ?? null,
                     p_rate_cents: Math.round(parseFloat(buyData.selected_rate?.rate || "0") * 100),
-                    p_display_price_cents: display_price_cents ?? Math.round(parseFloat(buyData.selected_rate?.rate || "0") * 100),
+                    // Persist the TRUSTED display price on paid legs (fix
+                    // 2026-07-06): flex keeps the server-derived value,
+                    // full-label persists the verified PI amount — never the
+                    // raw body value. Comp keeps the client value (no charge
+                    // to cross-check; the gate above is admin-only).
+                    p_display_price_cents: (isComp ? display_price_cents : (gateDisplayCents > 0 ? gateDisplayCents : null))
+                        ?? Math.round(parseFloat(buyData.selected_rate?.rate || "0") * 100),
                     // Read parcel dims from the EasyPost buy response (source of
                     // truth — what carriers were actually quoted and billed on),
                     // not the client request body. The client `buyLabel` wrapper
@@ -1445,13 +1469,16 @@ serve(async (req: Request) => {
 
                         // ── Ledger: label_cost (H1 — migration 032) ────────
                         // Write a label_cost transaction row recording that
-                        // SendMo paid EasyPost for this label. Fire-and-forget
-                        // wrapper — failure is logged but never breaks label-buy.
+                        // SendMo paid EasyPost for this label. AWAITED (fix
+                        // 2026-07-06) — it was fire-and-forget, so the isolate
+                        // could be reclaimed before the row landed; it's a
+                        // cheap DB write and ledger completeness matters. The
+                        // helper catches internally and never breaks label-buy.
                         // Per PLAYBOOK Rule 16 (amended): labels is the sole
                         // writer for label_cost rows.
                         if (shipmentId) {
                             const rateCents = Math.round(parseFloat(buyData.selected_rate?.rate || "0") * 100);
-                            writeLabelCost({
+                            await writeLabelCost({
                                 supabase,
                                 sessionId,
                                 shipmentId,
@@ -1668,23 +1695,28 @@ serve(async (req: Request) => {
                                             displayPriceCents: labelCreatedCtx.display_price_cents,
                                             variant: resolvedLink ? "flex" : "full_label",
                                         });
-                                        sendEmail({ to: payerAddr, subject: tpl.subject, html: tpl.html })
-                                            .then(({ id }) => log({
-                                                event_type: "email.label_confirmation_fallback_sent",
-                                                session_id: sessionId,
-                                                severity: "warn",
-                                                entity_type: "shipment",
-                                                entity_id: shipmentId,
-                                                properties: { resend_id: id, public_code: publicCode, reason: "notification_contacts_insert_failed" },
-                                            }))
-                                            .catch((err) => log({
-                                                event_type: "email.label_confirmation_error",
-                                                session_id: sessionId,
-                                                severity: "error",
-                                                entity_type: "shipment",
-                                                entity_id: shipmentId,
-                                                properties: { error_message: err instanceof Error ? err.message : String(err), public_code: publicCode },
-                                            }));
+                                        // runInBackground (fix 2026-07-06): keep the send alive
+                                        // past the handler return via EdgeRuntime.waitUntil.
+                                        runInBackground(
+                                            sendEmail({ to: payerAddr, subject: tpl.subject, html: tpl.html })
+                                                .then(({ id }) => log({
+                                                    event_type: "email.label_confirmation_fallback_sent",
+                                                    session_id: sessionId,
+                                                    severity: "warn",
+                                                    entity_type: "shipment",
+                                                    entity_id: shipmentId,
+                                                    properties: { resend_id: id, public_code: publicCode, reason: "notification_contacts_insert_failed" },
+                                                }))
+                                                .catch((err) => log({
+                                                    event_type: "email.label_confirmation_error",
+                                                    session_id: sessionId,
+                                                    severity: "error",
+                                                    entity_type: "shipment",
+                                                    entity_id: shipmentId,
+                                                    properties: { error_message: err instanceof Error ? err.message : String(err), public_code: publicCode },
+                                                })),
+                                            "label_confirmation_fallback",
+                                        );
                                     }
                                 } else {
                                     log({
@@ -1701,13 +1733,18 @@ serve(async (req: Request) => {
                                     // dispatchNotifications reads the contacts we just wrote
                                     // and routes LABEL_CREATED_EVENT to the payer-role contact
                                     // only (sender for full-label, recipient/owner for flex).
-                                    // Fire-and-forget, matching tracking/webhooks. Its
+                                    // Fire-and-forget via runInBackground (fix 2026-07-06:
+                                    // EdgeRuntime.waitUntil keeps it alive past the handler
+                                    // return — the 2026-06-27 bug class). Its
                                     // notifications_log guard dedupes per (shipment, contact,
                                     // event), so it's robust to a re-dispatch of the SAME
                                     // contact rows; it does NOT dedupe across a labels-function
                                     // retry that re-inserts fresh contact rows (no unique
                                     // constraint on notification_contacts — see OQ3, deferred).
-                                    dispatchNotifications(supabase, shipmentId, LABEL_CREATED_EVENT, labelCreatedCtx);
+                                    runInBackground(
+                                        dispatchNotifications(supabase, shipmentId, LABEL_CREATED_EVENT, labelCreatedCtx),
+                                        "label_created_dispatch",
+                                    );
                                 }
                             } else {
                                 log({
@@ -1736,7 +1773,10 @@ serve(async (req: Request) => {
                         //       row directly. Awaited (not fire-and-forget) so the
                         //       insert error surfaces and we don't return 200 with
                         //       missing ledger state (round-2 B2 await discipline).
-                        if (shipmentId && (isComp || (!verifiedPaymentIntent && isLive))) {
+                        // (The old `|| (!verifiedPaymentIntent && isLive)` arm was
+                        // unreachable defensive code — both non-comp legs guarantee a
+                        // PI or early-return. Removed 2026-07-06.)
+                        if (shipmentId && isComp) {
                             const rateCents = Math.round(parseFloat(buyData.selected_rate?.rate || "0") * 100);
                             // comp_grant amount is negative — SendMo absorbs the EasyPost cost.
                             const compAmountCents = -Math.abs(rateCents || display_price_cents || 0);
