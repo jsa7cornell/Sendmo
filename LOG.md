@@ -39,6 +39,25 @@ Connection was the session pooler as `postgres.fkxykvzsqdjzhurntgah` with `PGPAS
   n/a-category: infra
   n/a-reason: Prod Vault secret + cron auth activation + doc status changes; verified via in-DB boolean checks and an HTTP-200 edge-function auth probe, no DOM/wire-shape consumer. T1-3 change is a doc/decision update (the monitoring code is unchanged and inert).
 
+---
+
+### [2026-07-06] Monitoring-stack REVERSAL (John) — Sentry + PostHog are OUT; GA4-only analytics proposed; discovery proposals reevaluated
+
+> Same decision as recorded in the T2-1 entry above ("fully deferred") — this entry adds the proposal-level follow-through: the merged inert layer is now slated for **removal** (not just left inert) via the rewritten GA4 proposal, pending its review/decision.
+
+**Category:** docs | Launch | Monitoring | Analytics | decision
+**Cross-link:** resolves the T1-3 flip-hold entry below | reversal addendum in [proposals/2026-07-06_sentry-posthog-frontend-monitoring_reviewed-2026-07-06_decided-2026-07-06.md](proposals/2026-07-06_sentry-posthog-frontend-monitoring_reviewed-2026-07-06_decided-2026-07-06.md) | rewritten in-review [proposals/2026-07-06_ga4-acquisition-analytics.md](proposals/2026-07-06_ga4-acquisition-analytics.md) | unaffected sibling [proposals/2026-07-06_seo-crawl-hygiene-and-discovery.md](proposals/2026-07-06_seo-crawl-hygiene-and-discovery.md) | PRE-LAUNCH T1-3
+
+**Decision (John, 2026-07-06):** SendMo will **not** use Sentry or PostHog — the flip hold (entry below) resolved as its option 3 in the strongest form. No vendor accounts were ever created and no env vars were ever set, so the merged frontend layer (`364462a`) was inert for its entire life; nothing external needs unwinding. **Standing instruction for all future agents: never create Sentry/PostHog accounts or set `VITE_SENTRY_DSN`/`VITE_POSTHOG_KEY`.**
+
+**Follow-through (this session):** (1) the same-day GA4 proposal was **rewritten** — GA4 is now positioned as SendMo's *only* analytics tool (not a PostHog complement), and the same proposal is the removal vehicle for the inert Sentry/PostHog layer (deps out of `package.json`, ~75 KB gz off the checkout bundle, Sentry plumbing out of `main.tsx`/`App.tsx`/`vite.config.ts`; CrashScreen survives on a plain React boundary per that review's B2; funnel-events fast-follow re-scoped to single-sink `gtag`). In-review — no code changes until decided. (2) Reversal addendum appended to the decided Sentry/PostHog proposal; PRE-LAUNCH T1-3 status rewritten (server-half alerting stands as the deliverable). (3) The SEO crawl-hygiene sibling proposal is unaffected (no monitoring dependency). **Known accepted gap pending John's OQ1 call in the GA4 proposal:** frontend JS errors are unmonitored (server money-path alert emails unaffected).
+
+**Browser-verified:**
+  n/a-category: docs
+  n/a-reason: decision/status record + proposal rewrite only; no code changed.
+
+---
+
 ### [2026-07-06] T1-3 flip ON HOLD (John) — no existing Sentry/PostHog accounts; paused before account creation
 
 **Category:** docs | Launch | Monitoring | decision

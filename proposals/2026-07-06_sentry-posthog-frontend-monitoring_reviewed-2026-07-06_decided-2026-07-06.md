@@ -4,7 +4,7 @@ slug: sentry-posthog-frontend-monitoring
 project: sendmo
 status: decided
 created: 2026-07-06
-last_updated: 2026-07-06 (author response + decision appended)
+last_updated: 2026-07-06 (Decision addendum appended — REVERSED by John same day; see addendum at end of file)
 reviewed: 2026-07-06
 decided: 2026-07-06
 author: Claude session "SendMo — T1-3 monitoring wiring — 2026-07-06" (same session will implement)
@@ -562,3 +562,32 @@ this merge is irreversible (env vars unset = fully inert). Implementation begins
 author session; spec = sections 1–7 **as amended by the Author response** (B1 App.tsx
 wrapper, B2 restated inert contract, B3 Rule 19 block, B4 + N5 PostHog
 pageview-only/deferred-import).
+
+## Decision addendum — REVERSED by John (2026-07-06, same day)
+
+**John's direction (2026-07-06, after the flip hold recorded in LOG `939313b`):
+SendMo will not use Sentry or PostHog.** This resolves the hold's "Decision John is
+holding" as option 3 in its strongest form — the vendor choice is reversed, not
+paused. No vendor accounts were ever created; no env vars were ever set; the merged
+code (`364462a`) ran fully inert its whole life, so **nothing external needs
+unwinding**.
+
+What this means going forward:
+
+- **Do NOT create Sentry/PostHog accounts or set `VITE_SENTRY_DSN` /
+  `VITE_POSTHOG_KEY`** — this supersedes the "when John resolves the hold" framing
+  in PRE-LAUNCH T1-3 and the §6 runbook above.
+- **The merged inert layer is slated for removal.** The removal (deps, Sentry
+  plumbing in `main.tsx`/`App.tsx`/`vite.config.ts`, PostHog branch) plus the
+  replacement analytics (GA4) are specified in
+  [2026-07-06_ga4-acquisition-analytics.md](2026-07-06_ga4-acquisition-analytics.md)
+  — in-review; nothing is removed until that proposal is decided.
+- **What survives the reversal:** the CrashScreen error boundary (this review's B2:
+  "an improvement we want regardless of Sentry" — reimplemented as a plain React
+  boundary), the pure-resolver ships-inert pattern in `monitoring.ts` (retargeted
+  to GA4), the N3 privacy-disclosure discipline, and the untouched **server half of
+  T1-3** (admin-alert emails).
+- **The reviewed engineering in this file remains load-bearing institutional
+  memory** — the PII postures, the idle-load rule, and the inert-contract wording
+  are all carried forward by the GA4 proposal; only the vendors changed.
+

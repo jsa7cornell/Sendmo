@@ -4,7 +4,7 @@ slug: seo-crawl-hygiene-and-discovery
 project: sendmo
 status: in-review
 created: 2026-07-06
-last_updated: 2026-07-06
+last_updated: 2026-07-06 (reconciliation note updated same day — Sentry/PostHog reversal; no functional change to this proposal)
 reviewed: null
 decided: null
 author: Claude session "SendMo — SEO + GA4 discovery research — 2026-07-06"
@@ -276,7 +276,9 @@ greenfield, not drift. Adjacent work honored: the `/s/` OG middleware (commits
 redesigned** — the personalised-preview behavior it exists for is explicitly preserved
 (§6 step 4); [2026-07-06_sentry-posthog-frontend-monitoring](2026-07-06_sentry-posthog-frontend-monitoring_reviewed-2026-07-06_decided-2026-07-06.md)
 touches `main.tsx`/`monitoring.ts`, which this proposal doesn't touch (no file
-overlap); PRE-LAUNCH **T3-3** (public-facing polish: logo, icons, OG image) is cited
+overlap) — and its same-day **reversal by John** (see that file's Decision addendum)
+changes nothing here, since this proposal never depended on any monitoring tool;
+PRE-LAUNCH **T3-3** (public-facing polish: logo, icons, OG image) is cited
 as the home of the OG-image work, not duplicated here. The sibling GA4 proposal
 depends on §6 step 5 (Search Console verification) for its Search-Console-link step
 and says so.
