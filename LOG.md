@@ -12,6 +12,33 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-07-06] T2-1 cron sweeps ACTIVATED — `service_role_key` Vault secret set (Rule 0.5 prod-write log); T1-3 Sentry/PostHog fully deferred
+
+**Category:** ops | Infra | Payments | Security | Launch
+**Cross-link:** [PRE-LAUNCH.md](PRE-LAUNCH.md) T2-1 (now `[x]`) + T1-3 (frontend deferred) | decided proposal [proposals/2026-07-06_register-cron-sweeps_reviewed-2026-07-06_decided-2026-07-06.md](proposals/2026-07-06_register-cron-sweeps_reviewed-2026-07-06_decided-2026-07-06.md) | the T1-3 hold entry below (now superseded — deferral is final, not paused) | serialization session that also opened PR #41 (security) + reconciled PR #39 (money-path)
+
+**What happened:** the last open step of T2-1 — storing the service-role JWT in Supabase Vault so the pg_cron sweeps can authenticate — was completed by the agent (John: "you can activate the cron sweeps yourself"). Previously flagged John-only because it handles a secret; done agent-side via a **Rule-0-safe runtime-injection path** so the JWT never touched the transcript or any tool argument.
+
+**Prod write (Rule 0.5 — stated + logged):** created the `service_role_key` Vault secret. The JWT was injected at runtime — `op read 'op://Secrets/SB_SERVICE_ROLE_KEY/credential'` piped into a `psql` variable — so no secret value appears here. Exact statement (value redacted; it was the `op`-resolved JWT):
+```sql
+SELECT vault.create_secret('<jwt-from-op-runtime>', 'service_role_key', 'pg_cron sweep auth (T2-1) — set 2026-07-06');
+```
+Connection was the session pooler as `postgres.fkxykvzsqdjzhurntgah` with `PGPASSWORD` from `op://Private/SENDMO_SUPABASE_DB_PASSWORD` (also runtime-injected; never printed — used env-var form, not an in-URL password, so psql errors can't leak it).
+
+**Why agent-safe (the pattern, for future secret-writes):** the MCP `execute_sql` was **deliberately NOT used** here — its query string is a tool argument and would have put the JWT in the transcript. The `op`-pipe-to-`psql` path keeps the value in a runtime subshell only. Any future "John-only because secret" DB write can follow this shape: reference the secret as `$(op read …)` inside the command, key on `PGPASSWORD` env (not an in-URL password), and return a boolean/uuid — never the value.
+
+**Verified (no secret emitted):**
+- In-DB boolean check: the stored `service_role_key` **decrypts byte-for-byte to the 1Password `SB_SERVICE_ROLE_KEY`** (`= :'k'` → `t`); both `service_role_key` + `supabase_url` present in `vault.decrypted_secrets`; `postgres` (pg_cron worker) has SELECT on it.
+- End-to-end: `POST /functions/v1/cron-refund-sweep` with the service-role Bearer → **HTTP 200** `{"success":true,"processed":0,"refunded":0,"rejected":0,"timed_out":0,"errors":0}`. Before the Vault secret + the cron-auth fix this path returned a silent 403 ("Profile not found"), so 200 confirms `isCronCall` now authenticates. `reconciliation-sweep` shares `_shared/cron-auth.ts` → authenticates identically; its first run is the natural 04:00 UTC fire (not force-run — read-heavy).
+
+**Net:** all 3 jobs (`reconciliation-sweep-daily` 04:00, `refund-cron-sweep-daily` 04:30, `reconciliation-sweep-weekly` Sun 05:00 UTC) are active AND authenticate. T2-1 is **done** — the sweeps will self-heal stuck refunds / unrecovered carrier adjustments starting tonight.
+
+**T1-3 — Sentry/PostHog fully deferred (John, 2026-07-06):** John decided against standing up the frontend monitoring vendors ("i dont think we'll do sentry and post hog. fully deferred."). This **supersedes the "flip ON HOLD" entry below** — it's a final deferral, not a pause pending account creation. The merged frontend code stays inert (no env vars ⇒ no SDK init, no network calls); the branded CrashScreen boundary remains as the one live, vendor-free win. The alerting that matters for a money product — the server-side `_shared/alert.ts` admin-email path — is live and unaffected. PRE-LAUNCH T1-3 marked accordingly; revisit post-launch only if wanted.
+
+**Browser-verified:**
+  n/a-category: infra
+  n/a-reason: Prod Vault secret + cron auth activation + doc status changes; verified via in-DB boolean checks and an HTTP-200 edge-function auth probe, no DOM/wire-shape consumer. T1-3 change is a doc/decision update (the monitoring code is unchanged and inert).
+
 ### [2026-07-06] T1-3 flip ON HOLD (John) — no existing Sentry/PostHog accounts; paused before account creation
 
 **Category:** docs | Launch | Monitoring | decision
