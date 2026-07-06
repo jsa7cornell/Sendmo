@@ -1,5 +1,4 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import { createClient } from "jsr:@supabase/supabase-js@2.97.0";
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { deriveActor } from "../_shared/actor.ts";
 import { checkRateLimit } from "../_shared/ratelimit.ts";
@@ -31,7 +30,7 @@ import { checkRateLimit } from "../_shared/ratelimit.ts";
 
 const RATE_LIMIT = { max: 10, windowMs: 60_000 };
 
-serve(async (req: Request) => {
+Deno.serve(async (req: Request) => {
   const corsResponse = handleCors(req);
   if (corsResponse) return corsResponse;
 

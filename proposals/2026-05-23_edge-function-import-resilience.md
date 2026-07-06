@@ -2,18 +2,34 @@
 title: Edge function import resilience — JSR migration to eliminate CDN single-point-of-failure on deploy
 slug: edge-function-import-resilience
 project: sendmo
-status: blocked
-blocked_on: "OQ1 decided by John 2026-05-23 = defer to post-launch focus window. Tracked on WISHLIST.md under 'Test / CI debt'."
+status: executed
+blocked_on: null
 created: 2026-05-23
-last_updated: 2026-05-23
+last_updated: 2026-07-06
 reviewed: null
 decided: 2026-05-23
+executed: 2026-07-06
 author: Claude Opus 4.7 — drafted after the 22:05 UTC esm.sh 522 failed a deploy mid-H1-H5-launch-push
 reviewer: null
-outcome: deferred-to-wishlist
+outcome: executed-post-launch
 ---
 
 > **2026-05-23 — Status: deferred to WISHLIST.** John exercised OQ1 = defer to post-launch. The proposal is preserved here as the load-bearing artifact (full scope inventory, JSR/`Deno.serve` migration plan, `import type` Vitest contract, OQ2–OQ5). When the work is picked up post-launch, flip `status: in-review` and route through normal review. WISHLIST entry: see "Test / CI debt" section of [WISHLIST.md](../WISHLIST.md).
+
+> **2026-07-06 — Status: EXECUTED (post-launch pickup).** John directed the pickup during launch-week hardening (closed beta went live 2026-07-05) after the esm.sh 522 fragility bit **three times on 2026-07-06** — the "Deploy Supabase Edge Functions" Action failed across merges #41 and #38 (×2), each on `Import 'https://esm.sh/@supabase/supabase-js@2.39.3' failed: 522`. Because the deploy job bundles sequentially and aborts on first failure, the #41 failure meant the `labels` money-path fixes after it didn't reach prod until a manual `gh run rerun`. That escalated this from annoyance to a correctness/latency risk and triggered execution. No fresh formal review round was run — the direction was already decided 2026-05-23 and John directed the pickup; this banner records the execution decisions.
+>
+> **Re-inventory (2026-07-06) — scope drifted wider than the May count.** `grep -rE 'https?://' supabase/functions/` now finds **49 URL imports across 35 files**: 23 esm.sh (14 value `createClient`, 7 type-only `SupabaseClient`, 1 combined `auth.ts`, 1 `libphonenumber-js`) + 26 `deno.land/std@0.168.0/http/server.ts` `serve`. New in-scope files that postdate the May draft: `_shared/intents.ts`, `_shared/paid-amount.ts` (2 more type-only), and functions `label-print`, `refunds`, `backfill-refund-status`, `auth-email-hook`, `admin-recon-action`, `tracking-admin`, `reconciliation-report`, `reconciliation-sweep`, `admin-recon-action`.
+>
+> **OQ resolutions as executed:**
+> - **OQ1 (now vs later):** NOW — post-launch, John-directed, after the 3× same-day failure.
+> - **OQ2 (import map vs inline):** INLINE `jsr:`/`npm:` specifiers, per author rec. No new `deno.json`; the 2 existing ones (`test-db-insert`, `admin-report`) unchanged. `admin-report/deno.json` already carried `jsr:@supabase/functions-js@^2` — in-repo proof the deploy pipeline resolves `jsr:` cleanly.
+> - **OQ3 (unify version):** UNIFIED to **exact `jsr:@supabase/supabase-js@2.97.0`** (all 22 supabase-js imports). This *supersedes* the May draft's `^2.43.0` (which was merely "the highest Deno-side pin then in use"): `package.json` is now on `@supabase/supabase-js@^2.97.0`, so pinning the Deno side to `2.97.0` kills **both** the 3-way Deno drift (`@2`/`@2.39.3`/`@2.43.0`) **and** the Deno-vs-npm split in one move. Chose an **exact** pin (not caret) for deploy reproducibility on money-path functions — matching the edge files' prior exact-pin convention and the task's deploy-reliability goal. `2.97.0` confirmed published on JSR (latest is `2.110.0`); `libphonenumber-js` kept at exact `npm:@1.13.2`.
+> - **OQ4 (sequencing vs buy-time-rate-gate):** N/A — that proposal shipped in May; no collision.
+> - **OQ5 (regression guard for the `type` qualifier):** SKIPPED as redundant. All 7 type-only `_shared` modules are imported directly by the Vitest unit suite; dropping the `type` qualifier makes a `jsr:` **value** import that esbuild cannot resolve → the affected unit test goes red immediately. The existing suite already enforces the contract more tightly than a CI grep would.
+>
+> **`serve` → `Deno.serve`:** all 26 call sites were the identical `serve(async (req: Request) => {` form → clean uniform rename; the `deno.land/std` import line deleted outright. This removes the deno.land CDN dependency **entirely** (Deno primitive, no registry), rather than swapping it for another registry — the strongest available fix for that half of the fragility class.
+>
+> Verified pre-push: `npx tsc -b --noEmit` clean (edge functions aren't in any tsconfig, so this only guards the frontend/test build) + `npx vitest run` 620/620 green. The real gate — the "Deploy Supabase Edge Functions" job bundling `jsr:`/`Deno.serve` cleanly across all functions — is verified post-merge per PLAYBOOK Rule 21.
 
 
 ## 1. Context

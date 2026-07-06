@@ -1,5 +1,4 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import { createClient } from "jsr:@supabase/supabase-js@2.97.0";
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { log } from "../_shared/logger.ts";
 import { sendEmail } from "../_shared/resend.ts";
@@ -41,7 +40,7 @@ function applyMarkup(rateDollars: number): number {
 // meaningful.
 const FLEX_RATE_LIMIT = { max: 5, windowMs: 60_000 };
 
-serve(async (req: Request) => {
+Deno.serve(async (req: Request) => {
     // Handle CORS preflight
     const corsResponse = handleCors(req);
     if (corsResponse) return corsResponse;

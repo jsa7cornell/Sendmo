@@ -20,7 +20,6 @@
 //   proposals/2026-05-22_reconciliation-and-carrier-adjustments_reviewed-2026-05-22_decided-2026-05-22.md
 //   §2.5 (admin dashboard), §3 reconciliation-report Edge Function
 
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { requireAdmin } from "../_shared/auth.ts";
 
 const corsHeaders = {
@@ -74,7 +73,7 @@ async function fetchEasyPostWalletBalance(): Promise<number | null> {
 
 // ─── Main handler ─────────────────────────────────────────────────────────────
 
-serve(async (req: Request) => {
+Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }

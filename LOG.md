@@ -12,6 +12,32 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-07-06] Edge-function imports migrated off esm.sh + deno.land → JSR / npm: / Deno.serve (deploy-resilience)
+
+**Category:** chore | Infra | Deploy | Launch-hardening
+**Cross-link:** executed proposal [proposals/2026-05-23_edge-function-import-resilience.md](proposals/2026-05-23_edge-function-import-resilience.md) (2026-07-06 execution banner = OQ resolutions + version rationale) | [WISHLIST.md](WISHLIST.md) (item closed) | [PRE-LAUNCH.md](PRE-LAUNCH.md) ("explicitly post-launch" list) | PLAYBOOK Rule 21 (deploy-green gate) | deploy workflow [.github/workflows/deploy-edge-functions.yml](.github/workflows/deploy-edge-functions.yml)
+
+**Why now:** the esm.sh CDN fragility bit **three times on 2026-07-06** — the "Deploy Supabase Edge Functions" Action failed across merges #41 and #38 (×2), each on `Import 'https://esm.sh/@supabase/supabase-js@2.39.3' failed: 522 <unknown status code>` (Cloudflare origin-timeout to esm.sh). The deploy job bundles functions sequentially and **aborts on first failure**, so a mid-list failure silently strands every function after it: on #41 the `labels` money-path fixes didn't reach prod until a manual `gh run rerun --failed`. That makes it a correctness/latency risk, not just an operational tax. John directed the post-launch pickup of the already-decided 2026-05-23 proposal (closed beta went live 2026-07-05).
+
+**What changed:** every HTTP-imported dependency under `supabase/functions/**` (49 URL imports across 35 files) migrated to a resolver that doesn't route through esm.sh's on-the-fly transpilation CDN:
+- **`https://esm.sh/@supabase/supabase-js@{2,2.39.3,2.43.0}` → `jsr:@supabase/supabase-js@2.97.0`** (22 imports: 14 value `createClient`, 7 type-only `SupabaseClient`, 1 combined `auth.ts`). **Unified + exact-pinned** to `2.97.0` — kills the 3-way Deno version drift AND the Deno-vs-npm split (`package.json` is on `@supabase/supabase-js@^2.97.0`); exact (not caret) for deploy reproducibility on money-path functions. `2.97.0` confirmed published on JSR (latest `2.110.0`). Supersedes the May draft's `^2.43.0` (that was just the then-highest Deno pin). `admin-report/deno.json` already used `jsr:@supabase/functions-js@^2`, i.e. the deploy pipeline was already proven to resolve `jsr:`.
+- **`https://esm.sh/libphonenumber-js@1.13.2` → `npm:libphonenumber-js@1.13.2`** (`_shared/phone.ts`; not on JSR, Deno resolves `npm:` natively). Vitest-safe: the Deno `phone.ts` is imported only by `rates`/`links` function code, never by a unit test (the phone unit test imports the frontend `@/lib/phone`).
+- **`serve` from `https://deno.land/std@0.168.0/http/server.ts` → `Deno.serve`** (26 functions). All call sites were the identical `serve(async (req: Request) => {` form → uniform rename + delete the import line. Removes the `deno.land` CDN dependency **entirely** (Deno primitive, no registry) — the same Cloudflare-522 fragility class, so fixing only esm.sh would have left half the exposure.
+
+**Contract preserved (the regression-prone part):** the 7 type-only `_shared` modules (`ledger`, `budget`, `refunds`, `adjustments`, `actor`, `intents`, `paid-amount`) keep their `import type` qualifier so Vitest's esbuild transform erases the specifier (no `jsr:` resolution at test time). `auth.ts`'s combined import became `{ createClient, type SupabaseClient }` (Pattern C). This contract is **self-guarding**: all 7 are imported by the unit suite, so a dropped `type` → a `jsr:` value import esbuild can't resolve → red test (tighter than the OQ5 CI-grep, which was therefore skipped).
+
+**Files:** 35 files changed (+49 / −75). No new files, no `deno.json`/import-map additions (inline specifiers per OQ2), no config/behavior changes beyond the import lines + `serve`→`Deno.serve` rename.
+
+**Tests:** `npx tsc -b --noEmit` clean; `npx vitest run` 620/620 green (58 files) — incl. every type-only-import test. Note: `supabase/functions/**` is in no tsconfig and Vitest only imports the `import type` `_shared` modules, so these gates confirm the frontend/test build is intact but do **not** exercise the deploy bundler — that's verified post-merge (below).
+
+**Deploy (Rule 21):** goes via PR (money-path-adjacent, John merges). The real proof — the "Deploy Supabase Edge Functions" job bundling `jsr:`/`Deno.serve` cleanly across all functions (atomic: any `_shared/` change redeploys all) — is confirmed on the post-merge run. Rollback if red: `git revert` the merge → redeploys pre-migration code in ~2 min.
+
+**Browser-verified:**
+  n/a-category: infra
+  n/a-reason: Deploy-tooling / import-specifier change only — no runtime response shape, DOM, or wire contract changes. `createClient`/`SupabaseClient`/`isPossiblePhoneNumber` API surfaces are identical across the registry switch and within supabase-js v2; the `serve`→`Deno.serve` handler signature is unchanged. No product surface (`src/**`, rendered output, edge-function response bodies) is touched. The one meaningful verification — that the migrated imports actually deploy — is a deploy-pipeline concern verified via the CI "Deploy Supabase Edge Functions" job (Rule 21), not a browser.
+
+---
+
 ### [2026-07-06] easypost_refund 0¢ amount bug: sourcing consolidated into writeEasypostRefund; sweep audits ledger directly
 
 **Category:** fix | Payments | Ledger

@@ -21,7 +21,7 @@
 // Type-only import of SupabaseClient (matches the budget.ts / ledger.ts pattern)
 // so Vitest can import this helper directly with a typed mock.
 
-import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import type { SupabaseClient } from "jsr:@supabase/supabase-js@2.97.0";
 
 export interface PiContext {
     userId: string | null;

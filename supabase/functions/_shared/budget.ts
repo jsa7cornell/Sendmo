@@ -18,7 +18,7 @@
 // Type-only import — at runtime TypeScript erases this so Vitest doesn't need
 // to resolve the remote URL. Lets `tests/unit/budget.test.ts` import this
 // helper directly and feed it a typed mock client.
-import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import type { SupabaseClient } from "jsr:@supabase/supabase-js@2.97.0";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const WEEK_MS = 7 * DAY_MS;

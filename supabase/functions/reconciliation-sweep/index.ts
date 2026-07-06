@@ -28,8 +28,7 @@
 //   Pitfall 4 resolution: sweep enqueues recovery via per-row pending state;
 //   does NOT try N synchronous recharges in a single sweep run.
 
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import { createClient } from "jsr:@supabase/supabase-js@2.97.0";
 import { requireAdmin } from "../_shared/auth.ts";
 import { isCronCall, getServiceRoleKey } from "../_shared/cron-auth.ts";
 import { log } from "../_shared/logger.ts";
@@ -635,7 +634,7 @@ async function runWeeklySweep(supabase: ReturnType<typeof createClient>, session
 
 // ─── Main handler ─────────────────────────────────────────────────────────────
 
-serve(async (req: Request) => {
+Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }

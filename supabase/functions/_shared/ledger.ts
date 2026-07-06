@@ -34,7 +34,7 @@
 
 // Type-only import — Vitest's TS transform erases this so no remote URL
 // resolution is needed in the test environment.
-import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import type { SupabaseClient } from "jsr:@supabase/supabase-js@2.97.0";
 import { log } from "./logger.ts";
 
 // ─── writeLabelCost ───────────────────────────────────────────────────────────

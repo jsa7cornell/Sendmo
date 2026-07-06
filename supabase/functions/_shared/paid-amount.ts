@@ -7,7 +7,7 @@
 // Falls back to `fallbackCents` when no charge row is found (comp labels,
 // webhook-lag window).
 
-import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import type { SupabaseClient } from "jsr:@supabase/supabase-js@2.97.0";
 
 export async function getPaidAmountCentsForShipment(
     supabase: SupabaseClient,
