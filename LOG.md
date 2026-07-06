@@ -12,6 +12,113 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-07-06] T1-3 flip ON HOLD (John) — no existing Sentry/PostHog accounts; paused before account creation
+
+**Category:** docs | Launch | Monitoring | decision
+**Cross-link:** T1-3 ship entry below (`364462a`) | PRE-LAUNCH T1-3 | in-review [proposals/2026-07-06_ga4-acquisition-analytics.md](proposals/2026-07-06_ga4-acquisition-analytics.md) (overlapping analytics-stack surface — see note)
+
+**What happened:** after the T1-3 code merge, the agent attempted John's 👤 flip steps directly (Vercel CLI: authenticated ✓; Sentry/PostHog dashboards: via browser). Both dead-ended at the same discovery: **neither sentry.io nor us.posthog.com has any account for jsa7cornell@gmail.com** — the Google-SSO flows land on "create a new organization" (Sentry "New Identity" screen; PostHog org-creation form with ToS acceptance). Account creation is agent-prohibited, so it was handed to John — who **paused the whole flip** rather than create the accounts ("retrench and hold", 2026-07-06).
+
+**Current state (safe to sit indefinitely):** the monitoring code on `main` is fully inert — no env vars ⇒ no SDK init, no monitoring network calls, zero data leaves the browser (browser-verified in the ship entry). The CrashScreen boundary is live (deliberate pre-flip change, works without Sentry). **Nothing was created:** no vendor accounts, no ToS accepted, no Vercel env vars set. The only side effect of the attempt: sentry.io + PostHog were granted Google OAuth **email-scope** consent on John's Google account (visible/revocable at myaccount.google.com → Connections).
+
+**Decision John is holding:** whether/where the monitoring vendor accounts should live. Options when resumed:
+1. **Create the two free accounts** under jsa7cornell@gmail.com (2 short signups; agent finishes everything else: project creation, DSN/key, `vercel env add`, redeploy, tag verification).
+2. **Existing account under another email?** If a Sentry (or PostHog) account already exists elsewhere, sign in there and add jsa7cornell@gmail.com as a verified email — the agent proceeds identically.
+3. **Reconsider the vendor choice.** Note this is a *stack* decision, not a config step — Sentry+PostHog have been the documented monitoring stack since PLAYBOOK/SPEC inception, and the decided T1-3 proposal implements exactly that. Also note the same-day in-review **GA4 acquisition-analytics proposal** builds on PostHog-for-product-analytics as its premise; if the analytics half changes, that proposal needs a re-look. (The Sentry error-monitoring half is independent of any analytics choice.)
+
+**For future agents:** do NOT create the accounts or flip `VITE_SENTRY_DSN`/`VITE_POSTHOG_KEY` until John resolves this hold. T1-3's remaining-work definition in PRE-LAUNCH is updated to reflect the hold.
+
+**Browser-verified:**
+  n/a-category: docs
+  n/a-reason: decision/status record only; no code changed.
+
+---
+
+### [2026-07-06] T2-1 — registered the pg_cron sweeps (reconciliation daily 04:00 + refund finalizer daily 04:30 UTC); fixed a silent-403 cron-auth bug; GUC→Vault forced by permissions
+
+**Category:** ship | Infra | Edge Functions | Payments (refund finalizer)
+**Cross-link:** decided proposal [proposals/2026-07-06_register-cron-sweeps_reviewed-2026-07-06_decided-2026-07-06.md](proposals/2026-07-06_register-cron-sweeps_reviewed-2026-07-06_decided-2026-07-06.md) | restores deferred Block 2 of migrations [034](supabase/migrations/034_reconciliation_cron.sql)/[035](supabase/migrations/035_refund_cron_state.sql) | PRE-LAUNCH **T2-1** | unblocked by T1-2 (Pro)
+
+**What shipped.** The two self-healing sweeps (`reconciliation-sweep`, `cron-refund-sweep`) were built + deployed weeks ago but never scheduled (pg_cron/pg_net weren't enabled on Free tier). Registered both on prod:
+- `reconciliation-sweep-daily` — `0 4 * * *`, body `{"mode":"daily"}`.
+- `refund-cron-sweep-daily` — `30 4 * * *`, body `{}` (offset 30 min to avoid concurrent EasyPost list-load).
+- `reconciliation-sweep-weekly` — `0 5 * * 0`, body `{"mode":"weekly"}`. *(Initially DEFERRED per this arc's review — heaviest job, Reports API + ~10 min in-function poll, zero week-one benefit; REGISTERED the same day per John's call during the parallel-arc takeover — see addendum below. Wall-clock risk WISHLIST-tracked.)*
+
+**The bug found + fixed (the one genuinely-new finding).** `cron-refund-sweep` called `requireAdmin` **unconditionally** — no cron-auth-bypass branch (its sibling `reconciliation-sweep` has one). `requireAdmin` does `auth.getUser(token)` then requires a `profiles.role='admin'` row; a pg_cron service-role Bearer resolves to a principal with **no** profiles row → 403 "Profile not found". So scheduling it as-deployed would have made **every nightly run silently 403 and the refund finalizer never run** — the exact silent-failure T2-1 exists to close. Fix (Rule 6): new **`_shared/cron-auth.ts`** (`isCronCall(req)` + `getServiceRoleKey()`) imported by **both** sweeps — `cron-refund-sweep` gets the bypass; `reconciliation-sweep` refactored onto the shared helper, which also closes a verified env-read asymmetry (it read only `SUPABASE_SERVICE_ROLE_KEY`; the helper honors `SB_SERVICE_ROLE_KEY` too, matching `auth.ts` + `cron-refund-sweep`). Deployed via the "Deploy Supabase Edge Functions" CI workflow on this push.
+
+**Prod SQL executed (Rule 0.5 — target: SendMo PROD `fkxykvzsqdjzhurntgah`, via write-capable MCP `execute_sql`, staged to avoid half-apply):**
+1. `CREATE EXTENSION IF NOT EXISTS pg_cron; CREATE EXTENSION IF NOT EXISTS pg_net;` → both installed (pg_cron 1.6.4, pg_net 0.19.5); probed `SELECT count(*) FROM cron.job` (0) to confirm `cron` schema grants are wired.
+2. `SELECT vault.create_secret('https://fkxykvzsqdjzhurntgah.supabase.co','supabase_url', …);` → verified it decrypts back via `vault.decrypted_secrets`.
+3. The two `cron.schedule(...)` calls (idempotent: `PERFORM cron.unschedule(jobname) FROM cron.job WHERE jobname=…` first). Verified `SELECT jobname,schedule,active FROM cron.job` → both `active=t` with correct schedules + Vault-based bodies.
+
+**GUC → Vault (execution-time correction, self-decided).** Migrations 034/035 sketched `current_setting('app.service_role_key')` GUCs. **Impossible on this project:** `postgres` is `rolsuper=off`, so BOTH `ALTER DATABASE postgres SET app.*` and `ALTER ROLE postgres SET app.*` return `ERROR 42501: permission denied to set parameter`. Setting custom `app.*` GUCs is superuser-gated and Supabase doesn't expose it — for the agent OR John. Switched to the Supabase-canonical **Vault** pattern (confirmed via `search_docs` → "Scheduling Edge Functions"): the cron bodies read `supabase_url` + `service_role_key` from `vault.decrypted_secrets` at fire time (`postgres`, the pg_cron worker role, has SELECT on it — verified). This is a forced technical correction, not a design tradeoff — no John escalation.
+
+**Idle-fail-then-heal (register-before-key window, review N2).** The `service_role_key` Vault secret is John's step (below) and isn't set yet, so the jobs fire but the auth subquery returns NULL → `Bearer ` → the function 403s until John stores it. Any `failed`/403 rows in `cron.job_run_details` before John's step are **the documented idle-fail window, not a broken cron** — don't chase them.
+
+**REMAINING — John-only (secret, Rule 0):** store the service-role JWT in Vault so the jobs authenticate. Run in Dashboard → SQL Editor:
+```sql
+SELECT vault.create_secret('<service-role-jwt>', 'service_role_key', 'pg_cron sweep auth (T2-1)');
+```
+Value = Dashboard → Project `fkxykvzsqdjzhurntgah` → Settings → API (or the newer API Keys view) → the **`service_role`** secret (NOT anon/publishable). It **must equal the deployed `SUPABASE_SERVICE_ROLE_KEY` function secret byte-for-byte** (review B3), else `isCronCall` fails and runs 403. Do NOT paste it into chat. After it's set, the §6 money-safe force-run (below) is the proof: `succeeded` + `recon_state.reconciliation_daily.last_run_at ≈ now` = the whole chain works; a 403 = the Vault value ≠ the env secret.
+
+**Verification once John's secret is set (money-safe):** the reconciliation daily sweep is read-heavy/no-money — force one via a `* * * * *` one-off `cron.schedule` (unschedule after ~90s — **mandatory**), then confirm `cron.job_run_details.status='succeeded'` + `recon_state.reconciliation_daily.last_run_at` advanced. Do NOT force the refund sweep unless `SELECT count(*) FROM shipments WHERE refund_status='submitted' AND is_test=false AND refund_submitted_at < now()-interval '21 days' AND easypost_shipment_id IS NOT NULL` = 0 (else it finalizes real live refunds — let the natural 04:30 schedule be its first run). **Health signal for these jobs = downstream state advancing, NOT `job_run_details.status` alone** (pg_net is fire-and-forget; `succeeded` only means the SQL ran).
+
+**Migration tracker:** applied as raw DDL via `execute_sql`, NOT `apply_migration`, to preserve the established tracker state (001-016 registered; 017-035 went through the Dashboard SQL Editor and were never recorded). The repo file `036_register_cron_sweeps.sql` is the source record; the 017-036 tracker gap is intentional.
+
+**Tests:** none added — infra SQL + a one-branch auth change on Deno edge functions (no local Deno; covered by the CI edge-deploy typecheck/bundle + the mandatory post-key force-run). No `src/` changes; `tsc -b` unaffected.
+
+**Browser-verified:**
+  n/a-category: infra
+  n/a-reason: pg_cron registration + Vault secret + edge-function auth-gate change. No DOM/rendered surface or UI-consumed response shape changes — the two sweeps are server-to-server (pg_cron → net.http_post → Edge Function). End-to-end proof is the post-key reconciliation force-run advancing `recon_state.last_run_at`, per the LOG verification block, not a browser check.
+
+> **Takeover addendum (2026-07-06, second session).** Two sessions were dispatched onto T2-1 the same morning and independently ran the full proposal→review→decide arc, converging on the same bug, the same `_shared/cron-auth.ts` fix, and the same Vault call (this arc empirically — GUC impossible, `42501`; the second arc a priori — Vault is Supabase's current documented pattern). The second arc's owner discovered the concurrent prod state mid-execution (unexpected `cron.job` rows), stopped, and John directed "take over & finish." Deltas the takeover added: **(1)** `config.toml` `verify_jwt` pinned `false` for both sweeps — the previous `true` was dead config (CI always deploys `--no-verify-jwt`) that a *manual* `functions deploy` would have silently enforced on money-path cron targets; **(2)** `reconciliation-sweep-weekly` registered (**Rule 0.5 prod write, second session:** `PERFORM cron.unschedule(...)` guard + `SELECT cron.schedule('reconciliation-sweep-weekly','0 5 * * 0', <same Vault-read net.http_post body, {"mode":"weekly"}>)` — verified all 3 jobs `active=t`), overriding this arc's defer per John's direct call; wall-clock risk WISHLIST-tracked; **(3)** takeover addendum on the decided proposal records both arcs (the second arc's reviewed proposal survives in branch history, commits `e20db38`/`ca958f0`). The duplicated cycle is a dispatch-coordination lesson: check prod state + in-flight branches before starting a PRE-LAUNCH item.
+
+> **T2-1 FULL STATUS as of 2026-07-06 ~14:45 UTC (end of the takeover session).** Everything agent-side is done; the item closes on John's one Vault statement + the post-secret verification run.
+>
+> | Piece | Stage | Evidence |
+> |---|---|---|
+> | `pg_cron` 1.6.4 + `pg_net` 0.19.5 | **Deployed** (enabled on prod) | `pg_extension` query |
+> | Vault `supabase_url` (non-secret) | **Deployed** (agent-seeded) | `vault.secrets` → 1 row |
+> | `reconciliation-sweep-daily` `0 4 * * *` | **Deployed** (registered, `active=t`) | `cron.job` re-verified 14:40 UTC |
+> | `refund-cron-sweep-daily` `30 4 * * *` | **Deployed** (registered, `active=t`) | ditto |
+> | `reconciliation-sweep-weekly` `0 5 * * 0` | **Deployed** (registered, `active=t`; per John's takeover call) | ditto |
+> | cron-auth bug fix (`_shared/cron-auth.ts`, both sweeps) | **Deployed** (CI run green on `d451fe9`; sweeps at v12/v11, `verify_jwt:false`) | `list_edge_functions` + Deploy workflow success 13:17 UTC |
+> | Takeover deltas (config.toml pin, weekly in migration 036, docs) | **Merged** — [PR #40](https://github.com/jsa7cornell/Sendmo/pull/40) → `ca7eff7`; docs-only, correctly did NOT trigger a function redeploy | `gh run list` (no Deploy run post-13:17) |
+> | CI for `ca7eff7` ("Provide Tests") | in progress at entry time — Rule 21 owner: this session, fix-forward if red | `gh run list` |
+> | Vault `service_role_key` | **NOT SET — John's step, blocks the sweeps authenticating** | `vault.secrets` has only `supabase_url`; `cron.job_run_details` 0 rows (first fire 04:00 UTC 2026-07-07, will idle-fail until the secret lands — expected, don't chase) |
+> | Post-secret verification (force recon-daily → `recon_state.last_run_at` advances; refund sweep only if stale-live-refund count = 0) | **Not started** — gated on John's step | procedure in the REMAINING/Verification blocks above |
+>
+> **PRE-LAUNCH T2-1 stays `[~]` until:** John's `SELECT vault.create_secret('<service-role-jwt>', 'service_role_key', 'pg_cron sweep auth (T2-1)');` (Dashboard SQL Editor — value from Settings → API → `service_role`, must equal the deployed `SUPABASE_SERVICE_ROLE_KEY` byte-for-byte) → then the money-safe force-run above → then flip to `[x]` and note the first green nightly runs.
+
+### [2026-07-06] T1-3 COMPLETE (code) — Sentry frontend error monitoring + CrashScreen boundary + PostHog pageview-only (ships inert)
+
+**Category:** ship | Launch | Monitoring | Frontend
+**Cross-link:** decided proposal [proposals/2026-07-06_sentry-posthog-frontend-monitoring_reviewed-2026-07-06_decided-2026-07-06.md](proposals/2026-07-06_sentry-posthog-frontend-monitoring_reviewed-2026-07-06_decided-2026-07-06.md) (Author response = binding spec) | PRE-LAUNCH T1-3 (server half shipped 2026-07-04 — `_shared/alert.ts`) | WISHLIST fast-follows: Sentry source-map upload · PostHog funnel events + identify()
+
+**INERT ON MERGE:** inert = no SDK initialization, no monitoring network calls, zero data leaves the browser (verified — see Browser-verified below). With `VITE_SENTRY_DSN` / `VITE_POSTHOG_KEY` unset (today's prod), both init branches are dead. The flip is 👤 John's: create the Sentry (React) + PostHog projects, set `VITE_SENTRY_DSN` (Vercel Production + Preview) and `VITE_POSTHOG_KEY` (Production), confirm Vercel's "Automatically expose System Environment Variables" is ON, redeploy — exact steps in PRE-LAUNCH T1-3.
+
+**Behavior changes visible BEFORE the flip (deliberate, per decided design — review B2):**
+1. A render crash now shows the branded CrashScreen ("Something went wrong" + reload + support mailto) instead of a white page — the `Sentry.ErrorBoundary` in `main.tsx` is always on and degrades to a plain React boundary when Sentry was never initialized (claim verified in `tests/unit/CrashScreen.test.tsx`).
+2. Main bundle +~75 KB gzipped (`@sentry/react`). `posthog-js` does NOT ride the main bundle — dynamic `import()` on idle, only when its key exists (review N5).
+
+**What shipped:**
+- **[src/lib/monitoring.ts](src/lib/monitoring.ts)** — pure `resolveMonitoringConfig` (env-injected truth table, `mode.ts` pattern) + `initMonitoring()`. Sentry: release/environment from `__APP_RELEASE__`/`__APP_ENV__` (vite `define` ← `VERCEL_GIT_COMMIT_SHA`/`VERCEL_ENV`), `reactRouterV7BrowserTracingIntegration`, `tracesSampleRate: 0.1`, `sendDefaultPii: false`, no replay/no `setUser` (payments PII posture), curated `ignoreErrors` + extension `denyUrls` (N6 — accepted limitation: ad-blockers drop some SDK traffic, no tunnel). PostHog: `capture_pageview: "history_change"`, **`autocapture: false`** (B4 — truly pageview-only), `disable_session_recording: true`, `respect_dnt: true`.
+- **[src/components/CrashScreen.tsx](src/components/CrashScreen.tsx)** — boundary fallback, design tokens.
+- **[src/main.tsx](src/main.tsx)** — `initMonitoring()` before render; `Sentry.ErrorBoundary` wraps `<App/>`.
+- **[src/App.tsx](src/App.tsx)** — `Routes` → `withSentryReactRouterV7Routing(Routes)` (B1 — parameterized route names; route definitions untouched; pass-through when uninitialized).
+- **[vite.config.ts](vite.config.ts)** + new **[src/vite-env.d.ts](src/vite-env.d.ts)** — `define` globals, always `JSON.stringify`-wrapped; `typeof`-guarded reads (vitest has no `define`).
+- **[src/pages/LabelTest.tsx](src/pages/LabelTest.tsx)** — "Throw test error" button, **render-throw** (crosses both the boundary and Sentry capture), gated `import.meta.env.DEV || isAdmin` (OQ4 — `/label-test` is unauthenticated; a public crash button is a quota-burn vector, T2-3 class). Also removed a leftover editing-artifact comment.
+- **[src/pages/Privacy.tsx](src/pages/Privacy.tsx)** — "Who we share it with" now discloses Sentry + PostHog (review N3).
+- **Docs:** PLAYBOOK env sections + `.env.example` gain both vars (N4); PRE-LAUNCH T1-3 → code complete + John's 👤 runbook; WISHLIST gains the two fast-follows.
+
+**Gotcha for future agents:** after John flips the DSN, verify a test-error issue shows `release=<real sha>` + `environment=production` — if it says `dev`/`development`, Vercel's system-env-vars setting is off and every event is untriageable while looking green (review N2 / Rule 20 shape). The throw button on `/label-test` (admin-gated in prod) is the one-click check.
+
+**Tests:** `tests/unit/monitoring.test.ts` (10 — resolver truth table pinning enabled===env-var-presence) + `tests/unit/CrashScreen.test.tsx` (2 — fallback render; boundary catches with Sentry never initialized). Suite: **559 passed / 51 files**. `npx tsc -b --noEmit` clean.
+
+**Browser-verified:**
+  mcp-session: preview-MCP session 2026-07-06 — worktree dev server, /label-test; DSN-unset pass: full network log showed zero monitoring hosts (only localhost + pre-existing js.stripe.com), throw → CrashScreen rendered (screenshot taken); DSN-set pass (dummy DSN via env): throw → CrashScreen + observed `POST https://o000001.ingest.us.sentry.io/api/.../envelope/` (403 from the fake DSN — the attempt proves capture wiring)
+  variants-covered: [{DSN unset → app boots + zero monitoring network calls + CrashScreen on render error}, {DSN set → Sentry init + envelope POST fires on the same error + CrashScreen still renders}, {throw-button visibility: DEV=visible (exercised); prod non-admin=hidden / prod admin=visible deferred with the post-flip §6 steps 3–5 verification (T1-1 §5-step-4 pattern)}]
+
 ### [2026-07-06] Full money-path review + parallel fix batch — 2 launch blockers + refund-ledger correctness (D1–D4)
 
 **Category:** fix | Payments | Refunds | Edge Functions | Review
@@ -42,6 +149,7 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 **Browser-verified:**
   spec: tests/unit/pricingGate.test.ts, tests/unit/resolveRefundRowsToBook.test.ts, tests/unit/initiateCancelRefund.test.ts, tests/unit/cancelLabelFailurePaths.test.ts, tests/unit/resolveRefundStatus.test.ts
   variants-covered: [D1 gate basis: flex-server-derived / full-label-PI-amount / comp-null; D2 comp admin-gate (code-read + client grep — no comp+link caller); D3 per-refund booking: single/partial×2/replay-idempotent/failed-excluded/pre-cutover-skip; D4 advance: submitted→refunded, rejected+ep-refunded heal, rejected+ep-not-refunded blocked; cancel-label DB-fail→500+alert, concurrent-cancel 0-rows→422. Edge-function wire shapes are pure-logic-extracted and unit-pinned; live money paths (503 kill switch, off-session charge) are env-gated and exercised in John's §5 live smoke tests post-flip.]
+
 
 ---
 

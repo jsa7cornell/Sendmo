@@ -160,9 +160,15 @@ verify_jwt = true
 
 # POST endpoint — daily incremental + weekly bulk EasyPost diff.
 # Also called by pg_cron (service-role Bearer). Both paths valid.
+# verify_jwt=false: pinned to match deployed reality. The CI workflow always
+# deploys --no-verify-jwt (long-standing gotcha, see deploy-edge-functions.yml),
+# so the previous `true` here was dead config that a MANUAL `functions deploy`
+# (which reads this file) would have silently enforced on a money-path cron
+# target. The function's own isCronCall/requireAdmin is the real gate.
+# (2026-07-06 register-cron-sweeps review B1.)
 [functions.reconciliation-sweep]
 enabled = true
-verify_jwt = true
+verify_jwt = false
 
 # POST endpoint — Needs-Attention action buttons: dispute / recharge / absorb.
 # Admin-gated via requireAdmin.
@@ -175,11 +181,14 @@ verify_jwt = true
 # one last time, and resolves: refunded (fire missed createRefund) / rejected
 # (mark terminal + Email C) / timed-out (mark rejected + Email C).
 # Admin-gated via requireAdmin for manual invocation; pg_cron service-role path
-# is DEFERRED to fast-follow (see migration 035 Block 2).
+# registered 2026-07-06 (migration 036 — see register-cron-sweeps proposal).
 # Per decided proposals: 2026-05-21_refund-system-implementation D3/D4/D5.
+# verify_jwt=false: pinned to match deployed reality (CI always deploys
+# --no-verify-jwt; a manual deploy reads this file). isCronCall/requireAdmin
+# is the real gate. (register-cron-sweeps review B1.)
 [functions.cron-refund-sweep]
 enabled = true
-verify_jwt = true
+verify_jwt = false
 
 # G2 — Supabase Auth Send Email Hook (pre-launch branded OTP/login emails).
 # Wires custom SendMo-branded otpEmail template into signup / login /

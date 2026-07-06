@@ -17,9 +17,8 @@ import StripePaymentForm from "@/components/recipient/StripePaymentForm";
 import type { AddressInput } from "@/lib/types";
 import { emptyAddress } from "@/lib/utils";
 import { isUsablePhone } from "@/lib/phone";
+import { useAuth } from "@/contexts/AuthContext";
 
-// ... existing code ...
-// I will rewrite this to use multi_replace since I need to also add imports properly. I'll pass on this exact one and use a better chunk.
 interface ParcelInput {
     length: string;
     width: string;
@@ -136,10 +135,21 @@ function Spinner({ size = "sm" }: { size?: "sm" | "lg" }) {
 // ─── Component ───────────────────────────────────────────────
 
 export default function LabelTest() {
+    const { isAdmin } = useAuth();
     const [sessionId] = useState(() => crypto.randomUUID());
     const [step, setStep] = useState(1);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+
+    // T1-3 monitoring verification: throwing during RENDER (not in the click
+    // handler) so the error crosses BOTH layers under test — the CrashScreen
+    // boundary and Sentry capture. Gated DEV-or-admin (proposal OQ4): this
+    // page is unauthenticated, and a public crash button is a Sentry-quota
+    // burn vector (same class as T2-3 public-endpoint abuse).
+    const [throwTestError, setThrowTestError] = useState(false);
+    if (throwTestError) {
+        throw new Error("SendMo test error — thrown deliberately from /label-test");
+    }
 
     // Live mode toggle
     const [liveMode, setLiveMode] = useState(false);
@@ -501,6 +511,15 @@ export default function LabelTest() {
                         <p className="text-sm text-muted-foreground">
                             End-to-end shipping label flow with live Supabase Edge Functions
                         </p>
+                        {(import.meta.env.DEV || isAdmin) && (
+                            <button
+                                type="button"
+                                onClick={() => setThrowTestError(true)}
+                                className="text-xs text-destructive underline underline-offset-2"
+                            >
+                                Throw test error (monitoring check)
+                            </button>
+                        )}
                     </div>
                     <div className="flex items-center space-x-2 bg-card border border-border px-4 py-2 rounded-xl shadow-sm">
                         <Switch
