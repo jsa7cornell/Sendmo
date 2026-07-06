@@ -341,3 +341,41 @@ Listed for completeness; these ride in the same PR but are not up for debate her
    to fix the client in the same PR, or pause and surface first?
 4. **Rollout:** any appetite for splitting D3/D4 (refund correctness) from D1/D2 (launch
    blockers) if the review stalls on the refund half? Author's view: keep one PR.
+
+---
+
+## Review — 2026-07-06 (adversarial correctness pass)
+
+```
+reviewer: fresh session, main @ 83d62ce sources verified line-by-line
+verdict: approve-with-changes
+```
+
+Every file:line citation verified accurate. D1(a) proven **complete** on its own terms
+(every non-comp path carries a server-verified PI; no non-comp no-PI path remains). D2
+drift framing confirmed; grep found exactly two client comp send-sites —
+`RecipientStepPayment.tsx:36` (`comp:true`, JWT, **no** link → admin gate, unaffected) and
+`SenderFlow.tsx:174` (`comp:false`). **No client change needed** (answers Open Q3).
+
+**Three REQUIRED changes — all applied in-flight before merge:**
+
+1. **D3 double-book is a code guard, not manual reconcile** (Open Q1 = yes, guard required):
+   pre-deploy refund rows keyed `stripe.<eventId>:refund` won't collide with the new
+   `stripe.refund.<rfnd_id>` keys, and the append-only ledger can't re-key them. **Applied:**
+   a time-cutover guard in `resolveRefundRowsToBook()` — refunds with Stripe `created` before
+   `REFUND_LEDGER_KEY_CUTOVER` (env; safe fallback floor) are skipped (already booked under the
+   legacy scheme). John sets the real deploy timestamp at rollout.
+2. **D3 must filter the retrieved refund list to `status === 'succeeded'`** before booking
+   (the list includes pending/failed/canceled). **Applied** + unit-pinned (a failed refund is
+   not booked).
+3. **D4 `'rejected'→'refunded'` advance must gate on `easypost_refund_status='refunded'`** —
+   `'rejected'` is overloaded (also written by carrier-refused voids), so an admin goodwill
+   partial refund on a refused-void shipment would flip it to `'refunded'` + send a false
+   "refund completed" email. **Applied:** two-step advance (submitted unconditional → fallback
+   rejected AND ep=refunded), extracted to a pure unit-pinned predicate.
+
+**Suggested (deferred fast-follow, non-blocking):** D1 gate on `pi.amount_received` vs `amount`;
+D1 rate-refetch-failure fails open (D1(b)); D4 post-28d heal is single-path (add tracking-poll
+for rejected+ep-non-terminal); the EP-status-write-before-createRefund ordering race.
+
+**Open Q2** (retraction email on D4 heal) and **Open Q4** (keep one PR — yes) accepted as-is.

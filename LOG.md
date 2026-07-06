@@ -12,6 +12,35 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-07-06] Full money-path review + parallel fix batch — 2 launch blockers + refund-ledger correctness (D1–D4)
+
+**Category:** fix | Payments | Refunds | Edge Functions | Review
+**Cross-link:** proposal [proposals/2026-07-06_money-path-review-fixes.md](proposals/2026-07-06_money-path-review-fixes.md) (in-review, reviewed same day — approve-with-changes, 3 required changes applied in-flight) | full code review of main @ `83d62ce` | sibling of the [2026-07-05 PI-stitch entry](#) (this batch hardens the paths that fix touched)
+
+**What happened:** a full correctness review of the money paths (labels, payments, stripe-webhook, cancel-label, refunds, tracking, webhooks, cron-refund-sweep, reconciliation, _shared) surfaced two launch blockers and a cluster of refund-ledger correctness bugs. Fixes were built in parallel across 5 isolated worktree agents, adversarially reviewed (proposal + code), integrated on `claude/money-path-fixes`, and land as one PR (money-path → John merges).
+
+**Launch blockers (both fixed):**
+- **D1 — full-label price was client-trusted end-to-end.** `payments` only floor-checked `amount_cents` (≥50); the `labels` full-label buy-time rate gate compared against the *request-body* `display_price_cents` and skipped entirely when absent → a 50¢ PI could buy a $50 live label. Fix: new `_shared/pricing.ts:resolveGateBasisCents` — the gate basis is now the **server-known** `verifiedPaymentIntent.amount` on the full-label leg (server-derived price on flex, 0 only for comp), and `p_display_price_cents` persists the same trusted basis. Never skips when a PI exists.
+- **D2 — comp + flex-link minted free live labels.** `labels:386` gate `if (isComp && !resolvedLink)` let `comp:true` WITH an active flex link skip the admin check *and* the whole payment branch (kill switch + allowlist) → anyone holding a flex-link URL got a free (live) label. Drift from the 2026-05-11 sender-flow-wizard comp-only era, never retired after Pattern D made flex charge real money. Fix: comp requires an admin JWT **unconditionally**. Verified via grep that no client sends comp+link (only the admin onboarding path sends comp, no link) — no client change needed.
+
+**Refund-ledger correctness:**
+- **D3** — `charge.refunded` booked cumulative `amount_refunded` (Stripe doesn't expand `charge.refunds` under the pinned API) with synthetic refund ids → a second partial refund over-booked the ledger; compounded by two of three cancel-refund initiators passing `amount_cents: undefined` (= refund ALL remaining) at ≤0 balance. Fix: retrieve the refund list explicitly (`listRefundsForCharge`), book **per-refund** rows keyed `stripe.refund.<rfnd_id>`, `status==='succeeded'` filtered, with a **time-cutover guard** (`REFUND_LEDGER_KEY_CUTOVER`) so pre-deploy rows under the legacy `stripe.<eventId>:refund` key never re-book; one shared `initiateCancelRefund` helper that **skips** at ≤0 balance across all three sites.
+- **D4** — sweep `STALE_DAYS=21` terminally rejected inside the 2–4-week carrier window and status could never advance. Fix: 28 days + webhook advances `'rejected'→'refunded'` **only when `easypost_refund_status='refunded'`** (guards the overloaded `'rejected'` value so an admin goodwill refund on a carrier-refused void can't send a false "refund completed" email).
+
+**Also in the PR (mechanical):** `_shared/background.ts` (`runInBackground` → `EdgeRuntime.waitUntil`) applied to all fire-and-forget email/ledger dispatches (fee_stripe write, dispatchNotifications ×3, easypost_refund writes now awaited); cancel-label returns **500 + admin alert** (not `success:true`) when the post-void DB update fails, plus a `refund_status='none'` concurrency guard; refund emails now quote the **paid** amount via `_shared/paid-amount.ts` (was `rate_cents`); EasyPost webhook returns **500 on real errors** so the carrier retries; cleanups (dead `adjustmentCollected`, stale comments, deterministic fallback event ids, dead recon cursor).
+
+**Deferred fast-follows (in proposal §9):** D1(b) PI-creation-time amount validation in `payments`; `pi.amount_received` vs `amount`; admin partial-refund idempotency window; D4 post-28d secondary heal path.
+
+**Prod reconcile (John, at rollout):** set `REFUND_LEDGER_KEY_CUTOVER` to the deploy unix timestamp before/at deploy (bounds the ~1 legacy refund row on 24W301E from re-booking). No schema changes; all edge functions redeploy on merge.
+
+**Tests:** integrated suite **594 passed / 56 files** (was 547/49 — +47 across pricingGate, background/runInBackground, resolveRefundRowsToBook, initiateCancelRefund, getPaidAmountCentsForShipment, resolveRefundStatus D4 cases, cancelLabelFailurePaths). `npx tsc -b --noEmit` clean. NOTE: `tsc -b` scope is `src/` only — edge functions (Deno URL imports) are type-checked at deploy time by the "Deploy Supabase Edge Functions" CI job; the `_shared` pure logic is covered directly by Vitest.
+
+**Browser-verified:**
+  spec: tests/unit/pricingGate.test.ts, tests/unit/resolveRefundRowsToBook.test.ts, tests/unit/initiateCancelRefund.test.ts, tests/unit/cancelLabelFailurePaths.test.ts, tests/unit/resolveRefundStatus.test.ts
+  variants-covered: [D1 gate basis: flex-server-derived / full-label-PI-amount / comp-null; D2 comp admin-gate (code-read + client grep — no comp+link caller); D3 per-refund booking: single/partial×2/replay-idempotent/failed-excluded/pre-cutover-skip; D4 advance: submitted→refunded, rejected+ep-refunded heal, rejected+ep-not-refunded blocked; cancel-label DB-fail→500+alert, concurrent-cancel 0-rows→422. Edge-function wire shapes are pure-logic-extracted and unit-pinned; live money paths (503 kill switch, off-session charge) are env-gated and exercised in John's §5 live smoke tests post-flip.]
+
+---
+
 ### [2026-07-05] Money-path fix — flex shipments never stitched their PI → cancel skipped the refund (first live flex cancel)
 
 **Category:** fix | Payments | Refunds | Edge Functions
