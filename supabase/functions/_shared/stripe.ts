@@ -614,6 +614,8 @@ export interface Refund {
     amount: number;
     status: "pending" | "succeeded" | "failed" | "canceled";
     payment_intent: string;
+    reason?: string | null;
+    charge?: string | null;
 }
 
 export function createRefund(params: {
@@ -635,6 +637,56 @@ export function createRefund(params: {
         idempotencyKey: params.idempotency_key,
         liveMode: params.liveMode,
     });
+}
+
+// List every refund attached to a charge, authoritative from Stripe. The
+// pinned 2026-04-22.dahlia API version does NOT embed `charge.refunds` in
+// webhook payloads, and `charge.amount_refunded` is CUMULATIVE — so the
+// charge.refunded handler must fetch this list and book each refund
+// individually by its real rfnd_ id (2026-07-06 cumulative-refund ledger fix).
+// limit=100 covers any realistic refund count on a single SendMo charge.
+export function listRefundsForCharge(
+    chargeId: string,
+    liveMode: boolean,
+): Promise<{ data: Refund[]; has_more: boolean }> {
+    return stripeRequest<{ data: Refund[]; has_more: boolean }>(
+        `/refunds?charge=${encodeURIComponent(chargeId)}&limit=100`,
+        { method: "GET", liveMode },
+    );
+}
+
+// One ledger booking per real Stripe refund. Consumed by the charge.refunded
+// arm: `stripeRefundId` keys the refunds-mirror UPSERT, `idempotencyKey`
+// (`stripe.refund.<rfnd_id>`) keys the transactions row — the UNIQUE collision
+// on that key is the convergence mechanism across partial refunds, webhook
+// replays, and event races.
+export interface RefundRowToBook {
+    stripeRefundId: string;
+    amountCents: number;   // positive individual refund amount (caller applies the − sign)
+    reason: string | null;
+    idempotencyKey: string;
+}
+
+/**
+ * Pure per-refund booking decision (Rule 12 / Rule 6 — kept pure so Vitest
+ * imports it directly; see tests/unit/resolveRefundRowsToBook.test.ts).
+ *
+ * Only `succeeded` refunds book — pending/failed/canceled refunds move no
+ * money. Each row carries the refund's INDIVIDUAL amount, never the charge's
+ * cumulative `amount_refunded`, so two partial refunds book as two correctly
+ * sized rows and a replay of the same list regenerates identical keys.
+ */
+export function resolveRefundRowsToBook(
+    refunds: Array<Pick<Refund, "id" | "amount" | "status" | "reason">>,
+): RefundRowToBook[] {
+    return refunds
+        .filter((r) => r.status === "succeeded")
+        .map((r) => ({
+            stripeRefundId: r.id,
+            amountCents: Math.abs(r.amount),
+            reason: r.reason ?? null,
+            idempotencyKey: `stripe.refund.${r.id}`,
+        }));
 }
 
 // ─── Webhook Signature Verification ─────────────────────────

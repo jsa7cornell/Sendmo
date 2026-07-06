@@ -2,8 +2,14 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { log } from "../_shared/logger.ts";
-import { verifyAndParseWebhook, retrieveCharge } from "../_shared/stripe.ts";
+import {
+    verifyAndParseWebhook,
+    retrieveCharge,
+    listRefundsForCharge,
+    resolveRefundRowsToBook,
+} from "../_shared/stripe.ts";
 import { writeStripeFee } from "../_shared/ledger.ts";
+import { runInBackground } from "../_shared/background.ts";
 import { resolvePiContextWithFallback } from "../_shared/intents.ts";
 import { sendEmail } from "../_shared/resend.ts";
 import { sendAdminAlert } from "../_shared/alert.ts";
@@ -24,8 +30,11 @@ import {
 //   payment_intent.succeeded     → UPSERT stripe_intents (succeeded)
 //                                  INSERT transactions (+charge)
 //   payment_intent.payment_failed → UPSERT stripe_intents (failed); no ledger row
-//   charge.refunded               → UPSERT refunds row
-//                                  INSERT transactions (-refund)
+//   charge.refunded               → list refunds from Stripe (payload omits
+//                                  charge.refunds under 2026-04-22.dahlia);
+//                                  per succeeded refund: UPSERT refunds row +
+//                                  INSERT transactions (-refund), both keyed
+//                                  on the real rfnd_ id
 //   charge.dispute.created        → INSERT transactions (-chargeback)
 //   setup_intent.succeeded        → UPSERT stripe_intents (succeeded). No
 //                                   payment_methods write — that happens on
@@ -180,8 +189,13 @@ serve(async (req: Request) => {
         Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
 
-    // Idempotency layer 1: webhook_events table. INSERT before processing
-    // and bail if a row already exists for this event.id.
+    // Idempotency layer 1: webhook_events table, two-phase. CHECK here at the
+    // top (bail if this event.id was already recorded), then RECORD after the
+    // switch completes — so a mid-handler throw leaves no row and Stripe's
+    // retry reprocesses the event. The check→record gap is a tiny race window
+    // (concurrent delivery of the same event), but it's harmless: every money
+    // row carries its own UNIQUE idempotency_key (layer 2), so a double run
+    // converges instead of double-booking.
     const { data: existing } = await supabase
         .from("webhook_events")
         .select("id")
@@ -259,9 +273,14 @@ serve(async (req: Request) => {
                 // The BT id is also the idempotency anchor for the fee row.
                 // Fire-and-forget within the webhook: a fee-write failure must
                 // not break the charge-success path. We do NOT throw here.
+                // Kept alive past the response via runInBackground /
+                // EdgeRuntime.waitUntil — a bare un-awaited IIFE could be cut
+                // off when the isolate is reclaimed, silently dropping
+                // fee_stripe rows (2026-07-06 fix, same class as the
+                // 2026-06-27 label_created email bug).
                 const ledgerLatestChargeId = (pi as { latest_charge?: string }).latest_charge;
                 if (ledgerLatestChargeId) {
-                    (async () => {
+                    runInBackground((async () => {
                         try {
                             const chargeWithBT = await retrieveCharge(ledgerLatestChargeId, liveMode, { expandBalanceTransaction: true });
                             const bt = typeof chargeWithBT.balance_transaction === "object"
@@ -304,7 +323,7 @@ serve(async (req: Request) => {
                                 },
                             });
                         }
-                    })();
+                    })(), "fee_stripe_write");
                 }
 
                 // NB: Pattern D explicitly does NOT update holds.status or flip
@@ -700,9 +719,24 @@ serve(async (req: Request) => {
             case "charge.refunded": {
                 const charge = obj as ChargeObj;
                 const piId = charge.payment_intent ?? null;
-                const refundData = charge.refunds?.data?.[0];
-                const refundAmount = (refundData?.amount ?? charge.amount_refunded ?? 0) as number;
-                const stripeRefundId = refundData?.id ?? `${charge.id}_refund`;
+
+                // Retrieve the authoritative refund list from Stripe. The
+                // pinned 2026-04-22.dahlia API version does NOT embed
+                // `charge.refunds` in webhook payloads, and the old fallback
+                // to `charge.amount_refunded` booked the CUMULATIVE total —
+                // the second partial refund landed as an over-sized second
+                // ledger row, and the synthetic `<charge_id>_refund` id
+                // collapsed distinct refunds in the `refunds` mirror
+                // (2026-07-06 fix). Each succeeded refund books individually,
+                // keyed on its real rfnd_ id; the idempotency_key UNIQUE
+                // collision (`stripe.refund.<rfnd_id>`, tolerated below) is
+                // the convergence mechanism across partial refunds, webhook
+                // replays, and event races.
+                const { data: refundList } = await listRefundsForCharge(charge.id, liveMode);
+                const rowsToBook = resolveRefundRowsToBook(refundList);
+                // Stripe lists refunds newest-first — [0] is the refund that
+                // fired this event; used for Email B amount + dedup key below.
+                const currentRefund = rowsToBook[0] ?? null;
 
                 // Look up the originating shipment + user via the PI.
                 // Uses Path B fallback — for SendMo's full-label flow the PI is
@@ -711,73 +745,87 @@ serve(async (req: Request) => {
                 // lookup keyed on stripe_payment_intent_id (forward-stitched
                 // by labels/index.ts post-H1).
                 const { userId, shipmentId, linkId } = await resolvePiContextWithFallback(supabase, piId);
-
-                // (1) UPSERT refunds row.
-                if (shipmentId && piId) {
-                    await supabase.from("refunds").upsert({
-                        shipment_id: shipmentId,
-                        stripe_refund_id: stripeRefundId,
-                        stripe_payment_intent_id: piId,
-                        amount_cents: refundAmount,
-                        reason: refundData?.reason ?? null,
-                        status: refundData?.status ?? "succeeded",
-                        mode,
-                    }, { onConflict: "stripe_refund_id" });
-                }
-
-                // (2) Append −refund ledger row (negative — money returned to customer).
                 const ledgerUserId = userId ?? "00000000-0000-0000-0000-000000000001";
-                const { error: txErr } = await supabase.from("transactions").insert({
-                    user_id: ledgerUserId,
-                    shipment_id: shipmentId,
-                    link_id: linkId,
-                    stripe_intent_id: piId,
-                    stripe_charge_id: charge.id,
-                    type: "refund",
-                    funding_source: "card",
-                    amount_cents: -Math.abs(refundAmount),
-                    mode,
-                    idempotency_key: `stripe.${eventId}:refund`,
-                    description: `charge.refunded ${charge.id}`,
-                });
-                if (txErr && !/duplicate key|unique constraint/i.test(txErr.message)) {
-                    throw new Error(`transactions insert failed: ${txErr.message}`);
-                }
 
-                // Advance shipments.refund_status from 'submitted' → 'refunded'.
-                // Set by cancel-label after a successful Stripe createRefund;
-                // this is the async hand-off that closes the cancel state machine.
-                // Per decided proposal label-cancel-and-change (2026-05-12).
-                if (shipmentId) {
-                    const { error: shipErr } = await supabase
-                        .from("shipments")
-                        .update({ refund_status: "refunded" })
-                        .eq("id", shipmentId)
-                        .eq("refund_status", "submitted");  // idempotent
-                    if (shipErr) {
-                        console.error("[stripe-webhook] shipments.refund_status update failed:", shipErr);
+                for (const row of rowsToBook) {
+                    // (1) UPSERT refunds mirror row, keyed on the real rfnd_ id.
+                    if (shipmentId && piId) {
+                        await supabase.from("refunds").upsert({
+                            shipment_id: shipmentId,
+                            stripe_refund_id: row.stripeRefundId,
+                            stripe_payment_intent_id: piId,
+                            amount_cents: row.amountCents,
+                            reason: row.reason,
+                            status: "succeeded",
+                            mode,
+                        }, { onConflict: "stripe_refund_id" });
+                    }
+
+                    // (2) Append −refund ledger row (negative — money returned
+                    //     to customer). Individual refund amount, never the
+                    //     cumulative charge.amount_refunded.
+                    const { error: txErr } = await supabase.from("transactions").insert({
+                        user_id: ledgerUserId,
+                        shipment_id: shipmentId,
+                        link_id: linkId,
+                        stripe_intent_id: piId,
+                        stripe_charge_id: charge.id,
+                        type: "refund",
+                        funding_source: "card",
+                        amount_cents: -Math.abs(row.amountCents),
+                        mode,
+                        idempotency_key: row.idempotencyKey,
+                        description: `charge.refunded ${charge.id}`,
+                    });
+                    if (txErr && !/duplicate key|unique constraint/i.test(txErr.message)) {
+                        throw new Error(`transactions insert failed: ${txErr.message}`);
                     }
                 }
 
+                // Advance shipments.refund_status → 'refunded'. Set to
+                // 'submitted' by cancel-label after a successful Stripe
+                // createRefund; this is the async hand-off that closes the
+                // cancel state machine (decided proposal label-cancel-and-
+                // change, 2026-05-12). Also recovers 'rejected': a real Stripe
+                // refund landing is ground truth — the cron sweep may have
+                // timeout-marked the cancel 'rejected' at day 21 while the
+                // carrier confirmed later (sweep timeout separately moving to
+                // 28d). .select("id") surfaces rows-affected so Email B below
+                // can key on whether this refund actually closed a customer
+                // cancel flow.
+                let refundStatusAdvanced = false;
+                if (shipmentId) {
+                    const { data: advancedRows, error: shipErr } = await supabase
+                        .from("shipments")
+                        .update({ refund_status: "refunded" })
+                        .eq("id", shipmentId)
+                        .in("refund_status", ["submitted", "rejected"])  // idempotent
+                        .select("id");
+                    if (shipErr) {
+                        console.error("[stripe-webhook] shipments.refund_status update failed:", shipErr);
+                    }
+                    refundStatusAdvanced = ((advancedRows as Array<{ id: string }> | null)?.length ?? 0) >= 1;
+                }
+
                 // ── Email B — refund completed notification (H5 D5) ──────────
-                // Fires here in charge.refunded, after submitted→refunded advance.
-                // Dedup: per-refund-event, not per-shipment — so two partial
-                // refunds on the same shipment correctly send two completion emails
-                // (N2 fix from the decided proposal).
-                // Key: (shipment_id, event_type='refund.completed', provider_id=stripe_refund_id)
-                // contact_id=NULL (direct send, not via notification_contacts).
-                //
-                // Only send if we actually advanced the status (shipment was 'submitted').
-                // For admin /refunds-initiated refunds the shipment may not be in
-                // 'submitted' state — those don't get Email B (D2 of the decided proposal).
-                if (shipmentId && stripeRefundId) {
+                // Fires here in charge.refunded, after the refund_status advance.
+                // Gate: rows-affected >= 1 on that advance — a real advance means
+                // this refund closed a customer cancel flow. Admin /refunds
+                // refunds (no advance; shipment never sat in 'submitted'/
+                // 'rejected') correctly skip — D2 of the decided proposal:
+                // admin-initiated refunds get no Email B. This replaces the old
+                // payer-email heuristic, which couldn't know rows-affected and
+                // ignored D2 (2026-07-06 fix).
+                // Dedup: (shipment_id, event_type='refund.completed',
+                // provider_id=<real rfnd_ id>), contact_id=NULL (direct send,
+                // not via notification_contacts) — insert-first, unchanged.
+                if (shipmentId && currentRefund && refundStatusAdvanced) {
                     try {
-                        // Check if this shipment was in submitted state (was a customer cancel).
-                        // We check by whether the shipment's refund_status was 'submitted'
-                        // before the update. Since we updated with .eq("refund_status", "submitted"),
-                        // shipErr being null means it was. However, we can't reliably know if rows
-                        // were updated (0 rows is not an error in Postgres). Use a heuristic:
-                        // look up the profile email for the shipment's link owner.
+                        // Resolve the payer email. Primary: the link owner
+                        // (flex/link flows). Fallback: the shipment owner's
+                        // profile email — full-label shipments have no link, and
+                        // previously never got Email B (2026-07-06 fix). The
+                        // system placeholder profile is never a real payer.
                         const { data: linkData } = await supabase
                             .from("stripe_intents")
                             .select("link_id")
@@ -802,6 +850,22 @@ serve(async (req: Request) => {
                                 payerEmailForRefund = (ownerProfile as { email?: string | null } | null)?.email ?? null;
                             }
                         }
+                        if (!payerEmailForRefund) {
+                            const { data: shipOwnerRow } = await supabase
+                                .from("shipments")
+                                .select("user_id")
+                                .eq("id", shipmentId)
+                                .maybeSingle();
+                            const shipOwnerId = (shipOwnerRow as { user_id?: string | null } | null)?.user_id ?? null;
+                            if (shipOwnerId && shipOwnerId !== "00000000-0000-0000-0000-000000000001") {
+                                const { data: ownerProfile } = await supabase
+                                    .from("profiles")
+                                    .select("email")
+                                    .eq("id", shipOwnerId)
+                                    .maybeSingle();
+                                payerEmailForRefund = (ownerProfile as { email?: string | null } | null)?.email ?? null;
+                            }
+                        }
 
                         if (payerEmailForRefund) {
                             // Dedup: attempt to insert notifications_log row first.
@@ -813,7 +877,7 @@ serve(async (req: Request) => {
                                     channel: "email",
                                     event_type: "refund.completed",
                                     status: "sent",
-                                    provider_id: stripeRefundId,
+                                    provider_id: currentRefund.stripeRefundId,
                                 });
 
                             if (!emailLogErr) {
@@ -821,13 +885,6 @@ serve(async (req: Request) => {
                                 // Extract last4 from the charge object if available.
                                 const last4 = (charge as { payment_method_details?: { card?: { last4?: string } } | null })
                                     ?.payment_method_details?.card?.last4 ?? null;
-
-                                const tpl = refundCompletedEmail({
-                                    amount_cents: refundAmount,
-                                    public_code: "", // fetched below if needed
-                                    tracking_url: "",
-                                    last4,
-                                });
 
                                 // Get public_code for the tracking link.
                                 const { data: shipRow } = await supabase
@@ -838,7 +895,7 @@ serve(async (req: Request) => {
                                 const publicCode = (shipRow as { public_code?: string } | null)?.public_code ?? "";
 
                                 const tplFull = refundCompletedEmail({
-                                    amount_cents: refundAmount,
+                                    amount_cents: currentRefund.amountCents,
                                     public_code: publicCode,
                                     tracking_url: `https://sendmo.co/t/${publicCode}`,
                                     last4,
@@ -851,8 +908,8 @@ serve(async (req: Request) => {
                                     entity_type: "payment_intent",
                                     entity_id: piId,
                                     properties: {
-                                        amount_cents: refundAmount,
-                                        stripe_refund_id: stripeRefundId,
+                                        amount_cents: currentRefund.amountCents,
+                                        stripe_refund_id: currentRefund.stripeRefundId,
                                         recipient: payerEmailForRefund,
                                     },
                                 });
@@ -863,7 +920,7 @@ serve(async (req: Request) => {
                                     severity: "error",
                                     entity_type: "payment_intent",
                                     entity_id: piId,
-                                    properties: { error_message: emailLogErr.message, stripe_refund_id: stripeRefundId },
+                                    properties: { error_message: emailLogErr.message, stripe_refund_id: currentRefund.stripeRefundId },
                                 });
                             }
                             // duplicate key → already sent → skip silently
@@ -877,7 +934,7 @@ serve(async (req: Request) => {
                             severity: "error",
                             entity_type: "payment_intent",
                             entity_id: piId,
-                            properties: { error_message: msg, stripe_refund_id: stripeRefundId },
+                            properties: { error_message: msg, stripe_refund_id: currentRefund.stripeRefundId },
                         });
                     }
                 }
@@ -887,7 +944,13 @@ serve(async (req: Request) => {
                     severity: "info",
                     entity_type: "payment_intent",
                     entity_id: piId,
-                    properties: { amount_cents: refundAmount, live_mode: liveMode, shipment_id: shipmentId },
+                    properties: {
+                        amount_cents: currentRefund?.amountCents ?? 0,
+                        refunds_booked: rowsToBook.length,
+                        refund_status_advanced: refundStatusAdvanced,
+                        live_mode: liveMode,
+                        shipment_id: shipmentId,
+                    },
                 });
                 break;
             }
@@ -1349,13 +1412,26 @@ serve(async (req: Request) => {
         }
 
         // Record the event AFTER processing so a retry runs again on throw.
-        await supabase.from("webhook_events").insert({
+        // A failed record is non-fatal (the money rows already landed, keyed
+        // by their own idempotency keys) but must be visible — a silent miss
+        // here means Stripe's retry reprocesses the whole event.
+        const { error: evtErr } = await supabase.from("webhook_events").insert({
             event_id: eventId,
             source: "stripe",
             event_type: eventType,
             payload: event,
             processed: true,
         });
+        if (evtErr) {
+            console.error("[stripe-webhook] webhook_events insert failed:", evtErr.message);
+            log({
+                event_type: "stripe.webhook_event_record_failed",
+                severity: "error",
+                entity_type: "webhook_event",
+                entity_id: eventId,
+                properties: { error_message: evtErr.message, event_type: eventType },
+            });
+        }
 
         return new Response(JSON.stringify({ ok: true }), {
             status: 200,
