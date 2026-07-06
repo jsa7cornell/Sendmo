@@ -12,6 +12,28 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-07-06] T1-3 flip ON HOLD (John) — no existing Sentry/PostHog accounts; paused before account creation
+
+**Category:** docs | Launch | Monitoring | decision
+**Cross-link:** T1-3 ship entry below (`364462a`) | PRE-LAUNCH T1-3 | in-review [proposals/2026-07-06_ga4-acquisition-analytics.md](proposals/2026-07-06_ga4-acquisition-analytics.md) (overlapping analytics-stack surface — see note)
+
+**What happened:** after the T1-3 code merge, the agent attempted John's 👤 flip steps directly (Vercel CLI: authenticated ✓; Sentry/PostHog dashboards: via browser). Both dead-ended at the same discovery: **neither sentry.io nor us.posthog.com has any account for jsa7cornell@gmail.com** — the Google-SSO flows land on "create a new organization" (Sentry "New Identity" screen; PostHog org-creation form with ToS acceptance). Account creation is agent-prohibited, so it was handed to John — who **paused the whole flip** rather than create the accounts ("retrench and hold", 2026-07-06).
+
+**Current state (safe to sit indefinitely):** the monitoring code on `main` is fully inert — no env vars ⇒ no SDK init, no monitoring network calls, zero data leaves the browser (browser-verified in the ship entry). The CrashScreen boundary is live (deliberate pre-flip change, works without Sentry). **Nothing was created:** no vendor accounts, no ToS accepted, no Vercel env vars set. The only side effect of the attempt: sentry.io + PostHog were granted Google OAuth **email-scope** consent on John's Google account (visible/revocable at myaccount.google.com → Connections).
+
+**Decision John is holding:** whether/where the monitoring vendor accounts should live. Options when resumed:
+1. **Create the two free accounts** under jsa7cornell@gmail.com (2 short signups; agent finishes everything else: project creation, DSN/key, `vercel env add`, redeploy, tag verification).
+2. **Existing account under another email?** If a Sentry (or PostHog) account already exists elsewhere, sign in there and add jsa7cornell@gmail.com as a verified email — the agent proceeds identically.
+3. **Reconsider the vendor choice.** Note this is a *stack* decision, not a config step — Sentry+PostHog have been the documented monitoring stack since PLAYBOOK/SPEC inception, and the decided T1-3 proposal implements exactly that. Also note the same-day in-review **GA4 acquisition-analytics proposal** builds on PostHog-for-product-analytics as its premise; if the analytics half changes, that proposal needs a re-look. (The Sentry error-monitoring half is independent of any analytics choice.)
+
+**For future agents:** do NOT create the accounts or flip `VITE_SENTRY_DSN`/`VITE_POSTHOG_KEY` until John resolves this hold. T1-3's remaining-work definition in PRE-LAUNCH is updated to reflect the hold.
+
+**Browser-verified:**
+  n/a-category: docs
+  n/a-reason: decision/status record only; no code changed.
+
+---
+
 ### [2026-07-06] T2-1 — registered the pg_cron sweeps (reconciliation daily 04:00 + refund finalizer daily 04:30 UTC); fixed a silent-403 cron-auth bug; GUC→Vault forced by permissions
 
 **Category:** ship | Infra | Edge Functions | Payments (refund finalizer)
