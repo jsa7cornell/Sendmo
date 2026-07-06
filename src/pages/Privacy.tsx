@@ -29,8 +29,11 @@ export default function Privacy() {
         <h2 className="text-base font-semibold mt-6">Who we share it with</h2>
         <p>
           Only the service providers needed to ship your package: EasyPost (carrier integration),
-          Stripe (payments), Supabase (database/auth), Resend (email), Vercel (hosting). We don't
-          sell your data and we don't share it for advertising.
+          Stripe (payments), Supabase (database/auth), Resend (email), Vercel (hosting). We also
+          use Sentry (error monitoring) and PostHog (anonymous page-view analytics) to keep the
+          service reliable — neither receives your name, address, or payment details, and we
+          honor your browser's Do&nbsp;Not&nbsp;Track setting for analytics. We don't sell your
+          data and we don't share it for advertising.
         </p>
 
         <h2 className="text-base font-semibold mt-6">Your data</h2>
