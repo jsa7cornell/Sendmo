@@ -2,13 +2,13 @@
 title: Sender-side visibility for flex shipments (confirmation email + dashboard record)
 slug: flex-sender-visibility
 project: sendmo
-status: in-review
+status: reviewed
 created: 2026-07-06
 last_updated: 2026-07-06
-reviewed:
+reviewed: 2026-07-06
 decided:
 author: Claude (Fable 5) — launch-week session, 2026-07-06; surfaced twice during John's first live flex dogfood (no sender email, no sender dashboard entry)
-reviewer:
+reviewer: Claude (Opus 4.8) — fresh-eyes reviewer, 2026-07-06; verified every claim against notifications.ts, email-templates.ts, labels/index.ts (contacts block 1580-1717), Dashboard.tsx, and the decided 2026-06-27 label-confirmation proposal
 outcome:
 ---
 

@@ -43,7 +43,12 @@ T2-4. See **Appendix A** for the full architecture map.
 ## 🔴 Tier 1 — Launch blockers (nothing but John transacts until these land)
 
 ### T1-1 🤖 Open the live-payment path to real customers  ⬅ the launch switch
-**Status:** `[~]` **decided 2026-07-04, implementation in progress (ships inert).** Proposal reviewed (approve-with-changes) + decided same day — gate map is **6 sites** (adds `payment-methods` + `rates`); flex mode derives from `link.is_test`, not caller role; two env signals (`SENDMO_ENV` identity + `SENDMO_LIVE_DEFAULT` kill switch); anonymous never resolves live. See [proposals/2026-07-04_customer-live-payments_reviewed-2026-07-04_decided-2026-07-04.md](proposals/2026-07-04_customer-live-payments_reviewed-2026-07-04_decided-2026-07-04.md). T2-4 key guard lands in the same change, keyed on `SENDMO_ENV`. Flip-day runbook: expire the 2 non-admin test flex links + owner emails; security review of the diff before the flip.
+**Status:** `[~]` **LIVE in CLOSED BETA (flipped 2026-07-05).** Implemented (6 gates + `_shared/mode.ts` + kill switch), merged (#35), env flipped: `SENDMO_ENV=production`, `SENDMO_LIVE_DEFAULT=true`, `VITE_SENDMO_LIVE_DEFAULT=true` (Vercel Production-only), `PAYMENTS_LIVE_ALLOWLIST_ONLY=true`, `PAYMENTS_ALLOWED_USERS` = John's UID only. So **only John's UID can charge live today**; everyone else is blocked by the allowlist. Smoke-tested live: full flex buy (24W301E, $15.95 charge → $13 UPS label → +$2.19 margin, ledger reconciled) + live cancel→refund (after the #37 fix + backfill below). **Remaining to fully open:** widen `PAYMENTS_ALLOWED_USERS` → run T2-2 non-happy paths → flip `PAYMENTS_LIVE_ALLOWLIST_ONLY=false` → write the launch-crossed LOG entry. Decided proposal: [proposals/2026-07-04_customer-live-payments_reviewed-2026-07-04_decided-2026-07-04.md](proposals/2026-07-04_customer-live-payments_reviewed-2026-07-04_decided-2026-07-04.md). **Security review of the opened surface is running (2026-07-06 chip).**
+
+> **Bugs found & fixed during the flip's own dogfood (2026-07-05/06):**
+> - **Flex cancel skipped the refund** — flex shipments never stitched their off-session PI onto `shipments.stripe_payment_intent_id`, so cancel wrote `refund_status='not_applicable'` and never refunded. Fixed: PR #37 (stitch from `verifiedPaymentIntent.id`) + 24W301E backfilled. Closes the flex half of T2-2.
+> - **Flex allowlist bypass** — the closed-beta lever was only enforced on full-label; the flex charge + live-link creation skipped it. Fixed: PR #36 (`_shared/allowlist.ts`, shared gate on all live-charge entry points).
+> - **Auth email totally broken** — the `auth-email-hook` (Supabase Send Email hook) returned 500 on every OTP/magic-link since 2026-05-27 because `SEND_EMAIL_HOOK_SECRET` was never set (invisible: John uses Google login). Fixed 2026-07-06 (John set the secret; verified end-to-end). **All email sign-in was down for 6 weeks — add to launch verification.**
 
 **Why it matters:** the entire live/test split assumes "admin in an admin mode." Real
 customers currently get test-mode labels. This is the single change that makes SendMo a
@@ -174,7 +179,7 @@ concurrent EasyPost list-load.
 ---
 
 ### T2-2 👤 Verify the non-happy-path money flows in LIVE
-**Status:** `[ ]` not started · **John-run smoke tests after T1-1**
+**Status:** `[~]` **partially done 2026-07-05/06.** **(a) Live cancel→refund: VERIFIED (after a fix).** The first live flex cancel exposed the PI-stitch bug (refund silently skipped); fixed (#37) + 24W301E backfilled → cancel now resolves `refund_status='submitted'` and refunds. Re-confirm on a fresh flex cancel once you're satisfied. **(b) Carrier reweigh/adjustment (H2): still UNVERIFIED live** — hasn't fired naturally; POST a synthetic `shipment.invoice.created` to exercise it. **(c) Rate-changed 409 gate: still UNVERIFIED live.**
 
 **Why it matters:** you've proven live *create* (the real ship+deliver). You have **not**
 cleanly verified, in live, since the fixes landed: **(a)** cancel → refund → the 3
