@@ -57,6 +57,9 @@ interface TrackingData {
   refund_status?: "none" | "submitted" | "refunded" | "rejected" | "not_applicable";
   paid?: boolean;
   amount_paid_cents?: number | null;
+  // Card last4 for the receipt block — payer-gated server-side like
+  // amount_paid_cents; null when unresolvable (UI shows "card on file").
+  payment_method_last4?: string | null;
   // Test-mode flag — surface to UI so viewers know the tracking is synthetic.
   is_test?: boolean;
   // Cancelled-state metadata (populated server-side when status='cancelled')
@@ -386,6 +389,7 @@ export default function TrackingPage() {
           mode={receiptMode}
           totalCents={totalCents}
           chargedAt={chargedAt}
+          paymentMethodLast4={data.payment_method_last4 ?? undefined}
         />
       );
     }
@@ -756,6 +760,7 @@ export default function TrackingPage() {
                       mode="condensed"
                       totalCents={data.amount_paid_cents ?? 0}
                       chargedAt={data.created_at}
+                      paymentMethodLast4={data.payment_method_last4 ?? undefined}
                       refundStatus={data.refund_status ?? "none"}
                     />
                   )}

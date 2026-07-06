@@ -12,6 +12,26 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-07-06] Receipt block now shows card last4 ("Charged to •••• 4242") — tracking endpoint wires the reserved `payment_method_last4` field
+
+**Category:** fix | Payments | UX
+**Cross-link:** branch `claude/receipt-card-last4` → PR to main (carries this + the stranded post-#39 `x-cancel-token` CORS commit from `claude/money-path-fixes`) | 2026-05-19_unify-confirmation-into-tracking proposal (blocking finding #2 payer gate — the field slot was reserved there) | migration 024 (Pattern D `stripe_intents.payment_method_id`)
+
+**What happened:** John flagged that the receipt on the tracking page ("$15.95 · charged to card on file · July 5") should show the last 4 digits of the charged card. `ReceiptBlock` already supported `paymentMethodLast4` (renders "•••• 4242", falls back to "card on file") — it was just never fed. The tracking endpoint's payer gate even had a comment reserving `payment_method_last4` as a future field.
+
+**How it's resolved (no Stripe round-trip):** inside the existing payer-only receipt lookup in `supabase/functions/tracking/index.ts`: `shipment.stripe_payment_intent_id` → `stripe_intents.payment_method_id` (cached by webhooks per Pattern D) → `payment_methods.last4` (cached card metadata). Soft-deleted `payment_methods` rows still resolve — the receipt shows the card that was actually charged even if since removed. Any gap in the chain degrades to `null` → UI falls back to "card on file" exactly as before. The new response field sits **inside the payer gate** per the documented contract: anonymous/sender_flex always get `null`, and the leak-zero e2e spec now asserts that.
+
+**What changed (files)**
+- `supabase/functions/tracking/index.ts` — last4 lookup + `payment_method_last4` response field (payer-gated)
+- `src/pages/TrackingPage.tsx` — `TrackingData.payment_method_last4` + passed to both `ReceiptBlock` call sites (lifecycle + terminal F3)
+- `tests/e2e/tracking-anonymous-payment-gating.spec.ts` — anonymous-null assertions (live + mocked), payer shape assertion, new mocked test asserting "•••• 4242" renders and "card on file" is absent
+
+**Deploy note:** the `tracking` edge function must be redeployed when this PR merges for the field to go live; until then clients render the "card on file" fallback (field absent → undefined).
+
+**Browser-verified:**
+  spec: tests/e2e/tracking-anonymous-payment-gating.spec.ts ("payer receipt shows card last4 when payment_method_last4 is present")
+  variants-covered: payer-with-last4 (•••• 4242 visible, "card on file" absent); payer-comp (last4 null → block renders with fallback); anonymous (field null, no receipt block). Live-endpoint variants remain env-gated (SENDMO_TEST_PUBLIC_CODE) and skipped locally.
+
 ### [2026-07-06] easypost_refund 0¢ amount bug: sourcing consolidated into writeEasypostRefund; sweep audits ledger directly
 
 **Category:** fix | Payments | Ledger

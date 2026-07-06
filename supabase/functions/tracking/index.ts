@@ -604,6 +604,7 @@ serve(async (req: Request) => {
   // The sum is signed-positive (charge rows are written as positive
   // amount_cents — customer cash IN to SendMo).
   let amountPaidCents: number | null = null;
+  let paymentMethodLast4: string | null = null;
   if (viewerRole === "payer" && shipment.stripe_payment_intent_id) {
     const { data: chargeRows } = await supabase
       .from("transactions")
@@ -612,6 +613,28 @@ serve(async (req: Request) => {
       .eq("type", "charge");
     if (chargeRows && chargeRows.length > 0) {
       amountPaidCents = chargeRows.reduce((sum, r) => sum + (r.amount_cents ?? 0), 0);
+    }
+
+    // Card last4 for the receipt block ("Charged to •••• 4242"). Resolved
+    // from cached rows — no Stripe round-trip: the PI's stripe_intents row
+    // carries payment_method_id (Pattern D, migration 024), which keys into
+    // payment_methods' cached card metadata. Soft-deleted payment_methods
+    // rows still resolve (receipt shows the card that was charged, even if
+    // since removed). Any gap in the chain degrades to null → the UI falls
+    // back to "card on file".
+    const { data: intentRow } = await supabase
+      .from("stripe_intents")
+      .select("payment_method_id")
+      .eq("stripe_intent_id", shipment.stripe_payment_intent_id)
+      .maybeSingle();
+    const pmId = (intentRow as { payment_method_id?: string | null } | null)?.payment_method_id ?? null;
+    if (pmId) {
+      const { data: pmRows } = await supabase
+        .from("payment_methods")
+        .select("last4")
+        .eq("stripe_payment_method_id", pmId)
+        .limit(1);
+      paymentMethodLast4 = (pmRows?.[0] as { last4?: string | null } | undefined)?.last4 ?? null;
     }
   }
 
@@ -679,6 +702,9 @@ serve(async (req: Request) => {
         ? (shipment.stripe_payment_intent_id != null)
         : false,
       amount_paid_cents: viewerRole === "payer" ? amountPaidCents : null,
+      // Card last4 for the receipt block. Inside the payer gate per the
+      // contract above — anonymous/sender_flex always receive null.
+      payment_method_last4: viewerRole === "payer" ? paymentMethodLast4 : null,
       // EasyPost test-mode shipments use synthetic tracking numbers that look
       // real (USPS format) but never hit the actual carrier. Surfacing this
       // flag lets the UI render a TEST banner and hide things that would
