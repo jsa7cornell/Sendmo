@@ -1655,6 +1655,12 @@ serve(async (req: Request) => {
                                 sender_name: from_address?.name ?? null,
                                 item_description: typeof parcel?.description === "string" ? parcel.description : null,
                                 display_price_cents: typeof display_price_cents === "number" ? display_price_cents : null,
+                                // Rides the flex SENDER's senderLabelReadyEmail only (the
+                                // tokenized cancel/change CTA — decided 2026-07-06, restoring
+                                // 2026-05-12 §3.2). Null when token-minting failed above; the
+                                // dispatcher then skips the sender copy rather than emailing a
+                                // broken link. The payer template never reads this field.
+                                cancel_token: mintedCancelToken,
                             };
 
                             if (contacts.length > 0) {

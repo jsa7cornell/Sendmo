@@ -113,18 +113,23 @@ describe("Notification dispatch logic", () => {
 // Locks the role↔payer asymmetry: the label-created email goes only to the
 // PAYER, whose contact role differs by flow. Full-label payer = `sender`;
 // flex payer (the link owner) = `recipient`.
-describe("label_created — payer-only routing + variant", () => {
-  // Mirrors dispatchNotifications: payerRole = is_flex ? "recipient" : "sender",
-  // and label_created skips any contact whose role !== payerRole.
+describe("label_created — routing + variant (2026-07-06 flex-sender-visibility)", () => {
+  // Mirrors dispatchNotifications routing:
+  //   payerRole   = is_flex ? "recipient" : "sender"   (always receives)
+  //   flex sender = also receives, but ONLY when a cancel_token is present
+  //                 (else the tokenized cancel CTA would be a dead link → skip)
   const payerRole = (isFlex: boolean) => (isFlex ? "recipient" : "sender");
   const variantFor = (isFlex: boolean) => (isFlex ? "flex" : "full_label");
+  // Which contacts get label_created, per the new predicate.
+  const receivesCreation = (
+    role: string, isFlex: boolean, cancelToken: string | null,
+  ) => role === payerRole(isFlex) || (isFlex && role === "sender" && !!cancelToken);
+  // Which template each recipient gets.
+  const templateFor = (role: string, isFlex: boolean) =>
+    isFlex && role === "sender" ? "senderLabelReadyEmail" : "labelConfirmationEmail";
 
-  it("full-label: payer is the sender role", () => {
+  it("full-label: payer is the sender role, flex payer is the recipient role", () => {
     expect(payerRole(false)).toBe("sender");
-    expect(variantFor(false)).toBe("full_label");
-  });
-
-  it("flex: payer is the recipient role (the link owner)", () => {
     expect(payerRole(true)).toBe("recipient");
     expect(variantFor(true)).toBe("flex");
   });
@@ -134,19 +139,36 @@ describe("label_created — payer-only routing + variant", () => {
       { role: "sender", address: "payer@test.com" },
       { role: "recipient", address: "dest@test.com" },
     ];
-    const got = contacts.filter((c) => c.role === payerRole(false));
-    expect(got).toHaveLength(1);
-    expect(got[0].address).toBe("payer@test.com");
+    const got = contacts.filter((c) => receivesCreation(c.role, false, null));
+    expect(got.map((c) => c.address)).toEqual(["payer@test.com"]);
   });
 
-  it("flex: only the owner (recipient role) receives label_created (link-user excluded)", () => {
+  it("flex WITH token: BOTH owner (payer copy) and sender (tokenized copy) receive it", () => {
     const contacts = [
       { role: "recipient", address: "owner@test.com" }, // link owner = payer
-      { role: "sender", address: "linkuser@test.com" }, // used the link
+      { role: "sender", address: "shipper@test.com" },  // the person who ships
     ];
-    const got = contacts.filter((c) => c.role === payerRole(true));
+    const got = contacts.filter((c) => receivesCreation(c.role, true, "tok123"));
+    expect(got.map((c) => c.address).sort()).toEqual(["owner@test.com", "shipper@test.com"]);
+    expect(templateFor("recipient", true)).toBe("labelConfirmationEmail");
+    expect(templateFor("sender", true)).toBe("senderLabelReadyEmail");
+  });
+
+  it("flex WITHOUT token: only the owner receives it (sender skipped — no dead cancel link)", () => {
+    const contacts = [
+      { role: "recipient", address: "owner@test.com" },
+      { role: "sender", address: "shipper@test.com" },
+    ];
+    const got = contacts.filter((c) => receivesCreation(c.role, true, null));
+    expect(got.map((c) => c.address)).toEqual(["owner@test.com"]);
+  });
+
+  it("self-send flex (single payer/recipient contact) → exactly one email, no sender copy", () => {
+    // sameInbox dedupe in labels stores ONE contact on the payer role.
+    const contacts = [{ role: "recipient", address: "me@test.com" }];
+    const got = contacts.filter((c) => receivesCreation(c.role, true, "tok123"));
     expect(got).toHaveLength(1);
-    expect(got[0].address).toBe("owner@test.com");
+    expect(templateFor("recipient", true)).toBe("labelConfirmationEmail");
   });
 });
 

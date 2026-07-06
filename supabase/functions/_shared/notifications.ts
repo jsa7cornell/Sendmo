@@ -9,7 +9,7 @@
  */
 
 import { sendEmail } from "./resend.ts";
-import { trackingUpdateEmail, labelConfirmationEmail } from "./email-templates.ts";
+import { trackingUpdateEmail, labelConfirmationEmail, senderLabelReadyEmail } from "./email-templates.ts";
 import { log } from "./logger.ts";
 
 // Event type for the one-time label-creation confirmation (payer only).
@@ -31,6 +31,12 @@ export interface NotificationContext {
   sender_name?: string | null;       // "From" row on the label-created email
   item_description?: string | null;  // "Item" row
   display_price_cents?: number | null; // "Amount" row
+  // Per-shipment cancel token (hex). Rides the flex SENDER "label ready" email
+  // ONLY (senderLabelReadyEmail builds `/t/<code>?cancel=<token>` so a
+  // returning sender can cancel/change). NEVER threaded into the payer/owner
+  // copy — the owner cancels via their JWT and must not get a live cancel
+  // credential in their inbox. Restores 2026-05-12 label-cancel-and-change §3.2.
+  cancel_token?: string | null;
 }
 
 interface Contact {
@@ -49,7 +55,24 @@ type ChannelHandler = (
 
 const channelHandlers: Record<string, ChannelHandler> = {
   email: async (contact, eventType, ctx) => {
-    const template = eventType === LABEL_CREATED_EVENT
+    // label_created has TWO renders on flex: the payer/owner gets the
+    // "your label is ready" payer copy; the SENDER (who ships) gets the
+    // tokenized "you shipped this" copy with the cancel link. Full-label has
+    // only the payer render (there is no separate sender). The dispatch filter
+    // below decides WHICH contacts receive label_created; here we pick the copy.
+    const isSenderCreation = eventType === LABEL_CREATED_EVENT
+      && ctx.is_flex === true && contact.role === "sender";
+    const template = isSenderCreation
+      ? senderLabelReadyEmail({
+          publicCode: ctx.public_code,
+          carrierTracking: ctx.tracking_number || "Pending",
+          carrier: ctx.carrier || "Standard",
+          eta: ctx.estimated_delivery || "Estimated upon pickup",
+          trackingUrl: ctx.tracking_url,
+          cancelToken: ctx.cancel_token || "",
+          itemDescription: ctx.item_description ?? null,
+        })
+      : eventType === LABEL_CREATED_EVENT
       ? labelConfirmationEmail({
           publicCode: ctx.public_code,
           carrierTracking: ctx.tracking_number || "Pending",
@@ -109,16 +132,37 @@ export async function dispatchNotifications(
       return;
     }
 
-    // label_created is payer-only. The recipient (and, in flex, the link user)
-    // hear about the package via the tracking events, not at creation. The
-    // payer is the `sender` contact for full-label and the `recipient` contact
-    // for flex (the link owner who prepaid) — see NotificationContext.is_flex.
+    // label_created routing (decided 2026-07-06 flex-sender-visibility,
+    // restoring 2026-05-12 label-cancel-and-change §3.2):
+    //   • payer — always. Full-label payer is the `sender` contact; flex payer
+    //     (the link owner who prepaid) is the `recipient` contact.
+    //   • flex SENDER — also gets a creation email (the tokenized
+    //     senderLabelReadyEmail; template picked in the channel handler), but
+    //     ONLY when the cancel token is present: without it the email's
+    //     manage/cancel CTA would be a broken `?cancel=` link, so we skip and
+    //     log rather than send a dead credential (degraded path).
+    //   • everyone else (full-label recipient) — no creation email; their
+    //     first touchpoint stays the in_transit tracking email.
     const payerRole = ctx.is_flex ? "recipient" : "sender";
+    const senderCreationEligible = ctx.is_flex === true && !!ctx.cancel_token;
 
     // Send to each contact in parallel
     const promises = contacts.map(async (contact: Contact) => {
       if (eventType === LABEL_CREATED_EVENT && contact.role !== payerRole) {
-        return; // not the payer — no creation email
+        const isFlexSender = ctx.is_flex === true && contact.role === "sender";
+        if (!isFlexSender) {
+          return; // not the payer and not a flex sender — no creation email
+        }
+        if (!senderCreationEligible) {
+          log({
+            event_type: "notification.sender_creation_skipped_no_token",
+            severity: "warn",
+            entity_type: "shipment",
+            entity_id: shipmentId,
+            properties: { contact_role: contact.role },
+          });
+          return;
+        }
       }
       const handler = channelHandlers[contact.channel];
       if (!handler) {

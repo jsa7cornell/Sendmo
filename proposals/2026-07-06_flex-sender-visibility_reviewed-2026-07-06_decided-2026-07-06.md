@@ -2,11 +2,11 @@
 title: Sender-side visibility for flex shipments (confirmation email + dashboard record)
 slug: flex-sender-visibility
 project: sendmo
-status: reviewed
+status: decided
 created: 2026-07-06
-last_updated: 2026-07-06 (round-1 addendum appended by second reviewer)
+last_updated: 2026-07-06 (author response + decision recorded)
 reviewed: 2026-07-06
-decided:
+decided: 2026-07-06
 author: Claude (Fable 5) — launch-week session, 2026-07-06; surfaced twice during John's first live flex dogfood (no sender email, no sender dashboard entry)
 reviewer: Claude (Opus 4.8) — fresh-eyes reviewer, 2026-07-06; verified every claim against notifications.ts, email-templates.ts, labels/index.ts (contacts block 1580-1717), Dashboard.tsx, and the decided 2026-06-27 label-confirmation proposal. Round-1 addendum by a second independent reviewer (Claude, Fable 5, 2026-07-06) — adds B3: the sender creation email was already DECIDED 2026-05-12 (senderLabelReadyEmail + cancel token) and never shipped; this proposal is drift-restoration, and the email must carry ?cancel=<token>
 outcome:
@@ -236,3 +236,22 @@ I independently reached the same core conclusions as the review above — the sc
 #### What the proposal got right (concurrence + one addition)
 
 I concur with the full list above. One addition: **the proposal's instinct that "the email is the sender's durable handle" is more right than it knows** — it's not just convenience, it's the decided auth surface for cancel/change from 2026-05-12. Restoring it closes a real product-promise gap, not just a nice-to-have.
+
+---
+
+## Author response
+
+Both reviews accepted. John ratified 2026-07-06 ("ratified, go"). Per-point:
+
+- **B1 (dispatcher misdescription) — ✅ accept.** §3.2 was wrong: on flex the creation email already routes to the *recipient/owner* (`payerRole = is_flex ? "recipient" : "sender"`); the **sender** is the skipped role to newly enable. Implementation does NOT touch `payerRole` or the full-label branch — it adds a parallel "flex sender also gets an email" branch, so the 2026-06-27 payer-only decision for the recipient is preserved untouched.
+- **B2 (`audience` vs `variant`) — ✅ accept, resolved by B3.** No new `audience` param on `labelConfirmationEmail` (would trip Rule 6 against the 9-day-old `variant` axis). Instead the sender gets its **own** template `senderLabelReadyEmail()` — the name the 2026-05-12 spec already decided. `labelConfirmationEmail` (payer, `variant:"full_label"|"flex"`) is untouched.
+- **B3 (drift-restoration + cancel token) — ✅ accept, load-bearing.** This is restoring [2026-05-11_label-cancel-and-change §3.2](2026-05-11_label-cancel-and-change_reviewed-2026-05-12_decided-2026-05-12.md), not a new reversal. The sender email carries **`/t/<code>?cancel=<token>`** (resolves OQ1 — neither original OQ1 option was the decided design). Token rides the **sender render only** (pitfall 2): the owner cancels via their JWT/link-owner arm and must not receive a second live cancel credential. This revives the dead email-token arm in `cancel-label` and makes good the required-email promise ("in case you want to change your shipment").
+- **Non-blocking / pitfalls — accepted:** OQ2 = **immediate** (pitfall 3: deferring to first-scan double-emails the sender, who already gets `in_transit`). OQ3 = payer copy **silent**. Comp-on-flex (pitfall 4): the sender line reads "**Shipping is prepaid — no charge to you**" (true for both live-charge and admin-comp; avoids the false "paid by the link owner" for comps). Degraded fallback (contacts-insert-failure direct-send) emails payer only — the sender email drops on that rare path; **acceptable, documented here**. §2B option (c) (JWT-stamp sender identity when a session exists) noted for the deferred dashboard revisit — does not change the defer verdict.
+
+## Decision
+
+**Decided 2026-07-06 by John: approve-with-changes accepted; scope A (sender email) ships now as drift-restoration; scope B (dashboard) deferred.**
+
+- **Ratification of the two-decided-proposal conflict:** the flex **sender** gets a creation email — restoring the **2026-05-12** `senderLabelReadyEmail` decision. The **2026-06-27** "flex link-user: no creation email at creation" cell is **superseded for the sender specifically**; it still stands for the **recipient/owner** (who gets only the payer "your label is ready" email). Net per flex shipment: payer → `labelConfirmationEmail` (flex variant); sender → `senderLabelReadyEmail` (with cancel token). Two people, two emails, no double-send to one inbox (sameInbox dedupe holds).
+- **OQ1** → tokenized `/t/<code>?cancel=<token>`, sender render only. **OQ2** → immediate (at creation). **OQ3** → payer copy silent.
+- Implementation: new `senderLabelReadyEmail()` in `email-templates.ts`; thread `cancel_token` into `NotificationContext` (sender render only); in `dispatchNotifications`, on `LABEL_CREATED_EVENT` + `is_flex`, also send the `sender` contact via the new template; `labels/index.ts` passes `mintedCancelToken` into `labelCreatedCtx`. Unit tests per §3.4 + comp-on-flex + token-only-on-sender-render.

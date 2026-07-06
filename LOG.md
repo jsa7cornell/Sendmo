@@ -226,6 +226,25 @@ Value = Dashboard → Project `fkxykvzsqdjzhurntgah` → Settings → API (or th
   spec: tests/unit/pricingGate.test.ts, tests/unit/resolveRefundRowsToBook.test.ts, tests/unit/initiateCancelRefund.test.ts, tests/unit/cancelLabelFailurePaths.test.ts, tests/unit/resolveRefundStatus.test.ts
   variants-covered: [D1 gate basis: flex-server-derived / full-label-PI-amount / comp-null; D2 comp admin-gate (code-read + client grep — no comp+link caller); D3 per-refund booking: single/partial×2/replay-idempotent/failed-excluded/pre-cutover-skip; D4 advance: submitted→refunded, rejected+ep-refunded heal, rejected+ep-not-refunded blocked; cancel-label DB-fail→500+alert, concurrent-cancel 0-rows→422. Edge-function wire shapes are pure-logic-extracted and unit-pinned; live money paths (503 kill switch, off-session charge) are env-gated and exercised in John's §5 live smoke tests post-flip.]
 
+### [2026-07-06] Flex sender "label ready" email — drift-restoration of the 2026-05-12 decided-but-unshipped `senderLabelReadyEmail`
+
+**Category:** feat | Emails | Cancel/Change | Edge Functions
+**Cross-link:** decided proposal [proposals/2026-07-06_flex-sender-visibility_reviewed-2026-07-06_decided-2026-07-06.md](proposals/2026-07-06_flex-sender-visibility_reviewed-2026-07-06_decided-2026-07-06.md) (approve-with-changes ×2 reviewers) | restores [2026-05-11_label-cancel-and-change §3.2](proposals/2026-05-11_label-cancel-and-change_reviewed-2026-05-12_decided-2026-05-12.md) | supersedes the "flex link-user: no creation email" cell of [2026-06-27_label-confirmation-email-by-role](proposals/2026-06-27_label-confirmation-email-by-role_reviewed-2026-06-27_decided-2026-06-27.md) **for the sender only**
+
+**What & why:** the flex **sender** (the person who fills in the package + prints the label) got no confirmation email — surfaced when John dogfooded 24W301E from the sender's seat. Turned out this email was **decided 2026-05-12** (`senderLabelReadyEmail` carrying the cancel link `/t/<code>?cancel=<token>`) and **never shipped** — while all its scaffolding did (cancel token minted in labels, email-token auth arm live in cancel-label, client comments referencing "the sender's 'Label ready' email"). So a returning sender who closed the tab literally could not cancel/change, despite the required-email promise. This restores it.
+
+**The reconciliation (two decided proposals conflicted):** 2026-05-12 said the sender gets a tokenized email; 2026-06-27 said "flex link-user gets no creation email." Ratified 2026-07-06: **payer/owner** → `labelConfirmationEmail` (unchanged); **sender** → new `senderLabelReadyEmail`. Two different people, two emails — the 2026-06-27 cell is superseded for the *sender* only, still stands for the *recipient*.
+
+**Load-bearing detail (review pitfall 2):** the cancel token rides the **sender render only** — `NotificationContext.cancel_token` is read only by `senderLabelReadyEmail`; the owner cancels via their JWT/link-owner arm and must NOT receive a second live cancel credential in their inbox. Degraded path: if token-minting failed (token null), the dispatcher **skips** the sender copy (logs `notification.sender_creation_skipped_no_token`) rather than emailing a dead `?cancel=` link. No price line on the sender copy — the sender never pays (comp or live), so "prepaid — no charge to you" is always true (sidesteps the comp-on-flex false-payment pitfall).
+
+**Files:** `_shared/email-templates.ts` (new `senderLabelReadyEmail`), `_shared/notifications.ts` (`cancel_token` on ctx; flex-sender branch in the channel handler + dispatch filter), `labels/index.ts` (pass `mintedCancelToken` into `labelCreatedCtx`). No schema change, no new env var.
+
+**Tests:** `emailTemplates.test.ts` (+5: tokenized CTA, sender copy, no-price, embeds, item-row) · `notifications.test.ts` (routing rewritten: flex-with-token → both; flex-no-token → owner only; self-send → one; full-label → payer only). Suite **553 / 49 files**. `npx tsc -b --noEmit` clean.
+
+**Browser-verified:**
+  spec: tests/unit/emailTemplates.test.ts, tests/unit/notifications.test.ts
+  variants-covered: [flex sender (tokenized CTA, no price, cancel copy) vs full-label payer (unchanged) vs flex payer (unchanged); routing: flex+token→2 emails, flex+no-token→payer only, self-send flex→1, full-label→payer only. Email dispatch is not DOM-renderable; the copy + routing contracts are unit-pinned. **Live confirmation pending (John):** re-run the flex sender flow → sender inbox gets "You shipped a package" with a working `/t/<code>?cancel=<token>` link that actually cancels; owner still gets the payer email; `notifications_log` shows 2 `label_created` rows.]
+
 
 ---
 

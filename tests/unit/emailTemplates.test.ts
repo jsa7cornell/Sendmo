@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   otpEmail,
   labelConfirmationEmail,
+  senderLabelReadyEmail,
   trackingUpdateEmail,
 } from "../../supabase/functions/_shared/email-templates";
 
@@ -135,6 +136,48 @@ describe("labelConfirmationEmail", () => {
       displayPriceCents: 0,
     });
     expect(result.html).not.toContain(">Amount<");
+  });
+});
+
+describe("senderLabelReadyEmail — flex sender (restored 2026-05-12 §3.2)", () => {
+  const senderParams = {
+    publicCode: "24W301E",
+    carrierTracking: "1Z13J52C0300885650",
+    carrier: "UPS",
+    eta: "3 business days",
+    trackingUrl: "https://sendmo.co/t/24W301E",
+    cancelToken: "deadbeefcafe1234deadbeefcafe1234deadbeefcafe1234deadbeefcafe1234",
+    itemDescription: "a book",
+  };
+
+  it("CTA carries the cancel token (?cancel=<token>), not the bare tracking URL", () => {
+    const r = senderLabelReadyEmail(senderParams);
+    expect(r.html).toContain(`https://sendmo.co/t/24W301E?cancel=${senderParams.cancelToken}`);
+  });
+
+  it("is sender-facing: 'you shipped'/'ready to ship', with cancel/change language", () => {
+    const r = senderLabelReadyEmail(senderParams);
+    expect(r.subject.toLowerCase()).toContain("you shipped");
+    expect(r.html.toLowerCase()).toContain("cancel");
+    expect(r.html.toLowerCase()).toMatch(/no charge to you/);
+  });
+
+  it("shows NO price/amount — the sender never pays (comp or live)", () => {
+    const r = senderLabelReadyEmail(senderParams);
+    expect(r.html).not.toContain(">Amount<");
+    expect(r.html).not.toContain("$");
+  });
+
+  it("embeds the public code + carrier tracking + ETA", () => {
+    const r = senderLabelReadyEmail(senderParams);
+    expect(r.html).toContain("24W301E");
+    expect(r.html).toContain("1Z13J52C0300885650");
+    expect(r.html).toContain("3 business days");
+  });
+
+  it("omits the Item row when itemDescription is blank", () => {
+    const r = senderLabelReadyEmail({ ...senderParams, itemDescription: null });
+    expect(r.html).not.toContain(">Item<");
   });
 });
 
