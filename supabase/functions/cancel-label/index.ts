@@ -6,6 +6,8 @@ import { sendEmail } from "../_shared/resend.ts";
 import { refundSubmittedEmail } from "../_shared/email-templates.ts";
 import { checkRateLimit } from "../_shared/ratelimit.ts";
 import { resolveRefundStatus } from "../_shared/refunds.ts";
+import { sendAdminAlert } from "../_shared/alert.ts";
+import { getPaidAmountCentsForShipment } from "../_shared/paid-amount.ts";
 // createRefund import retired 2026-05-13 — Stripe refund is now triggered
 // by tracking/index.ts's lazy poll once EasyPost confirms the carrier
 // refund (two-step refund safety). See the comment at the refund_status
@@ -310,11 +312,6 @@ serve(async (req: Request) => {
         // For comp shipments (no Stripe PI), step 2 just sets refund_status
         // to 'not_applicable' once EP confirms — no money to move.
         //
-        // The Stripe import is kept for completeness (createRefund still
-        // imported below) even though this function no longer calls it; the
-        // intent is to keep the dependency graph visible during the Phase E
-        // transition.
-        //
         // Decision table after a successful (non-rejected) EasyPost void:
         //   epRefundStatus='rejected'  → 'rejected'         (already-scanned label)
         //   no Stripe PI              → 'not_applicable'   (comp shipments OR pre-Stripe "card"
@@ -349,7 +346,11 @@ serve(async (req: Request) => {
             : !shipment.stripe_payment_intent_id ? "not_applicable"
             : epRefundStatus || "submitted";
 
-        const { error: updateError } = await supabase
+        // refund_status guard + .select("id"): only the request that wins the
+        // 'none' → write race proceeds to emails/link revival. A concurrent
+        // cancel that passed the read-guards but lost the race sees 0 rows
+        // affected and gets the same 422 as the read-guard above.
+        const { data: updatedRows, error: updateError } = await supabase
             .from("shipments")
             .update({
                 status: "cancelled",
@@ -361,7 +362,9 @@ serve(async (req: Request) => {
                 cancel_token: null,  // consume the token
                 updated_at: now,
             })
-            .eq("id", shipment.id);
+            .eq("id", shipment.id)
+            .eq("refund_status", "none")
+            .select("id");
 
         if (updateError) {
             console.error("DB update error after successful carrier void:", updateError);
@@ -374,13 +377,56 @@ serve(async (req: Request) => {
                 entity_id: shipment.id,
                 properties: { error_message: updateError.message },
             });
+            // The carrier void SUCCEEDED but SendMo's state was not recorded:
+            // the shipment stays status='label_created', refund_status='none',
+            // and both refund pull-paths (tracking poll + cron sweep) key on
+            // refund_status='submitted' — the customer's Stripe refund is NOT
+            // armed. Alert the admin and tell the caller to retry (the
+            // EasyPost /refund call is idempotent for an already-voided
+            // shipment). Awaited: error path — reliability over latency.
+            await sendAdminAlert({
+                subject: "Cancel-label DB update FAILED after carrier void",
+                heading: "Cancel-Label DB Update Failed",
+                intro: "The EasyPost void succeeded at the carrier, but the shipments UPDATE failed — SendMo's state was not recorded and the refund flow is NOT armed. Retrying the cancel is safe (the carrier void is idempotent).",
+                rows: [
+                    { label: "Shipment", value: shipment.id },
+                    { label: "Public code", value: shipment.public_code },
+                    { label: "PaymentIntent", value: shipment.stripe_payment_intent_id ?? "none/comp" },
+                    { label: "Intended refund_status", value: refundStatusToWrite },
+                    { label: "DB error", value: updateError.message },
+                    { label: "Mode", value: shipment.is_test ? "Test" : "LIVE" },
+                ],
+                source: "cancel-label post-void UPDATE (cancel.db_update_failed)",
+            });
             return new Response(
                 JSON.stringify({
-                    success: true,
-                    refund_status: refundStatusToWrite,
-                    warning: "Label was voided with the carrier but DB update failed — please refresh.",
+                    success: false,
+                    error: "The label was voided with the carrier, but we couldn't record it. Please try cancelling again — it's safe to retry.",
+                    retry_safe: true,
                 }),
-                { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+
+        if (!updatedRows || updatedRows.length === 0) {
+            // Another concurrent cancel won the race between our read-guards
+            // and this UPDATE. That request owns emails + link revival; this
+            // one reports the same 422 as the refund_status read-guard.
+            log({
+                event_type: "cancel.concurrent_lost_race",
+                session_id: sessionId,
+                severity: "warn",
+                source: "cancel-label",
+                entity_type: "shipment",
+                entity_id: shipment.id,
+                properties: { public_code: shipment.public_code },
+            });
+            return new Response(
+                JSON.stringify({
+                    error: "A cancellation is already in progress for this label.",
+                    refund_status: "submitted",
+                }),
+                { status: 422, headers: { ...corsHeaders, "Content-Type": "application/json" } }
             );
         }
 
@@ -423,8 +469,17 @@ serve(async (req: Request) => {
                     actor === "admin" ? "admin" :
                     cancellerIsPayer ? "payer" : "link_user";
 
+                // Quote what the CUSTOMER paid (ledger +charge row), not
+                // shipments.rate_cents (SendMo's EasyPost cost — ~15%+$1
+                // lower than the display price the card was charged).
+                const paidAmountCents = await getPaidAmountCentsForShipment(
+                    supabase,
+                    shipment.stripe_payment_intent_id,
+                    shipment.rate_cents ?? 0,
+                );
+
                 const tpl = refundSubmittedEmail({
-                    amount_cents: shipment.rate_cents ?? 0,
+                    amount_cents: paidAmountCents,
                     carrier: shipment.carrier ?? "the carrier",
                     public_code: shipment.public_code,
                     tracking_url: `https://sendmo.co/t/${shipment.public_code}`,
