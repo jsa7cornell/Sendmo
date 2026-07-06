@@ -313,15 +313,20 @@ async function runDailySweep(supabase: ReturnType<typeof createClient>, sessionI
 
     const { data: existingTxs } = await supabase
       .from("transactions")
-      .select("idempotency_key")
+      .select("idempotency_key, amount_cents, mode, shipment_id")
       .in("idempotency_key", idempotencyKeys);
 
-    const existingKeys = new Set((existingTxs ?? []).map((t) => t.idempotency_key));
+    const existingByKey = new Map(
+      (existingTxs ?? []).map((t) => [t.idempotency_key as string, t]),
+    );
 
     for (const epRefund of epRefunds) {
-      const r = epRefund as { id: string; shipment_id: string; amount: number; status: string };
+      // EasyPost Refund objects carry NO amount field (confirmed 2026-07-06
+      // from a live payload) — amount is optional and normally absent.
+      const r = epRefund as { id: string; shipment_id: string; amount?: number | null; status: string };
       const key = `easypost_refund_${r.id}`;
-      if (!existingKeys.has(key) && r.status === "refunded") {
+      const existingTx = existingByKey.get(key);
+      if (!existingTx && r.status === "refunded") {
         mismatches++;
         await log({
           event_type: "recon.missing_easypost_refund_tx",
@@ -332,7 +337,25 @@ async function runDailySweep(supabase: ReturnType<typeof createClient>, sessionI
           properties: {
             ep_refund_id: r.id,
             ep_shipment_id: r.shipment_id,
-            amount_cents: Math.round(r.amount * 100),
+            amount_cents: r.amount != null ? Math.round(r.amount * 100) : null,
+            idempotency_key: key,
+            source: "daily_sweep",
+          },
+        });
+      } else if (existingTx && existingTx.amount_cents === 0 && existingTx.mode === "live") {
+        // Row exists but at 0¢ on a live shipment — the pre-2026-07-06 webhook
+        // writer's fallback. Under-states EasyPost credits in the append-only
+        // ledger; flag for manual backfill (ledger rows are never UPDATEd).
+        mismatches++;
+        await log({
+          event_type: "recon.zero_amount_easypost_refund_tx",
+          session_id: sessionId,
+          severity: "warn",
+          entity_type: "shipment",
+          entity_id: (existingTx.shipment_id as string | null) ?? r.shipment_id,
+          properties: {
+            ep_refund_id: r.id,
+            ep_shipment_id: r.shipment_id,
             idempotency_key: key,
             source: "daily_sweep",
           },

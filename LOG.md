@@ -12,6 +12,23 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-07-06] Webhook easypost_refund 0¢ fallback fixed → rate_cents; sweep now flags 0¢ ledger rows
+
+**Category:** fix | Payments | Ledger
+**Cross-link:** LOG entry "[2026-07-06] YPPY9AK missing easypost_refund ledger row backfilled" (the incident that surfaced this) | [PAYMENTS.md](PAYMENTS.md) | migration 032 (H1 ledger rows) | sibling writer `supabase/functions/tracking/index.ts` (already had the correct fallback)
+
+**The bug:** `webhooks/index.ts` (refund.successful arm) wrote `easypost_refund` ledger rows with `refundAmountCents = effectiveRefundObj?.amount ? … : 0` — a 0¢ fallback. EasyPost Refund objects carry **no `amount` field** (confirmed empirically 2026-07-06: the reconciliation sweep logged `amount_cents=null` from a live payload, and the 2026-05-24 YPPY9AK webhook wrote a 0¢ row). So **every** webhook-written `easypost_refund` row was 0¢, silently under-stating EasyPost credits in the append-only `transactions` ledger. The sweep didn't catch it because Step 4 only checked idempotency-key existence, not amount.
+
+**The fix (two parts):**
+1. **`webhooks/index.ts`** — the shipment lookup now also selects `rate_cents`, and the amount fallback mirrors the sibling writer in `tracking/index.ts:240`: `rate_cents` (declared label cost at buy time) instead of 0. Since the Refund object never carries `amount`, this fallback is the norm-case path, not an edge case — comment updated to say so.
+2. **`reconciliation-sweep/index.ts` Step 4** — now selects `amount_cents`/`mode` alongside `idempotency_key` and emits a new `recon.zero_amount_easypost_refund_tx` warn (counted as a mismatch) when a ledger row **exists** but is 0¢ on a **live**-mode row. Ledger rows are append-only (never UPDATEd), so the flag is a manual-backfill signal, same remediation as YPPY9AK. Also hardened the existing `recon.missing_easypost_refund_tx` log: `r.amount` is optional now, so `amount_cents` logs `null` instead of `NaN` when absent.
+
+**Scope note:** the daily sweep only fetches EP refunds since its cursor, so the 0¢ flag catches rows inside the sweep window (i.e. future regressions or races), not deep history. The one known historical 0¢-class row (YPPY9AK) was already manually backfilled per the entry below.
+
+**Browser-verified:**
+  n/a-category: agent-internal
+  n/a-reason: Server-side ledger-write amount sourcing + sweep log emission; no DOM surface. Tighter alternative considered: a unit test on the amount fallback — infeasible without refactoring, because the sourcing logic is inline in the edge function handler (same status as the sibling tracking/index.ts fallback; `tests/unit/ledger-writes.test.ts` covers the shared writeEasypostRefund writer, which is unchanged). Verified via esbuild parse of both functions + full unit suite green (613 passed); real-payload verification lands with the next live cancel or 04:00 UTC sweep.
+
 ### [2026-07-06] T2-1 cron sweeps ACTIVATED — `service_role_key` Vault secret set (Rule 0.5 prod-write log); T1-3 Sentry/PostHog fully deferred
 
 **Category:** ops | Infra | Payments | Security | Launch

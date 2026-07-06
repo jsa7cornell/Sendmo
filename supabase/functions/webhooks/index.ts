@@ -541,7 +541,7 @@ serve(async (req: Request) => {
       // Look up the shipment by EasyPost shipment ID.
       const { data: refundShipment, error: refundFetchErr } = await supabase
         .from("shipments")
-        .select("id, public_code, refund_status, easypost_refund_status, stripe_payment_intent_id, is_test")
+        .select("id, public_code, refund_status, easypost_refund_status, stripe_payment_intent_id, is_test, rate_cents")
         .eq("easypost_shipment_id", epShipmentId)
         .maybeSingle();
 
@@ -681,9 +681,16 @@ serve(async (req: Request) => {
           : null;
         const effectiveRefundObj = refundObj ?? refundObjFallback ?? refundObjFromTopLevel;
         const refundObjId: string = effectiveRefundObj?.id ?? `shp_fallback_${epShipmentId}`;
+        // EasyPost Refund objects carry NO amount field (confirmed empirically
+        // 2026-07-06: live sweep payload had amount_cents=null, and the
+        // 2026-05-24 YPPY9AK webhook wrote a 0¢ ledger row). So the fallback
+        // below is the NORM, not the exception: use the shipment's rate_cents
+        // (declared label cost at buy time) — same fallback as the sibling
+        // writer in tracking/index.ts. A 0¢ row silently under-states EasyPost
+        // credits in the append-only ledger and the sweep won't flag it by key.
         const refundAmountCents: number = effectiveRefundObj?.amount
           ? Math.round(parseFloat(String(effectiveRefundObj.amount)) * 100)
-          : 0;
+          : (refundShipment.rate_cents as number | null) ?? 0;
 
         // Awaited: ledger completeness matters more than one cheap DB write
         // of latency, and an un-awaited promise can be cut off when the edge

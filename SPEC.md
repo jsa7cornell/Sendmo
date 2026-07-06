@@ -808,6 +808,8 @@ The `transactions` ledger is now fully bidirectional — it records both the cus
 
 **Idempotency:** `easypost_refund` rows are keyed on the EasyPost Refund object id (`rfnd_…`), not the shipment id — so a re-void, a webhook retry, and a concurrent tracking poll all resolve to the same row with a safe UNIQUE collision (B4 fix, decided proposal 2026-05-22).
 
+**Amount sourcing:** EasyPost Refund objects carry **no `amount` field** (confirmed empirically 2026-07-06), so both writers use the shipment's `rate_cents` (declared label cost at buy time) as the norm-case amount, only preferring a payload `amount` if one ever appears. Before 2026-07-06 the `webhooks` writer fell back to 0¢ instead — the daily reconciliation sweep now flags any live-mode `easypost_refund` row with `amount_cents=0` (`recon.zero_amount_easypost_refund_tx`) for manual backfill, since ledger rows are append-only.
+
 **Net-margin identity** (foundation for H4 reconciliation dashboard):
 
 ```
