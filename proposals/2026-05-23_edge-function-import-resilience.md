@@ -2,21 +2,22 @@
 title: Edge function import resilience — JSR migration to eliminate CDN single-point-of-failure on deploy
 slug: edge-function-import-resilience
 project: sendmo
-status: executed
+status: in-pr
 blocked_on: null
 created: 2026-05-23
 last_updated: 2026-07-06
 reviewed: null
 decided: 2026-05-23
 executed: 2026-07-06
+pr: 45
 author: Claude Opus 4.7 — drafted after the 22:05 UTC esm.sh 522 failed a deploy mid-H1-H5-launch-push
 reviewer: null
-outcome: executed-post-launch
+outcome: executed-post-launch (in PR #45 — awaiting John's merge + post-merge deploy verification)
 ---
 
 > **2026-05-23 — Status: deferred to WISHLIST.** John exercised OQ1 = defer to post-launch. The proposal is preserved here as the load-bearing artifact (full scope inventory, JSR/`Deno.serve` migration plan, `import type` Vitest contract, OQ2–OQ5). When the work is picked up post-launch, flip `status: in-review` and route through normal review. WISHLIST entry: see "Test / CI debt" section of [WISHLIST.md](../WISHLIST.md).
 
-> **2026-07-06 — Status: EXECUTED (post-launch pickup).** John directed the pickup during launch-week hardening (closed beta went live 2026-07-05) after the esm.sh 522 fragility bit **three times on 2026-07-06** — the "Deploy Supabase Edge Functions" Action failed across merges #41 and #38 (×2), each on `Import 'https://esm.sh/@supabase/supabase-js@2.39.3' failed: 522`. Because the deploy job bundles sequentially and aborts on first failure, the #41 failure meant the `labels` money-path fixes after it didn't reach prod until a manual `gh run rerun`. That escalated this from annoyance to a correctness/latency risk and triggered execution. No fresh formal review round was run — the direction was already decided 2026-05-23 and John directed the pickup; this banner records the execution decisions.
+> **2026-07-06 — Status: IN PR #45 (post-launch pickup — not merged, not deployed).** John directed the pickup during launch-week hardening (closed beta went live 2026-07-05) after the esm.sh 522 fragility bit **three times on 2026-07-06** — the "Deploy Supabase Edge Functions" Action failed across merges #41 and #38 (×2), each on `Import 'https://esm.sh/@supabase/supabase-js@2.39.3' failed: 522`. Because the deploy job bundles sequentially and aborts on first failure, the #41 failure meant the `labels` money-path fixes after it didn't reach prod until a manual `gh run rerun`. That escalated this from annoyance to a correctness/latency risk and triggered execution. No fresh formal review round was run — the direction was already decided 2026-05-23 and John directed the pickup; this banner records the execution decisions.
 >
 > **Re-inventory (2026-07-06) — scope drifted wider than the May count.** `grep -rE 'https?://' supabase/functions/` now finds **49 URL imports across 35 files**: 23 esm.sh (14 value `createClient`, 7 type-only `SupabaseClient`, 1 combined `auth.ts`, 1 `libphonenumber-js`) + 26 `deno.land/std@0.168.0/http/server.ts` `serve`. New in-scope files that postdate the May draft: `_shared/intents.ts`, `_shared/paid-amount.ts` (2 more type-only), and functions `label-print`, `refunds`, `backfill-refund-status`, `auth-email-hook`, `admin-recon-action`, `tracking-admin`, `reconciliation-report`, `reconciliation-sweep`, `admin-recon-action`.
 >

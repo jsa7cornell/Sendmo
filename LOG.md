@@ -30,7 +30,7 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 **Tests:** `npx tsc -b --noEmit` clean; `npx vitest run` 620/620 green (58 files) — incl. every type-only-import test. Note: `supabase/functions/**` is in no tsconfig and Vitest only imports the `import type` `_shared` modules, so these gates confirm the frontend/test build is intact but do **not** exercise the deploy bundler — that's verified post-merge (below).
 
-**Deploy (Rule 21):** goes via PR (money-path-adjacent, John merges). The real proof — the "Deploy Supabase Edge Functions" job bundling `jsr:`/`Deno.serve` cleanly across all functions (atomic: any `_shared/` change redeploys all) — is confirmed on the post-merge run. Rollback if red: `git revert` the merge → redeploys pre-migration code in ~2 min.
+**Deploy (Rule 21):** in **PR [#45](https://github.com/jsa7cornell/Sendmo/pull/45)** (money-path-adjacent, John merges) — not merged, not deployed as of this entry. The real proof — the "Deploy Supabase Edge Functions" job bundling `jsr:`/`Deno.serve` cleanly across all functions (atomic: any `_shared/` change redeploys all) — is confirmed on the post-merge run. Rollback if red: `git revert` the merge → redeploys pre-migration code in ~2 min.
 
 **Browser-verified:**
   n/a-category: infra
