@@ -108,6 +108,10 @@ test.describe("tracking API — anonymous viewer payment-field gating", () => {
       // Anonymous viewers ALWAYS see amount_paid_cents=null.
       expect(body.amount_paid_cents).toBeNull();
 
+      // Anonymous viewers ALWAYS see payment_method_last4=null — card
+      // metadata sits inside the same payer gate as amount_paid_cents.
+      expect(body.payment_method_last4).toBeNull();
+
       // Server must derive and return viewerRole = "anonymous" when no JWT.
       expect(body.viewerRole).toBe("anonymous");
 
@@ -148,6 +152,7 @@ test.describe("tracking API — anonymous viewer payment-field gating", () => {
       // Must still see the anonymous shape for payment fields.
       expect(body.paid).toBe(false);
       expect(body.amount_paid_cents).toBeNull();
+      expect(body.payment_method_last4).toBeNull();
       expect(body.viewerRole).toBe("anonymous");
     }
   );
@@ -200,6 +205,13 @@ test.describe("tracking API — payer viewer role", () => {
       expect(
         body.amount_paid_cents === null || typeof body.amount_paid_cents === "number"
       ).toBe(true);
+
+      // payment_method_last4 is a 4-char string or null (null when comp or
+      // when the stripe_intents → payment_methods chain has a gap).
+      expect(
+        body.payment_method_last4 === null ||
+          (typeof body.payment_method_last4 === "string" && body.payment_method_last4.length === 4)
+      ).toBe(true);
     }
   );
 
@@ -241,6 +253,7 @@ test.describe("tracking API — response shape contract (mocked)", () => {
           recipient_first_name: null,
           paid: false,
           amount_paid_cents: null,
+          payment_method_last4: null,
           refund_status: "none",
           is_test: true,
           cancelled_at: null,
@@ -300,6 +313,7 @@ test.describe("tracking API — response shape contract (mocked)", () => {
           recipient_first_name: "Jane",
           paid: false,             // comp shipment — paid is false even for payer
           amount_paid_cents: null, // comp shipment — null even for payer
+          payment_method_last4: null, // comp shipment — no card was charged
           refund_status: "none",
           is_test: true,
           cancelled_at: null,
@@ -328,6 +342,61 @@ test.describe("tracking API — response shape contract (mocked)", () => {
     await expect(
       page.getByText(/no charge|receipt|amount paid|\$0/i).first()
     ).toBeVisible({ timeout: 8000 });
+  });
+
+  test("payer receipt shows card last4 when payment_method_last4 is present", async ({ page }) => {
+    await page.route(`${SUPABASE_URL}/functions/v1/tracking*`, (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          tracking_number: "9400111899223456789012",
+          public_code: "TESTPG3",
+          carrier: "USPS",
+          service: "GroundAdvantage",
+          status: "label_created",
+          estimated_delivery: null,
+          events: [],
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          promised_delivery_date: null,
+          delivered_at: null,
+          label_url: "https://easypost.com/labels/mock-label.pdf",
+          link_short_code: "TESTSC3",
+          link_status: "in_use",
+          link_type: "full_label",
+          // Payment-gating contract — paid payer shape:
+          viewer_is_recipient: true,
+          viewerRole: "payer",
+          recipient_first_name: "Jane",
+          paid: true,
+          amount_paid_cents: 1595,
+          payment_method_last4: "4242",
+          refund_status: "none",
+          is_test: true,
+          cancelled_at: null,
+          cancelled_by_actor: null,
+          item_description: null,
+          from_city: "San Francisco",
+          from_state: "CA",
+          to_city: "Los Angeles",
+          to_state: "CA",
+          print_count: 0,
+          last_printed_at: null,
+        }),
+      })
+    );
+
+    await page.route(`${SUPABASE_URL}/rest/v1/**`, (route) =>
+      route.fulfill({ status: 200, contentType: "application/json", body: "[]" })
+    );
+
+    await page.goto("/t/TESTPG3");
+
+    // ReceiptBlock masks the card as "•••• 4242" (maskedCard in
+    // ReceiptBlock.tsx) instead of the "card on file" fallback.
+    await expect(page.getByText(/•••• 4242/).first()).toBeVisible({ timeout: 8000 });
+    await expect(page.getByText(/card on file/i)).not.toBeVisible();
   });
 
 });
