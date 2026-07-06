@@ -4,11 +4,11 @@ slug: flex-sender-visibility
 project: sendmo
 status: reviewed
 created: 2026-07-06
-last_updated: 2026-07-06
+last_updated: 2026-07-06 (round-1 addendum appended by second reviewer)
 reviewed: 2026-07-06
 decided:
 author: Claude (Fable 5) — launch-week session, 2026-07-06; surfaced twice during John's first live flex dogfood (no sender email, no sender dashboard entry)
-reviewer: Claude (Opus 4.8) — fresh-eyes reviewer, 2026-07-06; verified every claim against notifications.ts, email-templates.ts, labels/index.ts (contacts block 1580-1717), Dashboard.tsx, and the decided 2026-06-27 label-confirmation proposal
+reviewer: Claude (Opus 4.8) — fresh-eyes reviewer, 2026-07-06; verified every claim against notifications.ts, email-templates.ts, labels/index.ts (contacts block 1580-1717), Dashboard.tsx, and the decided 2026-06-27 label-confirmation proposal. Round-1 addendum by a second independent reviewer (Claude, Fable 5, 2026-07-06) — adds B3: the sender creation email was already DECIDED 2026-05-12 (senderLabelReadyEmail + cancel token) and never shipped; this proposal is drift-restoration, and the email must carry ?cancel=<token>
 outcome:
 ---
 
@@ -199,3 +199,40 @@ The scope call is right: ship the sender confirmation email (A), defer the dashb
 - **No double-send on any path** — full-label (payer=sender, recipient excluded), self-send flex (sameInbox dedupe → one contact), and the `notifications_log` key (sender is a distinct contact_id, no collision) all hold. The author's instinct on the three risk areas was right; the mechanisms just need to be described accurately.
 - **OQ1's instinct (link to `/t/<code>`, don't propagate the raw unsigned label URL)** is the privacy-correct choice and aligns with PRE-LAUNCH T3-4.
 - **Correctly frames itself as reversing/extending a decided proposal** and names the 2026-06-27 decision up front — no drift-as-new-finding, exactly the institutional-memory discipline the protocol asks for.
+
+---
+
+### Round-1 addendum — second reviewer (2026-07-06)
+
+> **reviewer:** Claude (Fable 5) — independent fresh-eyes pass, run concurrently with the review above; verified against `notifications.ts`, `labels/index.ts:1580-1717`, `email-templates.ts:63-167`, `cancel-label/index.ts`, `SenderFlow.tsx`, `SenderStepReview.tsx`, `senderState.ts`, `TrackingPage.tsx`, `tracking/index.ts`, `Dashboard.tsx:221-222`, and the decided proposals of 2026-05-11/12 (cancel-and-change), 2026-05-11 (sender-flow-wizard), 2026-05-16 (Pattern D), 2026-06-27 (label-confirmation-by-role).
+> **reviewed_at:** 2026-07-06
+> **verdict:** approve-with-changes (concurs with the review above; adds one blocking issue it missed)
+
+I independently reached the same core conclusions as the review above — the scope split is right, the double-send analysis is clean (full-label untouched, self-send dedupe at [labels/index.ts:1604-1607](../supabase/functions/labels/index.ts) yields exactly one email, the `notifications_log` guard at [notifications.ts:137-149](../supabase/functions/_shared/notifications.ts) keys per `contact_id` so the second contact isn't blocked), and B1/B2 above are real (I hit the same `variant`-vs-`audience` mismatch). I won't restate those. This addendum exists because my prior-proposal scan surfaced one finding the review above missed, and it's blocker-class.
+
+#### Blocking issue (additional)
+
+**B3 — The sender creation email was already DECIDED on 2026-05-12 and never shipped. This proposal is *drift-restoration*, not a fresh reversal — and the decided design requires the email to carry the cancel token, which changes OQ1's answer.**
+- *Location:* §1 (framing), §2A, OQ1; missing `## Reconciliation with prior decided proposals` section.
+- *Issue:* [2026-05-11_label-cancel-and-change (decided 2026-05-12)](2026-05-11_label-cancel-and-change_reviewed-2026-05-12_decided-2026-05-12.md) §3.2 states: *"Add `senderLabelReadyEmail()` send when `sender_email` is present — includes the cancel-link `/t/<code>?cancel=<token>` in the body."* Its §2.2 auth table makes that email the load-bearing transport for the returning-sender cancel path ("Returning sender (closed tab, came back later) → email-token: `/t/<code>?cancel=<hex>` **from the sender's 'Label ready' email**"), and its verification walkthrough item 4 tests clicking that link. **That email was never built** — `senderLabelReadyEmail` appears nowhere in the codebase, and no email today carries `?cancel=`. The infrastructure around it all shipped and is live-but-orphaned: the token is minted at [labels/index.ts:1508-1527](../supabase/functions/labels/index.ts), the email-token auth arm is live at [cancel-label/index.ts:159-160](../supabase/functions/cancel-label/index.ts), and both [TrackingPage.tsx:79,197](../src/pages/TrackingPage.tsx) and [SenderFlow.tsx:189](../src/pages/SenderFlow.tsx) carry comments referencing *"?cancel=<hex> from the sender's 'Label ready' email"* — an email that does not exist. A sender who closes the tab today cannot cancel or change their shipment, despite the required-email copy (*"in case you want to change your shipment"*, [SenderStepReview.tsx:39-44](../src/components/sender/SenderStepReview.tsx)) promising exactly that — the very promise was the 2026-05-12 rationale for making the email required. John's dogfood surprise is this drift biting, on schedule.
+  Three consequences:
+  1. **Framing:** per the protocol ("drift from a decided proposal is its own category"), §1 should present scope A as *restoring the 2026-05-12 §3.2 spec* — merged with the 2026-06-27 dispatcher architecture — and add a `## Reconciliation with prior decided proposals` section citing both. The proposal currently quotes the 2026-05-12 copy and its "required since 2026-05-12" fact without noticing that the same decided proposal specified this exact email.
+  2. **Design:** the sender email's tracking link should be **`/t/<code>?cancel=<token>`**, not the bare `/t/<code>`. That resolves OQ1 decisively — neither of OQ1's two options is the decided design. Without the token, the email gives the sender a view they could already reach but still no way to cancel/change, and the email-token arm in `cancel-label` stays dead code. The token is available at send time (minted before the contacts block); thread it into `NotificationContext` for the **sender variant only** — the owner cancels via their JWT (link-owner arm) and doesn't need the token, so don't widen token distribution to the owner's copy.
+  3. **Conflict to surface for John:** the 2026-06-27 decision table ("flex link-user: ❌ none at creation") itself contradicted the still-standing 2026-05-12 decision without naming it — two decided proposals conflict. The Decision section here should explicitly record which cell supersedes which, so the next agent doesn't re-drift in either direction.
+- *Suggested fix:* reframe §1/§2A as drift-restoration citing 2026-05-12 §2.2/§3.2; answer OQ1 with the tokenized `/t/` link (sender variant only); add the reconciliation section; ask John to ratify "2026-06-27's flex-link-user cell is superseded" in the Decision block.
+
+#### Non-blocking (additional)
+
+- **§2B's option space is missing the cheapest identity option, (c): stamp sender identity from the JWT when a session exists.** The flex buy deliberately omits the JWT ([SenderFlow.tsx:174](../src/pages/SenderFlow.tsx): `undefined, // accessToken — sender flow uses link_short_code auth, not JWT`), so "no JWT on the flex buy path" is an implementation choice, not a fact of nature. For the subset of senders who happen to be signed in, attaching the token and stamping `shipments.sender_user_id` would give a *verified* identity link with zero mid-flow friction and none of option (a)'s unverified-email leak. Separately, `saveSender`/`loadSavedSender` ([senderState.ts:47-64](../src/components/sender/senderState.ts)) already half-builds device-level sender identity (localStorage address+email pre-fill). Neither changes the deferral verdict — B stays correctly deferred — but the revisit should start from options (a)/(b)/(c) plus the existing localStorage seam, not the false binary.
+- **Degraded-path asymmetry:** when the `notification_contacts` insert fails, the fallback direct send ([labels/index.ts:1646-1682](../supabase/functions/labels/index.ts)) emails the **payer only** — the sender email silently drops on that path. Probably acceptable (it's a rare degraded mode), but the proposal should say so rather than leave it implicit.
+
+#### Predicted pitfalls (additional — beyond the four above)
+
+1. **The email ships without the cancel token, and John's exact dogfood scenario recurs one layer deeper:** a sender prints a label, closes the tab, gets the new confirmation email, clicks through to `/t/<code>` — and still can't change or cancel the shipment, because the sessionStorage token died with the tab and no email ever carried `?cancel=<hex>`. The 2026-05-12 email-token arm stays dead code, and the required-email field keeps making a promise the product doesn't keep. (This is the B3 failure mode; it's also the most likely one, since the bare-`/t/` link is OQ1's current recommendation.)
+2. **If the token IS added but threaded carelessly into the shared `NotificationContext.tracking_url`, the owner's copy gets the tokenized link too** — silently widening cancel-token distribution to a second inbox and creating a second live credential per shipment. The token must ride only the sender-variant render (the owner already has JWT-arm cancel).
+3. **OQ2's "send after first tracking event" option, if picked, double-emails the sender at first scan:** the sender contact already receives the `in_transit` tracking email via the existing fan-out (that's §5's own observation). A creation email deferred to first-tracking-event arrives in the same minute as the in_transit email with near-identical content. OQ2 should be decided as "immediate" — the deferred option is strictly worse, not a neutral alternative.
+4. **Comp-on-flex sends the sender copy with a false payment line:** `is_flex = resolvedLink !== null` includes admin Live-Comp labels bought through a flex link, where nobody paid — "Paid by the link owner — no charge to you" is half-false (SendMo comped it). Low stakes, but Rule 19's variant-axis discipline ({test, live-comp, live-charge} × flex) means §6 should name the comp-on-flex variant explicitly or it will be skipped in verification.
+
+#### What the proposal got right (concurrence + one addition)
+
+I concur with the full list above. One addition: **the proposal's instinct that "the email is the sender's durable handle" is more right than it knows** — it's not just convenience, it's the decided auth surface for cancel/change from 2026-05-12. Restoring it closes a real product-promise gap, not just a nice-to-have.
