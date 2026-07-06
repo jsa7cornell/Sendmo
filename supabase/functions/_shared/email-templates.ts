@@ -166,6 +166,84 @@ export function labelConfirmationEmail(params: {
   };
 }
 
+// ─── Sender "Label ready" Email (flex sender) ──────────────
+//
+// Restores the 2026-05-12 decided-but-never-shipped `senderLabelReadyEmail`
+// (proposals/2026-05-11_label-cancel-and-change §3.2). Sent to the flex
+// SENDER (the person who filled in the package + printed the label), a
+// different person than the payer/link-owner who gets labelConfirmationEmail.
+//
+// Load-bearing difference from the payer email: the CTA carries the cancel
+// token — `/t/<code>?cancel=<token>` — so a returning sender who closed the
+// tab can still change or cancel (the sessionStorage token died with the tab;
+// this email is the durable auth transport per §2.2 of that proposal). The
+// token rides THIS render only — the owner cancels via their JWT and must not
+// receive a second live cancel credential.
+//
+// No price line: the sender never pays (whether the owner paid or SendMo
+// comped), so "prepaid — no charge to you" is always true — no comp branch.
+export function senderLabelReadyEmail(params: {
+  publicCode: string;
+  carrierTracking: string;
+  carrier: string;
+  eta: string;
+  /** https://sendmo.co/t/<code> — the cancel token is appended here. */
+  trackingUrl: string;
+  /** Per-shipment cancel token (hex). Builds `?cancel=<token>` on the CTA. */
+  cancelToken: string;
+  itemDescription?: string | null;
+}): { subject: string; html: string } {
+  const { publicCode, carrierTracking, carrier, eta, trackingUrl, cancelToken, itemDescription } = params;
+
+  // The cancel token authorizes change/cancel from the email — hence the CTA
+  // links to the tokenized URL, not the bare tracking page.
+  const manageUrl = `${trackingUrl}?cancel=${cancelToken}`;
+
+  const trimmedItem = itemDescription?.trim();
+  const itemDisplay = trimmedItem && trimmedItem.length > 40
+    ? `${trimmedItem.slice(0, 40)}…`
+    : trimmedItem;
+  const itemRow = itemDisplay ? `
+    <tr>
+      <td style="padding:12px 16px;border-bottom:1px solid #e5e7eb;">
+        <span style="font-size:12px;color:${GRAY_400};text-transform:uppercase;letter-spacing:0.5px;">Item</span><br/>
+        <span style="font-size:14px;font-weight:500;color:#111827;">${itemDisplay}</span>
+      </td>
+    </tr>` : "";
+
+  return {
+    subject: "You shipped a package — label & tracking inside — SendMo",
+    html: layout(`
+      <h2 style="margin:0 0 8px;font-size:20px;font-weight:600;color:#111827;">Your label is ready to ship</h2>
+      <p style="margin:0 0 24px;font-size:14px;color:${GRAY_600};line-height:1.5;">
+        You created a shipping label. Print it, tape it on, and drop it off. Shipping is prepaid — no charge to you.
+      </p>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 24px;background-color:#f9fafb;border-radius:8px;border:1px solid #e5e7eb;">
+        <tr>
+          <td style="padding:12px 16px;border-bottom:1px solid #e5e7eb;">
+            <span style="font-size:12px;color:${GRAY_400};text-transform:uppercase;letter-spacing:0.5px;">SendMo Tracking</span><br/>
+            <span style="font-size:22px;font-weight:700;color:${BRAND_BLUE};letter-spacing:1px;">${publicCode}</span><br/>
+            <span style="font-size:11px;color:${GRAY_400};">${carrier} #${carrierTracking}</span>
+          </td>
+        </tr>
+        ${itemRow}
+        <tr>
+          <td style="padding:12px 16px;">
+            <span style="font-size:12px;color:${GRAY_400};text-transform:uppercase;letter-spacing:0.5px;">Estimated Delivery</span><br/>
+            <span style="font-size:14px;font-weight:500;color:#111827;">${eta}</span>
+          </td>
+        </tr>
+      </table>
+      <div style="text-align:center;margin:0 0 16px;">
+        <a href="${manageUrl}" style="display:inline-block;background-color:${BRAND_BLUE};color:#ffffff;font-size:14px;font-weight:600;text-decoration:none;padding:12px 32px;border-radius:8px;">Print label &amp; track</a>
+      </div>
+      <p style="margin:0;font-size:13px;color:${GRAY_400};text-align:center;">
+        Need to change or cancel this shipment? Use the button above — you can cancel any time before it's scanned by the carrier.
+      </p>
+    `),
+  };
+}
+
 // ─── Tracking Update Email ─────────────────────────────────
 
 const STATUS_LABELS: Record<string, { label: string; emoji: string; color: string }> = {
