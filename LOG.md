@@ -3984,6 +3984,24 @@ Returns the new `shipments.id`. Called via `supabase.rpc('admin_insert_shipment'
 
 Every merge to `main` triggers a Vercel auto-deploy. This section tracks what shipped and when.
 
+### [2026-07-06] — Receipt card last4 + stranded x-cancel-token CORS fix (PR #44)
+
+**Branch:** `claude/receipt-card-last4` → squash-merged to `main` as `82b983f` (21:51 UTC)
+**Deploy:** CI `deploy-edge-functions.yml` run 28825718813 — `_shared/cors.ts` changed, so ALL edge functions redeployed (success, ~21:52 UTC). Vercel auto-deploy for the frontend half (TrackingPage prop).
+
+**What shipped**
+- Tracking-page receipt now shows the charged card's last4 ("Charged to •••• 4242") instead of "card on file". Server resolves it with no Stripe round-trip: `shipments.stripe_payment_intent_id` → `stripe_intents.payment_method_id` (Pattern D cache) → `payment_methods.last4`; any gap degrades to null → unchanged fallback copy. New `payment_method_last4` response field sits inside the payer gate (anonymous/sender_flex always null).
+- Rode along: `x-cancel-token` added to CORS allow-headers (`5f1e427`) — this commit was stranded on `claude/money-path-fixes` when PR #39 squash-merged (pushed after the PR head was set); cherry-picked here so it actually landed.
+
+**What changed (files)**
+- `supabase/functions/tracking/index.ts`, `supabase/functions/_shared/cors.ts`, `src/pages/TrackingPage.tsx`, `tests/e2e/tracking-anonymous-payment-gating.spec.ts`, `LOG.md`
+
+**Tests:** tsc clean; mocked e2e specs pass incl. new "•••• 4242 renders, card-on-file absent" browser test; anonymous leak-zero assertions extended to the new field.
+
+**Breaking changes:** none — additive response field.
+
+**Notes for future agents:** browser-verified live post-deploy on https://sendmo.co/t/24W301E → "$15.95 · charged to •••• 5001 · July 5" (payer view), and anonymous curl shows `payment_method_last4: null` (gate holds). Full context: Decisions & Gotchas entry of the same date. Lesson: commits pushed to a PR branch after the head is locked get stranded by squash-merge — check `git diff origin/main HEAD` (two-dot) on "merged" branches before assuming content landed.
+
 ### [2026-07-06] — easypost_refund amount sourcing consolidated (PR #43)
 
 **Branch:** `claude/musing-varahamihira-5b0064` → squash-merged to `main` as `4349cce` (21:13 UTC)
