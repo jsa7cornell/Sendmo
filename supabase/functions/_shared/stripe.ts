@@ -616,6 +616,28 @@ export interface Refund {
     payment_intent: string;
     reason?: string | null;
     charge?: string | null;
+    // Unix seconds the refund object was created. Used by the ledger-key
+    // cutover guard (D3) — refunds created before the new-key deploy were
+    // already booked under the legacy `stripe.<eventId>:refund` scheme and
+    // must not re-book under `stripe.refund.<rfnd_id>`.
+    created?: number;
+}
+
+// Ledger-key cutover floor (D3 double-book guard). Pre-deploy refund rows were
+// booked with idempotency_key `stripe.<eventId>:refund`; the new-key scheme
+// (`stripe.refund.<rfnd_id>`) does NOT collide with them, so a FUTURE
+// charge.refunded on a charge that already has a legacy refund row would
+// re-book the old refund under a fresh key (double-count). transactions has
+// UPDATE revoked (Rule 16), so legacy rows can't be re-keyed — instead we skip
+// any refund whose Stripe `created` is before the cutover. John sets the real
+// deploy timestamp via env REFUND_LEDGER_KEY_CUTOVER at rollout; the fallback
+// 1751760000 (2025-07-06T00:00:00Z) is a safe floor a full year before this
+// deploy, so no genuinely-new refund is ever skipped.
+export function refundLedgerKeyCutoverUnix(): number {
+    const raw = (globalThis as { Deno?: { env: { get(k: string): string | undefined } } })
+        .Deno?.env.get("REFUND_LEDGER_KEY_CUTOVER");
+    const parsed = raw ? Number(raw) : NaN;
+    return Number.isFinite(parsed) ? parsed : 1751760000;
 }
 
 export function createRefund(params: {
@@ -671,16 +693,27 @@ export interface RefundRowToBook {
  * Pure per-refund booking decision (Rule 12 / Rule 6 — kept pure so Vitest
  * imports it directly; see tests/unit/resolveRefundRowsToBook.test.ts).
  *
- * Only `succeeded` refunds book — pending/failed/canceled refunds move no
- * money. Each row carries the refund's INDIVIDUAL amount, never the charge's
+ * Two exclusions, both here so they're unit-pinned:
+ *   1. `status === 'succeeded'` — pending/failed/canceled refunds move no
+ *      money and never book.
+ *   2. `created >= cutoverUnix` (D3 double-book guard) — a refund created
+ *      before the new-key deploy was already booked under the legacy
+ *      `stripe.<eventId>:refund` scheme; re-booking it under
+ *      `stripe.refund.<rfnd_id>` would double-count (the two keys don't
+ *      collide). A refund with no `created` is treated as new (>= cutover) —
+ *      Stripe always sends it, so this only matters for hand-built payloads.
+ *
+ * Each row carries the refund's INDIVIDUAL amount, never the charge's
  * cumulative `amount_refunded`, so two partial refunds book as two correctly
  * sized rows and a replay of the same list regenerates identical keys.
  */
 export function resolveRefundRowsToBook(
-    refunds: Array<Pick<Refund, "id" | "amount" | "status" | "reason">>,
+    refunds: Array<Pick<Refund, "id" | "amount" | "status" | "reason" | "created">>,
+    cutoverUnix: number = refundLedgerKeyCutoverUnix(),
 ): RefundRowToBook[] {
     return refunds
         .filter((r) => r.status === "succeeded")
+        .filter((r) => (r.created ?? Number.POSITIVE_INFINITY) >= cutoverUnix)
         .map((r) => ({
             stripeRefundId: r.id,
             amountCents: Math.abs(r.amount),

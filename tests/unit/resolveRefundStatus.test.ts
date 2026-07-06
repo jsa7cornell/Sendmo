@@ -12,7 +12,10 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { resolveRefundStatus } from "../../supabase/functions/_shared/refunds.ts";
+import {
+  resolveRefundStatus,
+  shouldAdvanceRefundStatusOnChargeRefunded,
+} from "../../supabase/functions/_shared/refunds.ts";
 
 describe("resolveRefundStatus", () => {
   it("paid shipment (PI present) → 'submitted' — the flex regression case", () => {
@@ -37,5 +40,38 @@ describe("resolveRefundStatus", () => {
     // (null PI column) and got 'not_applicable' → refund skipped. With the
     // stitch, hasPaymentIntent=true and it correctly resolves 'submitted'.
     expect(resolveRefundStatus("submitted", true)).not.toBe("not_applicable");
+  });
+});
+
+/**
+ * D4 guard (approve-with-changes REQUIRED-3): on charge.refunded, only advance
+ * refund_status → 'refunded' for a genuine customer cancel flow. 'submitted'
+ * always qualifies; 'rejected' is overloaded (timeout-healed cancel vs
+ * carrier-REFUSED void) and only the EP-refunded variant may advance —
+ * otherwise an admin goodwill partial refund on a carrier-refused shipment
+ * would flip it to 'refunded' and fire a false Email B.
+ */
+describe("shouldAdvanceRefundStatusOnChargeRefunded", () => {
+  it("'submitted' → advance, regardless of easypost_refund_status", () => {
+    expect(shouldAdvanceRefundStatusOnChargeRefunded("submitted", "refunded")).toBe(true);
+    expect(shouldAdvanceRefundStatusOnChargeRefunded("submitted", "rejected")).toBe(true);
+    expect(shouldAdvanceRefundStatusOnChargeRefunded("submitted", null)).toBe(true);
+  });
+
+  it("'rejected' + easypost_refund_status='refunded' → advance (timeout-healed cancel)", () => {
+    expect(shouldAdvanceRefundStatusOnChargeRefunded("rejected", "refunded")).toBe(true);
+  });
+
+  it("'rejected' + carrier-refused (EP not refunded) → do NOT advance — the false-Email-B bug it guards", () => {
+    expect(shouldAdvanceRefundStatusOnChargeRefunded("rejected", "rejected")).toBe(false);
+    expect(shouldAdvanceRefundStatusOnChargeRefunded("rejected", null)).toBe(false);
+    expect(shouldAdvanceRefundStatusOnChargeRefunded("rejected", "submitted")).toBe(false);
+  });
+
+  it("already 'refunded' / 'not_applicable' / null → do NOT advance (no cancel flow to close)", () => {
+    expect(shouldAdvanceRefundStatusOnChargeRefunded("refunded", "refunded")).toBe(false);
+    expect(shouldAdvanceRefundStatusOnChargeRefunded("not_applicable", "refunded")).toBe(false);
+    expect(shouldAdvanceRefundStatusOnChargeRefunded(null, "refunded")).toBe(false);
+    expect(shouldAdvanceRefundStatusOnChargeRefunded(undefined, undefined)).toBe(false);
   });
 });

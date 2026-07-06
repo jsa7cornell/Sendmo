@@ -782,29 +782,58 @@ serve(async (req: Request) => {
                     }
                 }
 
-                // Advance shipments.refund_status → 'refunded'. Set to
-                // 'submitted' by cancel-label after a successful Stripe
-                // createRefund; this is the async hand-off that closes the
-                // cancel state machine (decided proposal label-cancel-and-
-                // change, 2026-05-12). Also recovers 'rejected': a real Stripe
-                // refund landing is ground truth — the cron sweep may have
-                // timeout-marked the cancel 'rejected' at day 21 while the
-                // carrier confirmed later (sweep timeout separately moving to
-                // 28d). .select("id") surfaces rows-affected so Email B below
-                // can key on whether this refund actually closed a customer
-                // cancel flow.
+                // Advance shipments.refund_status → 'refunded', in two attempts.
+                //
+                // (a) 'submitted' → 'refunded', unconditional. Set by cancel-
+                //     label after a successful Stripe createRefund; the async
+                //     hand-off that closes the cancel state machine (decided
+                //     proposal label-cancel-and-change, 2026-05-12).
+                //
+                // (b) 'rejected' → 'refunded', ONLY when easypost_refund_status
+                //     = 'refunded' (D4 guard). 'rejected' is overloaded: it
+                //     means a timeout-healed cancel (EP-side refunded — a real
+                //     Stripe refund landing is ground truth over a day-21 cron
+                //     timeout-mark) OR a carrier-REFUSED void (resolveRefund-
+                //     Status / sweep carrier-scan) where NO customer refund is
+                //     owed. Advancing the latter would let an admin goodwill
+                //     partial refund flip it to 'refunded' and fire a false
+                //     Email B. The EP-refunded check distinguishes them.
+                //
+                // "submitted OR (rejected AND ep=refunded)" isn't one clean
+                // PostgREST filter, so we run (a), and only if it hit 0 rows,
+                // run (b). Email B fires when EITHER affected >= 1 row. The
+                // pure decision these two writes implement is unit-pinned as
+                // shouldAdvanceRefundStatusOnChargeRefunded (_shared/refunds.ts).
                 let refundStatusAdvanced = false;
                 if (shipmentId) {
-                    const { data: advancedRows, error: shipErr } = await supabase
+                    const { data: submittedRows, error: submittedErr } = await supabase
                         .from("shipments")
                         .update({ refund_status: "refunded" })
                         .eq("id", shipmentId)
-                        .in("refund_status", ["submitted", "rejected"])  // idempotent
+                        .eq("refund_status", "submitted")  // idempotent
                         .select("id");
-                    if (shipErr) {
-                        console.error("[stripe-webhook] shipments.refund_status update failed:", shipErr);
+                    if (submittedErr) {
+                        console.error("[stripe-webhook] shipments.refund_status (submitted) update failed:", submittedErr);
                     }
-                    refundStatusAdvanced = ((advancedRows as Array<{ id: string }> | null)?.length ?? 0) >= 1;
+                    let advancedCount = (submittedRows as Array<{ id: string }> | null)?.length ?? 0;
+
+                    if (advancedCount === 0) {
+                        // No 'submitted' row — try the rejected-heal path, gated
+                        // on EP-side refunded so carrier-refused voids stay put.
+                        const { data: healedRows, error: healedErr } = await supabase
+                            .from("shipments")
+                            .update({ refund_status: "refunded" })
+                            .eq("id", shipmentId)
+                            .eq("refund_status", "rejected")
+                            .eq("easypost_refund_status", "refunded")
+                            .select("id");
+                        if (healedErr) {
+                            console.error("[stripe-webhook] shipments.refund_status (rejected-heal) update failed:", healedErr);
+                        }
+                        advancedCount = (healedRows as Array<{ id: string }> | null)?.length ?? 0;
+                    }
+
+                    refundStatusAdvanced = advancedCount >= 1;
                 }
 
                 // ── Email B — refund completed notification (H5 D5) ──────────
