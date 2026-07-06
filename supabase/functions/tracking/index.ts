@@ -95,7 +95,7 @@ serve(async (req: Request) => {
   // cancel_token is included in the SELECT for server-side identity validation
   // (viewerHoldsValidCancelToken derivation below). It is NEVER returned in the
   // response — the value never leaves this function.
-  const selectFields = "id, tracking_number, public_code, carrier, service, status, refund_status, easypost_tracker_id, easypost_shipment_id, is_test, created_at, updated_at, promised_delivery_date, delivered_at, label_url, link_id, stripe_payment_intent_id, cancelled_at, cancel_token, item_description, sender_address:addresses!sender_address_id(city,state), recipient_address:addresses!recipient_address_id(city,state), sendmo_links!inner(short_code, user_id, status, link_type)";
+  const selectFields = "id, tracking_number, public_code, carrier, service, status, refund_status, easypost_tracker_id, easypost_shipment_id, is_test, rate_cents, created_at, updated_at, promised_delivery_date, delivered_at, label_url, link_id, stripe_payment_intent_id, cancelled_at, cancel_token, item_description, sender_address:addresses!sender_address_id(city,state), recipient_address:addresses!recipient_address_id(city,state), sendmo_links!inner(short_code, user_id, status, link_type)";
   const baseQuery = supabase.from("shipments").select(selectFields);
   const lookup = publicCode
     ? baseQuery.eq("public_code", publicCode).single()
@@ -225,19 +225,16 @@ serve(async (req: Request) => {
             // EasyPost Refund object id (rfnd_…) per B4 of the decided proposal.
             //
             // EasyPost shipment payload: epShip.refunds is an array of Refund
-            // objects. The first (most recent) is the one we care about. Shape:
-            //   { id: 'rfnd_…', amount: 8.50, tracking_code: '…', status: 'refunded', … }
-            // We extract id and amount from epShip.refunds[0]. If the array is
-            // absent or empty (unexpected), we fall back to shipments.rate_cents
-            // as the amount and use the easypost_shipment_id as a fallback key
-            // suffix (less ideal but prevents a silent ledger hole).
-            const refundObjects = (epShip.refunds as Array<{ id: string; amount: string | number }> | null) ?? [];
+            // objects; the first (most recent) is the one we care about. We
+            // extract the id from epShip.refunds[0]; if the array is absent or
+            // empty (unexpected), the easypost_shipment_id becomes a fallback
+            // key suffix (less ideal but prevents a silent ledger hole).
+            // Refund objects carry NO amount field, so the amount is sourced
+            // inside writeEasypostRefund (payload amount if ever present,
+            // else rate_cents) — see SPEC.md §13.3 "Amount sourcing".
+            const refundObjects = (epShip.refunds as Array<{ id: string; amount?: string | number }> | null) ?? [];
             const refundObj = refundObjects[0] ?? null;
             const refundObjId: string = refundObj?.id ?? `shp_fallback_${shipment.easypost_shipment_id}`;
-            // amount is a dollar float from EasyPost → convert to cents.
-            const refundAmountCents: number = refundObj?.amount
-              ? Math.round(parseFloat(String(refundObj.amount)) * 100)
-              : (shipment as { rate_cents?: number | null }).rate_cents ?? 0;
 
             if (shipment.stripe_payment_intent_id) {
               // Phase E (real money) — fire the Stripe refund now. Idempotency
@@ -341,7 +338,8 @@ serve(async (req: Request) => {
               linkId: (shipment as { link_id?: string | null }).link_id ?? null,
               easypostShipmentId: shipment.easypost_shipment_id!,
               easypostRefundObjectId: refundObjId,
-              refundAmountCents,
+              payloadAmount: refundObj?.amount ?? null,
+              rateCents: (shipment as { rate_cents?: number | null }).rate_cents ?? null,
               mode: shipment.is_test ? "test" : "live",
               isComp: !shipment.stripe_payment_intent_id,
               source: "tracking_poll",

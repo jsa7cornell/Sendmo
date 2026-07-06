@@ -329,16 +329,13 @@ serve(async (req: Request) => {
       const epRefundStatus: string | null = epShip?.refund_status ?? null;
 
       // Extract the refund object (most recent).
-      const refundObjects = (epShip.refunds as Array<{ id: string; amount: string | number; status: string; message?: string }> | null) ?? [];
+      const refundObjects = (epShip.refunds as Array<{ id: string; amount?: string | number; status: string; message?: string }> | null) ?? [];
       const refundObj = refundObjects[0] ?? null;
 
       if (epRefundStatus === "refunded") {
         // ── Branch 1: EP confirmed refunded (missed webhook) ─────────────────
         // Fire Stripe createRefund to catch the missed charge.refunded webhook.
         const refundObjId = refundObj?.id ?? `shp_fallback_${shipment.easypost_shipment_id}`;
-        const refundAmountCents = refundObj?.amount
-          ? Math.round(parseFloat(String(refundObj.amount)) * 100)
-          : (shipment.rate_cents ?? 0);
 
         if (shipment.stripe_payment_intent_id) {
           // Shared helper (Rule 6) — computes the per-PI refundable balance
@@ -369,7 +366,8 @@ serve(async (req: Request) => {
             linkId: null,
             easypostShipmentId: shipment.easypost_shipment_id!,
             easypostRefundObjectId: refundObjId,
-            refundAmountCents,
+            payloadAmount: refundObj?.amount ?? null,
+            rateCents: shipment.rate_cents ?? null,
             mode: "live",
             isComp: false,
             source: "cron_refund_sweep",

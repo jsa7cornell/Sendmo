@@ -319,9 +319,12 @@ async function runDailySweep(supabase: ReturnType<typeof createClient>, sessionI
     const existingKeys = new Set((existingTxs ?? []).map((t) => t.idempotency_key));
 
     for (const epRefund of epRefunds) {
-      const r = epRefund as { id: string; shipment_id: string; amount: number; status: string };
+      // EasyPost Refund objects carry NO amount field (confirmed 2026-07-06
+      // from a live payload) — amount is optional and normally absent.
+      const r = epRefund as { id: string; shipment_id: string; amount?: number | null; status: string };
+      if (r.status !== "refunded") continue;
       const key = `easypost_refund_${r.id}`;
-      if (!existingKeys.has(key) && r.status === "refunded") {
+      if (!existingKeys.has(key)) {
         mismatches++;
         await log({
           event_type: "recon.missing_easypost_refund_tx",
@@ -332,8 +335,77 @@ async function runDailySweep(supabase: ReturnType<typeof createClient>, sessionI
           properties: {
             ep_refund_id: r.id,
             ep_shipment_id: r.shipment_id,
-            amount_cents: Math.round(r.amount * 100),
+            amount_cents: r.amount != null ? Math.round(r.amount * 100) : null,
             idempotency_key: key,
+            source: "daily_sweep",
+          },
+        });
+      }
+    }
+  }
+
+  // ── Step 4b: Ledger-side easypost_refund audit (window-independent) ────────
+  // Unlike Step 4, this audits the transactions ledger directly — the EP
+  // refund-list window can't be trusted for amount problems, because slow
+  // carriers (USPS: up to 15 days) get their ledger row written long after
+  // the refund object's created_at has left the daily cursor window.
+  //
+  // Two invariants, both flagged for manual review (ledger rows are
+  // append-only — remediation is a backfill row under a new key):
+  //   1. No live easypost_refund row may be 0¢ (under-stated EP credit —
+  //      the pre-2026-07-06 webhook fallback, or a rate_cents-less write).
+  //      A shipment with a sibling non-zero row is skipped: that's the
+  //      backfill-remediation signature (e.g. YPPY9AK), already handled.
+  //   2. No shipment may carry more than one non-zero easypost_refund row
+  //      (double-counted EP credit — divergent idempotency keys, e.g. a
+  //      webhook shp_fallback row racing a tracking rfnd row).
+  {
+    const { data: refundTxs } = await supabase
+      .from("transactions")
+      .select("id, shipment_id, amount_cents, idempotency_key")
+      .eq("type", "easypost_refund")
+      .eq("mode", "live")
+      .limit(2000);
+
+    const nonZeroByShipment = new Map<string, number>();
+    for (const tx of refundTxs ?? []) {
+      if (tx.amount_cents !== 0 && tx.shipment_id) {
+        nonZeroByShipment.set(
+          tx.shipment_id as string,
+          (nonZeroByShipment.get(tx.shipment_id as string) ?? 0) + 1,
+        );
+      }
+    }
+
+    for (const tx of refundTxs ?? []) {
+      if (tx.amount_cents === 0 && !nonZeroByShipment.has(tx.shipment_id as string)) {
+        mismatches++;
+        await log({
+          event_type: "recon.zero_amount_easypost_refund_tx",
+          session_id: sessionId,
+          severity: "warn",
+          entity_type: "shipment",
+          entity_id: tx.shipment_id,
+          properties: {
+            transaction_id: tx.id,
+            idempotency_key: tx.idempotency_key,
+            source: "daily_sweep",
+          },
+        });
+      }
+    }
+
+    for (const [shipmentId, count] of nonZeroByShipment) {
+      if (count > 1) {
+        mismatches++;
+        await log({
+          event_type: "recon.duplicate_easypost_refund_tx",
+          session_id: sessionId,
+          severity: "warn",
+          entity_type: "shipment",
+          entity_id: shipmentId,
+          properties: {
+            non_zero_row_count: count,
             source: "daily_sweep",
           },
         });

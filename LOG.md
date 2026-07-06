@@ -12,6 +12,26 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-07-06] easypost_refund 0¢ amount bug: sourcing consolidated into writeEasypostRefund; sweep audits ledger directly
+
+**Category:** fix | Payments | Ledger
+**Cross-link:** LOG entry "[2026-07-06] YPPY9AK missing easypost_refund ledger row backfilled" (the incident that surfaced this) | [PAYMENTS.md](PAYMENTS.md) | migration 032 (H1 ledger rows) | SPEC.md §13.3 "Amount sourcing" | PLAYBOOK Rule 16 (ledger.ts = sole row constructor)
+
+**The bug (wider than first diagnosed):** EasyPost Refund objects carry **no `amount` field** (confirmed empirically 2026-07-06: the reconciliation sweep logged `amount_cents=null` from a live payload, and the 2026-05-24 YPPY9AK webhook wrote a 0¢ row). The amount-sourcing ternary (`refundObj?.amount ? dollars→cents : fallback`) was inlined in **three** writers, and two of three were broken: `webhooks/index.ts` fell back to a literal `0`, and `tracking/index.ts`'s `rate_cents` fallback was **dead code** — `rate_cents` was never in its `selectFields`, so it always resolved `undefined ?? 0`. Only `cron-refund-sweep` was correct. Net effect: webhook- and tracking-written `easypost_refund` rows were all 0¢, silently under-stating EasyPost credits in the append-only `transactions` ledger. (An initial version of this fix patched only the webhook copy and cited tracking as the "already-correct sibling" — the /code-review pass caught that the sibling was equally broken, plus the third writer the docs had missed.)
+
+**The fix — sourcing moved to the altitude the docs already promised:**
+1. **`_shared/ledger.ts`** — new exported `resolveEasypostRefundAmountCents(payloadAmount, rateCents)`: uses the payload amount only when present, numeric, and > 0 (guards the `'0.00'`-is-truthy and `parseFloat→NaN→NOT NULL violation→silently dropped row` hazards); else `rate_cents`. `writeEasypostRefund` now takes `payloadAmount` + `rateCents` instead of a pre-computed `refundAmountCents`, so no caller can get the fallback wrong again — the helper's doc-comment had *claimed* this fallback since H1 without implementing it. A resolved 0¢ (rate_cents missing too) still writes (ledger completeness) but logs `ledger.easypost_refund_zero_amount` warn at write time. `source` union widened to include `"cron_refund_sweep"` (the value the third writer was already passing — a latent type error nothing compiled).
+2. **All three writers** (`webhooks`, `tracking`, `cron-refund-sweep`) pass raw payload amount + `rate_cents`; `tracking`'s `selectFields` now includes `rate_cents`, which also revives the second dead fallback at its `getPaidAmountCentsForShipment` call — the refund-unsuccessful email no longer quotes $0.00 for comp labels.
+3. **`reconciliation-sweep/index.ts`** — Step 4's missing-row check keeps its EP-window diff (hoisted `status !== 'refunded'` gate now guards all branches). New **Step 4b audits the ledger directly** (`type='easypost_refund' AND mode='live'`), because the EP refund-list window is created_at-bound and slow carriers (USPS: up to 15 days) write their ledger row long after the refund leaves the daily window — the first version's windowed 0¢ check would structurally never fire on the dominant path. Step 4b flags: (a) `recon.zero_amount_easypost_refund_tx` — 0¢ rows, **skipping shipments with a sibling non-zero row** (the backfill-remediation signature, so YPPY9AK doesn't re-alert forever); (b) `recon.duplicate_easypost_refund_tx` — >1 non-zero row per shipment (double-counted credit, e.g. a webhook `shp_fallback_`-keyed row racing tracking's `rfnd_`-keyed row — a divergence that became money-bearing once fallbacks stopped writing 0¢).
+
+**Regression tests (PLAYBOOK Rule 12):** `tests/unit/ledger-writes.test.ts` — new `resolveEasypostRefundAmountCents` suite (absent/zero-string/non-numeric/negative payload → rate_cents; dollars→cents conversion) + writer-level tests proving `payloadAmount: null → rate_cents, not 0` (the YPPY9AK class) and 0¢-write-with-warn when both sources are missing. 22/22 green.
+
+**Browser-verified:**
+  n/a-category: agent-internal
+  n/a-reason: Server-side ledger amount sourcing + sweep log emission; no DOM surface. The tighter alternative (unit tests) was implemented this time — sourcing was extracted into _shared/ledger.ts precisely so tests/unit/ledger-writes.test.ts covers it directly. Remaining unverified surface is edge-function wiring (payload → helper params), verified via esbuild parse + full unit suite; real-payload verification lands with the next live cancel or 04:00 UTC sweep.
+
+---
+
 ### [2026-07-06] YPPY9AK missing `easypost_refund` ledger row backfilled (+711¢) — the recon sweep's first catch, closed (Rule 0.5 prod write)
 
 **Category:** fix | Payments | Ledger | ops
