@@ -48,6 +48,34 @@ Value = Dashboard → Project `fkxykvzsqdjzhurntgah` → Settings → API (or th
 **Browser-verified:**
   n/a-category: infra
   n/a-reason: pg_cron registration + Vault secret + edge-function auth-gate change. No DOM/rendered surface or UI-consumed response shape changes — the two sweeps are server-to-server (pg_cron → net.http_post → Edge Function). End-to-end proof is the post-key reconciliation force-run advancing `recon_state.last_run_at`, per the LOG verification block, not a browser check.
+### [2026-07-06] T1-3 COMPLETE (code) — Sentry frontend error monitoring + CrashScreen boundary + PostHog pageview-only (ships inert)
+
+**Category:** ship | Launch | Monitoring | Frontend
+**Cross-link:** decided proposal [proposals/2026-07-06_sentry-posthog-frontend-monitoring_reviewed-2026-07-06_decided-2026-07-06.md](proposals/2026-07-06_sentry-posthog-frontend-monitoring_reviewed-2026-07-06_decided-2026-07-06.md) (Author response = binding spec) | PRE-LAUNCH T1-3 (server half shipped 2026-07-04 — `_shared/alert.ts`) | WISHLIST fast-follows: Sentry source-map upload · PostHog funnel events + identify()
+
+**INERT ON MERGE:** inert = no SDK initialization, no monitoring network calls, zero data leaves the browser (verified — see Browser-verified below). With `VITE_SENTRY_DSN` / `VITE_POSTHOG_KEY` unset (today's prod), both init branches are dead. The flip is 👤 John's: create the Sentry (React) + PostHog projects, set `VITE_SENTRY_DSN` (Vercel Production + Preview) and `VITE_POSTHOG_KEY` (Production), confirm Vercel's "Automatically expose System Environment Variables" is ON, redeploy — exact steps in PRE-LAUNCH T1-3.
+
+**Behavior changes visible BEFORE the flip (deliberate, per decided design — review B2):**
+1. A render crash now shows the branded CrashScreen ("Something went wrong" + reload + support mailto) instead of a white page — the `Sentry.ErrorBoundary` in `main.tsx` is always on and degrades to a plain React boundary when Sentry was never initialized (claim verified in `tests/unit/CrashScreen.test.tsx`).
+2. Main bundle +~75 KB gzipped (`@sentry/react`). `posthog-js` does NOT ride the main bundle — dynamic `import()` on idle, only when its key exists (review N5).
+
+**What shipped:**
+- **[src/lib/monitoring.ts](src/lib/monitoring.ts)** — pure `resolveMonitoringConfig` (env-injected truth table, `mode.ts` pattern) + `initMonitoring()`. Sentry: release/environment from `__APP_RELEASE__`/`__APP_ENV__` (vite `define` ← `VERCEL_GIT_COMMIT_SHA`/`VERCEL_ENV`), `reactRouterV7BrowserTracingIntegration`, `tracesSampleRate: 0.1`, `sendDefaultPii: false`, no replay/no `setUser` (payments PII posture), curated `ignoreErrors` + extension `denyUrls` (N6 — accepted limitation: ad-blockers drop some SDK traffic, no tunnel). PostHog: `capture_pageview: "history_change"`, **`autocapture: false`** (B4 — truly pageview-only), `disable_session_recording: true`, `respect_dnt: true`.
+- **[src/components/CrashScreen.tsx](src/components/CrashScreen.tsx)** — boundary fallback, design tokens.
+- **[src/main.tsx](src/main.tsx)** — `initMonitoring()` before render; `Sentry.ErrorBoundary` wraps `<App/>`.
+- **[src/App.tsx](src/App.tsx)** — `Routes` → `withSentryReactRouterV7Routing(Routes)` (B1 — parameterized route names; route definitions untouched; pass-through when uninitialized).
+- **[vite.config.ts](vite.config.ts)** + new **[src/vite-env.d.ts](src/vite-env.d.ts)** — `define` globals, always `JSON.stringify`-wrapped; `typeof`-guarded reads (vitest has no `define`).
+- **[src/pages/LabelTest.tsx](src/pages/LabelTest.tsx)** — "Throw test error" button, **render-throw** (crosses both the boundary and Sentry capture), gated `import.meta.env.DEV || isAdmin` (OQ4 — `/label-test` is unauthenticated; a public crash button is a quota-burn vector, T2-3 class). Also removed a leftover editing-artifact comment.
+- **[src/pages/Privacy.tsx](src/pages/Privacy.tsx)** — "Who we share it with" now discloses Sentry + PostHog (review N3).
+- **Docs:** PLAYBOOK env sections + `.env.example` gain both vars (N4); PRE-LAUNCH T1-3 → code complete + John's 👤 runbook; WISHLIST gains the two fast-follows.
+
+**Gotcha for future agents:** after John flips the DSN, verify a test-error issue shows `release=<real sha>` + `environment=production` — if it says `dev`/`development`, Vercel's system-env-vars setting is off and every event is untriageable while looking green (review N2 / Rule 20 shape). The throw button on `/label-test` (admin-gated in prod) is the one-click check.
+
+**Tests:** `tests/unit/monitoring.test.ts` (10 — resolver truth table pinning enabled===env-var-presence) + `tests/unit/CrashScreen.test.tsx` (2 — fallback render; boundary catches with Sentry never initialized). Suite: **559 passed / 51 files**. `npx tsc -b --noEmit` clean.
+
+**Browser-verified:**
+  mcp-session: preview-MCP session 2026-07-06 — worktree dev server, /label-test; DSN-unset pass: full network log showed zero monitoring hosts (only localhost + pre-existing js.stripe.com), throw → CrashScreen rendered (screenshot taken); DSN-set pass (dummy DSN via env): throw → CrashScreen + observed `POST https://o000001.ingest.us.sentry.io/api/.../envelope/` (403 from the fake DSN — the attempt proves capture wiring)
+  variants-covered: [{DSN unset → app boots + zero monitoring network calls + CrashScreen on render error}, {DSN set → Sentry init + envelope POST fires on the same error + CrashScreen still renders}, {throw-button visibility: DEV=visible (exercised); prod non-admin=hidden / prod admin=visible deferred with the post-flip §6 steps 3–5 verification (T1-1 §5-step-4 pattern)}]
 
 ---
 

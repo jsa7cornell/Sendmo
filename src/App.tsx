@@ -1,4 +1,5 @@
 import { BrowserRouter, Routes, Route, Outlet, Navigate, useNavigate } from "react-router-dom";
+import * as Sentry from "@sentry/react";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { RecipientFlowProvider } from "@/contexts/RecipientFlowContext";
 import ProtectedRoute from "@/components/ProtectedRoute";
@@ -24,6 +25,11 @@ import LinksEdit from "@/pages/LinksEdit";
 import NotFound from "@/pages/NotFound";
 import AppHeader from "@/components/AppHeader";
 import RecipientStepPathChoice from "@/components/recipient/RecipientStepPathChoice";
+
+// T1-3 monitoring (proposal review B1): gives Sentry events parameterized
+// route names (/onboarding/:pathSlug/:stepSlug, not raw URLs). Pass-through
+// when Sentry.init was never called — route definitions are unchanged.
+const SentryRoutes = Sentry.withSentryReactRouterV7Routing(Routes);
 
 // Path picker — shown at /onboarding (no flow state needed yet).
 // Sends both anon and authed users into /onboarding/{path-slug}/destination.
@@ -57,7 +63,7 @@ function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <Routes>
+        <SentryRoutes>
           <Route path="/" element={<Index />} />
           <Route path="/login" element={<Login />} />
 
@@ -107,7 +113,7 @@ function App() {
           <Route path="/header-preview" element={<HeaderPreview />} />
           <Route path="/link-share-preview" element={<LinkSharePreview />} />
           <Route path="*" element={<NotFound />} />
-        </Routes>
+        </SentryRoutes>
       </AuthProvider>
     </BrowserRouter>
   );
