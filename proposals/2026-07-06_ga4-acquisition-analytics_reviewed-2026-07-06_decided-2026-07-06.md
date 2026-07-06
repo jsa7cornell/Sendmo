@@ -2,14 +2,14 @@
 title: GA4 as the only analytics tool + removal of the inert Sentry/PostHog layer
 slug: ga4-acquisition-analytics
 project: sendmo
-status: revised
+status: decided
 created: 2026-07-06
-last_updated: 2026-07-06 (Author response appended — all B1–B4 + N1–N5 + nits accepted, zero unresolved; awaiting John's decision)
+last_updated: 2026-07-06 (Decision appended — approved by John same day)
 reviewed: 2026-07-06
-decided: null
+decided: 2026-07-06
 author: Claude session "SendMo — SEO + GA4 discovery research — 2026-07-06"
 reviewer: Claude (Fable 5) — fresh-eyes review session 2026-07-06; verified every file/line claim against origin/main and the gtag.js/GA4 semantics from knowledge
-outcome: null
+outcome: approve-with-changes
 ---
 
 # GA4 as the only analytics tool + removal of the inert Sentry/PostHog layer
@@ -650,3 +650,18 @@ traffic pollutes the property — GA4 history is append-only").
 No rejections, no unresolved points; nothing needs a Tradeoffs-for-John section.
 OQ1/OQ2 were resolved by John in-session (see §7); OQ3–OQ5 stand as recommended and
 were not contested by the review. Ready for John's decision.
+
+## Decision
+
+**Approved (approve-with-changes accepted in full) — John, 2026-07-06.** Review and
+author response converged with zero unresolved points; OQ1 (no Sentry, GA exception
+tripwire) and OQ2 (GA4 yes, PostHog no) were John's explicit in-session calls, and
+OQ3–OQ5 close per the recommendations (Production-only var; Enhanced Measurement
+with the manual fallback named; DNT/GPC promise kept and implemented). Spec =
+sections 1–7 **as amended by the Author response** (B1 canonical `gtag` function +
+pinned arguments-object test, B2 synchronous dataLayer queue, B3 SPEC.md +
+LabelTest.tsx additions, B4 custom-dimension 👤 step, N1–N5 + nits). The 👤 half
+(GA4 property, Vercel var, custom dimensions, Search Console link per §6) remains
+John's; same-day verification of §6 steps 3–4 is blocking per the review's pitfall 1.
+Nothing in the merge is irreversible (env var unset = fully inert; the removal half
+restores nothing that was ever active).
