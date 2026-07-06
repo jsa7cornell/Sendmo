@@ -39,6 +39,25 @@ Connection was the session pooler as `postgres.fkxykvzsqdjzhurntgah` with `PGPAS
   n/a-category: infra
   n/a-reason: Prod Vault secret + cron auth activation + doc status changes; verified via in-DB boolean checks and an HTTP-200 edge-function auth probe, no DOM/wire-shape consumer. T1-3 change is a doc/decision update (the monitoring code is unchanged and inert).
 
+---
+
+### [2026-07-06] Monitoring-stack REVERSAL (John) — Sentry + PostHog are OUT; GA4-only analytics proposed; discovery proposals reevaluated
+
+> Same decision as recorded in the T2-1 entry above ("fully deferred") — this entry adds the proposal-level follow-through: the merged inert layer is now slated for **removal** (not just left inert) via the rewritten GA4 proposal, pending its review/decision.
+
+**Category:** docs | Launch | Monitoring | Analytics | decision
+**Cross-link:** resolves the T1-3 flip-hold entry below | reversal addendum in [proposals/2026-07-06_sentry-posthog-frontend-monitoring_reviewed-2026-07-06_decided-2026-07-06.md](proposals/2026-07-06_sentry-posthog-frontend-monitoring_reviewed-2026-07-06_decided-2026-07-06.md) | rewritten in-review [proposals/2026-07-06_ga4-acquisition-analytics.md](proposals/2026-07-06_ga4-acquisition-analytics.md) | unaffected sibling [proposals/2026-07-06_seo-crawl-hygiene-and-discovery.md](proposals/2026-07-06_seo-crawl-hygiene-and-discovery.md) | PRE-LAUNCH T1-3
+
+**Decision (John, 2026-07-06):** SendMo will **not** use Sentry or PostHog — the flip hold (entry below) resolved as its option 3 in the strongest form. No vendor accounts were ever created and no env vars were ever set, so the merged frontend layer (`364462a`) was inert for its entire life; nothing external needs unwinding. **Standing instruction for all future agents: never create Sentry/PostHog accounts or set `VITE_SENTRY_DSN`/`VITE_POSTHOG_KEY`.**
+
+**Follow-through (this session):** (1) the same-day GA4 proposal was **rewritten** — GA4 is now positioned as SendMo's *only* analytics tool (not a PostHog complement), and the same proposal is the removal vehicle for the inert Sentry/PostHog layer (deps out of `package.json`, ~75 KB gz off the checkout bundle, Sentry plumbing out of `main.tsx`/`App.tsx`/`vite.config.ts`; CrashScreen survives on a plain React boundary per that review's B2; funnel-events fast-follow re-scoped to single-sink `gtag`). In-review — no code changes until decided. (2) Reversal addendum appended to the decided Sentry/PostHog proposal; PRE-LAUNCH T1-3 status rewritten (server-half alerting stands as the deliverable). (3) The SEO crawl-hygiene sibling proposal is unaffected (no monitoring dependency). **Known accepted gap pending John's OQ1 call in the GA4 proposal:** frontend JS errors are unmonitored (server money-path alert emails unaffected).
+
+**Browser-verified:**
+  n/a-category: docs
+  n/a-reason: decision/status record + proposal rewrite only; no code changed.
+
+---
+
 ### [2026-07-06] Security review of the opened live-payment surface — privilege-escalation blocker fixed in prod + 4 mediums
 
 **Category:** fix | Security | RLS | Auth | Edge Functions | Review
@@ -141,11 +160,11 @@ Value = Dashboard → Project `fkxykvzsqdjzhurntgah` → Settings → API (or th
 > | `reconciliation-sweep-weekly` `0 5 * * 0` | **Deployed** (registered, `active=t`; per John's takeover call) | ditto |
 > | cron-auth bug fix (`_shared/cron-auth.ts`, both sweeps) | **Deployed** (CI run green on `d451fe9`; sweeps at v12/v11, `verify_jwt:false`) | `list_edge_functions` + Deploy workflow success 13:17 UTC |
 > | Takeover deltas (config.toml pin, weekly in migration 036, docs) | **Merged** — [PR #40](https://github.com/jsa7cornell/Sendmo/pull/40) → `ca7eff7`; docs-only, correctly did NOT trigger a function redeploy | `gh run list` (no Deploy run post-13:17) |
-> | CI for `ca7eff7` ("Provide Tests") | in progress at entry time — Rule 21 owner: this session, fix-forward if red | `gh run list` |
-> | Vault `service_role_key` | **NOT SET — John's step, blocks the sweeps authenticating** | `vault.secrets` has only `supabase_url`; `cron.job_run_details` 0 rows (first fire 04:00 UTC 2026-07-07, will idle-fail until the secret lands — expected, don't chase) |
-> | Post-secret verification (force recon-daily → `recon_state.last_run_at` advances; refund sweep only if stale-live-refund count = 0) | **Not started** — gated on John's step | procedure in the REMAINING/Verification blocks above |
+> | CI for `ca7eff7` ("Provide Tests") | **Green** (also green for the `8dbd6a1` docs push) | `gh run watch` both runs → success |
+> | Vault `service_role_key` | **SET 14:50:08 UTC** — by the sibling session via the Rule-0-safe `op read \| psql` runtime-injection path (John: "you can activate the cron sweeps yourself"); John's later Dashboard attempt correctly hit `23505 duplicate key` (already created — no action needed) | activation entry above + `vault.secrets` metadata |
+> | Post-secret verification | **DONE 14:56–14:58 UTC** — recon-daily forced via one-shot `net.http_post` (the exact Vault-read body the cron jobs use): **HTTP 200**, `{"ok":true,"mode":"daily","mismatches":1}`, `event_logs` shows `triggered_by:"cron"`, `recon_state.reconciliation_daily.last_run_at` advanced 2026-05-22 → 14:56 UTC. `cron-refund-sweep` forced the same way after confirming the stale-set was empty: **HTTP 200**, `processed:0` — the service-role path that used to silently 401 now authenticates (the bug fix, proven on the fixed function itself). Health signal read from downstream state per review N5, not `job_run_details`. | `net._http_response` ids 1–2 + `event_logs` + `recon_state` |
 >
-> **PRE-LAUNCH T2-1 stays `[~]` until:** John's `SELECT vault.create_secret('<service-role-jwt>', 'service_role_key', 'pg_cron sweep auth (T2-1)');` (Dashboard SQL Editor — value from Settings → API → `service_role`, must equal the deployed `SUPABASE_SERVICE_ROLE_KEY` byte-for-byte) → then the money-safe force-run above → then flip to `[x]` and note the first green nightly runs.
+> **T2-1 CLOSED (see the ACTIVATED entry above; PRE-LAUNCH flipped `[x]`).** First scheduled fires: 04:00/04:30 UTC 2026-07-07, weekly Sun 05:00 UTC. **The verification force-run also produced the sweep's first real catch:** `recon.missing_easypost_refund_tx` — **YPPY9AK** (the known-buggy 2026-05-24 live cancel) is fully refunded (`refund_status='refunded'`, EP `rfnd_dcda5a228d12466e91ac22810604eed5`) but its `easypost_refund` **ledger row was never written**, so the ledger under-states EasyPost credits by that refund. One-time catch from the 6-week backfill window (the daily cursor has now advanced past it — it will NOT re-flag tomorrow; the `event_logs` row is the only record). Follow-up filed: write the missing row via the idempotent `writeEasypostRefund` path (keyed `easypost_refund_rfnd_dcda…`), verify against the reconciliation dashboard.
 
 ### [2026-07-06] T1-3 COMPLETE (code) — Sentry frontend error monitoring + CrashScreen boundary + PostHog pageview-only (ships inert)
 
@@ -175,6 +194,38 @@ Value = Dashboard → Project `fkxykvzsqdjzhurntgah` → Settings → API (or th
 **Browser-verified:**
   mcp-session: preview-MCP session 2026-07-06 — worktree dev server, /label-test; DSN-unset pass: full network log showed zero monitoring hosts (only localhost + pre-existing js.stripe.com), throw → CrashScreen rendered (screenshot taken); DSN-set pass (dummy DSN via env): throw → CrashScreen + observed `POST https://o000001.ingest.us.sentry.io/api/.../envelope/` (403 from the fake DSN — the attempt proves capture wiring)
   variants-covered: [{DSN unset → app boots + zero monitoring network calls + CrashScreen on render error}, {DSN set → Sentry init + envelope POST fires on the same error + CrashScreen still renders}, {throw-button visibility: DEV=visible (exercised); prod non-admin=hidden / prod admin=visible deferred with the post-flip §6 steps 3–5 verification (T1-1 §5-step-4 pattern)}]
+
+### [2026-07-06] Full money-path review + parallel fix batch — 2 launch blockers + refund-ledger correctness (D1–D4)
+
+**Category:** fix | Payments | Refunds | Edge Functions | Review
+**Cross-link:** proposal [proposals/2026-07-06_money-path-review-fixes.md](proposals/2026-07-06_money-path-review-fixes.md) (in-review, reviewed same day — approve-with-changes, 3 required changes applied in-flight) | full code review of main @ `83d62ce` | sibling of the [2026-07-05 PI-stitch entry](#) (this batch hardens the paths that fix touched) | [PR #39](https://github.com/jsa7cornell/Sendmo/pull/39) | disjoint sibling of the same-day security-review entry above (that = authz/RLS/public-surface incl. the prod profiles-privilege-escalation fix; this = payment/refund correctness D1–D4 — the two reviews independently converged on the D2 comp-via-flex-link bypass)
+
+**Stage: In PR #39 — NOT merged, NOT deployed.** Branch `claude/money-path-fixes` pushed; money-path change, so John merges. `tsc -b` + full vitest green locally (594/56); the authoritative edge-function compile gate is the "Deploy Supabase Edge Functions" CI job, which runs on merge to `main` — confirm it green before relying on the deploy. Do NOT re-file as "Merged/Deployed" until #39 lands and that job passes.
+
+**Rollout precondition (John, at deploy):** set `REFUND_LEDGER_KEY_CUTOVER` to the deploy unix timestamp — the D3 time-cutover guard uses it to stop the ~1 pre-existing prod refund row (24W301E, keyed under the legacy `stripe.<eventId>:refund` scheme) from re-booking under the new `stripe.refund.<rfnd_id>` key on its next `charge.refunded`.
+
+**What happened:** a full correctness review of the money paths (labels, payments, stripe-webhook, cancel-label, refunds, tracking, webhooks, cron-refund-sweep, reconciliation, _shared) surfaced two launch blockers and a cluster of refund-ledger correctness bugs. Fixes were built in parallel across 5 isolated worktree agents (B labels+payments · C stripe-webhook · D webhooks/tracking/cron · E cancel-label+recon · A proposal), adversarially reviewed (a separate proposal reviewer returned approve-with-changes; the 3 required changes were applied in-flight before merge), integrated on `claude/money-path-fixes`, and land as one PR. Integration was clean except a duplicated `runInBackground.test.ts` (two agents, same helper) — resolved to one copy; the two new shared files (`_shared/background.ts`, `_shared/paid-amount.ts`) were authored byte-identically across agents so the parallel additions merged without conflict.
+
+**Launch blockers (both fixed):**
+- **D1 — full-label price was client-trusted end-to-end.** `payments` only floor-checked `amount_cents` (≥50); the `labels` full-label buy-time rate gate compared against the *request-body* `display_price_cents` and skipped entirely when absent → a 50¢ PI could buy a $50 live label. Fix: new `_shared/pricing.ts:resolveGateBasisCents` — the gate basis is now the **server-known** `verifiedPaymentIntent.amount` on the full-label leg (server-derived price on flex, 0 only for comp), and `p_display_price_cents` persists the same trusted basis. Never skips when a PI exists.
+- **D2 — comp + flex-link minted free live labels.** `labels:386` gate `if (isComp && !resolvedLink)` let `comp:true` WITH an active flex link skip the admin check *and* the whole payment branch (kill switch + allowlist) → anyone holding a flex-link URL got a free (live) label. Drift from the 2026-05-11 sender-flow-wizard comp-only era, never retired after Pattern D made flex charge real money. Fix: comp requires an admin JWT **unconditionally**. Verified via grep that no client sends comp+link (only the admin onboarding path sends comp, no link) — no client change needed.
+
+**Refund-ledger correctness:**
+- **D3** — `charge.refunded` booked cumulative `amount_refunded` (Stripe doesn't expand `charge.refunds` under the pinned API) with synthetic refund ids → a second partial refund over-booked the ledger; compounded by two of three cancel-refund initiators passing `amount_cents: undefined` (= refund ALL remaining) at ≤0 balance. Fix: retrieve the refund list explicitly (`listRefundsForCharge`), book **per-refund** rows keyed `stripe.refund.<rfnd_id>`, `status==='succeeded'` filtered, with a **time-cutover guard** (`REFUND_LEDGER_KEY_CUTOVER`) so pre-deploy rows under the legacy `stripe.<eventId>:refund` key never re-book; one shared `initiateCancelRefund` helper that **skips** at ≤0 balance across all three sites.
+- **D4** — sweep `STALE_DAYS=21` terminally rejected inside the 2–4-week carrier window and status could never advance. Fix: 28 days + webhook advances `'rejected'→'refunded'` **only when `easypost_refund_status='refunded'`** (guards the overloaded `'rejected'` value so an admin goodwill refund on a carrier-refused void can't send a false "refund completed" email).
+
+**Also in the PR (mechanical):** `_shared/background.ts` (`runInBackground` → `EdgeRuntime.waitUntil`) applied to all fire-and-forget email/ledger dispatches (fee_stripe write, dispatchNotifications ×3, easypost_refund writes now awaited); cancel-label returns **500 + admin alert** (not `success:true`) when the post-void DB update fails, plus a `refund_status='none'` concurrency guard; refund emails now quote the **paid** amount via `_shared/paid-amount.ts` (was `rate_cents`); EasyPost webhook returns **500 on real errors** so the carrier retries; cleanups (dead `adjustmentCollected`, stale comments, deterministic fallback event ids, dead recon cursor).
+
+**Deferred fast-follows (in proposal §9):** D1(b) PI-creation-time amount validation in `payments`; `pi.amount_received` vs `amount`; admin partial-refund idempotency window; D4 post-28d secondary heal path.
+
+**Prod reconcile (John, at rollout):** set `REFUND_LEDGER_KEY_CUTOVER` to the deploy unix timestamp before/at deploy (bounds the ~1 legacy refund row on 24W301E from re-booking). No schema changes; all edge functions redeploy on merge.
+
+**Tests:** integrated suite **594 passed / 56 files** (was 547/49 — +47 across pricingGate, background/runInBackground, resolveRefundRowsToBook, initiateCancelRefund, getPaidAmountCentsForShipment, resolveRefundStatus D4 cases, cancelLabelFailurePaths). `npx tsc -b --noEmit` clean. NOTE: `tsc -b` scope is `src/` only — edge functions (Deno URL imports) are type-checked at deploy time by the "Deploy Supabase Edge Functions" CI job; the `_shared` pure logic is covered directly by Vitest.
+
+**Browser-verified:**
+  spec: tests/unit/pricingGate.test.ts, tests/unit/resolveRefundRowsToBook.test.ts, tests/unit/initiateCancelRefund.test.ts, tests/unit/cancelLabelFailurePaths.test.ts, tests/unit/resolveRefundStatus.test.ts
+  variants-covered: [D1 gate basis: flex-server-derived / full-label-PI-amount / comp-null; D2 comp admin-gate (code-read + client grep — no comp+link caller); D3 per-refund booking: single/partial×2/replay-idempotent/failed-excluded/pre-cutover-skip; D4 advance: submitted→refunded, rejected+ep-refunded heal, rejected+ep-not-refunded blocked; cancel-label DB-fail→500+alert, concurrent-cancel 0-rows→422. Edge-function wire shapes are pure-logic-extracted and unit-pinned; live money paths (503 kill switch, off-session charge) are env-gated and exercised in John's §5 live smoke tests post-flip.]
+
 
 ---
 

@@ -3,8 +3,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { requireAdmin } from "../_shared/auth.ts";
 import { isCronCall } from "../_shared/cron-auth.ts";
-import { createRefund } from "../_shared/stripe.ts";
-import { getRefundableBalanceForPI } from "../_shared/refunds.ts";
+import { initiateCancelRefund } from "../_shared/refunds.ts";
+import { getPaidAmountCentsForShipment } from "../_shared/paid-amount.ts";
 import { writeEasypostRefund } from "../_shared/ledger.ts";
 import { sendEmail } from "../_shared/resend.ts";
 import { refundUnsuccessfulEmail, refundCompletedEmail } from "../_shared/email-templates.ts";
@@ -17,7 +17,7 @@ import { log } from "../_shared/logger.ts";
 //   2026-05-21_refund-system-implementation_..._decided-2026-05-22.md (D3/D4/D5)
 //   2026-05-23_pre-launch-handoff-plan.md §Package H5
 //
-// Purpose: Find refund_status='submitted' shipments older than 21 days, poll
+// Purpose: Find refund_status='submitted' shipments older than 28 days, poll
 // EasyPost one last time, and resolve:
 //
 //   EP 'refunded'  → fire createRefund (catches missed webhook + easypost_refund ledger row)
@@ -26,20 +26,29 @@ import { log } from "../_shared/logger.ts";
 //                    leave easypost_refund_status='submitted' as the timeout signature
 //                    + send Email C
 //
+// STALE_DAYS = 28 (was 21) — aligned with the documented "refunds take 2–4
+// weeks" policy so a carrier confirming in week 4 arrives BEFORE the terminal
+// 'rejected' + "refund unsuccessful" email, not after. A carrier confirmation
+// that still lands after the timeout is not lost: the refund.successful
+// webhook path fires the Stripe refund regardless (its stripe-webhook advance
+// is being widened to rejected→refunded in a parallel change).
+//
 // Auth: admin-only (requireAdmin) for manual invocation; service role JWT for
 // the pg_cron scheduled path (cron registration is DEFERRED to fast-follow —
 // see migration 035 Block 2).
 //
-// Cursor: uses recon_state table (H4 migration 034), key='refund_sweep'.
-// The cursor's last_run_at is updated each run so repeated runs don't re-scan
-// old shipments. Initial value: now() - 21 days (seeded by migration 035).
+// No recon_state cursor: the scan is fully determined by the
+// refund_submitted_at < (now - STALE_DAYS) filter, and processed shipments
+// leave refund_status='submitted', so runs are naturally idempotent. (A
+// key='refund_sweep' cursor was written here until 2026-07 but never read —
+// dead bookkeeping, removed.)
 //
 // Cron schedule (when pg_cron is enabled): daily 04:30 UTC — offset 30 min
 // from H4's reconciliation-sweep (04:00 UTC) to avoid concurrent load.
 // =============================================================================
 
 const APP_URL = "https://sendmo.co";
-const STALE_DAYS = 21;
+const STALE_DAYS = 28;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -88,8 +97,16 @@ async function sendEmailC(
   }
   if (!payerEmail) return;
 
+  // Quote what the CUSTOMER paid (the +charge ledger row), not
+  // shipments.rate_cents (SendMo's EasyPost cost — ~15%+$1 lower). Falls
+  // back to rate_cents when no charge row exists.
+  const paidAmountCents = await getPaidAmountCentsForShipment(
+    supabase,
+    shipment.stripe_payment_intent_id,
+    shipment.rate_cents ?? 0,
+  );
   const tpl = refundUnsuccessfulEmail({
-    amount_cents: shipment.rate_cents ?? 0,
+    amount_cents: paidAmountCents,
     carrier: shipment.carrier ?? "the carrier",
     public_code: shipment.public_code,
     tracking_url: `${APP_URL}/t/${shipment.public_code}`,
@@ -151,8 +168,16 @@ async function sendEmailB(
   }
   if (!payerEmail) return;
 
+  // Quote what the CUSTOMER paid (the +charge ledger row), not
+  // shipments.rate_cents (SendMo's EasyPost cost — ~15%+$1 lower). Falls
+  // back to rate_cents when no charge row exists.
+  const paidAmountCents = await getPaidAmountCentsForShipment(
+    supabase,
+    shipment.stripe_payment_intent_id,
+    shipment.rate_cents ?? 0,
+  );
   const tpl = refundCompletedEmail({
-    amount_cents: shipment.rate_cents ?? 0,
+    amount_cents: paidAmountCents,
     public_code: shipment.public_code,
     tracking_url: `${APP_URL}/t/${shipment.public_code}`,
     last4: null, // sweep path doesn't have the card details readily available
@@ -241,7 +266,7 @@ serve(async (req: Request) => {
   // ── Fetch stale submitted-refund shipments ─────────────────────────────────
   // Find all live (non-test) shipments where:
   //   - refund_status = 'submitted' (void was submitted to carrier, waiting)
-  //   - refund_submitted_at < (now - 21 days) — stale
+  //   - refund_submitted_at < (now - 28 days) — stale (2–4-week policy)
   //   - easypost_shipment_id is present (required for EP poll)
   //   - is_test = false (only live labels are real-money refunds)
   const { data: staleShipments, error: fetchErr } = await serviceSupabase
@@ -316,30 +341,27 @@ serve(async (req: Request) => {
           : (shipment.rate_cents ?? 0);
 
         if (shipment.stripe_payment_intent_id) {
-          const refundableBalance = await getRefundableBalanceForPI(
-            serviceSupabase,
-            shipment.stripe_payment_intent_id,
-          );
+          // Shared helper (Rule 6) — computes the per-PI refundable balance
+          // and skips the Stripe call when it is <= 0 (logs
+          // cancel.stripe_refund_skipped_no_balance). Same idempotency key
+          // as the tracking-poll and webhook triggers, so Stripe dedupes.
+          const refundResult = await initiateCancelRefund({
+            supabase: serviceSupabase,
+            stripePaymentIntentId: shipment.stripe_payment_intent_id,
+            easypostShipmentId: shipment.easypost_shipment_id!,
+            shipmentId: shipment.id,
+            publicCode: shipment.public_code,
+            trigger: "cron_refund_sweep",
+            liveMode: true, // only live shipments are processed
+          });
+          const stripeRefundId: string | null = refundResult.skipped
+            ? null
+            : refundResult.stripeRefundId;
 
-          let stripeRefundId: string | null = null;
-          if (refundableBalance > 0) {
-            const stripeRefund = await createRefund({
-              payment_intent_id: shipment.stripe_payment_intent_id,
-              amount_cents: refundableBalance,
-              reason: "requested_by_customer",
-              metadata: {
-                shipment_id: shipment.id,
-                public_code: shipment.public_code,
-                trigger: "cron_refund_sweep",
-              },
-              idempotency_key: `refund_${shipment.easypost_shipment_id}_user_cancel`,
-              liveMode: true, // only live shipments are processed
-            });
-            stripeRefundId = (stripeRefund as { id?: string })?.id ?? null;
-          }
-
-          // Write easypost_refund ledger row (idempotent).
-          writeEasypostRefund({
+          // Write easypost_refund ledger row (idempotent). Awaited — the
+          // helper never throws by design, and ledger completeness matters
+          // more than one cheap DB write of latency.
+          await writeEasypostRefund({
             supabase: serviceSupabase,
             sessionId,
             shipmentId: shipment.id,
@@ -351,8 +373,6 @@ serve(async (req: Request) => {
             mode: "live",
             isComp: false,
             source: "cron_refund_sweep",
-          }).catch((err) => {
-            console.error("[cron-refund-sweep] writeEasypostRefund failed:", err);
           });
 
           // Update easypost_refund_status — charge.refunded webhook will
@@ -404,7 +424,7 @@ serve(async (req: Request) => {
 
       } else {
         // ── Branch 3: EP still 'submitted' → timeout terminal (D3) ──────────
-        // Decision D3: mark rejected after 21 days even if EP still says submitted.
+        // Decision D3: mark rejected after 28 days even if EP still says submitted.
         // Signature: refund_status='rejected', easypost_refund_status='submitted'
         // (the lingering 'submitted' is the timeout signature so admins can tell
         // this was a timeout vs a hard carrier rejection).
@@ -449,11 +469,8 @@ serve(async (req: Request) => {
     }
   }
 
-  // ── Update the recon_state cursor ─────────────────────────────────────────
-  await serviceSupabase
-    .from("recon_state")
-    .upsert({ key: "refund_sweep", last_run_at: runStarted, updated_at: new Date().toISOString() })
-    .eq("key", "refund_sweep");
+  // (No recon_state cursor write — the sweep's query filters on
+  // refund_submitted_at, so the key='refund_sweep' cursor was dead bookkeeping.)
 
   log({
     event_type: "cron_refund_sweep.completed",
