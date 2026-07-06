@@ -147,33 +147,21 @@ alert failure mask or block the original handler) — mirror the existing
 ## 🟡 Tier 2 — Strongly recommended (launch week)
 
 ### T2-1 👤🤖 Register the cron sweeps (pg_cron)
-**Status:** `[ ]` not started · **unblocked once T1-2 (Pro) lands**
+**Status:** `[~]` **EXECUTED 2026-07-06 (agent) — jobs registered + active; awaiting John's one Vault secret to authenticate.** Both extensions enabled (`pg_cron` 1.6.4, `pg_net` 0.19.5), `reconciliation-sweep-daily` (`0 4 * * *`) + `refund-cron-sweep-daily` (`30 4 * * *`) both `active=t` on prod, and a shipped **cron-auth bug fix** (see below). Decided proposal: [proposals/2026-07-06_register-cron-sweeps_reviewed-2026-07-06_decided-2026-07-06.md](proposals/2026-07-06_register-cron-sweeps_reviewed-2026-07-06_decided-2026-07-06.md). Weekly bulk recon **deferred** (heaviest job, no week-one volume — one-liner in migration 036 header).
 
-**Why it matters:** `reconciliation-sweep` (daily) and `cron-refund-sweep` (21-day refund
-finalizer) are **built but manual-only** — pg_cron was never registered. Without them a
-stuck refund or unrecovered carrier adjustment **never self-heals**. The exact
-enable-later steps and `cron.schedule()` boilerplate are already written in the migrations.
+> **Bug found + fixed during registration:** `cron-refund-sweep` called `requireAdmin` unconditionally with **no cron-auth-bypass** (its sibling `reconciliation-sweep` had one) → a pg_cron service-role Bearer would 403 "Profile not found" → **the refund finalizer would silently never run.** Fixed via new `_shared/cron-auth.ts` (`isCronCall`) imported by both sweeps (also closed an env-read asymmetry). Deployed via CI on the T2-1 push.
+>
+> **GUC → Vault:** the `ALTER DATABASE SET app.*` GUC route in the steps below is **impossible on this project** (postgres is `rolsuper=off` → `ERROR 42501: permission denied to set parameter`, for the agent AND John). Switched to the Supabase-canonical **Vault** pattern: the cron bodies read `supabase_url` + `service_role_key` from `vault.decrypted_secrets`. The agent stored the non-secret `supabase_url`.
 
-**Steps:**
-1. 👤 Dashboard → Database → Extensions → enable **`pg_cron`** + **`pg_net`**.
-2. 👤 Set the GUCs (contains the **service-role JWT — a secret, so John runs this**, per
-   Rule 0):
-   ```sql
-   ALTER DATABASE postgres SET app.supabase_url    = 'https://fkxykvzsqdjzhurntgah.supabase.co';
-   ALTER DATABASE postgres SET app.service_role_key = '<service-role-jwt>';
-   ```
-3. 🤖 Apply **migration 035 Block 2** verbatim (the `cron.schedule('refund-cron-sweep-daily',
-   '30 4 * * *', …)` call — already written in
-   [`supabase/migrations/035_*.sql`](supabase/migrations)).
-4. 🤖 Apply the **reconciliation-sweep** schedule (daily `0 4 * * *` + weekly Sundays).
-   Migration 034's boilerplate was left in git history at the H4 commit — recover it, or
-   write it fresh matching the 035 Block 2 shape, pointing at `/functions/v1/reconciliation-sweep`.
+**REMAINING — John-only (secret, Rule 0):** store the service-role JWT in Vault (Dashboard → SQL Editor):
+```sql
+SELECT vault.create_secret('<service-role-jwt>', 'service_role_key', 'pg_cron sweep auth (T2-1)');
+```
+Value = Settings → API (or newer API Keys view) → the **`service_role`** secret (NOT anon). It **must equal the deployed `SUPABASE_SERVICE_ROLE_KEY` function secret byte-for-byte**, or `isCronCall` fails and runs 403. Until it's set, the jobs fire but 403 (idle-fail; self-heals when the secret lands — don't chase `failed` rows in `cron.job_run_details` before then). Then run the force-run verification below.
 
-**Verification:** `SELECT jobname, schedule, active FROM cron.job;` shows both jobs active.
-Force one run (`SELECT cron.schedule(... )` then check `cron.job_run_details`) → the
-function's `recon_state.last_run_at` advances.
+**Verification (after John's secret; money-safe):** `SELECT jobname, schedule, active FROM cron.job;` already shows both active. Force the **reconciliation** daily sweep (read-heavy, no money) via a `* * * * *` one-off `cron.schedule` → **unschedule after ~90s (mandatory)** → confirm `cron.job_run_details.status='succeeded'` + `recon_state.reconciliation_daily.last_run_at` advanced to ≈now. Do NOT force the **refund** sweep unless the stale-live-refund count is 0 (else it finalizes real refunds — let the natural 04:30 run be its first). Health signal = downstream state advancing, NOT `job_run_details.status` alone (pg_net is fire-and-forget).
 
-**Gotcha:** offset the two jobs (04:00 vs 04:30 UTC) as the migrations specify — avoids
+**Gotcha:** the two jobs are offset 04:00 vs 04:30 UTC as the migrations specify — avoids
 concurrent EasyPost list-load.
 
 ---
