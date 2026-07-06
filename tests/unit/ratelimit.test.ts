@@ -66,11 +66,21 @@ describe("checkRateLimit", () => {
 });
 
 describe("clientIpKey", () => {
-    it("takes the first hop of x-forwarded-for, trimmed", () => {
+    it("takes the LAST hop of x-forwarded-for, trimmed (the trusted edge-appended IP)", () => {
         const req = new Request("http://x", {
             headers: { "x-forwarded-for": " 1.2.3.4 , 5.6.7.8" },
         });
-        expect(clientIpKey(req)).toBe("1.2.3.4");
+        expect(clientIpKey(req)).toBe("5.6.7.8");
+    });
+
+    it("REGRESSION (M2) — a client-prepended fake hop cannot control the key", () => {
+        // Attacker prepends a random value per request to escape the bucket.
+        // The trusted edge appends the real observed IP last, so the key is
+        // stable regardless of what the client stuffs on the left.
+        const a = new Request("http://x", { headers: { "x-forwarded-for": "99.99.99.99, 5.6.7.8" } });
+        const b = new Request("http://x", { headers: { "x-forwarded-for": "11.11.11.11, 5.6.7.8" } });
+        expect(clientIpKey(a)).toBe("5.6.7.8");
+        expect(clientIpKey(b)).toBe("5.6.7.8");
     });
 
     it("falls back to x-real-ip", () => {
