@@ -3964,6 +3964,26 @@ Returns the new `shipments.id`. Called via `supabase.rpc('admin_insert_shipment'
 
 Every merge to `main` triggers a Vercel auto-deploy. This section tracks what shipped and when.
 
+### [2026-07-06] — easypost_refund amount sourcing consolidated (PR #43)
+
+**Branch:** `claude/musing-varahamihira-5b0064` → squash-merged to `main` as `4349cce` (21:13 UTC)
+**Deploy:** CI `deploy-edge-functions.yml` run 28823662114 — `_shared/ledger.ts` changed, so ALL 26 edge functions redeployed (success, ~21:14 UTC). No frontend change (Vercel deploy is a no-op for this PR).
+
+**What shipped**
+- `easypost_refund` ledger amount sourcing moved into `writeEasypostRefund` (`resolveEasypostRefundAmountCents`: payload amount only when present/numeric/>0, else `rate_cents`) — fixes the webhook 0¢ fallback (YPPY9AK class) AND tracking's dead fallback (`rate_cents` was never selected). 0¢ writes now log `ledger.easypost_refund_zero_amount` warn.
+- `tracking` selects `rate_cents` — also fixes the refund-unsuccessful email quoting $0.00 for comp labels.
+- `reconciliation-sweep` Step 4b: window-independent ledger audit — flags live 0¢ rows (`recon.zero_amount_easypost_refund_tx`, suppressed once a backfill sibling exists) and per-shipment duplicate non-zero rows (`recon.duplicate_easypost_refund_tx`). Status gate hoisted over Step 4.
+
+**What changed (files)**
+- `supabase/functions/_shared/ledger.ts`, `webhooks/index.ts`, `tracking/index.ts`, `cron-refund-sweep/index.ts`, `reconciliation-sweep/index.ts`
+- `tests/unit/ledger-writes.test.ts` (+7 regression tests), `LOG.md`, `SPEC.md` §13.3
+
+**Tests:** 620 unit tests passing; full CI (lint/unit/e2e) green pre-merge.
+
+**Breaking changes:** none at the API surface. `writeEasypostRefund` signature changed (`refundAmountCents` → `payloadAmount` + `rateCents`) — all three callers updated in the same PR.
+
+**Notes for future agents:** first real-payload verification = next live cancel or the 04:00 UTC reconciliation sweep, whose Step 4b now audits ALL historical live `easypost_refund` rows (expect it to stay quiet: YPPY9AK's 0¢ row is suppressed by its backfill sibling). Full context: Decisions & Gotchas entry of the same date.
+
 ### [2026-04-26] — Links Manager: auth-aware /links/new + /links/:id/edit
 
 **Branch:** `main`
