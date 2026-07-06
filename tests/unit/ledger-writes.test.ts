@@ -19,6 +19,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
     writeLabelCost,
     writeEasypostRefund,
+    resolveEasypostRefundAmountCents,
     type LabelCostParams,
     type EasypostRefundParams,
 } from "../../supabase/functions/_shared/ledger.ts";
@@ -61,7 +62,8 @@ const BASE_EP_REFUND_PARAMS: Omit<EasypostRefundParams, "supabase"> = {
     linkId: null,
     easypostShipmentId: "shp_abc123",
     easypostRefundObjectId: "rfnd_xyz789",
-    refundAmountCents: 850,
+    payloadAmount: 8.50,     // dollar float — parsed to 850¢ (preferred over rateCents when present)
+    rateCents: 599,          // distinct from the payload-derived 850 so tests prove which source won
     mode: "test",
     isComp: false,
     source: "tracking_poll",
@@ -221,8 +223,10 @@ describe("writeEasypostRefund (tracking poll source)", () => {
             }),
         } as unknown as Parameters<typeof writeLabelCost>[0]["supabase"];
 
-        // Pass a negative amount (shouldn't happen but test the guard)
-        await writeEasypostRefund({ ...BASE_EP_REFUND_PARAMS, supabase, refundAmountCents: -850 });
+        // Negative payload amount (shouldn't happen) is rejected by the >0
+        // guard and falls back to rateCents; a negative rateCents (also
+        // shouldn't happen) is Math.abs'd. Either way: positive cash-in.
+        await writeEasypostRefund({ ...BASE_EP_REFUND_PARAMS, supabase, payloadAmount: -8.50, rateCents: -850 });
         const row = insertedRows[0] as Record<string, unknown>;
         expect(row.amount_cents).toBe(850);
         expect((row.amount_cents as number) > 0).toBe(true);
@@ -352,5 +356,92 @@ describe("writeEasypostRefund (webhook push source)", () => {
         expect(r2.ok).toBe(true);         // collision is ok — not an error
         expect(insertCount).toBe(1);       // only ONE actual row was inserted
         expect(callCount).toBe(2);         // both tried
+    });
+});
+
+// ─── resolveEasypostRefundAmountCents — amount-sourcing regressions ────────
+//
+// Regression tests for the 2026-07-06 0¢-ledger-row incident (YPPY9AK):
+// EasyPost Refund objects carry NO amount field, so the fallback path is the
+// NORM. The webhook writer used to fall back to 0¢ instead of rate_cents,
+// silently under-stating EasyPost credits in the append-only ledger; the
+// tracking writer's rate_cents fallback was dead code (column not selected).
+// Sourcing now lives here, in the shared helper, under this coverage.
+
+describe("resolveEasypostRefundAmountCents", () => {
+    it("uses rate_cents when payload amount is absent — the norm case (YPPY9AK regression)", () => {
+        expect(resolveEasypostRefundAmountCents(null, 711)).toBe(711);
+        expect(resolveEasypostRefundAmountCents(undefined, 711)).toBe(711);
+    });
+
+    it("prefers a positive payload amount over rate_cents, converting dollars to cents", () => {
+        expect(resolveEasypostRefundAmountCents(8.5, 599)).toBe(850);
+        expect(resolveEasypostRefundAmountCents("8.50", 599)).toBe(850);
+    });
+
+    it("treats a zero payload amount as absent — string or number ('0.00' is truthy!)", () => {
+        expect(resolveEasypostRefundAmountCents("0.00", 711)).toBe(711);
+        expect(resolveEasypostRefundAmountCents("0", 711)).toBe(711);
+        expect(resolveEasypostRefundAmountCents(0, 711)).toBe(711);
+    });
+
+    it("treats a non-numeric payload amount as absent — NaN must never reach amount_cents", () => {
+        expect(resolveEasypostRefundAmountCents("USD 8.50", 711)).toBe(711);
+        expect(Number.isFinite(resolveEasypostRefundAmountCents("garbage", null))).toBe(true);
+    });
+
+    it("resolves to 0 only when payload amount AND rate_cents are both missing", () => {
+        expect(resolveEasypostRefundAmountCents(null, null)).toBe(0);
+        expect(resolveEasypostRefundAmountCents(null, undefined)).toBe(0);
+    });
+});
+
+describe("writeEasypostRefund amount sourcing (via resolve helper)", () => {
+    it("inserts rate_cents when the payload has no amount — the webhook 0¢ regression", async () => {
+        const insertedRows: unknown[] = [];
+        const supabase = {
+            from: () => ({
+                insert: (row: unknown) => {
+                    insertedRows.push(row);
+                    return Promise.resolve({ error: null });
+                },
+            }),
+        } as unknown as Parameters<typeof writeLabelCost>[0]["supabase"];
+
+        const result = await writeEasypostRefund({
+            ...BASE_EP_REFUND_PARAMS,
+            supabase,
+            payloadAmount: null,   // EasyPost Refund objects carry no amount — every real event
+            rateCents: 711,
+        });
+
+        expect(result.ok).toBe(true);
+        const row = insertedRows[0] as Record<string, unknown>;
+        expect(row.amount_cents).toBe(711);   // NOT 0 — the old webhook fallback
+    });
+
+    it("still writes the row (0¢, ledger completeness) when rate_cents is also missing", async () => {
+        const insertedRows: unknown[] = [];
+        const supabase = {
+            from: () => ({
+                insert: (row: unknown) => {
+                    insertedRows.push(row);
+                    return Promise.resolve({ error: null });
+                },
+            }),
+        } as unknown as Parameters<typeof writeLabelCost>[0]["supabase"];
+
+        const result = await writeEasypostRefund({
+            ...BASE_EP_REFUND_PARAMS,
+            supabase,
+            payloadAmount: null,
+            rateCents: null,
+        });
+
+        // Row is written (the reconciliation sweep flags live 0¢ rows) and the
+        // helper logs a ledger.easypost_refund_zero_amount warn internally.
+        expect(result.ok).toBe(true);
+        const row = insertedRows[0] as Record<string, unknown>;
+        expect(row.amount_cents).toBe(0);
     });
 });

@@ -677,34 +677,28 @@ serve(async (req: Request) => {
         // discriminator; if present, treat result.id + result.amount as the
         // refund-object identity.
         const refundObjFromTopLevel = (!refundObj && !refundObjFallback && result.shipment_id && result.id)
-          ? { id: result.id as string, amount: (result.amount as string | number) ?? 0 }
+          ? { id: result.id as string, amount: (result.amount as string | number) ?? null }
           : null;
         const effectiveRefundObj = refundObj ?? refundObjFallback ?? refundObjFromTopLevel;
         const refundObjId: string = effectiveRefundObj?.id ?? `shp_fallback_${epShipmentId}`;
-        // EasyPost Refund objects carry NO amount field (confirmed empirically
-        // 2026-07-06: live sweep payload had amount_cents=null, and the
-        // 2026-05-24 YPPY9AK webhook wrote a 0¢ ledger row). So the fallback
-        // below is the NORM, not the exception: use the shipment's rate_cents
-        // (declared label cost at buy time) — same fallback as the sibling
-        // writer in tracking/index.ts. A 0¢ row silently under-states EasyPost
-        // credits in the append-only ledger and the sweep won't flag it by key.
-        const refundAmountCents: number = effectiveRefundObj?.amount
-          ? Math.round(parseFloat(String(effectiveRefundObj.amount)) * 100)
-          : (refundShipment.rate_cents as number | null) ?? 0;
 
         // Awaited: ledger completeness matters more than one cheap DB write
         // of latency, and an un-awaited promise can be cut off when the edge
         // isolate is reclaimed after the response. writeEasypostRefund never
         // throws by design — it catches internally and logs on failure.
+        // Amount sourcing (incl. the rate_cents fallback for the norm case
+        // where the Refund object carries no amount) lives in the helper —
+        // see SPEC.md §13.3 "Amount sourcing".
         await writeEasypostRefund({
           supabase,
           sessionId: body.id ?? "webhook",
           shipmentId: refundShipment.id,
-          userId: "00000000-0000-0000-0000-000000000001", // resolved below if available
+          userId: "00000000-0000-0000-0000-000000000001", // system user — webhook context has no link join
           linkId: null,  // not available in refund webhook context without extra query
           easypostShipmentId: epShipmentId,
           easypostRefundObjectId: refundObjId,
-          refundAmountCents,
+          payloadAmount: effectiveRefundObj?.amount ?? null,
+          rateCents: (refundShipment.rate_cents as number | null) ?? null,
           mode: refundShipment.is_test ? "test" : "live",
           isComp: !refundShipment.stripe_payment_intent_id,
           source: "webhook",

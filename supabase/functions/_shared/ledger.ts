@@ -10,13 +10,14 @@
 //   label_cost     — SendMo paid EasyPost for the label (negative; cash out).
 //                    Sole writer: labels function, at label-buy time.
 //   easypost_refund— EasyPost credited SendMo on a confirmed carrier void
-//                    (positive; cash in). Two writers, both keyed on the
+//                    (positive; cash in). THREE writers, all keyed on the
 //                    EasyPost Refund object id (rfnd_…) per B4 of the review:
 //                      • webhooks function — refund.successful push event
 //                      • tracking function — lazy poll when user visits /t/<code>
+//                      • cron-refund-sweep — 21-day stale-'submitted' resolver
 //                    Idempotency key = 'easypost_refund_<refund_object_id>' ensures
-//                    the three writers (webhook, poll, hypothetical retry) converge
-//                    on a single row — UNIQUE collision is the expected safe no-op.
+//                    all writers converge on a single row — UNIQUE collision is
+//                    the expected safe no-op.
 //
 // Design decisions:
 //   - Writers are ADDITIVE — they do not break existing behavior. A failed
@@ -151,15 +152,40 @@ export async function writeLabelCost(
 //     easypost_refund_status update. Refund object id from payload.result.id.
 //   • tracking/index.ts — in the lazy-poll refund branch when epRefundStatus
 //     === 'refunded'. Refund object id from epShip.refunds[0].id.
+//   • cron-refund-sweep/index.ts — when the 21-day resolver finds EP already
+//     reporting 'refunded'. Refund object id from epShip.refunds[0].id.
 //
 // Idempotency key = 'easypost_refund_<refund_object_id>' (keyed on the EasyPost
 // Refund object id, NOT the shipment id — B4 fix from the decided proposal).
-// This guarantees exactly one row per EasyPost refund event, even across the
-// two writers racing on the same event.
+// This guarantees exactly one row per EasyPost refund event, even across
+// writers racing on the same event.
 //
-// amount_cents: positive (SendMo gains back the label cost).
-// If the refund amount cannot be sourced from the EasyPost payload, falls back
-// to rate_cents (the declared EasyPost label cost at label-buy time).
+// amount_cents: positive (SendMo gains back the label cost). Sourced here —
+// not by callers — via resolveEasypostRefundAmountCents: payload amount when
+// present and a positive number, else rate_cents (the declared EasyPost label
+// cost at buy time). EasyPost Refund objects carry NO amount field (confirmed
+// empirically 2026-07-06), so rate_cents is the norm-case amount, and since
+// label_cost is written as -rate_cents the pair cancels exactly in the
+// net-margin identity. A resolved 0¢ amount (rate_cents missing too) is
+// written for ledger completeness but logged as a warn — the reconciliation
+// sweep flags live 0¢ rows for manual backfill.
+
+// Pure amount-sourcing helper — exported for direct unit coverage.
+// Guards the two payload hazards the 2026-07-06 review confirmed: a truthy
+// non-numeric amount (parseFloat → NaN would violate amount_cents NOT NULL
+// and silently drop the row) and a zero-string amount ('0.00' is truthy).
+export function resolveEasypostRefundAmountCents(
+    payloadAmount: string | number | null | undefined,
+    rateCents: number | null | undefined,
+): number {
+    if (payloadAmount != null) {
+        const parsed = parseFloat(String(payloadAmount));
+        if (Number.isFinite(parsed) && parsed > 0) {
+            return Math.round(parsed * 100);
+        }
+    }
+    return Math.abs(rateCents ?? 0);    // positive — cash in
+}
 
 export interface EasypostRefundParams {
     supabase: SupabaseClient;
@@ -169,10 +195,11 @@ export interface EasypostRefundParams {
     linkId: string | null;
     easypostShipmentId: string;         // 'shp_…' (for description / logging)
     easypostRefundObjectId: string;     // 'rfnd_…' — the idempotency key anchor
-    refundAmountCents: number;          // positive — cash in
+    payloadAmount: string | number | null;  // Refund object's amount, if any (normally absent)
+    rateCents: number | null;           // shipments.rate_cents — the norm-case amount
     mode: "test" | "live";
     isComp: boolean;
-    source: "webhook" | "tracking_poll";
+    source: "webhook" | "tracking_poll" | "cron_refund_sweep";
 }
 
 export async function writeEasypostRefund(
@@ -180,13 +207,31 @@ export async function writeEasypostRefund(
 ): Promise<{ ok: boolean; error?: string }> {
     const {
         supabase, sessionId, shipmentId, userId, linkId,
-        easypostShipmentId, easypostRefundObjectId, refundAmountCents,
+        easypostShipmentId, easypostRefundObjectId, payloadAmount, rateCents,
         mode, isComp, source,
     } = params;
 
-    const amountCents = Math.abs(refundAmountCents);    // positive — cash in
+    const amountCents = resolveEasypostRefundAmountCents(payloadAmount, rateCents);
     const idempotencyKey = `easypost_refund_${easypostRefundObjectId}`;
     const fundingSource = isComp ? "comp" : null;
+
+    if (amountCents === 0) {
+        log({
+            event_type: "ledger.easypost_refund_zero_amount",
+            session_id: sessionId,
+            severity: "warn",
+            entity_type: "transaction",
+            entity_id: shipmentId,
+            properties: {
+                easypost_refund_id: easypostRefundObjectId,
+                easypost_shipment_id: easypostShipmentId,
+                payload_amount: payloadAmount,
+                rate_cents: rateCents,
+                mode,
+                source,
+            },
+        });
+    }
 
     try {
         const { error: txErr } = await supabase.from("transactions").insert({
