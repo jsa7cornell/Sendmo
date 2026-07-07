@@ -24,7 +24,7 @@ interface Props {
 }
 
 function formatRefundCopy(paid: boolean, amountPaidCents: number | null): string {
-  if (!paid) return "No charge was made, so no refund is needed.";
+  if (!paid) return "Any payment made for this label will be refunded to the original purchase method.";
   if (amountPaidCents != null) {
     const dollars = (amountPaidCents / 100).toFixed(2);
     return `We'll refund $${dollars} to the card on file. Refunds usually appear within a few minutes to a few days.`;
