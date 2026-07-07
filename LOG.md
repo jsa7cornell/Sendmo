@@ -38,6 +38,26 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ---
 
+### [2026-07-06] Receipt block now shows card last4 ("Charged to •••• 4242") — tracking endpoint wires the reserved `payment_method_last4` field
+
+**Category:** fix | Payments | UX
+**Cross-link:** branch `claude/receipt-card-last4` → PR to main (carries this + the stranded post-#39 `x-cancel-token` CORS commit from `claude/money-path-fixes`) | 2026-05-19_unify-confirmation-into-tracking proposal (blocking finding #2 payer gate — the field slot was reserved there) | migration 024 (Pattern D `stripe_intents.payment_method_id`)
+
+**What happened:** John flagged that the receipt on the tracking page ("$15.95 · charged to card on file · July 5") should show the last 4 digits of the charged card. `ReceiptBlock` already supported `paymentMethodLast4` (renders "•••• 4242", falls back to "card on file") — it was just never fed. The tracking endpoint's payer gate even had a comment reserving `payment_method_last4` as a future field.
+
+**How it's resolved (no Stripe round-trip):** inside the existing payer-only receipt lookup in `supabase/functions/tracking/index.ts`: `shipment.stripe_payment_intent_id` → `stripe_intents.payment_method_id` (cached by webhooks per Pattern D) → `payment_methods.last4` (cached card metadata). Soft-deleted `payment_methods` rows still resolve — the receipt shows the card that was actually charged even if since removed. Any gap in the chain degrades to `null` → UI falls back to "card on file" exactly as before. The new response field sits **inside the payer gate** per the documented contract: anonymous/sender_flex always get `null`, and the leak-zero e2e spec now asserts that.
+
+**What changed (files)**
+- `supabase/functions/tracking/index.ts` — last4 lookup + `payment_method_last4` response field (payer-gated)
+- `src/pages/TrackingPage.tsx` — `TrackingData.payment_method_last4` + passed to both `ReceiptBlock` call sites (lifecycle + terminal F3)
+- `tests/e2e/tracking-anonymous-payment-gating.spec.ts` — anonymous-null assertions (live + mocked), payer shape assertion, new mocked test asserting "•••• 4242" renders and "card on file" is absent
+
+**Deploy note:** the `tracking` edge function must be redeployed when this PR merges for the field to go live; until then clients render the "card on file" fallback (field absent → undefined).
+
+**Browser-verified:**
+  spec: tests/e2e/tracking-anonymous-payment-gating.spec.ts ("payer receipt shows card last4 when payment_method_last4 is present")
+  variants-covered: payer-with-last4 (•••• 4242 visible, "card on file" absent); payer-comp (last4 null → block renders with fallback); anonymous (field null, no receipt block). Live-endpoint variants remain env-gated (SENDMO_TEST_PUBLIC_CODE) and skipped locally.
+
 ### [2026-07-06] easypost_refund 0¢ amount bug: sourcing consolidated into writeEasypostRefund; sweep audits ledger directly
 
 **Category:** fix | Payments | Ledger
@@ -3989,6 +4009,24 @@ Returns the new `shipments.id`. Called via `supabase.rpc('admin_insert_shipment'
 ## Deploy Log
 
 Every merge to `main` triggers a Vercel auto-deploy. This section tracks what shipped and when.
+
+### [2026-07-06] — Receipt card last4 + stranded x-cancel-token CORS fix (PR #44)
+
+**Branch:** `claude/receipt-card-last4` → squash-merged to `main` as `82b983f` (21:51 UTC)
+**Deploy:** CI `deploy-edge-functions.yml` run 28825718813 — `_shared/cors.ts` changed, so ALL edge functions redeployed (success, ~21:52 UTC). Vercel auto-deploy for the frontend half (TrackingPage prop).
+
+**What shipped**
+- Tracking-page receipt now shows the charged card's last4 ("Charged to •••• 4242") instead of "card on file". Server resolves it with no Stripe round-trip: `shipments.stripe_payment_intent_id` → `stripe_intents.payment_method_id` (Pattern D cache) → `payment_methods.last4`; any gap degrades to null → unchanged fallback copy. New `payment_method_last4` response field sits inside the payer gate (anonymous/sender_flex always null).
+- Rode along: `x-cancel-token` added to CORS allow-headers (`5f1e427`) — this commit was stranded on `claude/money-path-fixes` when PR #39 squash-merged (pushed after the PR head was set); cherry-picked here so it actually landed.
+
+**What changed (files)**
+- `supabase/functions/tracking/index.ts`, `supabase/functions/_shared/cors.ts`, `src/pages/TrackingPage.tsx`, `tests/e2e/tracking-anonymous-payment-gating.spec.ts`, `LOG.md`
+
+**Tests:** tsc clean; mocked e2e specs pass incl. new "•••• 4242 renders, card-on-file absent" browser test; anonymous leak-zero assertions extended to the new field.
+
+**Breaking changes:** none — additive response field.
+
+**Notes for future agents:** browser-verified live post-deploy on https://sendmo.co/t/24W301E → "$15.95 · charged to •••• 5001 · July 5" (payer view), and anonymous curl shows `payment_method_last4: null` (gate holds). Full context: Decisions & Gotchas entry of the same date. Lesson: commits pushed to a PR branch after the head is locked get stranded by squash-merge — check `git diff origin/main HEAD` (two-dot) on "merged" branches before assuming content landed.
 
 ### [2026-07-06] — easypost_refund amount sourcing consolidated (PR #43)
 
