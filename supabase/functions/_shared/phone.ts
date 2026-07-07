@@ -1,4 +1,4 @@
-import { isPossiblePhoneNumber } from "https://esm.sh/libphonenumber-js@1.13.2";
+import { isPossiblePhoneNumber } from "npm:libphonenumber-js@1.13.2";
 
 // Phone is required on every shipping address — FedEx/UPS reject EasyPost
 // label purchases without one (PHONENUMBER.EMPTY). `isPossiblePhoneNumber` is

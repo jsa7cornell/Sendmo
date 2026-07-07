@@ -11,7 +11,7 @@
 // actual workload (admin-report reads all users' data). One client per
 // function, role check up front.
 
-import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import { createClient, type SupabaseClient } from "jsr:@supabase/supabase-js@2.97.0";
 
 export interface AdminContext {
     user: { id: string; email: string };

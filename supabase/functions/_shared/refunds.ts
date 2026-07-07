@@ -16,7 +16,7 @@
 // Type-only import so Vitest can import this module directly with a typed mock
 // client (same pattern as _shared/budget.ts, established 2026-05-23).
 
-import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.43.0";
+import type { SupabaseClient } from "jsr:@supabase/supabase-js@2.97.0";
 import { createRefund } from "./stripe.ts";
 import { log } from "./logger.ts";
 

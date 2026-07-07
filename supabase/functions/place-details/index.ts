@@ -1,4 +1,3 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { checkRateLimit, clientIpKey } from "../_shared/ratelimit.ts";
 
@@ -13,7 +12,7 @@ const RATE_LIMIT = { max: 20, windowMs: 60_000 };
 // Uses Places API (New) — the legacy /maps/api/place/details endpoint is
 // deprecated and disabled for keys provisioned after early 2025.
 
-serve(async (req: Request) => {
+Deno.serve(async (req: Request) => {
     const corsResponse = handleCors(req);
     if (corsResponse) return corsResponse;
 

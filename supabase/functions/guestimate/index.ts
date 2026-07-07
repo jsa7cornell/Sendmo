@@ -1,4 +1,3 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { log } from "../_shared/logger.ts";
 import { checkRateLimit, clientIpKey } from "../_shared/ratelimit.ts";
@@ -46,7 +45,7 @@ const TOOL_SCHEMA = {
     },
 };
 
-serve(async (req: Request) => {
+Deno.serve(async (req: Request) => {
     const corsResponse = handleCors(req);
     if (corsResponse) return corsResponse;
 

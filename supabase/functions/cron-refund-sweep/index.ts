@@ -1,5 +1,4 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import { createClient } from "jsr:@supabase/supabase-js@2.97.0";
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { requireAdmin } from "../_shared/auth.ts";
 import { isCronCall } from "../_shared/cron-auth.ts";
@@ -201,7 +200,7 @@ async function sendEmailB(
 
 // ── Main handler ───────────────────────────────────────────────────────────────
 
-serve(async (req: Request) => {
+Deno.serve(async (req: Request) => {
   const corsResponse = handleCors(req);
   if (corsResponse) return corsResponse;
 

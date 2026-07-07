@@ -15,7 +15,7 @@
 //   - Rate limiting (each caller has its own ceiling).
 //   - The shipment SELECT (each caller selects different columns).
 
-import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import type { SupabaseClient } from "jsr:@supabase/supabase-js@2.97.0";
 
 export type Actor =
   | "admin"

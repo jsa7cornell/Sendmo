@@ -1,4 +1,3 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { checkRateLimit, clientIpKey } from "../_shared/ratelimit.ts";
 
@@ -13,7 +12,7 @@ const RATE_LIMIT = { max: 60, windowMs: 60_000 };
  * POST { input: string }
  * Returns { predictions: [{ description, place_id, main_text, secondary_text }] }
  */
-serve(async (req: Request) => {
+Deno.serve(async (req: Request) => {
     const corsResponse = handleCors(req);
     if (corsResponse) return corsResponse;
 

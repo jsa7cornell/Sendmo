@@ -41,7 +41,7 @@
 // `carrierAdjustmentEmail` from this file immediately after the recharge PI
 // returns `succeeded`. notifications_log dedup keyed on carrier_adjustment_id.
 
-import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import type { SupabaseClient } from "jsr:@supabase/supabase-js@2.97.0";
 import { log } from "./logger.ts";
 import { createAdjustmentRecharge } from "./stripe.ts";
 import { sendEmail } from "./resend.ts";

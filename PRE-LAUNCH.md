@@ -283,7 +283,8 @@ These were verified during the 2026-07-04 review; treat as done for launch:
 - **Type-check + unit gate** green and blocking in CI (476 tests).
 
 **Explicitly post-launch (NOT blockers):** Seller Marketplace link, real insurance (toggle
-currently hidden), saved addresses, Apple Pay, esm.sh→JSR import migration, lint cleanup.
+currently hidden), saved addresses, Apple Pay, ~~esm.sh→JSR import migration~~ (DONE 2026-07-06 —
+see LOG + executed proposal), lint cleanup.
 
 **Stale-doc cleanup (2-min, do anytime):** [`PLAYBOOK.md`](PLAYBOOK.md) ~266-269 still
 calls the shipped sender/flex flows "stubs." Correct it so it stops misleading agents.

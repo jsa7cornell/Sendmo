@@ -1,4 +1,3 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { requireAdmin } from "../_shared/auth.ts";
 
@@ -21,7 +20,7 @@ import { requireAdmin } from "../_shared/auth.ts";
 
 const EP_REFUND_STATUSES = ["submitted", "refunded", "rejected", "not_applicable"];
 
-serve(async (req: Request) => {
+Deno.serve(async (req: Request) => {
   const cors = handleCors(req);
   if (cors) return cors;
 

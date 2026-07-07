@@ -39,7 +39,6 @@
 // The `token_hash` + `redirect_to` are available for future "click a link"
 // flows if we ever stop sending OTPs and switch to magic-link-only.
 
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { otpEmail } from "../_shared/email-templates.ts";
 import { sendEmail } from "../_shared/resend.ts";
 
@@ -116,7 +115,7 @@ async function verifySignature(
     return false;
 }
 
-serve(async (req: Request) => {
+Deno.serve(async (req: Request) => {
     if (req.method !== "POST") {
         return jsonResponse({ error: "method not allowed" }, 405);
     }

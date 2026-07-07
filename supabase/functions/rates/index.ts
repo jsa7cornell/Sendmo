@@ -1,5 +1,4 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import { createClient } from "jsr:@supabase/supabase-js@2.97.0";
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { log } from "../_shared/logger.ts";
 import { isUsablePhone } from "../_shared/phone.ts";
@@ -52,7 +51,7 @@ const SERVICE_DENYLIST: Array<{ carrier: string; service: string }> = [
 // be pointed at the LIVE key via live_mode). 10 req/min/IP per SPEC §14.
 const RATE_LIMIT = { max: 10, windowMs: 60_000 };
 
-serve(async (req: Request) => {
+Deno.serve(async (req: Request) => {
     // Handle CORS preflight
     const corsResponse = handleCors(req);
     if (corsResponse) return corsResponse;

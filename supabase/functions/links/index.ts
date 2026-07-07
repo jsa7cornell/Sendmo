@@ -1,5 +1,4 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import { createClient } from "jsr:@supabase/supabase-js@2.97.0";
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { isUsablePhone } from "../_shared/phone.ts";
 import { resolveLiveMode } from "../_shared/mode.ts";
@@ -14,7 +13,7 @@ function generateShortCode(): string {
     return Array.from(arr, (b) => SAFE_CHARS[b % SAFE_CHARS.length]).join("");
 }
 
-serve(async (req: Request) => {
+Deno.serve(async (req: Request) => {
     const corsResponse = handleCors(req);
     if (corsResponse) return corsResponse;
 
