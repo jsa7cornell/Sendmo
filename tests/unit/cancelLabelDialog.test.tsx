@@ -38,9 +38,9 @@ describe("CancelLabelDialog", () => {
     expect(screen.getByText("Yes, start over")).toBeTruthy();
   });
 
-  it("shows 'no charge was made' copy when paid=false", () => {
+  it("shows non-leaking refund copy when paid=false", () => {
     renderOpen({ paid: false, amountPaidCents: null });
-    expect(screen.getByText(/no charge was made/i)).toBeTruthy();
+    expect(screen.getByText(/will be refunded to the original purchase method/i)).toBeTruthy();
   });
 
   it("formats the refund amount when paid=true with cents", () => {
