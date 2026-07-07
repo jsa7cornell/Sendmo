@@ -26,17 +26,37 @@ import {
 
 // ─── Mock Supabase client factory ─────────────────────────────────────────
 //
-// The helpers call exactly one chain: .from('transactions').insert(row).
-// The mock returns { error: null } by default (success) or a configurable
-// error object to simulate constraint violations and DB errors.
+// The helpers call .from('transactions').insert(row); writeEasypostRefund
+// additionally calls .from('transactions').select(...).eq(...).eq(...)
+// .eq(...).neq(...).limit(1) BEFORE the insert, as its shipment-scoped
+// dedupe guard (2026-07-07 fix — see ledger.ts). The mock returns
+// { error: null } by default for insert (success) or a configurable error
+// object to simulate constraint violations and DB errors; the select stub
+// defaults to "no existing row found" so pre-existing insert-path tests
+// keep exercising the insert (and its 23505 handling) unchanged.
 
 interface InsertResult {
     error: { code?: string; message: string } | null;
 }
 
+// Chainable select-query stub: .select().eq().eq().eq().neq().limit()
+// (any number/order of .eq()/.neq() calls), terminated by .limit() which
+// resolves the configured result. Keeps mocks resilient to the exact
+// filter chain writeEasypostRefund's dedupe guard uses, rather than
+// hard-coding the chain shape in every test.
+function selectStub(result: { data: unknown[] | null; error: unknown } = { data: [], error: null }) {
+    const chain: Record<string, unknown> = {
+        eq: () => chain,
+        neq: () => chain,
+        limit: () => Promise.resolve(result),
+    };
+    return chain;
+}
+
 function mockSupabase(insertResult: InsertResult): Parameters<typeof writeLabelCost>[0]["supabase"] {
     return {
         from: (_table: string) => ({
+            select: () => selectStub(),
             insert: (_row: unknown) => Promise.resolve(insertResult),
         }),
     } as unknown as Parameters<typeof writeLabelCost>[0]["supabase"];
@@ -189,6 +209,7 @@ describe("writeEasypostRefund (tracking poll source)", () => {
         const insertedRows: unknown[] = [];
         const supabase = {
             from: () => ({
+                select: () => selectStub(),
                 insert: (row: unknown) => {
                     insertedRows.push(row);
                     return Promise.resolve({ error: null });
@@ -216,6 +237,7 @@ describe("writeEasypostRefund (tracking poll source)", () => {
         const insertedRows: unknown[] = [];
         const supabase = {
             from: () => ({
+                select: () => selectStub(),
                 insert: (row: unknown) => {
                     insertedRows.push(row);
                     return Promise.resolve({ error: null });
@@ -236,6 +258,7 @@ describe("writeEasypostRefund (tracking poll source)", () => {
         const insertedRows: unknown[] = [];
         const supabase = {
             from: () => ({
+                select: () => selectStub(),
                 insert: (row: unknown) => {
                     insertedRows.push(row);
                     return Promise.resolve({ error: null });
@@ -264,6 +287,79 @@ describe("writeEasypostRefund (tracking poll source)", () => {
         expect(result.ok).toBe(true);
     });
 
+    it("skips insert (safe no-op) when a non-zero easypost_refund row already exists for the shipment, even under a DIFFERENT idempotency key (shp_fallback_ vs rfnd_ race — 24W301E regression, 2026-07-07)", async () => {
+        // Simulates the confirmed bug: webhook resolves 'shp_fallback_<epShipmentId>'
+        // (EasyPost hadn't attached the Refund object yet) and writes a $13.00 row.
+        // ~28s later, tracking's poll resolves the REAL 'rfnd_…' id — a DIFFERENT
+        // idempotency_key — so the UNIQUE constraint on idempotency_key would not
+        // catch it. The shipment-scoped guard must catch it instead.
+        let selectCalls = 0;
+        let insertCalls = 0;
+        const supabase = {
+            from: (_table: string) => ({
+                select: (_cols: string) => {
+                    const stub = selectStub({
+                        data: [{
+                            id: "existing-row-uuid",
+                            idempotency_key: "easypost_refund_shp_fallback_shp_28b98a447de343749ae333baeb9f6a2a",
+                        }],
+                        error: null,
+                    });
+                    const originalLimit = stub.limit as () => Promise<unknown>;
+                    stub.limit = () => {
+                        selectCalls++;
+                        return originalLimit();
+                    };
+                    return stub;
+                },
+                insert: (_row: unknown) => {
+                    insertCalls++;
+                    return Promise.resolve({ error: null });
+                },
+            }),
+        } as unknown as Parameters<typeof writeLabelCost>[0]["supabase"];
+
+        const result = await writeEasypostRefund({
+            ...BASE_EP_REFUND_PARAMS,
+            supabase,
+            shipmentId: "shipment-uuid-24w301e",
+            easypostRefundObjectId: "rfnd_b498050251c847e9bd1edb53e6ff0f5a",
+            payloadAmount: null,
+            rateCents: 1300,
+            source: "tracking_poll",
+        });
+
+        expect(result.ok).toBe(true);
+        expect(selectCalls).toBe(1);
+        expect(insertCalls).toBe(0); // the would-be duplicate $13.00 row must NOT be inserted
+    });
+
+    it("still inserts when the existing shipment row is 0¢ (placeholder backfill case, not a real duplicate)", async () => {
+        // A 0¢ row (amount unresolvable at write time) must not block a later
+        // writer from recording the real, non-zero amount once it's known —
+        // the dedupe guard filters on amount_cents != 0 both when reading
+        // (existing rows) and when deciding whether to check at all
+        // (this writer's own amountCents !== 0).
+        let insertCalls = 0;
+        const insertedRows: unknown[] = [];
+        const supabase = {
+            from: (_table: string) => ({
+                select: () => selectStub(), // no non-zero rows found
+                insert: (row: unknown) => {
+                    insertCalls++;
+                    insertedRows.push(row);
+                    return Promise.resolve({ error: null });
+                },
+            }),
+        } as unknown as Parameters<typeof writeLabelCost>[0]["supabase"];
+
+        const result = await writeEasypostRefund({ ...BASE_EP_REFUND_PARAMS, supabase });
+        expect(result.ok).toBe(true);
+        expect(insertCalls).toBe(1);
+        const row = insertedRows[0] as Record<string, unknown>;
+        expect(row.amount_cents).toBe(850);
+    });
+
     it("returns ok:false (but does not throw) on real DB error", async () => {
         const supabase = mockSupabase({
             error: { code: "42P01", message: "relation does not exist" },
@@ -278,6 +374,7 @@ describe("writeEasypostRefund (tracking poll source)", () => {
         const insertedRows: unknown[] = [];
         const supabase = {
             from: () => ({
+                select: () => selectStub(),
                 insert: (row: unknown) => {
                     insertedRows.push(row);
                     return Promise.resolve({ error: null });
@@ -298,6 +395,7 @@ describe("writeEasypostRefund (webhook push source)", () => {
         const insertedRows: unknown[] = [];
         const supabase = {
             from: () => ({
+                select: () => selectStub(),
                 insert: (row: unknown) => {
                     insertedRows.push(row);
                     return Promise.resolve({ error: null });
@@ -321,10 +419,16 @@ describe("writeEasypostRefund (webhook push source)", () => {
     it("webhook and poll writer for same refund event = UNIQUE collision = no duplicate", async () => {
         // Simulate: webhook writer lands first (success), poll writer lands second
         // (23505 collision). Both calls return ok:true; no second row.
+        // Both writers resolve the SAME idempotency_key (same refund object
+        // id) in this scenario, so the shipment-scoped dedupe guard's select
+        // finds nothing on either call (the row isn't visible to the guard's
+        // read until the insert commits in this mock) — this test exercises
+        // the pre-existing 23505 safe no-op path, unchanged by the new guard.
         let insertCount = 0;
         let callCount = 0;
         const supabase = {
             from: () => ({
+                select: () => selectStub(),
                 insert: (_row: unknown) => {
                     callCount++;
                     if (callCount === 1) {
@@ -401,6 +505,7 @@ describe("writeEasypostRefund amount sourcing (via resolve helper)", () => {
         const insertedRows: unknown[] = [];
         const supabase = {
             from: () => ({
+                select: () => selectStub(),
                 insert: (row: unknown) => {
                     insertedRows.push(row);
                     return Promise.resolve({ error: null });
@@ -424,6 +529,7 @@ describe("writeEasypostRefund amount sourcing (via resolve helper)", () => {
         const insertedRows: unknown[] = [];
         const supabase = {
             from: () => ({
+                select: () => selectStub(),
                 insert: (row: unknown) => {
                     insertedRows.push(row);
                     return Promise.resolve({ error: null });
