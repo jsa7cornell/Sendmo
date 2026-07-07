@@ -158,7 +158,19 @@ export async function writeLabelCost(
 // Idempotency key = 'easypost_refund_<refund_object_id>' (keyed on the EasyPost
 // Refund object id, NOT the shipment id — B4 fix from the decided proposal).
 // This guarantees exactly one row per EasyPost refund event, even across
-// writers racing on the same event.
+// writers racing on the same event — PROVIDED both writers resolve the same
+// refund_object_id. When EasyPost hasn't yet attached the Refund object to
+// the Shipment at query time, callers fall back to a synthetic
+// 'shp_fallback_<easypost_shipment_id>' id (see webhooks/index.ts and
+// tracking/index.ts). Two writers racing the SAME shipment can therefore
+// resolve DIFFERENT ids (one real 'rfnd_…', one 'shp_fallback_…') and the
+// UNIQUE constraint on idempotency_key does not catch it — two non-zero rows
+// land (confirmed empirically 2026-07-07, shipment 24W301E, $13.00 x2).
+// Fix: before inserting, check for any existing non-zero easypost_refund row
+// on this shipment_id. A shipment has at most one EasyPost refund event
+// (whole-shipment void, not partial) so a second non-zero row is always a
+// duplicate, never a legitimate second credit — guard here rather than
+// relaxing the key.
 //
 // amount_cents: positive (SendMo gains back the label cost). Sourced here —
 // not by callers — via resolveEasypostRefundAmountCents: payload amount when
@@ -214,6 +226,53 @@ export async function writeEasypostRefund(
     const amountCents = resolveEasypostRefundAmountCents(payloadAmount, rateCents);
     const idempotencyKey = `easypost_refund_${easypostRefundObjectId}`;
     const fundingSource = isComp ? "comp" : null;
+
+    // ── Shipment-scoped dedupe (2026-07-07 double-credit fix) ─────────────
+    // The idempotency_key UNIQUE constraint only catches two writers that
+    // agree on the SAME key. It does NOT catch the real race: one writer's
+    // EasyPost payload lacks the Refund object id and falls back to
+    // `shp_fallback_<shipment_id>`, while another writer (same refund event)
+    // has the real `rfnd_…` id — two distinct keys, both pass the UNIQUE
+    // check, and the shipment ends up with two non-zero easypost_refund
+    // rows (double-counted EP credit — confirmed on shipment 24W301E,
+    // 2026-07-07). There is no legitimate case for more than one non-zero
+    // easypost_refund row per shipment (unlike Stripe `refund`, which is
+    // dedup'd per-refund-event because partial refunds are real; an
+    // EasyPost label void/refund is a single per-shipment event). So:
+    // before inserting a non-zero row, check whether a non-zero row already
+    // exists for this shipment+mode and no-op if so — whichever writer
+    // landed first (real key or fallback key) wins, and a slower second
+    // writer never adds a second credit. A 0¢ placeholder row does not
+    // block this — a later writer with a real amount must still be able to
+    // backfill it (see the 2026-07-06 0¢-amount fix above).
+    if (amountCents !== 0) {
+        const { data: existing, error: existingErr } = await supabase
+            .from("transactions")
+            .select("id, idempotency_key")
+            .eq("shipment_id", shipmentId)
+            .eq("type", "easypost_refund")
+            .eq("mode", mode)
+            .neq("amount_cents", 0)
+            .limit(1);
+
+        if (!existingErr && existing && existing.length > 0) {
+            log({
+                event_type: "ledger.easypost_refund_duplicate",
+                session_id: sessionId,
+                severity: "info",
+                entity_type: "transaction",
+                entity_id: shipmentId,
+                properties: {
+                    idempotency_key: idempotencyKey,
+                    existing_idempotency_key: existing[0].idempotency_key,
+                    easypost_refund_id: easypostRefundObjectId,
+                    source,
+                    reason: "shipment_scoped_dedupe",
+                },
+            });
+            return { ok: true };
+        }
+    }
 
     if (amountCents === 0) {
         log({
