@@ -22,9 +22,19 @@ export interface AdminAlertRow {
 }
 
 export interface AdminAlertOptions {
-    /** Subject line — "[SendMo ALERT] " is prefixed automatically. */
+    /**
+     * "alert" (default) — an error/needs-a-human event: "[SendMo ALERT] "
+     * subject prefix + red ⚠️ heading. "notice" — a routine operational FYI
+     * (e.g. "a label was created"): "[SendMo] " prefix + neutral blue heading,
+     * no warning icon. One helper (Rule 6) so alerts and notices share the
+     * escaping / rows / never-throws contract; the variant only changes framing
+     * so routine notices don't cry-wolf and dilute real alerts. Default "alert"
+     * keeps every existing caller bit-for-bit.
+     */
+    variant?: "alert" | "notice";
+    /** Subject line — auto-prefixed "[SendMo ALERT] " (alert) or "[SendMo] " (notice). */
     subject: string;
-    /** Red heading inside the email body. */
+    /** Heading inside the email body (red for alert, blue for notice). */
     heading: string;
     /** 1–2 plain sentences: what happened, why it needs a human. */
     intro: string;
@@ -67,18 +77,23 @@ export async function sendAdminAlert(opts: AdminAlertOptions): Promise<void> {
     const actionHtml = opts.actionUrl
         ? `<p><a href="${escapeHtml(opts.actionUrl)}" style="color:#2563EB;">${escapeHtml(opts.actionLabel ?? "View details")}</a></p>`
         : "";
+    const isNotice = opts.variant === "notice";
+    const subjectPrefix = isNotice ? "[SendMo]" : "[SendMo ALERT]";
+    const headingColor = isNotice ? "#2563EB" : "#DC2626";
+    const headingIcon = isNotice ? "" : "&#x26A0;&#xFE0F; ";
+    const footerLabel = isNotice ? "SendMo automated notice" : "SendMo automated alert";
     try {
         await sendEmail({
             to: adminEmail,
-            subject: `[SendMo ALERT] ${opts.subject}`,
+            subject: `${subjectPrefix} ${opts.subject}`,
             html: `<!DOCTYPE html><html><body style="font-family:sans-serif;padding:24px;">
-<h2 style="color:#DC2626;">&#x26A0;&#xFE0F; ${escapeHtml(opts.heading)}</h2>
+<h2 style="color:${headingColor};">${headingIcon}${escapeHtml(opts.heading)}</h2>
 <p>${opts.intro}</p>
 <table style="border-collapse:collapse;width:100%;max-width:480px;">
 ${rowsHtml}
 </table>
 ${actionHtml}
-<p style="font-size:13px;color:#9CA3AF;margin-top:24px;">SendMo automated alert — ${escapeHtml(opts.source)}</p>
+<p style="font-size:13px;color:#9CA3AF;margin-top:24px;">${footerLabel} — ${escapeHtml(opts.source)}</p>
 </body></html>`,
         });
     } catch (emailErr) {

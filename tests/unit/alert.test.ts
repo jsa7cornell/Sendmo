@@ -115,4 +115,37 @@ describe("sendAdminAlert", () => {
         expect(logged.entity_type).toBe("refund");
         expect(logged.entity_id).toBe("re_9");
     });
+
+    // ── variant: "notice" (label-created FYI — must not read as an alert) ──
+    it('default variant (unset) still renders the red ALERT framing (existing callers untouched)', async () => {
+        await sendAdminAlert(BASE);
+        const call = mockSendEmail.mock.calls[0][0];
+        expect(call.subject).toBe("[SendMo ALERT] Refund failed");
+        expect(call.html).toContain("#DC2626");        // red heading
+        expect(call.html).toContain("&#x26A0;");       // ⚠️ entity present
+    });
+
+    it('variant "notice" uses "[SendMo]" prefix, blue heading, no warning icon', async () => {
+        await sendAdminAlert({ ...BASE, variant: "notice", subject: "New label (live) — 24W301E" });
+        const call = mockSendEmail.mock.calls[0][0];
+        expect(call.subject).toBe("[SendMo] New label (live) — 24W301E");
+        expect(call.subject).not.toContain("ALERT");
+        expect(call.html).toContain("#2563EB");        // blue heading
+        expect(call.html).not.toContain("#DC2626");    // not the alert red
+        expect(call.html).not.toContain("&#x26A0;");   // no ⚠️ entity
+        expect(call.html).toContain("automated notice");
+    });
+
+    it('variant "notice" still escapes rows and never throws (shared contract)', async () => {
+        mockSendEmail.mockRejectedValueOnce(new Error("resend down"));
+        await expect(
+            sendAdminAlert({
+                ...BASE,
+                variant: "notice",
+                rows: [{ label: "From → To", value: "<b>SF</b> → NYC" }],
+            }),
+        ).resolves.toBeUndefined();
+        expect(mockLog).toHaveBeenCalledOnce();
+        expect(mockLog.mock.calls[0][0].event_type).toBe("alert.email_failed");
+    });
 });
