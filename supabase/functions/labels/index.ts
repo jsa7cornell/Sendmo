@@ -1466,6 +1466,46 @@ Deno.serve(async (req: Request) => {
                     dbPublicCode = publicCode ?? null;
                     dbShortCode = shortCode ?? null;
 
+                    // ── Admin notice: every label creation (John's ask) ──────
+                    // Operational FYI to SENDMO_ADMIN_EMAIL on EVERY successful
+                    // label — test, comp, and live — so John sees each one. Uses
+                    // the "notice" variant (blue "[SendMo]", not the red ALERT
+                    // framing) so it never dilutes real error alerts. Fire-and-
+                    // forget via runInBackground (EdgeRuntime.waitUntil), never
+                    // on the response critical path; sendAdminAlert never throws.
+                    // Mode is in the subject so it's trivially filterable, and
+                    // trivially scopeable to live-only later if it gets noisy.
+                    {
+                        const noticeMode = isComp ? "comp" : (isLive ? "live" : "test");
+                        const noticeRateCents = Math.round(parseFloat(buyData.selected_rate?.rate || "0") * 100);
+                        const noticeChargedCents = isComp ? 0 : (gateDisplayCents > 0 ? gateDisplayCents : noticeRateCents);
+                        const fmt = (c: number) => `$${(c / 100).toFixed(2)}`;
+                        runInBackground(
+                            sendAdminAlert({
+                                variant: "notice",
+                                subject: `New label (${noticeMode}) — ${publicCode ?? easypost_shipment_id}`,
+                                heading: `New ${noticeMode} label created`,
+                                intro: `A ${noticeMode}-mode label was just generated on SendMo.`,
+                                rows: [
+                                    { label: "Mode", value: noticeMode },
+                                    { label: "Carrier", value: `${carrier} ${service}`.trim() || "—" },
+                                    { label: "Charged", value: isComp ? "$0.00 (comp)" : fmt(noticeChargedCents) },
+                                    { label: "SendMo cost", value: fmt(noticeRateCents) },
+                                    { label: "Tracking", value: trackingNumber ?? "—" },
+                                    {
+                                        label: "From → To",
+                                        value: `${from_address?.city ?? "?"}, ${from_address?.state ?? "?"} → ${to_address?.city ?? "?"}, ${to_address?.state ?? "?"}`,
+                                    },
+                                    { label: "Public code", value: publicCode ?? "—" },
+                                ],
+                                actionUrl: publicCode ? `https://sendmo.co/t/${publicCode}` : undefined,
+                                actionLabel: "View tracking page",
+                                source: "labels label.created admin notice",
+                            }),
+                            "label_created_admin_notice",
+                        );
+                    }
+
                         // ── Ledger: label_cost (H1 — migration 032) ────────
                         // Write a label_cost transaction row recording that
                         // SendMo paid EasyPost for this label. AWAITED (fix

@@ -12,6 +12,23 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-07-06] Admin email on EVERY label creation — `sendAdminAlert` gains a `variant:"notice"` (Rule 6, no cry-wolf)
+
+**Category:** ship | Monitoring | Edge Functions
+**Cross-link:** John's ask ("i want an admin email to me any time a label is generated") | reuses [`_shared/alert.ts`](supabase/functions/_shared/alert.ts) (T1-3 server-half) | fires from the `label.created` success path in [`labels/index.ts`](supabase/functions/labels/index.ts)
+
+**What shipped:** John now gets an email at `SENDMO_ADMIN_EMAIL` (fallback his Gmail) on **every** successful label — test, comp, and live.
+
+**Design choice (Rule 6 — extend, don't invent):** routing a routine "label created" FYI through `sendAdminAlert` as-is would stamp every label with the red "⚠️ [SendMo ALERT]" framing and dilute real error alerts. So `sendAdminAlert` gained an optional `variant: "alert" | "notice"` (**default `"alert"` — every existing caller is bit-for-bit unchanged**). `"notice"` swaps the subject prefix (`[SendMo]` not `[SendMo ALERT]`), the heading color (blue `#2563EB` not red `#DC2626`), drops the ⚠️, and footers "automated notice". Same escaping / rows / never-throws contract. The label notice fires **fire-and-forget** via `runInBackground` (EdgeRuntime.waitUntil) right after the shipment row persists — never on the response critical path — with mode in the subject (`New label (live) — 24W301E`) so it's filterable, carrier/service, charged amount, SendMo cost, from→to city, tracking, and a `/t/<code>` link.
+
+**Scope note:** fires for ALL modes per John's "any time" — including his own test labels. Mode is in the subject line; trivially scopeable to live-only later (guard the `runInBackground` on `isLive || isComp`) if the test-label volume gets noisy.
+
+**Tests:** `tests/unit/alert.test.ts` +3 (10 total): default-variant still red-ALERT; `notice` = `[SendMo]`/blue/no-⚠️; notice still escapes rows + never-throws. Suite **625 passed**. `npx tsc -b --noEmit` clean (edge-fn labels wiring type-checks at deploy).
+
+**Browser-verified:**
+  spec: tests/unit/alert.test.ts
+  variants-covered: [sendAdminAlert framing: default→red "[SendMo ALERT]"+⚠️ (existing callers untouched), notice→blue "[SendMo]" no-⚠️, notice escapes rows + never-throws. The `labels` call site is an email side-channel (fire-and-forget, no DOM/wire-shape consumer) — end-to-end confirmed by John receiving the "[SendMo] New label …" email on his next label buy across {test, comp, live}.]
+
 ### [2026-07-06] Edge-function imports migrated off esm.sh + deno.land → JSR / npm: / Deno.serve (deploy-resilience)
 
 **Category:** chore | Infra | Deploy | Launch-hardening
