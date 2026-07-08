@@ -253,10 +253,7 @@ states** — a customer told "on its way" never hears if it's returned/held. Ext
 [`WISHLIST.md`](WISHLIST.md) "Failure-mode tracking emails."
 
 ### T3-3 🤖 Public-facing polish
-**Status:** `[ ]` · the moment strangers see it: SendMo logo in nav + email templates,
-real favicon / apple-touch / PWA icons / OG image (currently placeholders), and
-signed-in users landing on `/dashboard` instead of the marketing homepage. All tracked
-under [`WISHLIST.md`](WISHLIST.md) "UX / Polish."
+**Status:** `[x]` **done 2026-07-06.** All shipped: SendMo logo in nav (`AppHeader` → `<SendMoLogo/>`) + email templates (icon-192 header), real favicon / apple-touch / PWA icons / manifest / 1200×630 OG image + Twitter cards (all real assets in `public/`, wired in `index.html` — the "placeholders" note was stale). Final piece landed here: **signed-in users hitting `/` now redirect to `/dashboard`** ([`src/pages/Index.tsx`](src/pages/Index.tsx) — gated on `!loading` so no flash-bounce; signed-out visitors still get marketing). Verified: `tests/unit/IndexRedirect.test.tsx` ({signed-out, auth-loading, signed-in}).
 
 ### T3-4 🤖 Secure the label PDF URL
 **Status:** `[ ]` · after a buy, the label links to a **public EasyPost URL** — anyone with
@@ -285,9 +282,6 @@ These were verified during the 2026-07-04 review; treat as done for launch:
 **Explicitly post-launch (NOT blockers):** Seller Marketplace link, real insurance (toggle
 currently hidden), saved addresses, Apple Pay, ~~esm.sh→JSR import migration~~ (DONE 2026-07-06 —
 see LOG + executed proposal), lint cleanup.
-
-**Stale-doc cleanup (2-min, do anytime):** [`PLAYBOOK.md`](PLAYBOOK.md) ~266-269 still
-calls the shipped sender/flex flows "stubs." Correct it so it stops misleading agents.
 
 ---
 
