@@ -29,6 +29,22 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
   spec: tests/unit/alert.test.ts
   variants-covered: [sendAdminAlert framing: default→red "[SendMo ALERT]"+⚠️ (existing callers untouched), notice→blue "[SendMo]" no-⚠️, notice escapes rows + never-throws. The `labels` call site is an email side-channel (fire-and-forget, no DOM/wire-shape consumer) — end-to-end confirmed by John receiving the "[SendMo] New label …" email on his next label buy across {test, comp, live}.]
 
+### [2026-07-06] T3-3 public polish — signed-in users land on /dashboard (last piece); assets/logo were already done
+
+**Category:** ship | UX | Launch
+**Cross-link:** [PRE-LAUNCH.md](PRE-LAUNCH.md) T3-3 (now `[x]`) | [`src/pages/Index.tsx`](src/pages/Index.tsx)
+
+**What happened:** T3-3 was ~90% already shipped — real favicons / apple-touch / PWA icons / manifest / 1200×630 OG image + Twitter cards (all real assets in `public/`, wired in `index.html`), SendMo logo in the nav (`AppHeader` → `<SendMoLogo/>`) and in email templates (icon-192 header). The PRE-LAUNCH "currently placeholders" text was stale. The **only** open piece was the signed-in landing redirect.
+
+**Shipped:** `Index.tsx` (the `/` route) now redirects authenticated users to `/dashboard` (`<Navigate replace/>`), **gated on `!loading`** so it never flash-bounces a returning visitor before the Supabase session resolves. Signed-out visitors (and the auth-loading window) still get the marketing homepage. Also marked T3-3 `[x]` and dropped the resolved "stale-doc cleanup" note (PLAYBOOK's stub language was already corrected 2026-07-04).
+
+**Tests:** `tests/unit/IndexRedirect.test.tsx` (3 — signed-out→marketing, auth-loading→marketing/no-bounce, signed-in→/dashboard). Suite **625 passed**. `npx tsc -b --noEmit` clean.
+
+**Browser-verified:**
+  spec: tests/unit/IndexRedirect.test.tsx
+  variants-covered: [landing at `/`: {signed-out → marketing, auth-loading → marketing (no premature bounce), signed-in → redirect /dashboard}. Rendered via MemoryRouter with a mocked useAuth; asserts the marketing hero vs the /dashboard route element.]
+
+
 ### [2026-07-06] Edge-function imports migrated off esm.sh + deno.land → JSR / npm: / Deno.serve (deploy-resilience)
 
 **Category:** chore | Infra | Deploy | Launch-hardening

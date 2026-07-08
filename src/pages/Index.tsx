@@ -1,9 +1,20 @@
 import { Link2, Shield, Zap, ArrowRight, CheckCircle2, Users, CreditCard, Package } from "lucide-react";
+import { Navigate } from "react-router-dom";
 import SendMoLogo from "@/components/SendMoLogo";
 import { Button } from "@/components/ui/button";
 import AppHeader from "@/components/AppHeader";
+import { useAuth } from "@/contexts/AuthContext";
 
 export default function Index() {
+  // T3-3: signed-in users land on their dashboard, not the marketing homepage.
+  // Gate on `!loading` so we never flash-bounce while the session is resolving
+  // (loading starts true; a premature redirect would strand a returning visitor
+  // before auth settles). Signed-out visitors always get the marketing page.
+  const { user, loading } = useAuth();
+  if (!loading && user) {
+    return <Navigate to="/dashboard" replace />;
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-background to-muted/50">
       <AppHeader />
