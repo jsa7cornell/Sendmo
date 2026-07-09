@@ -69,6 +69,7 @@ interface PaymentIntentObj extends StripeObj {
     currency?: string;
     capture_method?: string;
     payment_method?: string;
+    statement_descriptor_suffix?: string | null;
     latest_charge?: string | ChargeObj;
     metadata?: Record<string, string>;
     last_payment_error?: { message?: string };
@@ -231,6 +232,7 @@ Deno.serve(async (req: Request) => {
                         intent_kind: "payment",
                         intent_role: intent_role ?? "shipment",
                         capture_method: pi.capture_method ?? "automatic",
+                        statement_descriptor_suffix: pi.statement_descriptor_suffix ?? null,
                         funding_source: "card",
                         amount_cents: pi.amount,
                         captured_cents: amountCents,
@@ -364,6 +366,7 @@ Deno.serve(async (req: Request) => {
                         intent_kind: "payment",
                         intent_role: intent_role ?? "shipment",
                         capture_method: pi.capture_method ?? "manual",
+                        statement_descriptor_suffix: pi.statement_descriptor_suffix ?? null,
                         funding_source: "card",
                         amount_cents: pi.amount,
                         payment_method_id: typeof pi.payment_method === "string" ? pi.payment_method : null,
@@ -410,6 +413,7 @@ Deno.serve(async (req: Request) => {
                         intent_kind: "payment",
                         intent_role: intent_role ?? "shipment",
                         capture_method: pi.capture_method ?? "manual",
+                        statement_descriptor_suffix: pi.statement_descriptor_suffix ?? null,
                         funding_source: "card",
                         amount_cents: pi.amount,
                         payment_method_id: typeof pi.payment_method === "string" ? pi.payment_method : null,
@@ -455,6 +459,7 @@ Deno.serve(async (req: Request) => {
                         intent_kind: "payment",
                         intent_role: intent_role ?? "shipment",
                         capture_method: pi.capture_method ?? "automatic",
+                        statement_descriptor_suffix: pi.statement_descriptor_suffix ?? null,
                         funding_source: "card",
                         amount_cents: pi.amount,
                         payment_method_id: typeof pi.payment_method === "string" ? pi.payment_method : null,
