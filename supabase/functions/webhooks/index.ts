@@ -62,8 +62,10 @@ const STATUS_MAP: Record<string, string> = {
   cancelled: "cancelled",            // label voided at carrier level
 };
 
-// EasyPost statuses that trigger notifications
-const NOTIFY_STATUSES = new Set(["in_transit", "out_for_delivery", "delivered"]);
+// EasyPost statuses that trigger notifications. return_to_sender added 2026-07-06
+// (T3-2) — previously a silent DB state (webhook wrote the status but sent no
+// email); kept in lockstep with tracking/index.ts NOTIFY_STATUSES.
+const NOTIFY_STATUSES = new Set(["in_transit", "out_for_delivery", "delivered", "return_to_sender"]);
 
 const APP_URL = "https://sendmo.co";
 

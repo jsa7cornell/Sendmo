@@ -245,12 +245,7 @@ known-broken `label-flow.spec.ts` (pre-existing breakage from the 2026-05-20 ref
 [`TESTING.md`](TESTING.md) + [`WISHLIST.md`](WISHLIST.md) "Fix Google Maps autocomplete in CI e2e."
 
 ### T3-2 🤖 Failure-mode tracking emails (return-to-sender, exceptions)
-**Status:** `[ ]` · `return_to_sender` and EasyPost delivery exceptions are **silent DB
-states** — a customer told "on its way" never hears if it's returned/held. Extend
-`NOTIFY_STATUSES` in [`tracking/index.ts`](supabase/functions/tracking/index.ts) +
-[`webhooks/index.ts`](supabase/functions/webhooks/index.ts) and add templates in
-[`_shared/email-templates.ts`](supabase/functions/_shared/email-templates.ts). Full spec in
-[`WISHLIST.md`](WISHLIST.md) "Failure-mode tracking emails."
+**Status:** `[x]` **return_to_sender done 2026-07-06; open-ended exception-batching deliberately deferred.** The concrete silent-failure gap — a customer told "on its way" who never hears the package is coming back — is closed: `return_to_sender` added to `NOTIFY_STATUSES` in both `tracking/index.ts` + `webhooks/index.ts`, with dedicated `trackingUpdateEmail` copy (amber "Being Returned", explains the return, points at support; fans out to sender + recipient via the existing dispatcher). The **void/refund** half of the WISHLIST item was already shipped (H3/H5 lifecycle emails A/B/C). **Deferred (with rationale):** forwarding arbitrary EasyPost *delivery-exception* sub-events (held-at-facility / delivery-attempted / address-issue) — WISHLIST itself flags this as an open "forward-each vs batch" design question, and naive per-exception emails risk noise; it needs a batching design + likely a status_detail parse, tracked in [`WISHLIST.md`](WISHLIST.md) "Failure-mode tracking emails." Verified: `tests/unit/emailTemplates.test.ts` (return_to_sender × {sender, recipient}).
 
 ### T3-3 🤖 Public-facing polish
 **Status:** `[x]` **done 2026-07-06.** All shipped: SendMo logo in nav (`AppHeader` → `<SendMoLogo/>`) + email templates (icon-192 header), real favicon / apple-touch / PWA icons / manifest / 1200×630 OG image + Twitter cards (all real assets in `public/`, wired in `index.html` — the "placeholders" note was stale). Final piece landed here: **signed-in users hitting `/` now redirect to `/dashboard`** ([`src/pages/Index.tsx`](src/pages/Index.tsx) — gated on `!loading` so no flash-bounce; signed-out visitors still get marketing). Verified: `tests/unit/IndexRedirect.test.tsx` ({signed-out, auth-loading, signed-in}).
