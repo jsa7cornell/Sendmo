@@ -12,6 +12,22 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-07-09] Statement-descriptor suffix now persisted on `stripe_intents` — support can match a card-statement line to a transaction
+
+**Category:** fix | Payments | Support | Edge Functions
+**Cross-link:** PR #51 | [`supabase/migrations/039_stripe_intents_statement_descriptor.sql`](supabase/migrations/039_stripe_intents_statement_descriptor.sql) | [`stripe-webhook/index.ts`](supabase/functions/stripe-webhook/index.ts) | proposals/2026-05-27_business-identifier-sweep-handoff.md
+
+**The gap (found via a real support lookup):** a user's card statement read `SENDMO* C4HLV3UFUB PORTOLA VALLEY CA` and nothing in the DB matched it. Investigation: the suffix is set at PI-creation time from the **flex link short_code** (`labels/index.ts`), the shipment `public_code` (adjustment recharges in `_shared/stripe.ts`), or the literal `LABEL` (on-session full-label in `payments/index.ts`). It's a point-in-time snapshot stored **nowhere** — flex short_codes rotate and `shipments.link_id` can point at a different link than the one charged (the 24W301E shipment charged flex link `C4hLV3uFub` but its shipment row references full_label link `sidVIfMonM`), so the printed descriptor can become unmatchable. Statements also uppercase the mixed-case suffix, defeating naive equality search.
+
+**Shipped:** migration 039 adds `stripe_intents.statement_descriptor_suffix` (+ partial index on `upper()`); all four PI upsert sites in `stripe-webhook` now persist `pi.statement_descriptor_suffix`. Support lookup is now one indexed query:
+`select * from stripe_intents where upper(statement_descriptor_suffix) = upper('<suffix from statement>');` → PI → link/shipment → `transactions`.
+
+**Prod writes (Rule 0.5, logged):** migration 039 applied via Supabase MCP (additive DDL). Backfill: fetched suffixes for all 13 mirrored `pi_*` rows from the Stripe API (op-read key piped at runtime, never in context) — only 2 carry a suffix (feature landed 2026-05-27; older PIs are null): scoped idempotent `UPDATE … WHERE stripe_intent_id = '<pi>' AND statement_descriptor_suffix IS NULL` set `pi_2Tpsci… = 'C4hLV3uFub'` and `pi_2Tn49N… = 'LABEL'`. Verified the original statement line now resolves.
+
+**Browser-verified:**
+  n/a-category: migration
+  n/a-reason: schema column + webhook mirror-field write; no rendered surface. Verified directly by running the support lookup against prod post-backfill — `upper(statement_descriptor_suffix)='C4HLV3UFUB'` returns pi_2Tpsci…/link a2b581ce as expected.
+
 ### [2026-07-06] T3-2 — return_to_sender notification email (silent-failure gap closed); exception-batching deferred
 
 **Category:** ship | Notifications | Edge Functions | Launch
