@@ -250,6 +250,7 @@ const STATUS_LABELS: Record<string, { label: string; emoji: string; color: strin
   in_transit: { label: "In Transit", emoji: "📦", color: BRAND_BLUE },
   out_for_delivery: { label: "Out for Delivery", emoji: "🚚", color: "#059669" },
   delivered: { label: "Delivered", emoji: "✅", color: "#059669" },
+  return_to_sender: { label: "Being Returned", emoji: "↩️", color: "#D97706" },
 };
 
 export function trackingUpdateEmail(
@@ -274,6 +275,14 @@ export function trackingUpdateEmail(
       return isSender
         ? "The package you sent is out for delivery and should arrive today."
         : "Your package is out for delivery and should arrive today.";
+    }
+    if (status === "return_to_sender") {
+      // Silent-failure case (T3-2): the carrier is sending the package back
+      // (undeliverable / refused / bad address). Both parties were previously
+      // told it was on its way, so be explicit and point at support.
+      return isSender
+        ? "The package you sent couldn't be delivered and is being returned to you. Track it below, and reply to this email if you need help."
+        : "This package couldn't be delivered and is being returned to the sender. Track it below, or contact us at support@sendmo.co if you need help.";
     }
     return isSender
       ? "The package you sent is on its way."

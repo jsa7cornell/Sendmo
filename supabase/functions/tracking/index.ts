@@ -10,7 +10,12 @@ import { sendEmail } from "../_shared/resend.ts";
 import { refundUnsuccessfulEmail } from "../_shared/email-templates.ts";
 
 const APP_URL = "https://sendmo.co";
-const NOTIFY_STATUSES = new Set(["in_transit", "out_for_delivery", "delivered"]);
+// Statuses that fire a notification email. return_to_sender added 2026-07-06
+// (T3-2): it was a silent DB state — a customer told "on its way" never heard
+// the package was coming back. Its trackingUpdateEmail copy explains the return
+// + points at support; the dispatcher fans it out to sender + recipient like
+// any tracking event.
+const NOTIFY_STATUSES = new Set(["in_transit", "out_for_delivery", "delivered", "return_to_sender"]);
 
 // viewerRole + recipient_first_name added per 2026-05-19_unify-confirmation-into-tracking proposal
 // (Author response → N1). The cancel_token-match identity proof is reused from

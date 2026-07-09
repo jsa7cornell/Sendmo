@@ -12,6 +12,23 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-07-06] T3-2 — return_to_sender notification email (silent-failure gap closed); exception-batching deferred
+
+**Category:** ship | Notifications | Edge Functions | Launch
+**Cross-link:** [PRE-LAUNCH.md](PRE-LAUNCH.md) T3-2 | [`WISHLIST.md`](WISHLIST.md) "Failure-mode tracking emails" | extends `trackingUpdateEmail` + the `NOTIFY_STATUSES` dispatch
+
+**The gap:** `return_to_sender` was a **silent DB state** — the webhook/tracking poll wrote the status but it wasn't in `NOTIFY_STATUSES`, so a customer who'd been told "on its way" (label-confirmation + in_transit emails already sent) never heard the package was coming back.
+
+**Shipped:** added `return_to_sender` to `NOTIFY_STATUSES` in **both** [`tracking/index.ts`](supabase/functions/tracking/index.ts) and [`webhooks/index.ts`](supabase/functions/webhooks/index.ts) (kept in lockstep), plus a `return_to_sender` branch in `trackingUpdateEmail` (STATUS_LABELS: amber "↩️ Being Returned"; copy explains the undeliverable-return and points at support@sendmo.co; role-aware sender vs recipient wording — "being returned to you" vs "to the sender"). No schema change (`return_to_sender` is already a valid `shipments.status` per migration 001). The dispatcher fans it out to both `sender` + `recipient` contacts like any tracking event; `notifications_log` dedupe unchanged.
+
+**Deliberately deferred (with rationale):** the WISHLIST item also lists arbitrary EasyPost *delivery-exception* sub-events (held-at-facility / delivery-attempted / address-issue). WISHLIST itself flags this as an open "forward-each vs batch" design question; naive per-exception emails risk noise and need a status_detail parse + batching design. Left tracked in WISHLIST, not rushed mid-launch. The **void/refund** half of the WISHLIST item was already shipped (H3/H5 lifecycle emails A/B/C).
+
+**Tests:** `tests/unit/emailTemplates.test.ts` +2 (return_to_sender × {recipient, sender}: explains the return, includes support link, and does NOT reuse the happy-path "on its way" copy). Suite **630 passed**. `npx tsc -b --noEmit` clean.
+
+**Browser-verified:**
+  spec: tests/unit/emailTemplates.test.ts
+  variants-covered: [trackingUpdateEmail("return_to_sender") × {recipient, sender} — subject "Being Returned", return-explaining body + support link, no "on its way" leak. NOTIFY_STATUSES wiring is a pure-set membership change routing into the already-covered dispatcher (which fans out to sender+recipient); the live end-to-end fire is exercised whenever a real RTS tracker event lands.]
+
 ### [2026-07-06] Admin email on EVERY label creation — `sendAdminAlert` gains a `variant:"notice"` (Rule 6, no cry-wolf)
 
 **Category:** ship | Monitoring | Edge Functions

@@ -213,6 +213,15 @@ describe("trackingUpdateEmail — recipient", () => {
     expect(result.subject).toContain("Out for Delivery");
     expect(result.html).toContain("Your package is out for delivery");
   });
+
+  it("return_to_sender — recipient copy explains the return + support (T3-2)", () => {
+    const result = trackingUpdateEmail("return_to_sender", "PUBRTS", "TRACKRTS");
+    expect(result.subject).toContain("Being Returned");
+    expect(result.html).toContain("being returned to the sender");
+    expect(result.html).toContain("support@sendmo.co");
+    // Must NOT reuse the happy-path "on its way" copy.
+    expect(result.html).not.toContain("on its way");
+  });
 });
 
 describe("trackingUpdateEmail — sender", () => {
@@ -257,6 +266,21 @@ describe("trackingUpdateEmail — sender", () => {
       "sender",
     );
     expect(result.html).toContain("The package you sent is out for delivery");
+  });
+
+  it("return_to_sender — sender copy says it's coming back to them (T3-2)", () => {
+    const result = trackingUpdateEmail(
+      "return_to_sender",
+      "PUBRTS",
+      "TRACKRTS",
+      undefined,
+      undefined,
+      undefined,
+      "sender",
+    );
+    expect(result.subject).toContain("Being Returned");
+    expect(result.html).toContain("is being returned to you");
+    expect(result.html).not.toContain("on its way");
   });
 });
 
