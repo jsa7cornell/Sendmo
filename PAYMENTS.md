@@ -45,7 +45,7 @@ The flex flow is **Pattern D** (decided 2026-05-18). Industry-standard model: sa
 |---|---|---|
 | `profiles.stripe_customer_id_test/_live` | Recipient's Stripe Customer per mode | Lazily populated; no Pattern D change |
 | `payment_methods` | Saved cards/ACH per (user, mode). UNIQUE partial index ensures one default per (user, mode). | The source of truth for "does recipient have a usable card" |
-| `stripe_intents` | Mirror of Stripe PI/SI state. UPSERTed by webhook. | **Pattern D added** `payment_method_id`, `cancellation_reason`, `last_payment_error_code` columns |
+| `stripe_intents` | Mirror of Stripe PI/SI state. UPSERTed by webhook. | **Pattern D added** `payment_method_id`, `cancellation_reason`, `last_payment_error_code` columns. **Migration 039 added** `statement_descriptor_suffix` — snapshot of the "SENDMO* <suffix>" card-statement line (flex link short_code / public_code / "LABEL"); support lookup: `where upper(statement_descriptor_suffix) = upper('<from statement>')` |
 | `transactions` | **Append-only ledger (Rule 16)**. Every charge/refund/chargeback. | `stripe-webhook` is the **sole writer** |
 | `holds` | Pre-Pattern-D flex authorizations. | **Pattern D no longer writes here.** Reserved for Phase 3 escrow. |
 | `link_state_events` | Audit trail for flex link lifecycle. | **NEW in Pattern D**. CHECK enum: `created/activated/reactivated/charge_failed/pm_detached/pm_expired/rotated/cancelled_by_user` |
