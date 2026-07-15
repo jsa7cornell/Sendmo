@@ -300,9 +300,8 @@ export interface AdminTrackingPayload {
     amount_cents: number;
     mode: string;
     idempotency_key: string | null;
-    stripe_payment_intent_id: string | null;
+    stripe_intent_id: string | null;
     stripe_charge_id: string | null;
-    stripe_refund_id: string | null;
     created_at: string;
   }>;
   event_logs: Array<{

@@ -883,13 +883,17 @@ Deno.serve(async (req: Request) => {
             );
         }
 
-        // Audit log — best-effort, don't fail the request if logging fails
+        // Audit log — best-effort, don't fail the request if logging fails.
+        // event_logs' actor column is actor_id, not user_id — the old key made
+        // this insert fail on every call, so link.updated audit rows were
+        // never written (found by the 2026-07-14 schema-column audit).
         try {
             await supabase.from("event_logs").insert({
                 event_type: "link.updated",
                 entity_type: "sendmo_link",
                 entity_id: linkId,
-                user_id: user.id,
+                actor_id: user.id,
+                source: "edge_fn",
                 properties: {
                     changed_fields: changedFields,
                     previous_address_id: previousAddressId,
