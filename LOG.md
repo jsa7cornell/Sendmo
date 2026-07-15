@@ -12,6 +12,21 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-07-15] H2 recovery half traced end-to-end — 4 MORE bugs (5–8) behind the recording half; repair proposal written (in-review, NOT a launch blocker)
+
+**Category:** investigation | Payments | Edge Functions | Schema
+**Cross-link:** [`proposals/2026-07-15_h2-carrier-adjustment-repair.md`](proposals/2026-07-15_h2-carrier-adjustment-repair.md) (in-review) | builds on the same-day PR #52 entry below | [decided §2.4](proposals/2026-05-22_reconciliation-and-carrier-adjustments_reviewed-2026-05-22_decided-2026-05-22.md) | migration `033_resolve_recovery_lock_rpc.sql`
+**Browser-verified:** n/a-category: `investigation-only` — n/a-reason: no code changed this session; traced the chain + wrote a proposal. Implementation is gated on proposal review.
+
+The PR #52 fixes (bugs 1–4, below) only got a ShipmentInvoice event as far as **recording** an adjustment. Tracing the **recovery** half against the live prod schema (Supabase MCP) proved it has *still* never run: `carrier_adjustments where recovery_status='recovered'` → 0, `stripe_intents where intent_role='carrier_adjustment'` → 0. Four more bugs, each fatal on its own:
+
+- **Bug 5 (the stated blocker):** per-shipment cap double-counts. `webhooks/index.ts` inserts the `-delta` `carrier_adjustment` cost row BEFORE `resolveRecovery`; the per-shipment cap then sums cost rows AND adds the prospective recharge → lone $5 adjustment: `500+600>1000` → false `flag` (reproduced live on `4Z8ZJZX`). Root: **drift from decided §2.4**, which defines all three caps on the customer-**recharge** side, not SendMo's cost rows.
+- **Bug 6:** per-card/per-user caps filter `idempotency_key LIKE 'adjustment\_%'`, but no `transactions` row ever carries that key — the recharge charge row is written by `stripe-webhook` `payment_intent.succeeded` as `stripe.<eventId>:charge` (the `adjustment_*` key is Stripe-side only). `transactions` has no `intent_role` column; the role only lives on `stripe_intents`. → both wider caps always sum 0.
+- **Bug 7 (schema-verified):** migration 033 `resolve_recovery_lock` joins nonexistent `stripe_intents.stripe_payment_intent_id` (real col: `stripe_intent_id`). plpgsql defers column resolution to execution → RPC throws `42703` on **every** call → cap-check falls to the unlocked fallback every time. So the load-bearing **N2 `FOR UPDATE` race guard has never run**, and the per-card cap isn't enforced even in fallback.
+- **Bug 8:** `recovery_tx_id` never linked (`markAdjustmentResolved` always passes null; `payment_intent.succeeded` doesn't know the `carrier_adjustment_id`; the `charge.succeeded` arm the headers reference doesn't exist). Reconciliation "Adjustment collected" join never closes. Reporting-severity.
+
+**Cap-semantics decision (documented in the proposal, pending review):** restore §2.4 — all three caps count recharge charges (discriminated via `stripe_intents.intent_role`); `resolveRecovery` writes its own recharge ledger row synchronously (keyed `adjustment_%`, sets `recovery_tx_id`) and `payment_intent.succeeded` skips its charge-row for that role; fix the RPC column. Honest wrinkle: D2's "cap-check + INSERT in one `FOR UPDATE` txn" isn't literally achievable (the recharge is a Stripe call, can't run inside the SQL lock) — recommend accepting the shrunk sub-second same-shipment race (per-shipment $10 ceiling bounds blast radius) over a new reservation construct. **Test finding:** the "integration" layer doesn't seed a DB (it hits deployed functions); a real H2 harness is net-new infra (recommend local `supabase start` + a hard prod-URL guard). No code changed — 4 OQs open for the reviewer.
+
 ### [2026-07-15] H2 carrier-adjustments was DEAD in prod — T2-2 live verification found 4 nonexistent-column/constraint bugs (3 fixed + deployed, cap bug spun out)
 
 **Category:** fix | Payments | Edge Functions | Launch | Schema
