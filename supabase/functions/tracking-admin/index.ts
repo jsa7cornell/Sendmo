@@ -111,9 +111,14 @@ Deno.serve(async (req: Request) => {
         // Parallel fetches — ledger rows for this shipment + last N event_logs.
         // The ledger query keys on the shipment_id column added in Stripe Phase A
         // migration 017 (transactions.shipment_id FK).
+        // Column names must match the real schema: stripe_intent_id +
+        // stripe_charge_id (there is no stripe_payment_intent_id or
+        // stripe_refund_id on transactions). The old names errored the whole
+        // query, so the admin debug panel always showed "No ledger rows"
+        // (found by the 2026-07-14 schema-column audit).
         const txnPromise = supabase
             .from("transactions")
-            .select("id, type, amount_cents, mode, idempotency_key, stripe_payment_intent_id, stripe_charge_id, stripe_refund_id, created_at")
+            .select("id, type, amount_cents, mode, idempotency_key, stripe_intent_id, stripe_charge_id, created_at")
             .eq("shipment_id", shipment.id)
             .order("created_at", { ascending: false })
             .limit(TXN_LIMIT);

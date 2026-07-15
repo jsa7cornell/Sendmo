@@ -274,24 +274,58 @@ Deno.serve(async (req: Request) => {
       const capturedWeightOz = claimedDetails.billed_weight_oz != null
         ? Math.round(Number(claimedDetails.billed_weight_oz)) : null;
 
-      // Look up the SendMo shipment.
+      // Look up the SendMo shipment. NOTE: shipments has NO user_id column —
+      // the owner is derived below from stripe_intents (the payer) with a
+      // sendmo_links fallback. Selecting user_id here errored every invoice
+      // event and killed the whole H2 arm (bug found by the 2026-07-14 T2-2
+      // live verification; the error was mislabelled "shipment_not_found").
       const { data: adjShipment, error: adjFetchErr } = await supabase
         .from("shipments")
-        .select("id, public_code, user_id, carrier, is_test, stripe_payment_intent_id, link_id")
+        .select("id, public_code, carrier, is_test, stripe_payment_intent_id, link_id")
         .eq("easypost_shipment_id", epShipmentId)
         .maybeSingle();
 
       if (adjFetchErr || !adjShipment) {
+        // A query ERROR is not "not found" — conflating them is what let the
+        // user_id-column bug fail silently at severity=warn. Errors log loud.
         log({
-          event_type: "webhook.shipment_invoice_shipment_not_found",
-          severity: "warn",
+          event_type: adjFetchErr
+            ? "webhook.shipment_invoice_lookup_error"
+            : "webhook.shipment_invoice_shipment_not_found",
+          severity: adjFetchErr ? "error" : "warn",
           source: "webhook",
-          properties: { easypost_shipment_id: epShipmentId, source_event_id: sourceEventId },
+          properties: {
+            easypost_shipment_id: epShipmentId,
+            source_event_id: sourceEventId,
+            ...(adjFetchErr ? { error_message: adjFetchErr.message, error_code: adjFetchErr.code ?? null } : {}),
+          },
         });
         return new Response(JSON.stringify({ ok: true }), {
           status: 200,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
+      }
+
+      // Resolve the shipment owner: the payer on the PI's stripe_intents row
+      // (present for every paid shipment), else the link owner (flex/comp-via-
+      // link). A full-label comp shipment (no PI, no link) resolves null —
+      // resolveRecovery absorbs those before any owner-dependent step.
+      let adjUserId: string | null = null;
+      if (adjShipment.stripe_payment_intent_id) {
+        const { data: piOwner } = await supabase
+          .from("stripe_intents")
+          .select("user_id")
+          .eq("stripe_intent_id", adjShipment.stripe_payment_intent_id)
+          .maybeSingle();
+        adjUserId = (piOwner as { user_id?: string | null } | null)?.user_id ?? null;
+      }
+      if (!adjUserId && adjShipment.link_id) {
+        const { data: linkOwner } = await supabase
+          .from("sendmo_links")
+          .select("user_id")
+          .eq("id", adjShipment.link_id)
+          .maybeSingle();
+        adjUserId = (linkOwner as { user_id?: string | null } | null)?.user_id ?? null;
       }
 
       // Outer webhook_events dedup — same belt-and-braces as refund.successful.
@@ -375,32 +409,49 @@ Deno.serve(async (req: Request) => {
       // INSERT transactions row type='carrier_adjustment' — the carrier
       // billed SendMo more, so amount_cents is NEGATIVE (SendMo loses).
       // Idempotency key keyed on the ShipmentInvoice id — same dedup
-      // namespace as the carrier_adjustments row.
-      const { error: txErr } = await supabase.from("transactions").insert({
-        user_id: adjShipment.user_id,
-        shipment_id: adjShipment.id,
-        link_id: adjShipment.link_id ?? null,
-        type: "carrier_adjustment",
-        amount_cents: -Math.abs(deltaCents),
-        mode: adjShipment.is_test ? "test" : "live",
-        idempotency_key: `carrier_adjustment_${sourceEventId}`,
-        description: `Carrier adjustment — ${adjustmentReason ?? "unknown reason"}`,
-      });
+      // namespace as the carrier_adjustments row. transactions.user_id is
+      // NOT NULL, so an owner-less shipment (full-label comp) skips the
+      // ledger row — the carrier_adjustments row above still records it.
+      if (adjUserId) {
+        const { error: txErr } = await supabase.from("transactions").insert({
+          user_id: adjUserId,
+          shipment_id: adjShipment.id,
+          link_id: adjShipment.link_id ?? null,
+          type: "carrier_adjustment",
+          amount_cents: -Math.abs(deltaCents),
+          mode: adjShipment.is_test ? "test" : "live",
+          idempotency_key: `carrier_adjustment_${sourceEventId}`,
+          description: `Carrier adjustment — ${adjustmentReason ?? "unknown reason"}`,
+        });
 
-      if (txErr && txErr.code !== "23505") {
-        // 23505 = UNIQUE collision on idempotency_key (we already wrote it
-        // for the .created event; the .updated arm hits this expectedly).
-        // Anything else is a real DB error.
+        if (txErr && txErr.code !== "23505") {
+          // 23505 = UNIQUE collision on idempotency_key (we already wrote it
+          // for the .created event; the .updated arm hits this expectedly).
+          // Anything else is a real DB error.
+          log({
+            event_type: "webhook.carrier_adjustment_tx_failed",
+            severity: "error",
+            source: "webhook",
+            entity_type: "carrier_adjustment",
+            entity_id: carrierAdjustmentId,
+            properties: {
+              error_message: txErr.message,
+              error_code: txErr.code ?? null,
+              source_event_id: sourceEventId,
+            },
+          });
+        }
+      } else {
         log({
-          event_type: "webhook.carrier_adjustment_tx_failed",
-          severity: "error",
+          event_type: "webhook.carrier_adjustment_tx_skipped_no_owner",
+          severity: "warn",
           source: "webhook",
           entity_type: "carrier_adjustment",
           entity_id: carrierAdjustmentId,
           properties: {
-            error_message: txErr.message,
-            error_code: txErr.code ?? null,
+            shipment_id: adjShipment.id,
             source_event_id: sourceEventId,
+            delta_cents: deltaCents,
           },
         });
       }
@@ -424,14 +475,18 @@ Deno.serve(async (req: Request) => {
 
       // Resolve the recovery decision. Need to look up the payment context
       // (saved PM + customer id) from stripe_intents joined back to the PI.
+      // adjUserId ?? "" — the empty-string case is unreachable in any path
+      // that consumes user_id: resolveRecovery only reads paymentContext /
+      // shipment.user_id after the PI-present branch below, and a PI always
+      // resolves adjUserId (stripe_intents.user_id).
       let paymentContext: AdjustmentPaymentContext = {
         payment_method_id: null,
-        user_id: adjShipment.user_id,
+        user_id: adjUserId ?? "",
         customer_id: null,
       };
       let receiptEmail: string | null = null;
 
-      if (adjShipment.stripe_payment_intent_id) {
+      if (adjShipment.stripe_payment_intent_id && adjUserId) {
         // Find the stripe_intents row to pull the payment_method_id + customer.
         const { data: piRow } = await supabase
           .from("stripe_intents")
@@ -446,14 +501,14 @@ Deno.serve(async (req: Request) => {
         const { data: profile } = await supabase
           .from("profiles")
           .select(`${customerCol}, email`)
-          .eq("id", adjShipment.user_id)
+          .eq("id", adjUserId)
           .maybeSingle();
         const customerId = (profile as Record<string, string | null> | null)?.[customerCol] ?? null;
         receiptEmail = (profile as { email?: string | null } | null)?.email ?? null;
 
         paymentContext = {
           payment_method_id: pmId,
-          user_id: adjShipment.user_id,
+          user_id: adjUserId,
           customer_id: customerId,
         };
       }
@@ -461,7 +516,7 @@ Deno.serve(async (req: Request) => {
       const adjustmentShipment: AdjustmentShipment = {
         id: adjShipment.id,
         public_code: adjShipment.public_code,
-        user_id: adjShipment.user_id,
+        user_id: adjUserId ?? "",
         carrier: adjShipment.carrier,
         is_test: adjShipment.is_test,
         stripe_payment_intent_id: adjShipment.stripe_payment_intent_id,

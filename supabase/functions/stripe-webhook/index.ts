@@ -855,16 +855,20 @@ Deno.serve(async (req: Request) => {
                 if (shipmentId && currentRefund && refundStatusAdvanced) {
                     try {
                         // Resolve the payer email. Primary: the link owner
-                        // (flex/link flows). Fallback: the shipment owner's
-                        // profile email — full-label shipments have no link, and
-                        // previously never got Email B (2026-07-06 fix). The
+                        // (flex/link flows). Fallback: the PI's payer via
+                        // stripe_intents.user_id — full-label shipments have no
+                        // link. (The fallback previously selected user_id from
+                        // shipments, a column that doesn't exist — the query
+                        // errored and full-label payers silently never got
+                        // Email B. Found by the 2026-07-14 schema audit.) The
                         // system placeholder profile is never a real payer.
-                        const { data: linkData } = await supabase
+                        const { data: piRowForEmail } = await supabase
                             .from("stripe_intents")
-                            .select("link_id")
+                            .select("link_id, user_id")
                             .eq("stripe_intent_id", piId ?? "")
                             .maybeSingle();
-                        const linkIdForEmail = (linkData as { link_id?: string | null } | null)?.link_id ?? linkId;
+                        const linkIdForEmail = (piRowForEmail as { link_id?: string | null } | null)?.link_id ?? linkId;
+                        const piPayerUserId = (piRowForEmail as { user_id?: string | null } | null)?.user_id ?? null;
 
                         let payerEmailForRefund: string | null = null;
                         if (linkIdForEmail) {
@@ -884,17 +888,11 @@ Deno.serve(async (req: Request) => {
                             }
                         }
                         if (!payerEmailForRefund) {
-                            const { data: shipOwnerRow } = await supabase
-                                .from("shipments")
-                                .select("user_id")
-                                .eq("id", shipmentId)
-                                .maybeSingle();
-                            const shipOwnerId = (shipOwnerRow as { user_id?: string | null } | null)?.user_id ?? null;
-                            if (shipOwnerId && shipOwnerId !== "00000000-0000-0000-0000-000000000001") {
+                            if (piPayerUserId && piPayerUserId !== "00000000-0000-0000-0000-000000000001") {
                                 const { data: ownerProfile } = await supabase
                                     .from("profiles")
                                     .select("email")
-                                    .eq("id", shipOwnerId)
+                                    .eq("id", piPayerUserId)
                                     .maybeSingle();
                                 payerEmailForRefund = (ownerProfile as { email?: string | null } | null)?.email ?? null;
                             }
