@@ -252,7 +252,23 @@ Deno.serve(async (req: Request) => {
                 //     user_id falls back to the system-profile UUID for events
                 //     whose metadata.sendmo_user_id is missing.
                 const ledgerUserId = user_id ?? "00000000-0000-0000-0000-000000000001";
-                const { error: txErr } = await supabase.from("transactions").insert({
+
+                // H2 carrier-adjustment recharges (intent_role='carrier_adjustment')
+                // are STILL written here — stripe-webhook is the sole `charge`
+                // writer (PLAYBOOK Rule 16). Two adjustment-specific fixes:
+                //   bug 6 — key the ledger row `adjustment_<shipment>_<adj>_<attempt>`
+                //     (from the PI metadata createAdjustmentRecharge stamps) so the
+                //     three recovery caps' `idempotency_key LIKE 'adjustment_%'`
+                //     filter actually matches it (the generic `stripe.<id>:charge`
+                //     key never did → per-card/per-user caps summed 0 forever).
+                //   bug 8 — patch carrier_adjustments.recovery_tx_id after the row
+                //     lands so the Reconciliation "Adjustment collected" join closes.
+                const isAdjustmentRecharge = intent_role === "carrier_adjustment";
+                const adjustmentId = meta.carrier_adjustment_id || null;
+                const chargeIdemKey = isAdjustmentRecharge && shipment_id && adjustmentId
+                    ? `adjustment_${shipment_id}_${adjustmentId}_${meta.attempt ?? "1"}`
+                    : `stripe.${eventId}:charge`;
+                const { data: chargeRow, error: txErr } = await supabase.from("transactions").insert({
                     user_id: ledgerUserId,
                     shipment_id,
                     link_id,
@@ -261,11 +277,31 @@ Deno.serve(async (req: Request) => {
                     funding_source: "card",
                     amount_cents: amountCents,
                     mode,
-                    idempotency_key: `stripe.${eventId}:charge`,
-                    description: `payment_intent.succeeded ${piId}`,
-                });
+                    idempotency_key: chargeIdemKey,
+                    description: isAdjustmentRecharge
+                        ? `Carrier adjustment recharge ${piId}`
+                        : `payment_intent.succeeded ${piId}`,
+                }).select("id").maybeSingle();
                 if (txErr && !/duplicate key|unique constraint/i.test(txErr.message)) {
                     throw new Error(`transactions insert failed: ${txErr.message}`);
+                }
+
+                if (isAdjustmentRecharge && adjustmentId) {
+                    let recoveryTxId = (chargeRow as { id?: string } | null)?.id ?? null;
+                    if (!recoveryTxId) {
+                        // Insert collided on the UNIQUE idempotency_key (Stripe retry
+                        // / re-delivery) — read the existing row's id to still link.
+                        const { data: existingTx } = await supabase
+                            .from("transactions").select("id")
+                            .eq("idempotency_key", chargeIdemKey).maybeSingle();
+                        recoveryTxId = (existingTx as { id?: string } | null)?.id ?? null;
+                    }
+                    if (recoveryTxId) {
+                        await supabase.from("carrier_adjustments")
+                            .update({ recovery_tx_id: recoveryTxId })
+                            .eq("id", adjustmentId)
+                            .then(() => {}, () => {});
+                    }
                 }
 
                 // ── Ledger: fee_stripe ──────────────────────────────────────

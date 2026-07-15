@@ -369,8 +369,9 @@ export function createAdjustmentRecharge(params: {
     shipmentId: string;                  // SendMo shipment UUID
     publicCode: string;                  // for metadata + reason text
     carrierAdjustmentId: string;         // anchors the idempotency key
+    userId: string;                      // shipment owner — stamped as sendmo_user_id
     deltaCents: number;                  // carrier overcharge; +$1 handling fee added
-    attempt: number;                     // 1 on first try; bump on retry
+    attempt: number;                     // 1 on try 1; bump on retry
     paymentMethodId: string;             // pre-attached saved PM
     customerId: string;                  // Stripe Customer (owner of the PM)
     reason?: string;                     // EasyPost adjustment_reason
@@ -387,6 +388,10 @@ export function createAdjustmentRecharge(params: {
         metadata: {
             source: "carrier_adjustment_recharge",
             intent_role: "carrier_adjustment",
+            // sendmo_user_id — the key stripe-webhook's resolveIdsFromMetadata reads
+            // to attribute the recharge ledger row to the owner (required for the
+            // per-user 7d cap to see this recharge).
+            sendmo_user_id: params.userId,
             // txn_kind — Radar/Fraud-Teams discriminator (B2 from risk-intel).
             txn_kind: "mit_adjustment",
             shipment_id: params.shipmentId,

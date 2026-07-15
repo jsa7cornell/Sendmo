@@ -248,8 +248,14 @@ Deno.serve(async (req: Request) => {
       };
 
       // Admin override: use attempt=99 to distinguish from auto-recharge attempts.
+      // (Fixed 2026-07-15: this call previously passed a `shipment:` object and
+      // omitted shipmentId/publicCode — a nonexistent-param bug that silently
+      // produced `adjustment_undefined_…` idempotency keys. Same class as the H2
+      // repair; corrected while the signature gained the required userId param.)
       const rechargeResult = await createAdjustmentRecharge({
-        shipment: shipmentContext,
+        shipmentId: shipmentContext.id,
+        publicCode: shipmentContext.public_code,
+        userId: userId,
         deltaCents: adjData.delta_cents,
         carrierAdjustmentId: carrier_adjustment_id,
         attempt: 99, // admin override attempt

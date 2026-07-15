@@ -21,7 +21,8 @@
     "test:integration:api": "vitest run --config vitest.integration.config.ts",
     "test:integration:easypost": "node tests/integration/easypost-test.mjs",
     "test:integration:easypost:rates": "node tests/integration/easypost-test.mjs --rates-only",
-    "test:integration:easypost:quick": "node tests/integration/easypost-test.mjs --limit 10"
+    "test:integration:easypost:quick": "node tests/integration/easypost-test.mjs --limit 10",
+    "test:db": "vitest run --config vitest.db.config.ts"
   },
   "dependencies": {
     "@googlemaps/js-api-loader": "^2.0.2",

@@ -16,13 +16,14 @@
 | `npm run test:e2e` | Playwright e2e suite | Mostly no — see below |
 | `npm run test:e2e:ui` | Playwright in interactive UI mode | Mostly no |
 | `npm run test:integration` | API + EasyPost integration tests | **YES — real DB + EasyPost** |
+| `npm run test:db` | DB-integration: recovery logic + RPC vs a **local** Postgres | **Local only — hard-guarded; skips if no local stack** |
 | `npm run test:all` | Unit + integration + e2e | **YES (integration leg)** |
 
 `npm test` deliberately **skips** integration — those tests cost real EasyPost
 API calls and touch a real database. Run integration explicitly and only when
 you mean to.
 
-## The four layers
+## The five layers
 
 ### 1. Unit tests — `tests/unit/`
 - **Runner:** Vitest (`vitest.config.ts`), jsdom environment, no network.
@@ -33,6 +34,11 @@ you mean to.
 - **Runner:** Vitest (`vitest.integration.config.ts`) for the API tests; a plain Node script (`easypost-test.mjs`) for the EasyPost checks.
 - **Scope:** real round-trips against the database and the EasyPost **test** API — flex-link API, recipient-flow API, label rating.
 - **⚠️ Danger:** these connect to a **real database**. On 2026-05-04 an integration run pointed at a *production* connection string truncated every row in prod. Before running, verify the target DB is local/test (see `~/AI-Brain/CLAUDE.md` → Credential Access Protocol → Rule 0.5). Never run these against prod.
+
+### 2b. DB-integration tests — `tests/db-integration/` (added 2026-07-15, H2 repair)
+- **Runner:** Vitest (`vitest.db.config.ts`), Node environment. **Run:** `supabase start` (boots a local Postgres via Docker + applies all migrations), then `SUPABASE_LOCAL=1 npm run test:db`.
+- **Scope:** the importable recovery logic (`resolveRecovery`) + the `resolve_recovery_lock` RPC + `onConflict` upserts run against a **real local Postgres with the real schema**. This is the ONLY layer that catches the column-name / index-inferrability / RPC-body bug class — the class that let H2 ship broken four times (every other layer mocks the DB, so a wrong column is invisible). The H2 suite (`h2-recovery.test.ts`) reproduces bugs 4, 5, and 7 on pre-fix code and passes on the fix.
+- **Safety (hard, not advisory):** `tests/db-integration/localGuard.ts` **throws** at resolution time if the configured target is not a loopback host — there is no `describe.skip` prod escape hatch (the exact shape that failed on 2026-05-04). The target must be opted into explicitly (`SUPABASE_LOCAL=1` or `SUPABASE_DB_INTEGRATION_URL=<loopback>`); an ambient `SUPABASE_URL` is never silently adopted. With no target configured, the suite skips. `transactions` rows are never deleted in teardown (append-only, Rule 16); each run namespaces its seed rows.
 
 ### 3. End-to-end tests — `tests/e2e/`
 - **Runner:** Playwright (`playwright.config.ts`), real Chromium. The dev server (`npm run dev`, port 5173) is started automatically.

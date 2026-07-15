@@ -46,6 +46,14 @@ import { log } from "./logger.ts";
 import { createAdjustmentRecharge } from "./stripe.ts";
 import { sendEmail } from "./resend.ts";
 import { carrierAdjustmentEmail } from "./email-templates.ts";
+import { sendAdminAlert } from "./alert.ts";
+
+// Admin-alert base URL for the /admin deep link. Read lazily + guarded so this
+// vitest-imported module never touches `Deno` at import time (Deno is undefined
+// under Node/Vitest).
+function adminAppUrl(): string {
+    return (typeof Deno !== "undefined" ? Deno.env.get("APP_URL") : undefined) ?? "https://sendmo.co";
+}
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -115,10 +123,15 @@ export interface ResolveRecoveryParams {
 //
 // Returns the resolution and updates `carrier_adjustments.recovery_status` to
 // the resolved state. On a successful recharge:
-//   - inserts the `recovery_tx_id` link to the new transactions row
-//     (the stripe-webhook's `charge.succeeded` arm writes the actual ledger
-//     row; here we just patch the cross-reference after the PI returns
-//     `succeeded` so the dashboard can show "Adjustment collected").
+//   - marks recovery_status='recovered'. It does NOT write the transactions
+//     ledger row and does NOT set recovery_tx_id — the recharge PI fires a
+//     Stripe `payment_intent.succeeded` webhook, and THAT arm (in
+//     stripe-webhook/index.ts) is the sole writer of the `charge` ledger row
+//     (PLAYBOOK Rule 16) and patches carrier_adjustments.recovery_tx_id from
+//     the PI metadata. Keeping a single durable, Stripe-retried writer avoids a
+//     split-writer missing-row hole (decided 2026-07-15 proposal, Review B2).
+//     recovery_tx_id is therefore null for the sub-second window until that
+//     webhook lands; it self-heals.
 //   - fires the customer notification email (N5 send-site).
 //
 // On flag: updates `recovery_status='pending'` (the default), records the
@@ -186,6 +199,11 @@ export async function resolveRecovery(
                 reason: "above_ceiling",
             },
         });
+        await sendAdjustmentAdminAlert({
+            supabase, sessionId, carrierAdjustmentId, shipment,
+            variant: "alert", deltaCents, reasonText,
+            flagReason: `Over the $${(RECHARGE_CEILING_CENTS / 100).toFixed(0)} auto-recharge ceiling — review manually.`,
+        });
         return resolution;
     }
 
@@ -214,6 +232,11 @@ export async function resolveRecovery(
                 has_pm: !!paymentContext.payment_method_id,
                 has_customer: !!paymentContext.customer_id,
             },
+        });
+        await sendAdjustmentAdminAlert({
+            supabase, sessionId, carrierAdjustmentId, shipment,
+            variant: "alert", deltaCents, reasonText,
+            flagReason: "No usable saved card on file — charge the customer manually.",
         });
         return {
             decision: "flag",
@@ -260,6 +283,11 @@ export async function resolveRecovery(
                 ...(capCheck.sums ? { sums: capCheck.sums } : {}),
             },
         });
+        await sendAdjustmentAdminAlert({
+            supabase, sessionId, carrierAdjustmentId, shipment,
+            variant: "alert", deltaCents, reasonText,
+            flagReason: `Recovery cap breached (${capCheck.blocked}) — review before charging.`,
+        });
         return {
             decision: "flag",
             amount_cents: 0,
@@ -277,6 +305,7 @@ export async function resolveRecovery(
             shipmentId: shipment.id,
             publicCode: shipment.public_code,
             carrierAdjustmentId,
+            userId: paymentContext.user_id,
             deltaCents,
             attempt,
             paymentMethodId: paymentContext.payment_method_id,
@@ -309,10 +338,10 @@ export async function resolveRecovery(
             };
         }
 
-        // Success — patch the carrier_adjustments row's recovery_status +
-        // anchor (recovery_tx_id stays NULL until the stripe-webhook lands
-        // the corresponding `charge` transactions row; the join via
-        // stripe_intent_id closes the loop in the Reconciliation dashboard).
+        // Success — mark recovery_status='recovered'. recovery_tx_id stays NULL
+        // here; the stripe-webhook payment_intent.succeeded arm writes the
+        // `charge` ledger row and patches recovery_tx_id from the PI metadata
+        // once Stripe delivers the event (Review B2 — single durable writer).
         await markAdjustmentResolved(
             supabase, carrierAdjustmentId, "recovered", null, sessionId,
         );
@@ -349,6 +378,19 @@ export async function resolveRecovery(
             });
         }
 
+        // ── Admin ops notice (John requirement 2026-07-15) — live recharges ───
+        await sendAdjustmentAdminAlert({
+            supabase,
+            sessionId,
+            carrierAdjustmentId,
+            shipment,
+            variant: "notice",
+            deltaCents,
+            reasonText,
+            rechargeAmount,
+            piId: pi.id,
+        });
+
         return {
             decision: "recharge",
             amount_cents: rechargeAmount,
@@ -383,13 +425,18 @@ export async function resolveRecovery(
 //
 //   BEGIN;
 //   SELECT id FROM shipments WHERE id = :ship_id FOR UPDATE;
-//   SELECT COALESCE(SUM(amount_cents), 0) FROM transactions
-//     WHERE type='carrier_adjustment'
-//       AND shipment_id = :ship_id;     -- per-shipment
+//   -- All three caps measure the customer-RECHARGE side (decided §2.4), i.e.
+//   -- type='charge' rows keyed `adjustment_%` — NOT the negative carrier_adjustment
+//   -- cost rows (counting those was bug 5's double-count).
 //   SELECT COALESCE(SUM(amount_cents), 0) FROM transactions
 //     WHERE type='charge'
 //       AND idempotency_key LIKE 'adjustment\_%'
-//       AND stripe_intent_id IN (SELECT pi from cards last 24h);
+//       AND shipment_id = :ship_id;     -- per-shipment lifetime
+//   SELECT COALESCE(SUM(t.amount_cents), 0) FROM transactions t
+//     JOIN stripe_intents si ON si.stripe_intent_id = t.stripe_intent_id
+//     WHERE t.type='charge'
+//       AND t.idempotency_key LIKE 'adjustment\_%'
+//       AND si.payment_method_id = :pm AND t.created_at > now() - interval '24 hours';
 //   SELECT COALESCE(SUM(amount_cents), 0) FROM transactions
 //     WHERE type='charge'
 //       AND idempotency_key LIKE 'adjustment\_%'
@@ -491,12 +538,20 @@ async function checkCapsWithLock(params: {
     // Still enforce the per-shipment cap (the highest-priority cap; without
     // it a fast double-fire could chain >$10 of recharge on one shipment).
     // The per-card and per-user caps degrade to best-effort.
+    //
+    // The per-shipment sum uses the SAME recharge-charge basis as the RPC
+    // (type='charge' + idempotency_key LIKE 'adjustment_%') — NOT the negative
+    // carrier_adjustment cost rows. Counting cost rows was bug 5 (double-count:
+    // the webhook writes the cost row before this check runs) and drift from the
+    // decided §2.4, which measures every cap on the customer-recharge side.
+    // Fallback and RPC MUST agree (Review B3), so keep these two queries aligned.
 
     const { data: shipmentRows, error: shipErr } = await supabase
         .from("transactions")
         .select("amount_cents")
-        .eq("type", "carrier_adjustment")
-        .eq("shipment_id", shipmentId);
+        .eq("type", "charge")
+        .eq("shipment_id", shipmentId)
+        .like("idempotency_key", "adjustment\\_%");
 
     if (shipErr) {
         // Conservative: fail-safe, treat as cap breach.
@@ -668,4 +723,92 @@ async function sendCarrierAdjustmentEmail(params: {
             error_message: msg,
         }).then(() => {}, () => {});  // swallow inner failure
     }
+}
+
+// ─── Helper: admin ops alert on a live recharge / flag (John req. 2026-07-15) ─
+//
+// John asked to be emailed any time H2 fires on a LIVE shipment. Scope: the
+// money-moving and needs-review outcomes only — a successful `recharge`
+// (variant:"notice") and every `flag` (variant:"alert"). Silent `absorb` cases
+// never alert. Extends the shared _shared/alert.ts:sendAdminAlert (Rule 6).
+//
+// Guards:
+//   - LIVE only — test-mode verification and the integration harness never email.
+//   - Deduped per (carrier_adjustment_id, variant) via a notifications_log marker
+//     so a `.updated` re-fire or webhook retry can't double-email. A flag that is
+//     later corrected to a recharge still sends both (distinct variants).
+// sendAdminAlert never throws, so a send failure can't break the recovery flow.
+
+async function sendAdjustmentAdminAlert(params: {
+    supabase: SupabaseClient;
+    sessionId: string;
+    carrierAdjustmentId: string;
+    shipment: AdjustmentShipment;
+    variant: "alert" | "notice";
+    deltaCents: number;
+    reasonText?: string;
+    flagReason?: string;      // variant "alert"
+    rechargeAmount?: number;  // variant "notice"
+    piId?: string;            // variant "notice"
+}): Promise<void> {
+    const {
+        supabase, sessionId, carrierAdjustmentId, shipment, variant,
+        deltaCents, reasonText, flagReason, rechargeAmount, piId,
+    } = params;
+
+    // Live-only.
+    if (shipment.is_test) return;
+
+    const eventType = `admin_alert.${variant}.carrier_adjustment:${carrierAdjustmentId}`;
+
+    // Dedup.
+    const { data: existing } = await supabase
+        .from("notifications_log")
+        .select("id")
+        .eq("shipment_id", shipment.id)
+        .eq("event_type", eventType)
+        .eq("status", "sent")
+        .limit(1);
+    if (existing && existing.length > 0) return;
+
+    const dollars = (c: number) => `$${(c / 100).toFixed(2)}`;
+    const carrier = shipment.carrier ?? "the carrier";
+    const rows = [
+        { label: "Shipment", value: shipment.public_code },
+        { label: "Carrier", value: carrier },
+        { label: "Reason", value: reasonText ?? "adjustment" },
+        { label: "Carrier delta", value: dollars(deltaCents) },
+    ];
+
+    if (variant === "notice") {
+        if (rechargeAmount != null) rows.push({ label: "Recharged", value: dollars(rechargeAmount) });
+        if (piId) rows.push({ label: "PaymentIntent", value: piId });
+    } else if (flagReason) {
+        rows.push({ label: "Action needed", value: flagReason });
+    }
+
+    await sendAdminAlert({
+        variant,
+        subject: variant === "notice"
+            ? `Carrier adjustment recharged — ${shipment.public_code}`
+            : `Carrier adjustment flagged — ${shipment.public_code}`,
+        heading: variant === "notice"
+            ? "H2 auto-recovered a carrier adjustment"
+            : "Carrier adjustment needs your review",
+        intro: variant === "notice"
+            ? `A live shipment was re-billed ${dollars(deltaCents)} by ${carrier}; SendMo auto-collected ${rechargeAmount != null ? dollars(rechargeAmount) : "the amount"} off-session.`
+            : `A live shipment was re-billed ${dollars(deltaCents)} by ${carrier} and could not be auto-recharged. ${flagReason ?? ""}`,
+        rows,
+        actionUrl: `${adminAppUrl()}/admin?shipment=${shipment.id}`,
+        actionLabel: "Open in admin",
+        source: "adjustments resolveRecovery",
+    });
+
+    await supabase.from("notifications_log").insert({
+        shipment_id: shipment.id,
+        contact_id: null,
+        channel: "email",
+        event_type: eventType,
+        status: "sent",
+    }).then(() => {}, () => {});
 }

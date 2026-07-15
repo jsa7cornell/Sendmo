@@ -2,14 +2,14 @@
 title: H2 Carrier-Adjustment Auto-Recovery — Full Repair
 slug: h2-carrier-adjustment-repair
 project: sendmo
-status: revised
+status: decided
 created: 2026-07-15
-last_updated: 2026-07-15 16:00
+last_updated: 2026-07-15 16:40
 reviewed: 2026-07-15
-decided: null
+decided: 2026-07-15
 author: Claude Opus 4.8 session — "SendMo H2 carrier-adjustment repair 2026-07-15" (traced the full chain against the live prod schema via Supabase MCP)
 reviewer: Claude Opus 4.8 — fresh-eyes reviewer; cold read against PLAYBOOK Rule 16 (ledger writer map) + Rule 19, PAYMENTS.md, the decided 2026-05-22 proposal (§2.4 + N2/N3/D2), and independently verified every schema claim + all four bugs against live prod (fkxykvzsqdjzhurntgah) via Supabase MCP
-outcome: null
+outcome: approve-with-changes
 ---
 
 > **Not a launch blocker.** H2 recovers SendMo's own margin when a carrier re-bills a
@@ -468,3 +468,9 @@ John asked to **be emailed any time H2 fires on a live shipment.** Scope chosen:
 **Reconciliation with the customer email:** unchanged. The customer still gets `carrierAdjustmentEmail` on a successful recharge (N5 send-site); this admin alert is a **separate** email to `SENDMO_ADMIN_EMAIL`, deduped independently. A live recharge therefore sends two emails (customer + admin notice); a live flag sends one (admin alert only — no customer charge happened).
 
 **Status of this addendum:** added after the round-1 review at John's request. It's small and uses an already-reviewed primitive, so I don't think it needs a fresh review round — but flagging it so the next session knows it post-dates the Review section. Folds into the same implementation.
+
+## Decision
+
+**Decided 2026-07-15 — approved (approve-with-changes accepted in full). John green-lit implementation.**
+
+The reviewer's B2 redesign is adopted: `stripe-webhook` stays the sole `charge` writer; bugs 6+8 are fixed there (derive the `adjustment_%` ledger key + patch `recovery_tx_id` from PI metadata). All other findings (B3 atomic per-shipment-basis fix + parity test, N-a deadlock check, N-b hard-throw prod-URL guard, N-c narrow RPC-body audit) accepted. Open questions settled: OQ1→(a) accept the bounded race; OQ2→local-Postgres harness; OQ3→`delta+fee`; OQ4→include the ghost-comment cleanup. The admin-alert addendum (recharge+flag, live-only) rides the same PR. Implementation started 2026-07-15 on branch `claude/gallant-allen-5edd5d` in the concurrent-session worktree.

@@ -47,7 +47,61 @@ const SCHEMA: Record<string, string[]> = {
   webhook_events: ["created_at","event_id","event_type","id","payload","processed","source"],
 };
 
+// UNIQUE_INDEXES — snapshot of every UNIQUE index on the SCHEMA tables, with
+// its column-set and whether it is PARTIAL (has a WHERE predicate). Pulled from
+// prod (fkxykvzsqdjzhurntgah) 2026-07-15 via:
+//   SELECT t.relname, i.relname, ix.indpred IS NOT NULL AS partial,
+//          (SELECT array_agg(a.attname ORDER BY k.ord)
+//             FROM unnest(ix.indkey) WITH ORDINALITY k(attnum,ord)
+//             JOIN pg_attribute a ON a.attrelid=t.oid AND a.attnum=k.attnum) AS cols
+//   FROM pg_index ix JOIN pg_class i ON i.oid=ix.indexrelid
+//        JOIN pg_class t ON t.oid=ix.indrelid
+//        JOIN pg_namespace n ON n.oid=t.relnamespace
+//   WHERE n.nspname='public' AND ix.indisunique AND t.relname IN (<SCHEMA tables>);
+//
+// Why this exists: supabase-js `.upsert(..., { onConflict })` emits Postgres
+// `ON CONFLICT (cols)` — which can only infer a NON-partial unique index. If
+// onConflict targets a column-set that only has a PARTIAL unique index (WHERE
+// predicate), Postgres raises 42P10 at runtime (supabase-js can't emit the
+// predicate). That was bug 4: `carrier_adjustments` onConflict:"source_event_id"
+// against a partial index. It's since migrated to a plain unique index
+// (`carrier_adjustments_source_event_id_key`), so the check below PASSES today.
+// SNAPSHOT MAINTENANCE: re-run the query above after any index migration.
+const UNIQUE_INDEXES: Record<string, { cols: string[]; partial: boolean }[]> = {
+  addresses: [{ cols: ["id"], partial: false }],
+  balances: [{ cols: ["id"], partial: false }, { cols: ["user_id"], partial: false }],
+  carrier_adjustments: [{ cols: ["id"], partial: false }, { cols: ["source_event_id"], partial: false }],
+  event_logs: [{ cols: ["id"], partial: false }],
+  holds: [{ cols: ["id"], partial: false }, { cols: ["stripe_intent_id"], partial: false }],
+  link_state_events: [{ cols: ["id"], partial: false }],
+  notification_contacts: [{ cols: ["id"], partial: false }],
+  notifications_log: [
+    { cols: ["shipment_id","contact_id","event_type"], partial: true },
+    { cols: ["shipment_id","event_type","provider_id"], partial: true },
+    { cols: ["id"], partial: false },
+  ],
+  payment_methods: [
+    { cols: ["id"], partial: false },
+    { cols: ["user_id","stripe_payment_method_id"], partial: false },
+    { cols: ["user_id","mode"], partial: true },
+  ],
+  profiles: [{ cols: ["id"], partial: false }],
+  recon_state: [{ cols: ["key"], partial: false }],
+  refunds: [{ cols: ["id"], partial: false }, { cols: ["stripe_refund_id"], partial: false }],
+  sendmo_links: [{ cols: ["id"], partial: false }, { cols: ["short_code"], partial: false }],
+  shipments: [{ cols: ["id"], partial: false }, { cols: ["public_code"], partial: false }],
+  stripe_intents: [
+    { cols: ["idempotency_key"], partial: false },
+    { cols: ["id"], partial: false },
+    { cols: ["stripe_intent_id"], partial: false },
+  ],
+  transactions: [{ cols: ["idempotency_key"], partial: false }, { cols: ["id"], partial: false }],
+  user_wallet_balance: [], // derived VIEW — no unique index
+  webhook_events: [{ cols: ["event_id"], partial: false }, { cols: ["id"], partial: false }],
+};
+
 const FUNCTIONS_DIR = join(__dirname, "..", "..", "supabase", "functions");
+const MIGRATIONS_DIR = join(__dirname, "..", "..", "supabase", "migrations");
 
 interface Finding { file: string; line: number; table: string; via: string; col: string; }
 
@@ -160,6 +214,160 @@ function audit(): Finding[] {
   return findings;
 }
 
+// ── Check 1: onConflict vs partial unique index ──────────────────────────────
+// Scan every .from("table")…upsert(…, { onConflict: "col[,col2]" }) in the edge
+// functions and assert the onConflict column-set matches a NON-partial unique
+// index in UNIQUE_INDEXES[table]. A match against only a partial index (or no
+// unique index) becomes a static failure instead of a runtime 42P10 (bug 4).
+interface OnConflictProblem { file: string; line: number; table: string; onConflict: string; why: string; }
+
+function eqSet(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  const bs = new Set(b);
+  return a.every((x) => bs.has(x));
+}
+
+function auditOnConflict(): { problems: OnConflictProblem[]; scanned: number } {
+  const problems: OnConflictProblem[] = [];
+  let scanned = 0;
+  const fromRe = /\.from\(\s*["']([a-z_]+)["']\s*\)/g;
+  const onConflictRe = /onConflict\s*:\s*["']([^"'`]+)["']/g;
+
+  for (const file of walk(FUNCTIONS_DIR)) {
+    const text = readFileSync(file, "utf8");
+    const rel = relative(FUNCTIONS_DIR, file);
+    let m: RegExpExecArray | null;
+    fromRe.lastIndex = 0;
+    while ((m = fromRe.exec(text)) !== null) {
+      const table = m[1];
+      // Chain chunk: from this .from() to the next .from() (or +1500 chars).
+      let chunk = text.slice(m.index + m[0].length, m.index + m[0].length + 1500);
+      const nxt = chunk.search(/\.from\(\s*["']/);
+      if (nxt !== -1) chunk = chunk.slice(0, nxt);
+      // Only upsert chains carry onConflict; skip everything else.
+      if (!chunk.includes("onConflict")) continue;
+
+      let om: RegExpExecArray | null;
+      onConflictRe.lastIndex = 0;
+      while ((om = onConflictRe.exec(chunk)) !== null) {
+        scanned++;
+        const line = text.slice(0, m.index).split("\n").length;
+        const cols = om[1].split(",").map((c) => c.trim()).filter(Boolean);
+        const indexes = UNIQUE_INDEXES[table] ?? [];
+        const full = indexes.some((ix) => !ix.partial && eqSet(ix.cols, cols));
+        if (full) continue;
+        const partialOnly = indexes.some((ix) => ix.partial && eqSet(ix.cols, cols));
+        problems.push({
+          file: rel, line, table, onConflict: om[1],
+          why: partialOnly
+            ? "target has no full unique index (partial index needs its WHERE predicate, which supabase-js can't emit → runtime 42P10)"
+            : "target matches no unique index in UNIQUE_INDEXES (onConflict inference will fail → runtime 42P10)",
+        });
+      }
+    }
+  }
+  return { problems, scanned };
+}
+
+// ── Check 2: RPC / migration function-body column references ──────────────────
+// Walk supabase/migrations/*.sql, and for each CREATE … FUNCTION body scan the
+// NARROW, low-false-positive forms only: alias.column references where the alias
+// is bound to a known public.<table> via FROM/JOIN in the SAME body. This is the
+// class that hid bug 7 (033's `si.stripe_payment_intent_id` join against
+// stripe_intents, which has no such column).
+//
+// SUPERSESSION — latest-definition-wins: a function may be redefined by a later
+// migration (CREATE OR REPLACE). Migration 033 defines resolve_recovery_lock
+// with the bug-7 column; migration 040 supersedes it with the correct
+// `si.stripe_intent_id`. Both files live in the dir, so a naive scan of 033 would
+// fail the test on a historical, already-superseded bug. We therefore scan ONLY
+// the highest-numbered migration that defines each function name (the principled
+// choice — no hand-maintained allowlist of superseded files to rot).
+interface BodyProblem { file: string; func: string; alias: string; table: string; col: string; }
+
+// Idents that are never a table alias (trigger pseudo-rows, dynamic SQL, keywords).
+const ALIAS_STOP = new Set(["new", "old", "tg", "public", "pg_catalog", "information_schema"]);
+
+function extractFunctions(text: string): { name: string; body: string }[] {
+  const out: { name: string; body: string }[] = [];
+  const re = /CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:public\.)?([a-z_][a-z0-9_]*)\s*\(/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const rest = text.slice(m.index);
+    const tagM = /\bAS\s+(\$[a-z0-9_]*\$)/i.exec(rest);
+    if (!tagM) continue;
+    const tag = tagM[1];
+    const bodyStart = rest.indexOf(tag, tagM.index) + tag.length;
+    const bodyEnd = rest.indexOf(tag, bodyStart);
+    if (bodyEnd === -1) continue;
+    out.push({ name: m[1].toLowerCase(), body: rest.slice(bodyStart, bodyEnd) });
+  }
+  return out;
+}
+
+function migNum(file: string): number {
+  const base = file.split("/").pop() ?? file;
+  const n = parseInt(base.slice(0, 3), 10);
+  return Number.isNaN(n) ? -1 : n;
+}
+
+function auditMigrationBodies(): { problems: BodyProblem[]; scannedFuncs: number } {
+  const files = readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith(".sql")).sort();
+  // Pass 1: for each function name, find the highest migration number defining it.
+  const latest: Record<string, number> = {};
+  const parsed: { file: string; num: number; funcs: { name: string; body: string }[] }[] = [];
+  for (const f of files) {
+    const text = readFileSync(join(MIGRATIONS_DIR, f), "utf8");
+    const funcs = extractFunctions(text);
+    const num = migNum(f);
+    parsed.push({ file: f, num, funcs });
+    for (const fn of funcs) latest[fn.name] = Math.max(latest[fn.name] ?? -1, num);
+  }
+
+  const problems: BodyProblem[] = [];
+  let scannedFuncs = 0;
+  const bindRe = /(?:FROM|JOIN)\s+public\.([a-z_][a-z0-9_]*)(?:\s+(?:AS\s+)?([a-z_][a-z0-9_]*))?/gi;
+  const refRe = /\b([a-z_][a-z0-9_]*)\.([a-z_][a-z0-9_]*)\b/gi;
+
+  for (const { file, num, funcs } of parsed) {
+    for (const { name, body } of funcs) {
+      if (latest[name] !== num) continue; // superseded — skip (latest-wins)
+      scannedFuncs++;
+      // Strip -- line comments so column names inside comments aren't scanned.
+      const src = body.replace(/--[^\n]*/g, "");
+      // Bind aliases (and the bare table name) → table, only for known tables.
+      const aliases: Record<string, string> = {};
+      let bm: RegExpExecArray | null;
+      bindRe.lastIndex = 0;
+      while ((bm = bindRe.exec(src)) !== null) {
+        const table = bm[1].toLowerCase();
+        if (!(table in SCHEMA)) continue;
+        aliases[table] = table; // allow full-table-name qualifier
+        const alias = bm[2]?.toLowerCase();
+        // Guard: the "alias" slot can capture a following SQL keyword; only bind
+        // short, non-keyword identifiers.
+        if (alias && !ALIAS_STOP.has(alias) && !/^(on|where|group|order|using|set|loop|and|or|as|when|then|for|update|select)$/.test(alias)) {
+          aliases[alias] = table;
+        }
+      }
+      // Check alias.column references against the schema of the bound table.
+      let rm: RegExpExecArray | null;
+      refRe.lastIndex = 0;
+      while ((rm = refRe.exec(src)) !== null) {
+        const alias = rm[1].toLowerCase();
+        const col = rm[2].toLowerCase();
+        if (ALIAS_STOP.has(alias)) continue;
+        const table = aliases[alias];
+        if (!table) continue; // unresolved alias — skip (narrow, no false positives)
+        if (!SCHEMA[table].includes(col)) {
+          problems.push({ file, func: name, alias, table, col });
+        }
+      }
+    }
+  }
+  return { problems, scannedFuncs };
+}
+
 describe("edge-function schema column audit", () => {
   it("references only columns that exist in the prod schema snapshot", () => {
     const findings = audit();
@@ -174,5 +382,25 @@ describe("edge-function schema column audit", () => {
     // cover a realistic number of files or the first assertion means nothing.
     const files = walk(FUNCTIONS_DIR);
     expect(files.length).toBeGreaterThan(20);
+  });
+
+  it("upsert onConflict targets a full (non-partial) unique index (bug 4)", () => {
+    const { problems, scanned } = auditOnConflict();
+    // Sanity: the scan must actually see the upserts (guard against a no-op).
+    expect(scanned, "auditOnConflict saw no onConflict options — scan is a no-op").toBeGreaterThan(3);
+    const msg = problems
+      .map((p) => `supabase/functions/${p.file}:${p.line}  table=${p.table}  onConflict="${p.onConflict}"  via=onConflict ${p.why}`)
+      .join("\n");
+    expect(problems, `\nonConflict targets with no full unique index:\n${msg}\n`).toEqual([]);
+  });
+
+  it("RPC / migration function bodies reference only columns that exist (bug 7)", () => {
+    const { problems, scannedFuncs } = auditMigrationBodies();
+    // Sanity: the scan must actually parse function bodies (guard against a no-op).
+    expect(scannedFuncs, "auditMigrationBodies parsed no function bodies").toBeGreaterThan(3);
+    const msg = problems
+      .map((p) => `supabase/migrations/${p.file}  fn=${p.func}()  ${p.alias}(→${p.table}).${p.col}  UNKNOWN column`)
+      .join("\n");
+    expect(problems, `\nUnknown column refs in migration function bodies:\n${msg}\n`).toEqual([]);
   });
 });

@@ -26,6 +26,9 @@ vi.mock("../../supabase/functions/_shared/resend.ts", () => ({
 vi.mock("../../supabase/functions/_shared/logger.ts", () => ({
     log: vi.fn(),
 }));
+vi.mock("../../supabase/functions/_shared/alert.ts", () => ({
+    sendAdminAlert: vi.fn().mockResolvedValue(undefined),
+}));
 
 import {
     resolveRecovery,
@@ -39,6 +42,9 @@ import {
     type AdjustmentPaymentContext,
 } from "../../supabase/functions/_shared/adjustments.ts";
 import { createAdjustmentRecharge } from "../../supabase/functions/_shared/stripe.ts";
+import { sendAdminAlert } from "../../supabase/functions/_shared/alert.ts";
+
+const LIVE_SHIPMENT_FIELDS = { is_test: false };
 
 // ─── Mock helpers ─────────────────────────────────────────────────────────
 
@@ -675,6 +681,77 @@ describe("resolveRecovery — customer email (N5)", () => {
         });
         const { sendEmail } = await import("../../supabase/functions/_shared/resend.ts");
         expect(sendEmail).not.toHaveBeenCalled();
+    });
+});
+
+// ─── Admin ops alert (John req. 2026-07-15) — live recharge + flag only ────
+
+describe("resolveRecovery — admin alert on live outcomes", () => {
+    const mockAlert = () => sendAdminAlert as unknown as ReturnType<typeof vi.fn>;
+
+    it("sends a 'notice' admin alert on a LIVE successful recharge", async () => {
+        (createAdjustmentRecharge as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+            id: "pi_live_rc", status: "succeeded", amount: 300,
+            currency: "usd", client_secret: "", capture_method: "automatic",
+        });
+        const supabase = makeMockSupabase({ rpcResult: { shipment_lifetime: 0, card_24h: 0, user_7d: 0 } });
+        const r = await resolveRecovery({
+            supabase, ...BASE_PARAMS,
+            shipment: { ...BASE_SHIPMENT, ...LIVE_SHIPMENT_FIELDS },
+            deltaCents: 200, paymentContext: BASE_PAYMENT_CTX,
+        });
+        expect(r.decision).toBe("recharge");
+        expect(mockAlert()).toHaveBeenCalledTimes(1);
+        expect(mockAlert().mock.calls[0][0].variant).toBe("notice");
+    });
+
+    it("sends an 'alert' admin alert on a LIVE flag (> $10 ceiling)", async () => {
+        const supabase = makeMockSupabase();
+        const r = await resolveRecovery({
+            supabase, ...BASE_PARAMS,
+            shipment: { ...BASE_SHIPMENT, ...LIVE_SHIPMENT_FIELDS },
+            deltaCents: 1500, paymentContext: BASE_PAYMENT_CTX,
+        });
+        expect(r.decision).toBe("flag");
+        expect(mockAlert()).toHaveBeenCalledTimes(1);
+        expect(mockAlert().mock.calls[0][0].variant).toBe("alert");
+    });
+
+    it("sends an 'alert' admin alert on a LIVE cap-breach flag", async () => {
+        const supabase = makeMockSupabase({ rpcResult: { shipment_lifetime: 900, card_24h: 0, user_7d: 0 } });
+        const r = await resolveRecovery({
+            supabase, ...BASE_PARAMS,
+            shipment: { ...BASE_SHIPMENT, ...LIVE_SHIPMENT_FIELDS },
+            deltaCents: 300, paymentContext: BASE_PAYMENT_CTX,
+        });
+        expect(r.decision).toBe("flag");
+        expect(r.blocked_by_cap).toBe("shipment_lifetime");
+        expect(mockAlert()).toHaveBeenCalledTimes(1);
+        expect(mockAlert().mock.calls[0][0].variant).toBe("alert");
+    });
+
+    it("does NOT alert on a TEST-mode recharge (live-only guard)", async () => {
+        (createAdjustmentRecharge as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+            id: "pi_test_rc", status: "succeeded", amount: 300,
+            currency: "usd", client_secret: "", capture_method: "automatic",
+        });
+        const supabase = makeMockSupabase({ rpcResult: { shipment_lifetime: 0, card_24h: 0, user_7d: 0 } });
+        await resolveRecovery({
+            supabase, ...BASE_PARAMS,
+            shipment: BASE_SHIPMENT,   // is_test: true
+            deltaCents: 200, paymentContext: BASE_PAYMENT_CTX,
+        });
+        expect(mockAlert()).not.toHaveBeenCalled();
+    });
+
+    it("does NOT alert on an absorb decision (even live)", async () => {
+        const supabase = makeMockSupabase();
+        await resolveRecovery({
+            supabase, ...BASE_PARAMS,
+            shipment: { ...BASE_SHIPMENT, ...LIVE_SHIPMENT_FIELDS },
+            deltaCents: 50, paymentContext: BASE_PAYMENT_CTX,
+        });
+        expect(mockAlert()).not.toHaveBeenCalled();
     });
 });
 

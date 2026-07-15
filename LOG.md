@@ -12,6 +12,23 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-07-15] H2 repair IMPLEMENTED (bugs 5–8 + admin alert) — committed + pushed, NOT merged/deployed
+
+**Category:** fix | Payments | Edge Functions | Schema | Tests
+**Stage:** Committed (local) → Pushed on `claude/gallant-allen-5edd5d`. **NOT** merged, **NOT** deployed. Migration 040 + edge-function redeploys land on merge (schema+money-path change → John's PR/merge decision per push-gate).
+**Cross-link:** [`proposals/2026-07-15_h2-carrier-adjustment-repair_reviewed-2026-07-15_decided-2026-07-15.md`](proposals/2026-07-15_h2-carrier-adjustment-repair_reviewed-2026-07-15_decided-2026-07-15.md) (decided) | supersedes the trace entry below
+**Browser-verified:** n/a-category: `edge-function-no-ui` — n/a-reason: server-only recovery logic + a Postgres RPC + a Vitest suite; nothing rendered. Verified via 639 green unit tests + an authored DB-integration suite (runs on a local stack; Docker unavailable in this authoring sandbox).
+
+Implemented the decided repair as one change set:
+- **Migration `040_fix_resolve_recovery_lock.sql`** — supersedes 033. Fixes bug 7 (`si.stripe_intent_id` join, was the nonexistent `stripe_payment_intent_id` → RPC threw 42703 every call → N2 lock never ran) AND bug 5 (per-shipment sum now counts recharge charges `type='charge' + idempotency_key LIKE 'adjustment_%'`, not the `carrier_adjustment` cost rows). Both atomic (Review B3).
+- **`stripe-webhook` payment_intent.succeeded** (Review B2 — sole `charge` writer preserved, Rule 16): for `intent_role='carrier_adjustment'`, keys the ledger row `adjustment_<shipment>_<adj>_<attempt>` from PI metadata (fixes bug 6 — the caps' LIKE filter now matches) and patches `carrier_adjustments.recovery_tx_id` (fixes bug 8). Non-adjustment PIs byte-for-byte unchanged.
+- **`_shared/stripe.ts`** — `createAdjustmentRecharge` now stamps `sendmo_user_id` (so the recharge ledger row attributes to the owner → per-user cap sees it) + takes `userId`.
+- **`_shared/adjustments.ts`** — fallback per-shipment sum moved to the same recharge-charge basis (B3); ghost `charge.succeeded`-arm comments corrected (OQ4); **admin ops alert** (John req.) via `sendAdminAlert` — live-only, deduped per `(carrier_adjustment_id, variant)`: `notice` on a successful live recharge, `alert` (with `/admin` deep link) on every live flag. Silent absorb never alerts.
+- **`admin-recon-action`** — fixed a pre-existing nonexistent-param bug (passed `shipment:` obj, omitted `shipmentId`/`publicCode` → `adjustment_undefined_…` keys); corrected while the shared signature gained `userId`.
+- **Tests:** `tests/unit/adjustments.test.ts` +5 admin-alert cases (32 total); `tests/unit/schemaColumnAudit.test.ts` +2 static checks (onConflict-vs-partial-index for bug-4 class; migration-body column refs for bug-7 class, latest-definition-wins so 033's historical bug is superseded by 040); **new DB-integration layer** `tests/db-integration/` (`vitest.db.config.ts`, `npm run test:db`) with a HARD loopback-only guard (`localGuard.ts` — throws on non-local, the programmatic rail the 2026-05-04 wipe wanted) reproducing bugs 4/5/7 against a real local Postgres. 639 unit tests green; DB suite skips without a local stack.
+
+**N2 honesty (unchanged from the decision):** the `FOR UPDATE` lock can't span the Stripe call, so a sub-second same-shipment race remains, bounded by the $10 per-shipment ceiling — accepted (OQ1-a). Fixing bug 7 turns the lock on in prod for the first time; verify no `shipments`-row deadlock post-deploy (Review N-a).
+
 ### [2026-07-15] H2 recovery half traced end-to-end — 4 MORE bugs (5–8) behind the recording half; repair proposal written (in-review, NOT a launch blocker)
 
 **Category:** investigation | Payments | Edge Functions | Schema
