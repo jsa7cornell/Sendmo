@@ -12,6 +12,37 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-07-15] H2 carrier-adjustments was DEAD in prod — T2-2 live verification found 4 nonexistent-column/constraint bugs (3 fixed + deployed, cap bug spun out)
+
+**Category:** fix | Payments | Edge Functions | Launch | Schema
+**Deploy:** PR #52 merged (squash `9c81063`) 2026-07-15 → "Deploy Supabase Edge Functions" green: `links`, `stripe-webhook`, `tracking-admin`, `webhooks` all redeployed. Plus prod migration `carrier_adjustments_source_event_id_plain_unique` applied via Supabase MCP (Rule 0.5, logged below).
+**Cross-link:** [PR #52](https://github.com/jsa7cornell/Sendmo/pull/52) | [PRE-LAUNCH.md](PRE-LAUNCH.md) T2-2 | H2 repair task `task_b4e647bf` + forthcoming `proposals/2026-07-15_h2-carrier-adjustment-repair.md` | [`tests/unit/schemaColumnAudit.test.ts`](tests/unit/schemaColumnAudit.test.ts)
+
+**How found:** running the T2-2(b) live verification — a synthetic `shipment.invoice.created`, HMAC-signed with `EASYPOST_WEBHOOK_HMAC_SECRET` and POSTed to the prod `/webhooks` endpoint (script `scratchpad/t22b_live_recharge.sh`, run in John's terminal so the secret never entered the agent transcript). The "verify it works" task instead proved the feature **had never once run successfully in prod** — the strongest possible argument for the T2-2 gate.
+
+**Root bug class:** edge functions are in no tsconfig and unit tests mock the Supabase client, so a `.select()`/`.insert()` column name or an `onConflict` target is validated by **nothing** until it errors at runtime — and the error surface conflated "query errored" with "row not found", returning 200 at severity=warn (invisible even to alerting). A schema audit of every `.from()` chain across all edge functions found 4 live bugs:
+
+1. **`webhooks` invoice arm** selected `shipments.user_id` — a column that doesn't exist (owner is via `stripe_intents.user_id`) → **every** ShipmentInvoice event errored → H2 fully dead. Fixed: derive owner from `stripe_intents.user_id` (payer) with `sendmo_links.user_id` fallback; DB-error now logs `severity=error` (`webhook.shipment_invoice_lookup_error`), distinct from not-found.
+2. **`stripe-webhook` Email-B fallback** — same nonexistent-column select → full-label payers silently never got the refund-completed email via the fallback. Fixed to `stripe_intents.user_id`.
+3. **`tracking-admin` ledger select** used `transactions.stripe_payment_intent_id`/`stripe_refund_id` (don't exist) → whole query errored → admin debug panel always showed "No ledger rows". Fixed to `stripe_intent_id`/`stripe_charge_id` (+ `api.ts` type aligned).
+4. **`links` audit insert** used `event_logs.user_id` (column is `actor_id`) → every `link.updated` audit row silently dropped. Fixed to `actor_id` + explicit `source`.
+
+**Migration (Rule 0.5, prod, logged):** the `carrier_adjustments` upsert `onConflict:"source_event_id"` couldn't infer the **partial** unique index (`WHERE source_event_id IS NOT NULL`) — Postgres won't match a partial index without its predicate, which supabase-js doesn't emit → `42P10`. Applied (verified no duplicate non-null rows first; behavior-preserving since NULLs stay distinct in a plain unique index):
+```sql
+CREATE UNIQUE INDEX IF NOT EXISTS carrier_adjustments_source_event_id_key ON public.carrier_adjustments (source_event_id);
+DROP INDEX IF EXISTS carrier_adjustments_source_event_id_uidx;
+```
+
+**Regression guard:** [`tests/unit/schemaColumnAudit.test.ts`](tests/unit/schemaColumnAudit.test.ts) statically validates every select/filter/insert/update/upsert column under `supabase/functions/` against a prod schema snapshot (regen SQL in the test header). Proven bidirectional: fails on pre-fix main naming exactly the 4 sites, passes on the fix. 632/632 unit, `tsc` clean.
+
+**Still broken → spun out (NOT a launch blocker; H2 is SendMo-margin-side, manually recoverable via the reconciliation tab):** bug 5 — per-shipment cap **double-counts** (the `carrier_adjustment` cost row is inserted before `resolveRecovery`'s cap check reads it, then `rechargeAmount` is added on top → a single $5 adjustment computes `500+600 > 1000` and flags). Downstream steps (recharge PI, `charge.succeeded` ledger row, customer email) have also never run live. Owned by H2 repair task `task_b4e647bf` — comprehensive fix + real integration test + proposal.
+
+**Known live-ledger artifact:** the last verification run left one synthetic `-$5` `carrier_adjustment` row on live shipment **4Z8ZJZX** (`idempotency_key=carrier_adjustment_si_synth_t22_1784099116`), resolved `flag`/`cap_breach` — append-only, so it stays. Treat as a test artifact in reconciliation, not a real reweigh.
+
+**Browser-verified:**
+  n/a-category: infra
+  n/a-reason: Edge-function DB-query column/constraint fixes + one index migration; no rendered surface changed (the tracking-admin/api.ts type fix repairs a never-worked admin debug field). Verified directly against prod: the synthetic ShipmentInvoice now passes the shipment lookup + upsert (previously errored), confirmed via `event_logs` + `carrier_adjustments`/`transactions` rows through the Supabase MCP.
+
 ### [2026-07-09] Statement-descriptor suffix now persisted on `stripe_intents` — support can match a card-statement line to a transaction
 
 **Category:** fix | Payments | Support | Edge Functions
