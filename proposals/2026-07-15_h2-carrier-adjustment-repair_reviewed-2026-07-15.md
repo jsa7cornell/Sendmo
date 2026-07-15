@@ -448,3 +448,23 @@ Round-1 response. **Verdict accepted: approve-with-changes, zero unresolved disa
 **Net change to the plan:** the diagnosis (bugs 5–8), the cap-semantics decision (restore §2.4), the RPC column fix, the atomic per-shipment-basis fix, the local harness, and the audit extensions all stand. The **only** design change is *where* bugs 6+8 are fixed: in `stripe-webhook` (sole writer, derive-key + patch-`recovery_tx_id`) instead of a new synchronous writer in `resolveRecovery`. This *removes* files/edits from the plan (no `resolveRecovery` transactions insert, no skip guard, no Rule 16 amendment) — strictly simpler.
 
 **Awaiting John's decision** to move to implementation. Nothing is unresolved between author and reviewer.
+
+## Addendum — admin alert on live outcomes (John requirement, 2026-07-15, post-review)
+
+John asked to **be emailed any time H2 fires on a live shipment.** Scope chosen: **recharge + flag** (the money-moving and needs-your-review outcomes); silent `absorb` cases (≤$1, carrier credit, comp) do **not** email. This is an ops-visibility requirement layered on the repair — the point is that H2 has never run live, so its first real firings should be visible, not buried in `event_logs`.
+
+**Design — extend the existing `_shared/alert.ts:sendAdminAlert` (Rule 6, no new construct).** It already has exactly the two framings needed:
+- **`flag` → `variant:"alert"`** (red "[SendMo ALERT] …", needs-a-human): fires on the three flag branches in `resolveRecovery` — `above_ceiling` (>$10), `no_saved_pm`, and `cap_breach`. Rows: public_code, carrier, reason, `delta_cents`, flag reason (+ `blocked_by_cap` when present). `actionUrl` → `${APP_URL}/admin?shipment=<id>` so John can act.
+- **`recharge` (succeeded) → `variant:"notice"`** (blue "[SendMo] …", routine FYI): fires after `markAdjustmentResolved(...,"recovered",...)`. Rows: public_code, carrier, reason, `delta_cents`, `recharge_amount` (delta+fee), `pi_id`.
+
+**Guards:**
+- **Live only** — gate every send on `!shipment.is_test`, so test-mode verification and the integration harness never email John.
+- **Dedup per `carrier_adjustment_id`** — reuse the same `notifications_log` marker pattern the customer email already uses (`sendCarrierAdjustmentEmail`), with a distinct `event_type` (e.g. `admin_alert.carrier_adjustment:<id>`), so a `.updated` re-fire or webhook retry doesn't double-email. `sendAdminAlert` already never throws, so a send failure can't break recovery.
+
+**Send-sites (all in `_shared/adjustments.ts:resolveRecovery`):** the three `flag` returns and the successful-`recharge` return. No new files; ~1 helper + 4 call-sites. Rides the same PR.
+
+**Test coverage:** the local-Postgres integration test (§5) asserts the `notifications_log` admin-alert marker is written for a live recharge and a live flag, and is **absent** for a test-mode run and for an `absorb`. Unit test asserts `sendAdminAlert` is called with `variant:"alert"` on flag and `variant:"notice"` on recharge, and not at all when `is_test`.
+
+**Reconciliation with the customer email:** unchanged. The customer still gets `carrierAdjustmentEmail` on a successful recharge (N5 send-site); this admin alert is a **separate** email to `SENDMO_ADMIN_EMAIL`, deduped independently. A live recharge therefore sends two emails (customer + admin notice); a live flag sends one (admin alert only — no customer charge happened).
+
+**Status of this addendum:** added after the round-1 review at John's request. It's small and uses an already-reviewed primitive, so I don't think it needs a fresh review round — but flagging it so the next session knows it post-dates the Review section. Folds into the same implementation.
