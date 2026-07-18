@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useParams, Link } from "react-router-dom";
 import { Printer, ArrowLeft, ExternalLink, AlertCircle, Info } from "lucide-react";
 import AppHeader from "@/components/AppHeader";
@@ -52,6 +52,34 @@ export default function LabelPrintPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [imgFailed, setImgFailed] = useState(false);
+
+  // Screen-preview scale. The sheet is a physical 8.5in (816px @96dpi); cap the
+  // preview at 0.44 on wide screens but shrink to fit narrow phones so the page
+  // never scrolls horizontally (iPhone SE @320 would otherwise overflow ~55px).
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [scale, setScale] = useState(0.44);
+  useEffect(() => {
+    const el = contentRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    // Guard against transient 0-width measurements (mount / hidden / reflow):
+    // clientWidth 0 would compute scale 0 and collapse the preview until the
+    // next resize. Ignore non-positive widths and keep the prior scale.
+    const compute = () => {
+      const w = el.clientWidth;
+      if (w > 0) setScale(Math.min(0.44, w / (8.5 * 96)));
+    };
+    compute();
+    const ro = new ResizeObserver(compute);
+    ro.observe(el);
+    // Window listeners back up the observer for viewport/orientation changes.
+    window.addEventListener("resize", compute);
+    window.addEventListener("orientationchange", compute);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", compute);
+      window.removeEventListener("orientationchange", compute);
+    };
+  }, [data, imgFailed]);
 
   const [preset, setPreset] = useState<Preset>(() => {
     try {
@@ -116,14 +144,14 @@ export default function LabelPrintPage() {
       <style>{`
         @media screen {
           .paper {
-            transform: scale(0.44);
+            transform: scale(var(--s, 0.44));
             transform-origin: top left;
             background: #fff;
             box-shadow: 0 1px 8px rgba(0,0,0,0.15);
           }
           .preview-wrap {
-            width: calc(8.5in * 0.44);
-            height: calc(11in * 0.44);
+            width: calc(8.5in * var(--s, 0.44));
+            height: calc(11in * var(--s, 0.44));
             overflow: hidden;
             margin: 0 auto;
           }
@@ -202,7 +230,7 @@ export default function LabelPrintPage() {
         )}
 
         {data && labelUrl && (
-          <div className="space-y-5">
+          <div className="space-y-5" ref={contentRef}>
             {/* Header + back link */}
             <div className="no-print flex items-center justify-between">
               <h1 className="text-xl font-bold text-foreground">Print your label</h1>
@@ -248,7 +276,7 @@ export default function LabelPrintPage() {
                 </p>
               </div>
             ) : (
-              <div className="preview-wrap" id="print-root">
+              <div className="preview-wrap" id="print-root" style={{ ["--s" as string]: scale } as CSSProperties}>
                 <div className={`paper sheet-${preset}`}>
                   <div className="label-group">
                     {preset === "half" ? (

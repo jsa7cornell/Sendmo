@@ -12,6 +12,18 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-07-17] Label print page — mobile responsive follow-up (PR after #54)
+
+**Category:** fix | Tracking | Frontend
+**Deploy:** In PR (after #54, both awaiting the same Vercel deploy — build was rate-limited on the #54 merge, "retry in 24h").
+**Cross-link:** [`src/pages/LabelPrintPage.tsx`](src/pages/LabelPrintPage.tsx) | follows the [2026-07-17] label-print-page entry below.
+
+**Bug found in mobile check:** the screen preview scale was hardcoded `0.44` → the Letter-sheet preview was a fixed ~359px, so phones ≤~360px wide (iPhone SE @320) got **~55px of horizontal page scroll** (violates no-horizontal-scroll). Fix: a `ResizeObserver` on the content container sets `--s = min(0.44, availWidth / 816px)`, consumed by the screen-only CSS; print CSS is untouched (still real inches). Guarded against transient **0-width** measurements (would compute scale 0 and collapse the preview) by ignoring non-positive widths; added `window` resize/orientationchange listeners as backup.
+
+**Browser-verified:**
+  mcp-session: fresh loads on Vite dev at 320 / 375 / 1280px — 320 scales to 0.353 (288px preview, **no horizontal overflow**), 1280 caps at 0.44 (359px). Half-sheet + tips + raw-label link + drop-off strip all render clean on 320px. (In-place `resize_window` doesn't fire DOM resize events in the harness, so orientation re-scaling is covered by code + real-device fresh-load parity, not re-verified live.)
+  variants-covered: 320px / 375px / 1280px fresh loads; 4×6 + half-sheet presets on mobile.
+
 ### [2026-07-17] Label print page — SendMo-owned print experience replaces the raw-file tab; verification overturned the "it's a PDF" assumption
 
 **Category:** ship | Tracking | Frontend
