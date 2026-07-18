@@ -22,8 +22,8 @@ type Preset = "half" | "label4x6" | "full";
 
 const PRESET_KEY = "sendmo:printPreset";
 const PRESETS: { id: Preset; label: string; hint: string }[] = [
+  { id: "label4x6", label: "4×6 label", hint: "Native 4×6, top-left. The carrier label untouched — prints the same on any printer." },
   { id: "half", label: "Half sheet", hint: "Label rotated onto the top half of a Letter page — fold or tear, save paper." },
-  { id: "label4x6", label: "4×6 label", hint: "Native 4×6, top-left. For thermal label printers and cut-to-size." },
   { id: "full", label: "Full page", hint: "Enlarged to fill a Letter page — biggest and easiest to read." },
 ];
 
@@ -58,7 +58,8 @@ export default function LabelPrintPage() {
       const saved = localStorage.getItem(PRESET_KEY);
       if (saved === "half" || saved === "label4x6" || saved === "full") return saved;
     } catch { /* localStorage unavailable — fall through to default */ }
-    return "half"; // default per decision OQ2
+    return "label4x6"; // default: the untouched carrier label. Half-sheet is
+    // promoted to default once it's physically print+scan-proven (see LOG).
   });
 
   useEffect(() => {
