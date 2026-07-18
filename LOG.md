@@ -12,6 +12,20 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-07-17] Seller Link (3rd shipment type) — proposed → reviewed → DECIDED same day
+
+**Category:** decision | Onboarding | Payments
+**Deploy:** None — decided proposal, implementation pending (no code yet).
+**Cross-link:** [proposals/2026-07-17_seller-link-buyer-pays_reviewed-2026-07-17_decided-2026-07-17.md](proposals/2026-07-17_seller-link-buyer-pays_reviewed-2026-07-17_decided-2026-07-17.md) | supersedes WISHLIST "Seller Marketplace Link" | mockup [previews/onboarding-seller-card-concepts.html](previews/onboarding-seller-card-concepts.html)
+
+**What & why:** a third shipment type where the **seller** creates a link (origin + package pre-specced) and the **buyer** pays **on-session** (Stripe Payment Element) — the mirror of the recipient-pays flex link, and the first time in SendMo that someone other than the account holder pays. Driven by eBay-seller feedback that SendMo is too buyer-focused. Scope is the *buyer-pays* link (off-platform / FB Marketplace / Craigslist / IG); the *seller-pays* eBay/Pirate-Ship tool with order-API import is explicitly a separate future effort.
+
+**Decisions (John, 2026-07-17):** OQ1 → **third card** on `/onboarding` (emerald accent + "Buyer pays" pill on all three cards + heading reframed "How do you want to ship?"; routes to a separate seller-builder, not the recipient state machine). OQ2 → **single table** (additive columns on `sendmo_links` + airtight per-`link_type` CHECK) over a separate `seller_links` table — deciding factor: the whole shipments/tracking/refund/ledger/admin stack keys off `shipments.link_id → sendmo_links`, so a split forces a polymorphic FK or a parallel shipment stack. OQ3 → buyer charge anchors to the seller as merchant-of-record, **excluded from `checkAccountBudget`**, reconciled per-link via `transactions.link_id`. OQ6 → **seller may cancel+refund the buyer's label, with mandatory buyer notification.**
+
+**Review caught (all accepted):** B1 — `status='used'` was renamed to `'in_use'` in migration 020; the proposal's reuse would have thrown a CHECK violation (same class as the 2026-07-16 H2 nonexistent-column incident). B2 — the stripe-webhook only writes the ledger, never buys; "webhook buys on success" was a new inversion risking double-buys → use the client-triggered synchronous `labels/` buy. B3 (blind spot) — refund emails/receipts/ledger are hardcoded to `link.user_id` (`cancel-label:448` "payer is the link owner"), so as-written the **seller** would get the buyer's refund email; the "payer can always manage their purchase" invariant needs real payer-identity rewiring across `cancel-label`/`tracking`/emails. B4/B5 — server-derive price from the buyer's `rate_id` (not the D1-vulnerable full-label leg) and enforce carrier constraints at buy-time.
+
+**Honest scope:** **two** new builds, not one — the on-session buyer checkout *and* the payer-identity rewiring. Implement in a worktree off `main`, ~6 PRs.
+
 ### [2026-07-17] Label print page — item description printed in the blank sheet area
 
 **Category:** ship | Tracking | Frontend
