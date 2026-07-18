@@ -12,6 +12,24 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-07-17] Label print page — SendMo-owned print experience replaces the raw-file tab; verification overturned the "it's a PDF" assumption
+
+**Category:** ship | Tracking | Frontend
+**Deploy:** In PR (not merged, not deployed). Frontend-only → Vercel auto-deploy on merge to `main`.
+**Cross-link:** [proposals/2026-07-17_label-print-page.md](proposals/2026-07-17_label-print-page.md) (decided 2026-07-17, 7 OQs resolved) | [`src/pages/LabelPrintPage.tsx`](src/pages/LabelPrintPage.tsx) | [`TrackingPage.tsx`](src/pages/TrackingPage.tsx) | [`App.tsx`](src/App.tsx)
+
+**What & why:** users asked for a print *page* (buttons + printer-config info) instead of the raw carrier file dumping into a browser tab, and specifically to print the label on **half a page**. New route `/t/:code/print` with three layout presets (**4×6 default**, half-sheet, full-page), printer-config tips, reused `HowToShipStrip`, and an always-present raw-label fallback link. (Default was set to 4×6 — the untouched carrier label, lowest scan risk — rather than half-sheet, so merge doesn't gate on a physical printer; half-sheet gets promoted to default once it's print+scan-proven.) Tracking-page "Print" CTA now routes here (primary); print-count logging moved to the print page's Print action (removed `handlePrintClick` + `optimisticPrintBump` from TrackingPage).
+
+**The load-bearing gotcha (verified against prod, do not re-assume):** the carrier label is a **PNG, not a PDF** — `easypost-files.s3…/*.png`, `Content-Type: image/png`, **1200×1800 = exactly 4×6 portrait @300dpi**, and **S3 serves no CORS**. Consequences: (1) the print page is just `<img src={label_url}>` + print CSS — no pdf.js, no conversion, no fetch; (2) half-sheet must **rotate the portrait label 90°** to 6×4 landscape to fit the top 5.5″ of Letter **at native size** (a 6″-tall label does not fit portrait) — no down-scaling, so the barcode is never shrunk.
+
+**Two pre-existing bugs the verification exposed (fixed here):** (A) the Download handler `fetch()`es the label → CORS-blocked → silently falls back to `window.open`, so "Download" never actually downloaded — left as raw-open for now (a true proxied download is the deferred fast-follow, OQ5); (B) it named the file `sendmo-<code>.pdf` on PNG bytes → corrected to `.png`. Note: the dead "Print Label (PDF)" copy lives only in `ShipmentLabelSection.tsx`, which is **not imported anywhere** (dead code) — left untouched.
+
+**Deferred (fast-follow):** a same-origin label-download proxy edge function (`Content-Disposition` + `.png`) for a true one-click download (proposal §3.5 / OQ5).
+
+**Browser-verified:**
+  mcp-session: Claude Browser pane on `localhost:5173/t/KMDCNEW/print` (Vite dev). All three presets render; measured the unscaled (print-truth) geometry via `offsetWidth`: paper = exactly 8.5×11in; full-page img 6.667×10in (aspect-correct); **half-sheet rot-wrap 6×4in with the native 4×6in image rotated inside (no scaling), label group 0.5in from top, fold guide at exactly 5.5in**. Raw-label link present → points at the real S3 PNG; printer tips + HowToShip present; preset persists to `localStorage` (`sendmo:printPreset`); tracking-page Print CTA `href` now `/t/KMDCNEW/print`. No console errors. `tsc -b` clean, 632/632 unit green.
+  variants-covered: half-sheet (default, rotated), 4×6 (native top-left), full-page (enlarged) presets; label-present happy path. NOTE — physical acceptance still owed: a **real print + carrier barcode-scan test of the half-sheet output** is the true gate per the proposal (browser layout is verified; a scanner is not).
+
 ### [2026-07-15] H2 carrier-adjustments was DEAD in prod — T2-2 live verification found 4 nonexistent-column/constraint bugs (3 fixed + deployed, cap bug spun out)
 
 **Category:** fix | Payments | Edge Functions | Launch | Schema
