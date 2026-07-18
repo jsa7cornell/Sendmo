@@ -12,6 +12,24 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-07-17] Tracking page rendered literal "unknown" for just-created labels — EasyPost `unknown` status leaked through untranslated
+
+**Category:** fix | Tracking | Edge Functions
+**Deploy:** `supabase functions deploy tracking` → deployed to prod (fkxykvzsqdjzhurntgah) 2026-07-17, ahead of PR #53 merge to close the live window.
+**Cross-link:** [PR #53](https://github.com/jsa7cornell/Sendmo/pull/53) | [`supabase/functions/tracking/index.ts`](supabase/functions/tracking/index.ts) L134 | repro shipment `KMDCNEW`
+
+**The bug (found via a real user screenshot):** the public tracking page showed a big **"unknown"** header for a label bought ~2 min earlier. Record itself was healthy (`status=label_created`, item/carrier/tracking all present, `updated_at == created_at`).
+
+**Root cause chain:** the `tracking` fn polls EasyPost live on every view. A brand-new, unscanned label returns `tracker.status: "unknown"` from EasyPost. L134 only translated `pre_transit` → `label_created`, so `unknown` passed straight into the response (`status: liveStatus`, L651). The frontend has no lifecycle/`STATUS_CONFIG` mapping for `unknown` → [`TrackingPage.tsx`](src/pages/TrackingPage.tsx) L887 UNKNOWN-STATUS-FALLBACK branch printed the raw string as the `<h1>`. Self-healing (corrects on first carrier scan) but an alarming first impression right after purchase.
+
+**Gotcha uncovered:** the write-back `UPDATE shipments SET status='unknown'` (L160) silently violated `shipments_status_check` (allowed set: label_created/in_transit/out_for_delivery/delivered/return_to_sender/cancelled — no `unknown`). The exception was swallowed by the catch at L465, so the row was never corrupted — which is exactly why `updated_at == created_at`. The bad value only ever leaked to the client, never to storage.
+
+**Fix:** L134 now maps `pre_transit` **and** `unknown` → `label_created` (both mean "label created, not yet in the carrier's system").
+
+**Browser-verified:**
+  mcp-session: Claude Browser pane loaded https://sendmo.co/t/KMDCNEW post-deploy — hero now renders "Your label is ready to print — waiting for drop-off!" (pre-dropoff F1) instead of "unknown"; item "RTX 2070 Super GPU" intact. Deployed endpoint returns `status: 'label_created'`.
+  variants-covered: pre-dropoff hero for a label whose EasyPost tracker reports `unknown`/`pre_transit` (the reported failure mode). Downstream statuses (in_transit/delivered/terminal) unchanged by this one-line map.
+
 ### [2026-07-15] H2 carrier-adjustments was DEAD in prod — T2-2 live verification found 4 nonexistent-column/constraint bugs (3 fixed + deployed, cap bug spun out)
 
 **Category:** fix | Payments | Edge Functions | Launch | Schema
@@ -4107,6 +4125,14 @@ Returns the new `shipments.id`. Called via `supabase.rpc('admin_insert_shipment'
 ## Deploy Log
 
 Every merge to `main` triggers a Vercel auto-deploy. This section tracks what shipped and when.
+
+### [2026-07-17] — Tracking "unknown" status fix (PR #53)
+
+**Branch:** `fix/tracking-unknown-status-map` → PR #53 open (not yet merged).
+**Deploy:** `supabase functions deploy tracking` run directly against prod (fkxykvzsqdjzhurntgah) 2026-07-17, ahead of merge, to close the live user-facing window. Bundled `tracking/index.ts` + `_shared/*`.
+
+**What shipped**
+- `tracking/index.ts` L134 now maps EasyPost `unknown` (as well as `pre_transit`) → `label_created`. Stops the public tracking page from rendering a literal "unknown" header for freshly-created, unscanned labels, and stops the swallowed `shipments_status_check` violation on the DB write-back. Details/see Decisions entry above.
 
 ### [2026-07-06] — Receipt card last4 + stranded x-cancel-token CORS fix (PR #44)
 
