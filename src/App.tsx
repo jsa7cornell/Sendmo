@@ -19,6 +19,7 @@ import SenderPreview from "@/pages/SenderPreview";
 import HeaderPreview from "@/pages/HeaderPreview";
 import LinkSharePreview from "@/pages/LinkSharePreview";
 import TrackingPage from "@/pages/TrackingPage";
+import LabelPrintPage from "@/pages/LabelPrintPage";
 import LegacyTrackingRedirect from "@/pages/LegacyTrackingRedirect";
 import LinksNew from "@/pages/LinksNew";
 import LinksEdit from "@/pages/LinksEdit";
@@ -107,6 +108,7 @@ function App() {
           <Route path="/admin/shipments/:public_code" element={<AdminShipmentDetail />} />
           <Route path="/admin/users/:userId" element={<AdminUserDetail />} />
           <Route path="/t/:code" element={<TrackingPage />} />
+          <Route path="/t/:code/print" element={<LabelPrintPage />} />
           <Route path="/track/:trackingNumber" element={<LegacyTrackingRedirect />} />
           <Route path="/label-test" element={<LabelTest />} />
           <Route path="/sender-preview" element={<SenderPreview />} />

@@ -18,7 +18,7 @@ import ReceiptBlock from "@/components/tracking/ReceiptBlock";
 import PaidByRecipientBlock from "@/components/tracking/PaidByRecipientBlock";
 import HelpLink from "@/components/tracking/HelpLink";
 import { Button } from "@/components/ui/button";
-import { cancelShipment, logLabelPrint } from "@/lib/api";
+import { cancelShipment } from "@/lib/api";
 
 const BASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
 
@@ -229,7 +229,6 @@ export default function TrackingPage() {
   // Optimistic bump for the print-count chip. The server count comes back on
   // the next tracking refetch; in the meantime the chip says what the user
   // expects. Rollback on POST failure (N3).
-  const [optimisticPrintBump, setOptimisticPrintBump] = useState(0);
   // Dialog state for Cancel + Change. Single state with a mode discriminator
   // so we don't render two dialogs.
   const [confirmMode, setConfirmMode] = useState<"cancel" | "change" | null>(null);
@@ -291,28 +290,9 @@ export default function TrackingPage() {
     return data.viewer_is_recipient ? "payer" : "anonymous";
   })();
 
-  // Fire the print-log POST on Print click + optimistically bump the chip,
-  // then refetch tracking data so data.print_count reflects truth (the
-  // optimistic bump was unreliable across new-tab + back-navigation flows).
-  async function handlePrintClick() {
-    if (!code) return;
-    setOptimisticPrintBump(b => b + 1);
-    try {
-      const { data: { session } } = await supabaseClient.auth.getSession();
-      const cancelToken = readCancelToken(code);
-      await logLabelPrint(code, {
-        accessToken: session?.access_token,
-        cancelToken: cancelToken ?? undefined,
-      });
-      // Refetch tracking to pick up the new server-side print_count.
-      // Reset optimistic bump on the next data load so we don't double-count.
-      setRefetchTick(t => t + 1);
-      setOptimisticPrintBump(0);
-    } catch {
-      // Rollback the optimistic bump. Server state didn't move; no refetch.
-      setOptimisticPrintBump(b => Math.max(0, b - 1));
-    }
-  }
+  // Print-count logging now lives on the dedicated print page (/t/:code/print),
+  // where the actual Print action happens. Returning here re-mounts and refetches,
+  // so data.print_count reflects the server truth.
 
   // Download the label as a true file download (cross-origin = the HTML5
   // <a download> attribute is ignored by browsers, so we fetch the PDF as a
@@ -325,7 +305,7 @@ export default function TrackingPage() {
       const blobUrl = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = blobUrl;
-      a.download = `sendmo-${publicCode}.pdf`;
+      a.download = `sendmo-${publicCode}.png`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -467,19 +447,16 @@ export default function TrackingPage() {
   // Count surfaces as a small line BELOW the row.
   function ActionButtonsRow() {
     if (!data || !data.label_url) return null;
-    const printCount = (data.print_count ?? 0) + optimisticPrintBump;
+    const printCount = data.print_count ?? 0;
     const printed = printCount > 0;
     return (
       <div className="space-y-2">
         <div className="grid grid-cols-2 gap-2">
-          {/* Print button — soft-green tint when printed */}
-          <a
-            href={data.label_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={handlePrintClick}
-            className="block"
-          >
+          {/* Print button — now routes to the SendMo print page (presets +
+              printer tips + always-present raw-label link) instead of dumping
+              the raw label file into a tab. Proposal 2026-07-17_label-print-page.
+              Soft-green tint when already printed. */}
+          <Link to={`/t/${code}/print`} className="block">
             <Button
               className={`w-full rounded-xl py-5 text-sm font-semibold ${
                 printed
@@ -491,10 +468,10 @@ export default function TrackingPage() {
               <Printer className="w-4 h-4 mr-2" />
               Print
             </Button>
-          </a>
+          </Link>
 
-          {/* Download button — fetches PDF as blob to force download
-              (cross-origin <a download> attribute is ignored by browsers). */}
+          {/* Download button — fetches the label as a blob to force a download
+              (cross-origin <a download> is ignored by browsers). */}
           <Button
             variant="outline"
             className="w-full rounded-xl py-5 text-sm font-semibold"
@@ -786,7 +763,7 @@ export default function TrackingPage() {
                   {/* How to ship strip */}
                   <HowToShipStrip
                     carrier={data.carrier}
-                    printDone={(data.print_count ?? 0) + optimisticPrintBump > 0}
+                    printDone={(data.print_count ?? 0) > 0}
                   />
 
                   {/* DetailsCard (family=1) + footer: Cancel (when eligible) + Help */}
