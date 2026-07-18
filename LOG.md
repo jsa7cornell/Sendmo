@@ -12,6 +12,18 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-07-17] Label print page — item description printed in the blank sheet area
+
+**Category:** ship | Tracking | Frontend
+**Deploy:** In PR (stacks on #54/#55; same pending Vercel deploy).
+**Cross-link:** [`src/pages/LabelPrintPage.tsx`](src/pages/LabelPrintPage.tsx) | user request "show the item description on the side of the page that isn't the label."
+
+**What:** the print page now prints `data.item_description` (already in the tracking response, migration 021) as a "Contents" block in the empty sheet area — **never over the label**. Per preset: 4×6 → right of the label; half-sheet → the empty bottom half; full-page → hidden via CSS (label fills the sheet, no room). Pure additive `<div className="item-desc">` inside `#print-root` with preset-scoped absolute positioning; no data/schema change.
+
+**Browser-verified:**
+  mcp-session: Vite dev `/t/KMDCNEW/print` — "CONTENTS / RTX 2070 Super GPU" renders right-of-label (4×6) and in the bottom half (half-sheet); `.item-desc` computed `display:none` on full-page. No label overlap in any preset.
+  variants-covered: 4×6 (right), half-sheet (bottom), full-page (hidden). item_description-present path; absent → block not rendered (guarded by `data.item_description &&`).
+
 ### [2026-07-17] Label print page — mobile responsive follow-up (PR after #54)
 
 **Category:** fix | Tracking | Frontend
