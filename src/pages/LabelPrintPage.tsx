@@ -184,6 +184,23 @@ export default function LabelPrintPage() {
         .sheet-full .label-group { inset: 0; display: flex; align-items: center; justify-content: center; }
         .sheet-full .label-group img { width: 6.667in; height: 10in; display: block; }
 
+        /* Item description printed in the blank sheet area, never over the label.
+           4x6: to the right of the label. Half-sheet: in the empty bottom half.
+           Full-page: no room (label fills the sheet) → hidden. */
+        .item-desc {
+          position: absolute;
+          font-family: system-ui, -apple-system, sans-serif;
+          color: #111;
+          box-sizing: border-box;
+        }
+        .item-desc .k {
+          font-size: 9pt; text-transform: uppercase; letter-spacing: 0.04em; color: #666;
+        }
+        .item-desc .v { font-size: 13pt; font-weight: 600; margin-top: 2px; word-break: break-word; }
+        .sheet-label4x6 .item-desc { top: 0.6in; left: 5in; width: 3in; }
+        .sheet-half .item-desc { top: 6in; left: 0.5in; width: 7.5in; }
+        .sheet-full .item-desc { display: none; }
+
         @media print {
           @page { size: letter portrait; margin: 0; }
           html, body { margin: 0 !important; padding: 0 !important; background: #fff !important; }
@@ -289,6 +306,14 @@ export default function LabelPrintPage() {
                   </div>
                   {preset === "half" && (
                     <div className="fold"><span>fold / tear</span></div>
+                  )}
+                  {/* Item description printed in the blank sheet area (never over
+                      the label). Hidden on full-page via CSS (no room). */}
+                  {data.item_description && (
+                    <div className="item-desc">
+                      <div className="k">Contents</div>
+                      <div className="v">{data.item_description}</div>
+                    </div>
                   )}
                 </div>
               </div>
