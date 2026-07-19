@@ -12,6 +12,23 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-07-19] Seller Link M1 — seller-checkout + rates/ seller branch DEPLOYED TO PROD + verified (test mode)
+
+**Category:** deploy | Payments | Seller Link
+**Deploy:** `seller-checkout` (new) + `rates/` (seller_link branch) deployed to PROD via CI dispatch from `seller-link` branch, 2026-07-19. Test-mode verified.
+**Cross-link:** plan `~/.claude/plans/zazzy-toasting-parrot.md` (M1) | [supabase/functions/seller-checkout/index.ts](supabase/functions/seller-checkout/index.ts) | [supabase/functions/rates/index.ts](supabase/functions/rates/index.ts)
+
+**What:** first backend of the buyer-pays money path is live on prod. `seller-checkout` (on-session PI, server-gated amount) got the review fixes before deploy — **buyer_email now REQUIRED (B2)**, **link_id + buyer_email added to PI metadata (F2** → webhook stamps `transactions.link_id` so N1 budget-exclusion can key off it**)**, and **`[functions.seller-checkout] verify_jwt=false` pinned in config.toml** (absent-section-401 incident class). `rates/` gained the seller_link branch (resolves origin+package+carrier from the link server-side; buyer supplies only destination).
+
+**Verified on prod (test mode):**
+- `seller-checkout` smoke: `POST {}` → **HTTP 400** "Missing or invalid link_short_code" — loads clean (no 500), gateway allows anon (no 401 → verify_jwt pin works).
+- `rates/` **regression** (existing non-seller path, from+to+parcel, no link) → **HTTP 200** with real rates (UPSDAP/USPS) — the top-of-function restructure did NOT break live flex/full-label rate-shopping.
+- `rates/` **seller path**: seeded a test `seller_link` (`SELLTEST01`, is_test=true, SF origin + 10×8×4/16oz + $100 cap; the airtight per-type CHECK accepted origin-set/recipient-null). Buyer `POST {to_address, link_short_code}` (no from/parcel) → **HTTP 200** with priced rates resolved from the link's origin+package.
+
+**Gotcha confirmed:** test mode isolates the *money*, not the *code* — a shared-function bug would break live buys regardless of mode, so each shared deploy (`rates` here) is regression-tested against the existing paths immediately. Held.
+
+**Test data on prod:** seller_link `SELLTEST01` (is_test) + its origin address remain for M2–M4 testing; clean up at M7.
+
 ### [2026-07-18] Seller Link — migration 040 APPLIED TO PROD (build-on-prod, per John)
 
 **Category:** deploy | Schema | Payments
