@@ -42,7 +42,7 @@ describe("App Routing", () => {
         window.history.pushState({}, "Test page", "/onboarding");
         render(<App />);
         await waitFor(() => {
-            expect(screen.getByText("How should we set up your prepaid shipment?")).toBeInTheDocument();
+            expect(screen.getByText("How do you want to ship?")).toBeInTheDocument();
         });
     });
 
