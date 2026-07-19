@@ -12,6 +12,25 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-07-18] Admin "New label created" notice — enriched to full shipment detail (fraud-review)
+
+**Category:** feat | Labels | Observability
+**Deploy:** In PR #57 — not merged, not deployed. Deploys the `labels` edge function on merge to `main`.
+**Cross-link:** [PR #57](https://github.com/jsa7cornell/Sendmo/pull/57) | prompted by the first live package (KMDCNEW, 2026-07-17) | new `_shared/label-notice.ts` + `_shared/alert.ts` + `labels/index.ts`
+
+**What & why:** the per-label admin FYI (`sendAdminAlert` variant `notice`, fired on every successful label — test/comp/live) previously carried 7 rows (mode, carrier, charged, SendMo cost, tracking, city→city, public code). John wants every transaction to support a manual fraud check + learning, so it now surfaces **everything in scope**, grouped into **Shipment / Parties / Money / IDs**: both parties' names/emails/phones, **sender IP**, full from/to addresses, item description, parcel weight+dims, ETA; a full cost breakdown — charged, EasyPost cost, **est. Stripe fee (2.9% + 30¢)**, **est. net margin**, flex price cap, payment method, Stripe PI id + status; plus all IDs (EasyPost shipment/tracker, SendMo shipment UUID, link code, session). KMDCNEW reads charged $12.14 / EP $9.69 / fee $0.65 / **net margin $1.80**; comp → $0.00 charged, margin −$9.69 (SendMo eats the carrier cost).
+
+**How / gotchas:**
+- `_shared/alert.ts` — `AdminAlertRow` gains an optional `heading` flag (full-width bold section-header row); extracted a pure `renderAdminAlertEmail()` from `sendAdminAlert()` so the markup is unit-testable/previewable without a live send. Backward compatible — the 6 existing alert callers are untouched.
+- `_shared/label-notice.ts` (**new**) — pure `buildLabelCreatedNoticeRows(facts)`. Extracted out of the handler deliberately: `labels/index.ts` calls `serve()` at import, so it can't be unit-imported — the Stripe-fee/net-margin math needed a home vitest can reach.
+- Builder is provably non-throwing (typed primitives + `?.` / `?? ""` / `Number()→||null` guards), preserving the "a notice failure never breaks label-buy" contract. PII in the body is intended (admin's own inbox); all row values are HTML-escaped; nothing added to `event_logs`.
+
+**Tests:** `tests/unit/label-notice.test.ts` (10 — margin math, comp/flex variants, full-address formatting, gap `—`) + 2 new `alert.test.ts` heading-row cases. **644 unit green**, `tsc -b --noEmit` clean. (Deno type-check of `labels/index.ts` runs on the PR / merge-deploy — Deno isn't installed locally.)
+
+**Browser-verified:**
+  mcp-session: previews/admin-label-notice.html — rendered live full-prepaid + live comp/flex emails through the real `renderAdminAlertEmail` + `buildLabelCreatedNoticeRows` path; screenshot in session transcript
+  variants-covered: [live/full-prepaid, comp/flexible-link, sparse/missing-fields]
+
 ### [2026-07-17] Seller Link (3rd shipment type) — proposed → reviewed → DECIDED same day
 
 **Category:** decision | Onboarding | Payments
