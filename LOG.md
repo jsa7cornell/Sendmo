@@ -4183,6 +4183,18 @@ Returns the new `shipments.id`. Called via `supabase.rpc('admin_insert_shipment'
 
 Every merge to `main` triggers a Vercel auto-deploy. This section tracks what shipped and when.
 
+### [2026-07-18] — Label print page + mobile scale + item description (PRs #54, #55, #56)
+
+**Branches:** `feat/label-print-page` (#54), `fix/label-print-mobile-scale` (#55), `feat/print-item-description` (#56) → all squash-merged to `main` (HEAD `3119a35`).
+**Deploy:** Vercel production auto-deploy — **delayed ~a day**: the #54/#55/#56 merges all hit a Vercel **Hobby-plan deployment rate limit** ("retry in 24h", account-wide cap shared across all of John's projects; SendMo itself only made 3 preview deploys — not the culprit). Once the window cleared, the deploy went green. **Verified live 2026-07-18**: prod bundle `index-D9ru1gvu.js` contains the print page (`Open the raw label file`), tips, responsive `orientationchange` handler, `sheet-half`, and the `item-desc`/`Contents` block. Frontend-only; no schema/edge changes.
+
+**What shipped**
+- New `/t/:code/print` route (`LabelPrintPage.tsx`) replacing the raw-file-in-a-tab Print flow: layout presets (**4×6 default**, half-sheet, full-page), printer-config tips, reused drop-off strip, always-present raw-label fallback link. Tracking-page "Print" CTA now routes here.
+- Item description printed as a "Contents" block in the blank sheet area (right of label on 4×6, bottom half on half-sheet, hidden on full-page).
+- Responsive preview scale (no horizontal scroll on ≤360px phones); guarded 0-width collapse.
+- Ride-along bug fixes: Download filename `.pdf`→`.png` (label is a PNG); mislabeled "(PDF)" copy. (Latent: Download `fetch()` is CORS-dead on S3 → falls back to `window.open`; true proxied download deferred.)
+**Gotcha for future deploys:** Vercel Hobby caps deployments/day **account-wide** across all projects, and **preview deploys count**. A day heavy on other projects (or many branch pushes) can rate-limit an unrelated project's prod deploy. Levers: upgrade to Pro, wait for the rolling window, or cut previews on the high-volume project. (SendMo is a commercial app on Stripe — Vercel Hobby is officially non-commercial, so Pro is warranted regardless.)
+
 ### [2026-07-06] — Receipt card last4 + stranded x-cancel-token CORS fix (PR #44)
 
 **Branch:** `claude/receipt-card-last4` → squash-merged to `main` as `82b983f` (21:51 UTC)
