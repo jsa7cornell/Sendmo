@@ -12,6 +12,26 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-07-19] Seller Link — high code-review (4 adversarial agents) + blocker fixes DEPLOYED to prod (test-mode)
+
+**Category:** fix | Payments | Seller Link | Security
+**Deploy:** `rates`, `seller-checkout`, `labels` redeployed to PROD via CI dispatch from `seller-link`, 2026-07-19 (commit `1ecf440`). Test-mode verified.
+**Cross-link:** [rates](supabase/functions/rates/index.ts) | [seller-checkout](supabase/functions/seller-checkout/index.ts) | [labels](supabase/functions/labels/index.ts) | WISHLIST "Seller Link — deferred follow-ups"
+
+**Review:** ran a 4-agent adversarial review of the money paths (labels buy-branch / payer-identity / anon endpoints / migration+RLS) + a 5th adversarial verify pass on the fix. The billed `/code-review ultra` cloud review is user-triggered (John runs it if he wants a second engine). Data-model/RLS got a clean bill (per-type CHECK airtight; buyer RLS correctly scoped — anon reads 0 rows, no enumeration by buyer_email; migration idempotent + correctly constraint-named; discriminator consistent).
+
+**🔴 BLOCKER found + FIXED + verified — shipment↔link binding.** The anonymous buyer supplied `easypost_shipment_id`, and neither `seller-checkout` nor `labels` verified it was minted from the link's origin+parcel → a buyer could mint a cheap 1oz shipment via the **no-link** `rates` path and pay its price for a label the seller applies to a real heavy item ("server derives amount" → "buyer picks amount"). **Fix:** `rates/` stamps EasyPost `shipment.reference = link.id` on the seller path (unforgeable — the no-link path never sets it, and minting via the seller path forces the link's parcel); `seller-checkout` verifies `reference === link.id` BEFORE pricing (403); `labels` verifies before the buy (refund + admin-alert backstop). **Verified on prod (test mode):** attack (cheap no-link shipment → seller-checkout) → **403 "does not belong to this seller link"**; legit (seller-path shipment) → **200** PI created; full-label regression → **402** unbroken.
+
+**Also fixed (same deploy):**
+- **HIGH — `buyer_email` atomicity** (flagged by 2 agents): the F1 marker was a non-fatal post-insert UPDATE; if it failed the SELLER saw the buyer's receipt/last4. Now retried 3× + `sendAdminAlert` on final failure.
+- **MEDIUM — kill switch:** `seller-checkout` now honors `SENDMO_LIVE_DEFAULT` (the "one-flip halt" must cover the 3rd money path; the charge originates there).
+- **MEDIUM — single-use revert:** if the EasyPost buy fails after the `active→in_use` claim, the link is reopened (not left permanently sold with no sale).
+- **LOW:** stricter `buyer_email` regex; transient claim DB error → 503 "try again" vs true race → 409 "just sold".
+
+**Deferred to WISHLIST (all pre-live, none block the test-mode merge):** notification **copy inversion** (buyer who paid gets "no charge to you" — contradicts their Stripe receipt; elevated to PRE-LIVE blocker, needs bespoke templates + its own review) + contacts-failure fallback; `buyer_email`↔PI-metadata pin; pre-existing EndShipper/EP-key 500 no-refund (shared with full-label); tracking `link_type` echo; DB dims CHECK; seller-cancel copy.
+
+**⚠️ MERGE BLOCKER (must reconcile before `seller-link` → `main`):** the branch's `tracking/index.ts` predates main's `tracker.status === "unknown" → "label_created"` mapping fix and **dropped it** (branch is behind main on this file). A naive merge would REGRESS that fix and can violate `shipments_status_check` on webhook write-back. Rebase `seller-link` on `main` (or hand-reconcile `tracking/`, `labels/`, any other files main advanced) BEFORE merging, and re-run the tracking tests.
+
 ### [2026-07-19] Seller Link M2–M7 — full feature built, deployed to prod (test-mode), unit-tested, browser-verified to the card swipe
 
 **Category:** ship | Payments | Seller Link
