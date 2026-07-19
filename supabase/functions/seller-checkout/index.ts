@@ -115,6 +115,14 @@ Deno.serve(async (req: Request) => {
         if (!easypost_rate_id || typeof easypost_rate_id !== "string") {
             return jsonResponse({ error: "Missing required field: easypost_rate_id" }, 400);
         }
+        // buyer_email is REQUIRED (review B2): it is the persisted marker that
+        // identifies a seller-link sale downstream (F1) and the address the
+        // buyer's receipt / tracking / tokenized cancel link go to. Without it,
+        // cancel-label + tracking can't tell the sale apart from a full-label
+        // one and would route the buyer's receipt to the seller.
+        if (!body.buyer_email || typeof body.buyer_email !== "string" || !body.buyer_email.includes("@")) {
+            return jsonResponse({ error: "Missing or invalid buyer_email" }, 400);
+        }
 
         const sbUrl = Deno.env.get("SUPABASE_URL") || Deno.env.get("VITE_SUPABASE_URL");
         const sbKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || Deno.env.get("SB_SERVICE_ROLE_KEY");
@@ -239,14 +247,15 @@ Deno.serve(async (req: Request) => {
                 source: "sendmo_seller_link",
                 txn_kind: "cit_seller_link",
                 intent_role: "shipment",
-                // Merchant-of-record = the SELLER (decided OQ3). The stripe-webhook
+                // Merchant-of-record = the SELLER (decided OQ3): the stripe-webhook
                 // ledger resolver reads sendmo_user_id → the charge books under the
-                // seller. N1: these charges must be EXCLUDED from the seller's
-                // Account Budget (a buyer's purchase is not the seller's spend) —
-                // enforced in budget.ts where the ledger is summed, NOT here; this
-                // endpoint deliberately runs NO budget check (the payer is the buyer).
+                // seller. link_id lets the webhook stamp transactions.link_id (F2), so
+                // the seller's Account Budget can EXCLUDE these buyer charges (N1) — a
+                // buyer's purchase is not the seller's spend. This endpoint itself runs
+                // no budget check (the payer is the buyer).
                 sendmo_user_id: link.user_id,
-                ...(body.buyer_email ? { buyer_email: body.buyer_email } : {}),
+                link_id: link.id,
+                buyer_email: body.buyer_email,
             },
             receipt_email: body.buyer_email,
             idempotency_key: `pi_seller_${easypost_shipment_id}`,

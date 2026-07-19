@@ -121,6 +121,11 @@ verify_jwt = false
 enabled = true
 verify_jwt = false
 
+# Seller-link on-session PaymentIntent — called by the anonymous buyer.
+[functions.seller-checkout]
+enabled = true
+verify_jwt = false
+
 # Stripe webhook receiver — verified via Stripe's own signature, not JWT.
 [functions.stripe-webhook]
 enabled = true
