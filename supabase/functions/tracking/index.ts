@@ -99,7 +99,7 @@ Deno.serve(async (req: Request) => {
   // cancel_token is included in the SELECT for server-side identity validation
   // (viewerHoldsValidCancelToken derivation below). It is NEVER returned in the
   // response — the value never leaves this function.
-  const selectFields = "id, tracking_number, public_code, carrier, service, status, refund_status, easypost_tracker_id, easypost_shipment_id, is_test, rate_cents, created_at, updated_at, promised_delivery_date, delivered_at, label_url, link_id, stripe_payment_intent_id, cancelled_at, cancel_token, item_description, sender_address:addresses!sender_address_id(city,state), recipient_address:addresses!recipient_address_id(city,state), sendmo_links!inner(short_code, user_id, status, link_type)";
+  const selectFields = "id, tracking_number, public_code, carrier, service, status, refund_status, easypost_tracker_id, easypost_shipment_id, is_test, rate_cents, created_at, updated_at, promised_delivery_date, delivered_at, label_url, link_id, stripe_payment_intent_id, cancelled_at, cancel_token, item_description, buyer_email, sender_address:addresses!sender_address_id(city,state), recipient_address:addresses!recipient_address_id(city,state), sendmo_links!inner(short_code, user_id, status, link_type)";
   const baseQuery = supabase.from("shipments").select(selectFields);
   const lookup = publicCode
     ? baseQuery.eq("public_code", publicCode).single()
@@ -392,17 +392,24 @@ Deno.serve(async (req: Request) => {
                   }
                   if (logErr) throw new Error(logErr.message);
 
-                  // Look up payer email via the link owner.
-                  const linkJoinForEmail = shipment.sendmo_links as unknown as { user_id?: string } | null;
-                  const ownerUserId = linkJoinForEmail?.user_id ?? null;
+                  // Look up payer email. Seller-link sale (buyer_email present):
+                  // the anonymous BUYER is the paying party — notify them
+                  // directly. Otherwise (full-label) the payer is the link owner.
+                  const buyerEmailForRefund = (shipment as { buyer_email?: string | null }).buyer_email ?? null;
                   let payerEmail: string | null = null;
-                  if (ownerUserId) {
-                    const { data: profile } = await supabase
-                      .from("profiles")
-                      .select("email")
-                      .eq("id", ownerUserId)
-                      .maybeSingle();
-                    payerEmail = (profile as { email?: string | null } | null)?.email ?? null;
+                  if (buyerEmailForRefund) {
+                    payerEmail = buyerEmailForRefund;
+                  } else {
+                    const linkJoinForEmail = shipment.sendmo_links as unknown as { user_id?: string } | null;
+                    const ownerUserId = linkJoinForEmail?.user_id ?? null;
+                    if (ownerUserId) {
+                      const { data: profile } = await supabase
+                        .from("profiles")
+                        .select("email")
+                        .eq("id", ownerUserId)
+                        .maybeSingle();
+                      payerEmail = (profile as { email?: string | null } | null)?.email ?? null;
+                    }
                   }
                   if (!payerEmail) return;
 
@@ -567,12 +574,28 @@ Deno.serve(async (req: Request) => {
     shipmentCancelToken != null &&
     timingSafeEqual(cancelTokenFromRequest, shipmentCancelToken);
 
+  // Seller-link sales invert the payer mapping. A seller sale is identified by
+  // shipments.buyer_email being set (F1: the buy RPC mints a throwaway
+  // full_label link per shipment, so link_type is NEVER seller_link downstream —
+  // buyer_email presence is the only reliable discriminator). In that case the
+  // anonymous BUYER holds the cancel_token and is the paying party (sees the
+  // receipt), while the SELLER (link owner) is demoted to a non-receipt role.
+  // Admin still sees the receipt. Non-seller shipments (buyer_email null) keep
+  // the original mapping byte-for-byte.
+  const isSellerSale = ((shipment as { buyer_email?: string | null }).buyer_email ?? null) != null;
+
   const viewerRole: "payer" | "sender_flex" | "anonymous" =
-    (viewerIsRecipient || isAdmin)
-      ? "payer"
-      : viewerHoldsValidCancelToken
-        ? "sender_flex"
-        : "anonymous";
+    isSellerSale
+      ? (isAdmin || viewerHoldsValidCancelToken)
+        ? "payer"
+        : viewerIsRecipient
+          ? "sender_flex"
+          : "anonymous"
+      : (viewerIsRecipient || isAdmin)
+        ? "payer"
+        : viewerHoldsValidCancelToken
+          ? "sender_flex"
+          : "anonymous";
 
   // Fetch recipient first name for payer and sender_flex viewers.
   // Done as a separate targeted query (rather than a nested PostgREST join)

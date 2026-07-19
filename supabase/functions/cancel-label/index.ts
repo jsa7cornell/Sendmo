@@ -119,7 +119,7 @@ Deno.serve(async (req: Request) => {
         // ── Fetch shipment (with ownership join + cancel_token) ─────
         // public_code is UNIQUE; shipment_id is UUID PK. Either resolves
         // a single row.
-        const selectCols = "id, easypost_shipment_id, status, refund_status, is_test, carrier, tracking_number, rate_cents, created_at, link_id, cancel_token, stripe_payment_intent_id, public_code, sendmo_links!inner(id, short_code, user_id, status, link_type)";
+        const selectCols = "id, easypost_shipment_id, status, refund_status, is_test, carrier, tracking_number, rate_cents, created_at, link_id, cancel_token, stripe_payment_intent_id, public_code, buyer_email, sendmo_links!inner(id, short_code, user_id, status, link_type)";
         let shipmentQuery = supabase.from("shipments").select(selectCols);
         if (public_code) shipmentQuery = shipmentQuery.eq("public_code", public_code);
         else shipmentQuery = shipmentQuery.eq("id", bodyShipmentId);
@@ -445,18 +445,25 @@ Deno.serve(async (req: Request) => {
         //   idx_notifications_log_refund_dedup partial index.
         if (refundOutcome === "submitted" && shipment.stripe_payment_intent_id) {
             // Find the payer email to notify.
-            // Full-label: payer is the link owner (recipient).
-            // We join sendmo_links in the fetch above; profile email is accessed
-            // via the user_id on the link.
-            const linkOwnerUserId = linkRow?.user_id ?? null;
+            // Seller-link sale (buyer_email present): the anonymous BUYER is the
+            //   paying party — notify them directly, no profile lookup needed.
+            // Full-label: payer is the link owner (recipient). We join
+            //   sendmo_links in the fetch above; profile email is accessed via
+            //   the user_id on the link.
+            const buyerEmail = (shipment as { buyer_email?: string | null }).buyer_email ?? null;
             let payerEmail: string | null = null;
-            if (linkOwnerUserId) {
-                const { data: profile } = await supabase
-                    .from("profiles")
-                    .select("email")
-                    .eq("id", linkOwnerUserId)
-                    .maybeSingle();
-                payerEmail = (profile as { email?: string | null } | null)?.email ?? null;
+            if (buyerEmail) {
+                payerEmail = buyerEmail;
+            } else {
+                const linkOwnerUserId = linkRow?.user_id ?? null;
+                if (linkOwnerUserId) {
+                    const { data: profile } = await supabase
+                        .from("profiles")
+                        .select("email")
+                        .eq("id", linkOwnerUserId)
+                        .maybeSingle();
+                    payerEmail = (profile as { email?: string | null } | null)?.email ?? null;
+                }
             }
 
             if (payerEmail) {

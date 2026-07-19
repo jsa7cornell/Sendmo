@@ -1798,21 +1798,49 @@ Deno.serve(async (req: Request) => {
                         // Store notification contacts for this shipment.
                         if (shipmentId) {
                             const contacts: Array<{ shipment_id: string; role: string; channel: string; address: string }> = [];
-                            const recipientAddr = (recipient_email && typeof recipient_email === "string") ? recipient_email : null;
-                            // Payer email for the `sender` contact: the client-supplied
-                            // sender_email if present, else (full-label only) the authed
-                            // caller's email — full-label authed users send an empty
-                            // sender_email, so without this the payer has no contact and
-                            // never gets the label-created email. Flex resolves its payer
-                            // (the owner) into the `recipient` role at line ~218, so the
-                            // fallback is gated to the non-flex path (resolvedLink === null).
-                            const senderAddr = (sender_email && typeof sender_email === "string")
-                                ? sender_email
-                                : (resolvedLink ? null : callerEmail);
+
+                            // Seller-link buy (F1: buyer_email is set; resolvedLink is the
+                            // seller_link) inverts the sender/recipient contact roles vs.
+                            // flex. The anonymous BUYER is the paying party who cancels/
+                            // changes the label, so they take the `sender` role and receive
+                            // the tokenized senderLabelReadyEmail (/t/<code>?cancel=<token>).
+                            // The SELLER (link owner) takes the payer `recipient` role and
+                            // gets the normal labelConfirmationEmail — never the buyer's
+                            // cancel token. is_flex stays true (resolvedLink !== null), so the
+                            // dispatcher routes payer→recipient and the tokenized copy→sender
+                            // exactly as this inversion needs. Flex + full-label are untouched.
+                            const isSellerLink = resolvedLink?.link_type === "seller_link";
+                            let sellerOwnerEmail: string | null = null;
+                            if (isSellerLink && resolvedLink) {
+                                const { data: ownerProf } = await supabase
+                                    .from("profiles")
+                                    .select("email")
+                                    .eq("id", resolvedLink.user_id)
+                                    .maybeSingle();
+                                sellerOwnerEmail = (ownerProf as { email?: string | null } | null)?.email ?? null;
+                            }
+
+                            const recipientAddr = isSellerLink
+                                ? sellerOwnerEmail
+                                : ((recipient_email && typeof recipient_email === "string") ? recipient_email : null);
+                            // Payer email for the `sender` contact: seller-link routes the
+                            // BUYER (buyer_email) here so they receive the tokenized cancel
+                            // email. Otherwise the client-supplied sender_email if present,
+                            // else (full-label only) the authed caller's email — full-label
+                            // authed users send an empty sender_email, so without this the
+                            // payer has no contact and never gets the label-created email.
+                            // Flex resolves its payer (the owner) into the `recipient` role at
+                            // line ~218, so the fallback is gated to the non-flex path
+                            // (resolvedLink === null).
+                            const senderAddr = isSellerLink
+                                ? ((buyer_email && typeof buyer_email === "string") ? buyer_email : null)
+                                : ((sender_email && typeof sender_email === "string")
+                                    ? sender_email
+                                    : (resolvedLink ? null : callerEmail));
                             // The payer's contact role differs by flow: full-label payer is
-                            // the `sender`; flex payer (the link owner) is the `recipient`.
-                            // Mirrors the dispatcher's payerRole logic — used by both the
-                            // self-send dedupe and the creation-email fallback below.
+                            // the `sender`; flex + seller-link payer (the link owner) is the
+                            // `recipient`. Mirrors the dispatcher's payerRole logic — used by
+                            // both the self-send dedupe and the creation-email fallback below.
                             const payerRole = resolvedLink ? "recipient" : "sender";
                             const payerAddr = resolvedLink ? recipientAddr : senderAddr;
                             // OQ4 dedupe: if payer and recipient are the same inbox, store a
