@@ -498,6 +498,53 @@ export async function createFlexLink(
   return data as CreateLinkResult;
 }
 
+// ─── Seller Link (buyer-pays) ──────────────────────────────
+// The seller specs the ORIGIN + package up front; the buyer supplies their
+// destination and pays at checkout. Hits the same /links POST with
+// link_type='seller_link' (server branches to the seller create flow).
+
+export interface CreateSellerLinkParams {
+  origin_address: {
+    name: string;
+    street1: string;
+    street2?: string;
+    city: string;
+    state: string;
+    zip: string;
+    phone: string;
+    verified?: boolean;
+  };
+  length_in: number;
+  width_in: number;
+  height_in: number;
+  weight_oz: number;
+  speed_preference?: string;
+  preferred_carrier?: string;
+  price_cap_dollars?: number;
+  /** 1 = single-use (closes after the first sale); omit/null = reusable. */
+  max_shipments?: number | null;
+  notes?: string;
+}
+
+export async function createSellerLink(
+  params: CreateSellerLinkParams,
+  accessToken: string,
+): Promise<CreateLinkResult> {
+  const res = await fetch(`${BASE_URL}/functions/v1/links`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({ ...params, link_type: "seller_link" }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || `Failed to create seller link (${res.status})`);
+  }
+  return data as CreateLinkResult;
+}
+
 export interface LinkData {
   id: string;
   short_code: string;

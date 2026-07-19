@@ -530,6 +530,120 @@ Deno.serve(async (req: Request) => {
             }
         }
 
+        // ─── Seller link (buyer-pays) — a distinct create flow ────────────
+        // A seller link stores the SELLER's ORIGIN + package + carrier
+        // constraint up front; the buyer supplies their destination at checkout.
+        // Kept as an early-return block so the flex path below is untouched
+        // (additive-branch discipline, review §2c). is_test is already derived.
+        if (body.link_type === "seller_link") {
+            const { origin_address, length_in, width_in, height_in, weight_oz, max_shipments } = body;
+
+            if (!origin_address?.street1 || !origin_address?.city || !origin_address?.state || !origin_address?.zip) {
+                return new Response(
+                    JSON.stringify({ error: "Missing required ship-from address fields" }),
+                    { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+            if (!isUsablePhone(origin_address?.phone)) {
+                return new Response(
+                    JSON.stringify({ error: "We need a phone number for your ship-from address — the shipping carriers require one." }),
+                    { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+            // Dims required (review): a null parcel → 0×0×0 → junk/failed rates.
+            const dims = [length_in, width_in, height_in, weight_oz].map((v) => Number(v));
+            if (dims.some((v) => !Number.isFinite(v) || v <= 0)) {
+                return new Response(
+                    JSON.stringify({ error: "Package length, width, height, and weight are all required" }),
+                    { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+
+            // Insert the seller's ORIGIN address.
+            const { data: originAddr, error: originErr } = await supabase
+                .from("addresses")
+                .insert({
+                    user_id: user.id,
+                    name: origin_address.name || "Seller",
+                    street1: origin_address.street1,
+                    street2: origin_address.street2 || null,
+                    city: origin_address.city,
+                    state: origin_address.state,
+                    zip: origin_address.zip,
+                    country: "US",
+                    phone: origin_address.phone,
+                    is_verified: origin_address.verified || false,
+                })
+                .select("id")
+                .single();
+            if (originErr || !originAddr) {
+                console.error("Origin address insert error:", originErr);
+                return new Response(
+                    JSON.stringify({ error: "Failed to save ship-from address" }),
+                    { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+
+            // Unique short code.
+            let sellerCode = "";
+            let sRetries = 0;
+            while (sRetries < 3) {
+                const candidate = generateShortCode();
+                const { error: codeError } = await supabase
+                    .from("sendmo_links").select("id").eq("short_code", candidate).single();
+                if (codeError) { sellerCode = candidate; break; }
+                sRetries++;
+            }
+            if (!sellerCode) {
+                return new Response(
+                    JSON.stringify({ error: "Failed to generate unique link code" }),
+                    { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+
+            const sPriceCap = typeof price_cap_dollars === "number" ? price_cap_dollars : 100;
+            const { data: sellerLink, error: sellerLinkErr } = await supabase
+                .from("sendmo_links")
+                .insert({
+                    user_id: user.id,
+                    short_code: sellerCode,
+                    link_type: "seller_link",
+                    status: "active",            // buyer-pays: active immediately, no draft/PM dance
+                    is_test: linkIsTest,
+                    funder: "buyer",
+                    origin_address_id: originAddr.id,
+                    // recipient_address_id stays NULL — required by the airtight per-type CHECK.
+                    length_in: dims[0],
+                    width_in: dims[1],
+                    height_in: dims[2],
+                    weight_hint_oz: dims[3],      // weight reuses weight_hint_oz (migration 040)
+                    max_shipments: Number(max_shipments) === 1 ? 1 : null,  // 1 = single-use, null = reusable
+                    max_price_cents: Math.round(sPriceCap * 100),
+                    preferred_speed: speed_preference || null,
+                    preferred_carrier: preferred_carrier === "any" ? null : (preferred_carrier || null),
+                    notes: notes || null,
+                })
+                .select("id, short_code")
+                .single();
+            if (sellerLinkErr || !sellerLink) {
+                console.error("Seller link insert error:", sellerLinkErr);
+                return new Response(
+                    JSON.stringify({ error: "Failed to create seller link" }),
+                    { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+
+            return new Response(
+                JSON.stringify({
+                    id: sellerLink.id,
+                    short_code: sellerLink.short_code,
+                    url: `https://sendmo.co/s/${sellerLink.short_code}`,
+                    status: "active",
+                }),
+                { status: 201, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+
         let startStatus: "draft" | "active";
         if (initial_status === "draft") {
             startStatus = "draft";
