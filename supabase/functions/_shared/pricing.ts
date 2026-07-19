@@ -29,3 +29,19 @@ export function resolveGateBasisCents(params: {
     }
     return 0;
 }
+
+// ─── applyMarkup — SendMo's label margin, single source of truth ────────────
+//
+// Display price = EasyPost rate × MARKUP_MULTIPLIER + MARKUP_FLAT_CENTS
+// (15% + $1.00). Historically duplicated as literals in rates/index.ts:7-8 and
+// labels/index.ts:28-33; centralized here so the seller-checkout leg shares one
+// definition. Pure (no Deno reads) — safe for Vitest and for Deno edge fns.
+// If you change these, the flex cap-check and the buy-time rate gate both
+// depend on them staying in sync across rates/ + labels/.
+export const MARKUP_MULTIPLIER = 1.15;
+export const MARKUP_FLAT_CENTS = 100;
+
+/** EasyPost rate in dollars → SendMo display price in cents. */
+export function applyMarkup(rateDollars: number): number {
+    return Math.round(rateDollars * 100 * MARKUP_MULTIPLIER) + MARKUP_FLAT_CENTS;
+}
