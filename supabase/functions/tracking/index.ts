@@ -131,7 +131,16 @@ Deno.serve(async (req: Request) => {
         );
         if (epResponse.ok) {
           const tracker = await epResponse.json();
-          liveStatus = tracker.status === "pre_transit" ? "label_created" : tracker.status;
+          // EasyPost returns "pre_transit" once it accepts the shipment, and
+          // "unknown" for a just-created label the carrier hasn't scanned yet.
+          // Both mean "label created, not yet in the carrier's system" → map to
+          // our label_created. Passing "unknown" through leaks a raw string the
+          // UI can't map (renders literal "unknown") and violates
+          // shipments_status_check on the DB write-back.
+          liveStatus =
+            tracker.status === "pre_transit" || tracker.status === "unknown"
+              ? "label_created"
+              : tracker.status;
           estDelivery = tracker.est_delivery_date || null;
 
           trackingEvents = (tracker.tracking_details || [])
