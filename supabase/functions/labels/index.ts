@@ -167,6 +167,7 @@ Deno.serve(async (req: Request) => {
             is_test: boolean;
             link_type: string;
             preferred_carrier: string | null;
+            max_shipments: number | null;
         } | null = null;
         if (link_short_code) {
             if (typeof link_short_code !== "string" || !link_short_code.match(/^[a-zA-Z0-9]{1,20}$/)) {
@@ -184,7 +185,7 @@ Deno.serve(async (req: Request) => {
             const { data: link, error: linkErr } = await supabase
                 .from("sendmo_links")
                 .select(`
-                    id, short_code, user_id, status, link_type, max_price_cents, is_test, preferred_carrier,
+                    id, short_code, user_id, status, link_type, max_price_cents, is_test, preferred_carrier, max_shipments,
                     recipient_address:addresses!recipient_address_id (
                         name, street1, street2, city, state, zip, country, phone
                     ),
@@ -312,6 +313,7 @@ Deno.serve(async (req: Request) => {
                 is_test: link.is_test === true,
                 link_type: link.link_type,
                 preferred_carrier: (link.preferred_carrier as string | null) ?? null,
+                max_shipments: (link.max_shipments as number | null) ?? null,
             };
 
             // Link-derived mode (T1-1, review B2): link.is_test is the
@@ -1337,6 +1339,87 @@ Deno.serve(async (req: Request) => {
                         },
                     });
                 }
+            }
+        }
+
+        // ── Single-use seller link: claim BEFORE the buy (review B4) ──────
+        // A max_shipments=1 seller link sells exactly once. Claim it here —
+        // AFTER price/PI validation, BEFORE spending money at EasyPost —
+        // by flipping status active→in_use atomically and requiring a row
+        // back. If a concurrent buyer already claimed it (no row returned),
+        // refund THIS buyer's captured PI and return a "just sold" 409
+        // without buying a label. Uses the REAL seller link id
+        // (resolvedLink.id), never shipments.link_id — the RPC mints a
+        // throwaway full_label link there (F1/B3). Reusable links
+        // (max_shipments=null) skip this entirely.
+        if (resolvedLink?.link_type === "seller_link" && resolvedLink.max_shipments === 1) {
+            const { data: claimed, error: claimErr } = await supabase
+                .from("sendmo_links")
+                .update({ status: "in_use" })
+                .eq("id", resolvedLink.id)
+                .eq("status", "active")
+                .select("id")
+                .maybeSingle();
+            if (claimErr || !claimed) {
+                // Lost the race (or the link is no longer active). Refund the
+                // buyer's captured PI — nobody pays for a label we won't buy.
+                let refundIssued = false;
+                let refundErrorMsg: string | null = null;
+                if (verifiedPaymentIntent) {
+                    try {
+                        await createRefund({
+                            payment_intent_id: verifiedPaymentIntent.id,
+                            reason: "requested_by_customer",
+                            metadata: { easypost_shipment_id, failure_reason: "seller_link_already_sold" },
+                            idempotency_key: `refund_${easypost_shipment_id}_already_sold`,
+                            liveMode: isLive,
+                        });
+                        refundIssued = true;
+                    } catch (refundErr) {
+                        refundErrorMsg = refundErr instanceof Error ? refundErr.message : String(refundErr);
+                        console.error(`[Session ${sessionId}] [labels] ALREADY-SOLD REFUND FAILED:`, refundErrorMsg);
+                        await sendAdminAlert({
+                            subject: "Auto-refund FAILED after seller-link already-sold — buyer charged, no label",
+                            heading: "Auto-Refund Failed — Manual Refund Required",
+                            intro: "A single-use seller link was already sold to another buyer; this buyer's " +
+                                "captured charge could not be auto-refunded. Refund manually in Stripe.",
+                            rows: [
+                                { label: "PaymentIntent", value: verifiedPaymentIntent.id },
+                                { label: "EasyPost shipment", value: easypost_shipment_id },
+                                { label: "Seller link", value: resolvedLink.id },
+                                { label: "Refund error", value: refundErrorMsg },
+                                { label: "Mode", value: isLive ? "LIVE" : "Test" },
+                            ],
+                            source: "labels seller-link single-use close (review B4)",
+                        });
+                    }
+                }
+                log({
+                    event_type: "label.seller_link_already_sold",
+                    session_id: sessionId,
+                    severity: "warn",
+                    entity_type: "label",
+                    entity_id: easypost_shipment_id,
+                    properties: {
+                        link_id: resolvedLink.id,
+                        refunded: refundIssued,
+                        refund_error: refundErrorMsg,
+                        claim_error: claimErr?.message ?? null,
+                        payment_intent_id: verifiedPaymentIntent?.id ?? null,
+                    },
+                });
+                return new Response(
+                    JSON.stringify({
+                        error: "already_sold",
+                        code: "SELLER_LINK_ALREADY_SOLD",
+                        message: refundIssued
+                            ? "This item was just sold to someone else — your card was not charged (any authorization has been reversed)."
+                            : "This item was just sold to someone else. We're refunding your charge and our team has been alerted. Reference: " + (verifiedPaymentIntent?.id ?? "n/a"),
+                        refunded: refundIssued,
+                        payment_intent_id: verifiedPaymentIntent?.id ?? null,
+                    }),
+                    { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
             }
         }
 
