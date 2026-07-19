@@ -77,7 +77,6 @@ Deno.serve(async (req: Request) => {
             easypost_shipment_id,
             easypost_rate_id,
             live_mode,
-            from_address,
             to_address: bodyToAddress,
             parcel,
             display_price_cents: bodyDisplayPriceCents,
@@ -86,12 +85,18 @@ Deno.serve(async (req: Request) => {
             payment_intent_id,
             comp,  // admin override — bypass payment requirement (live comp labels)
             link_short_code,  // sender-flow flex-link auth claim
+            buyer_email,      // seller-link buyer email (persisted on the shipment; F1 marker)
+            from_address: bodyFromAddress,
         } = await req.json();
 
         // Per proposal 2026-05-11_sender-flow-wizard B3: when link_short_code is
         // present, the server resolves to_address + recipient_email and ignores
         // any client-supplied values for those fields. This prevents an attacker
         // from buying a label to a different address than the recipient set.
+        // For a SELLER link the polarity flips: the server resolves the FROM
+        // (origin) from the link and the TO (destination) from the EasyPost
+        // shipment (B1) — so from_address is mutable too.
+        let from_address = bodyFromAddress;
         let to_address = bodyToAddress;
         let recipient_email = bodyRecipientEmail;
         let display_price_cents = bodyDisplayPriceCents;
@@ -160,6 +165,8 @@ Deno.serve(async (req: Request) => {
             user_id: string;
             max_price_cents: number;
             is_test: boolean;
+            link_type: string;
+            preferred_carrier: string | null;
         } | null = null;
         if (link_short_code) {
             if (typeof link_short_code !== "string" || !link_short_code.match(/^[a-zA-Z0-9]{1,20}$/)) {
@@ -177,8 +184,11 @@ Deno.serve(async (req: Request) => {
             const { data: link, error: linkErr } = await supabase
                 .from("sendmo_links")
                 .select(`
-                    id, short_code, user_id, status, link_type, max_price_cents, is_test,
+                    id, short_code, user_id, status, link_type, max_price_cents, is_test, preferred_carrier,
                     recipient_address:addresses!recipient_address_id (
+                        name, street1, street2, city, state, zip, country, phone
+                    ),
+                    origin_address:addresses!origin_address_id (
                         name, street1, street2, city, state, zip, country, phone
                     )
                 `)
@@ -198,47 +208,110 @@ Deno.serve(async (req: Request) => {
             }
             // The DB stores 'flexible' (not 'flexible_link') per links/index.ts:189
             // and the migration-001 CHECK constraint. Author-response B1.
-            if (link.link_type !== "flexible") {
+            if (link.link_type !== "flexible" && link.link_type !== "seller_link") {
                 return new Response(
-                    JSON.stringify({ error: "Link is not a flexible link" }),
+                    JSON.stringify({ error: "Link type not supported for label purchase" }),
                     { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
                 );
             }
-            // Resolve to_address from the link (ignore any client-supplied value).
-            const recipientAddr = link.recipient_address as unknown as {
-                name: string; street1: string; street2: string | null;
-                city: string; state: string; zip: string; country: string | null;
-                phone: string | null;
-            } | null;
-            if (!recipientAddr || !recipientAddr.street1) {
-                return new Response(
-                    JSON.stringify({ error: "Link has no resolvable destination address" }),
-                    { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            if (link.link_type === "seller_link") {
+                // ── Seller link: from = the seller's ORIGIN (from the link);
+                // to = the buyer's destination, resolved from the EasyPost
+                // shipment rates/ already built (B1 — never trust a client
+                // to_address here). buyer_email = the package recipient contact.
+                const originAddr = link.origin_address as unknown as {
+                    name: string; street1: string; street2: string | null;
+                    city: string; state: string; zip: string; country: string | null;
+                    phone: string | null;
+                } | null;
+                if (!originAddr || !originAddr.street1) {
+                    return new Response(
+                        JSON.stringify({ error: "Seller link has no resolvable ship-from address" }),
+                        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                    );
+                }
+                from_address = {
+                    name: originAddr.name,
+                    street1: originAddr.street1,
+                    street2: originAddr.street2 ?? undefined,
+                    city: originAddr.city,
+                    state: originAddr.state,
+                    zip: originAddr.zip,
+                    country: originAddr.country ?? "US",
+                    phone: originAddr.phone ?? undefined,
+                };
+                const sIsLive = link.is_test !== true;
+                const epKey = Deno.env.get(sIsLive ? "EASYPOST_API_KEY" : "EASYPOST_TEST_API_KEY");
+                const epResp = await fetch(
+                    `https://api.easypost.com/v2/shipments/${easypost_shipment_id}`,
+                    { headers: { Authorization: "Basic " + btoa(epKey + ":") } },
                 );
+                if (!epResp.ok) {
+                    return new Response(
+                        JSON.stringify({ error: "Could not resolve the destination address" }),
+                        { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                    );
+                }
+                const epData = await epResp.json();
+                const t = epData.to_address;
+                if (!t?.street1) {
+                    return new Response(
+                        JSON.stringify({ error: "Shipment has no destination address" }),
+                        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                    );
+                }
+                to_address = {
+                    name: t.name,
+                    street1: t.street1,
+                    street2: t.street2 ?? undefined,
+                    city: t.city,
+                    state: t.state,
+                    zip: t.zip,
+                    country: t.country ?? "US",
+                    phone: t.phone ?? undefined,
+                };
+                // The BUYER receives the package → their email is the shipment's
+                // recipient contact (M5 refines the email routing).
+                recipient_email = typeof buyer_email === "string" ? buyer_email : null;
+            } else {
+                // Resolve to_address from the link (ignore any client-supplied value).
+                const recipientAddr = link.recipient_address as unknown as {
+                    name: string; street1: string; street2: string | null;
+                    city: string; state: string; zip: string; country: string | null;
+                    phone: string | null;
+                } | null;
+                if (!recipientAddr || !recipientAddr.street1) {
+                    return new Response(
+                        JSON.stringify({ error: "Link has no resolvable destination address" }),
+                        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                    );
+                }
+                to_address = {
+                    name: recipientAddr.name,
+                    street1: recipientAddr.street1,
+                    street2: recipientAddr.street2 ?? undefined,
+                    city: recipientAddr.city,
+                    state: recipientAddr.state,
+                    zip: recipientAddr.zip,
+                    country: recipientAddr.country ?? "US",
+                    phone: recipientAddr.phone ?? undefined,
+                };
+                // Resolve recipient_email server-side (never returned to client).
+                const { data: prof } = await supabase
+                    .from("profiles")
+                    .select("email")
+                    .eq("id", link.user_id)
+                    .single();
+                recipient_email = prof?.email ?? null;
             }
-            to_address = {
-                name: recipientAddr.name,
-                street1: recipientAddr.street1,
-                street2: recipientAddr.street2 ?? undefined,
-                city: recipientAddr.city,
-                state: recipientAddr.state,
-                zip: recipientAddr.zip,
-                country: recipientAddr.country ?? "US",
-                phone: recipientAddr.phone ?? undefined,
-            };
-            // Resolve recipient_email server-side (never returned to client).
-            const { data: prof } = await supabase
-                .from("profiles")
-                .select("email")
-                .eq("id", link.user_id)
-                .single();
-            recipient_email = prof?.email ?? null;
             resolvedLink = {
                 id: link.id,
                 short_code: link.short_code,
                 user_id: link.user_id,
                 max_price_cents: link.max_price_cents,
                 is_test: link.is_test === true,
+                link_type: link.link_type,
+                preferred_carrier: (link.preferred_carrier as string | null) ?? null,
             };
 
             // Link-derived mode (T1-1, review B2): link.is_test is the
@@ -451,7 +524,69 @@ Deno.serve(async (req: Request) => {
         //      is succeeded and metadata matches easypost_shipment_id.
         let verifiedPaymentIntent: { id: string; amount: number; status: string } | null = null;
 
-        if (!isComp && resolvedLink) {
+        if (!isComp && resolvedLink?.link_type === "seller_link") {
+            // ── Seller-link buyer verify path (on-session, mirrors full-label) ──
+            // The buyer already paid on-session via seller-checkout. Verify that
+            // PI, require buyer_email (B2), and confirm the PI was minted for THIS
+            // shipment + THIS link (replay guard). Price is enforced by the shared
+            // buy-time rate gate below (which refunds on drift), so no separate
+            // amount check is needed here (review B5).
+            if (!payment_intent_id || typeof payment_intent_id !== "string") {
+                return new Response(
+                    JSON.stringify({ error: "Missing required field: payment_intent_id" }),
+                    { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+            if (!buyer_email || typeof buyer_email !== "string" || !buyer_email.includes("@")) {
+                return new Response(
+                    JSON.stringify({ error: "Missing or invalid buyer_email" }),
+                    { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+            try {
+                const pi = await retrievePaymentIntent(payment_intent_id, isLive);
+                if (pi.status !== "succeeded") {
+                    return new Response(
+                        JSON.stringify({ error: `Payment not captured (status=${pi.status})` }),
+                        { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                    );
+                }
+                // Replay guard. A mismatch means this PI is not this shipment's
+                // payment — 403 WITHOUT refunding (it may be a legit payment for a
+                // different shipment; the rate gate handles this shipment's own PI).
+                if (
+                    pi.metadata?.easypost_shipment_id !== easypost_shipment_id ||
+                    pi.metadata?.txn_kind !== "cit_seller_link" ||
+                    pi.metadata?.link_short_code !== resolvedLink.short_code
+                ) {
+                    log({
+                        event_type: "label.pi_shipment_mismatch",
+                        session_id: sessionId,
+                        severity: "error",
+                        entity_type: "payment_intent",
+                        entity_id: payment_intent_id,
+                        properties: {
+                            flow: "seller_link",
+                            requested_shipment_id: easypost_shipment_id,
+                            pi_metadata_shipment_id: pi.metadata?.easypost_shipment_id ?? null,
+                            pi_txn_kind: pi.metadata?.txn_kind ?? null,
+                        },
+                    });
+                    return new Response(
+                        JSON.stringify({ error: "PaymentIntent does not match this seller link" }),
+                        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                    );
+                }
+                verifiedPaymentIntent = { id: pi.id, amount: pi.amount, status: pi.status };
+            } catch (err) {
+                const msg = err instanceof Error ? err.message : "PI verification failed";
+                console.error(`[Session ${sessionId}] [labels] seller PI verify error:`, msg);
+                return new Response(
+                    JSON.stringify({ error: `Payment verification failed: ${msg}` }),
+                    { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+        } else if (!isComp && resolvedLink) {
             // ── Flex off_session charge path (Pattern D, Phase F) ───
             // Per proposal
             // 2026-05-16_flex-payment-pattern-d-execution_reviewed-2026-05-16_decided-2026-05-18.md
@@ -1611,6 +1746,23 @@ Deno.serve(async (req: Request) => {
                             if (descErr) {
                                 // Non-fatal — label still shipped, just no description stored.
                                 console.error('item_description write error:', descErr);
+                            }
+                        }
+
+                        // Seller-link buyer identity (F4) — the admin_insert_shipment
+                        // RPC has no buyer_email param, so persist via a follow-up
+                        // UPDATE (same pattern as item_description above). buyer_email
+                        // IS the downstream seller-sale marker (F1); it was already
+                        // required + validated in the seller charge branch.
+                        if (shipmentId && resolvedLink?.link_type === "seller_link" && typeof buyer_email === "string") {
+                            const { error: buyerErr } = await supabase
+                                .from('shipments')
+                                .update({ buyer_email })
+                                .eq('id', shipmentId);
+                            if (buyerErr) {
+                                // Non-fatal for the label, but this breaks the F1
+                                // discriminator downstream — log loudly.
+                                console.error('buyer_email write error (seller-link marker):', buyerErr);
                             }
                         }
 
