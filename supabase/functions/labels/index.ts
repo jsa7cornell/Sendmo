@@ -255,34 +255,33 @@ Deno.serve(async (req: Request) => {
                 }
                 const epData = await epResp.json();
                 // ── Seller-link binding backstop (review BLOCKER) ─────────────
-                // seller-checkout already verified shipment.reference === link.id
-                // before creating the PI, and the PI-metadata pin below ties the
-                // bought shipment to that PI. This is defense-in-depth: refuse to
-                // BUY a shipment not minted from this link (rates/ stamps
-                // reference = link.id on the seller path). On the should-be-
-                // impossible mismatch, refund the buyer's captured charge + alert.
+                // Pure defense-in-depth: seller-checkout already verified
+                // reference === link.id BEFORE the PI was created, and the charge
+                // branch's PI-metadata pin (below) requires this request's
+                // easypost_shipment_id === pi.metadata.easypost_shipment_id — so
+                // labels can only operate on the shipment seller-checkout bound.
+                // This branch is therefore unreachable via the legit client; a
+                // mismatch means tampering or a seller-checkout bug.
+                //
+                // Do NOT auto-refund here (adversarial-review fix): payment_intent_id
+                // is UNVERIFIED at this point — its metadata pin runs later, in the
+                // charge branch — so refunding it would let an attacker refund an
+                // ARBITRARY PaymentIntent they merely name (e.g. their own prior
+                // purchase → free shipping) by deliberately constructing a mismatch.
+                // Reject + alert only; a genuinely-charged buyer's PI is handled by
+                // the charge branch's own verify/refund path, never here.
                 if (epData.reference !== link.id) {
-                    if (payment_intent_id && typeof payment_intent_id === "string") {
-                        try {
-                            await createRefund({
-                                payment_intent_id,
-                                reason: "requested_by_customer",
-                                metadata: { easypost_shipment_id, failure_reason: "seller_link_binding_mismatch" },
-                                idempotency_key: `refund_${easypost_shipment_id}_binding_mismatch`,
-                                liveMode: sIsLive,
-                            });
-                        } catch (_e) { /* alert fires regardless */ }
-                    }
                     await sendAdminAlert({
                         subject: "Seller-link binding mismatch at buy time — label refused",
                         heading: "Seller-Link Binding Mismatch",
                         intro: "labels/ refused to buy a shipment whose EasyPost reference did not match the seller link. " +
-                            "seller-checkout should have caught this before the charge — investigate a possible bypass.",
+                            "seller-checkout should have caught this before the charge — investigate tampering or a bypass. " +
+                            "No auto-refund was issued (the supplied PaymentIntent is unverified in this branch).",
                         rows: [
                             { label: "EasyPost shipment", value: easypost_shipment_id },
                             { label: "Seller link", value: link.id },
                             { label: "Shipment reference", value: String(epData.reference ?? "none") },
-                            { label: "PaymentIntent", value: typeof payment_intent_id === "string" ? payment_intent_id : "none" },
+                            { label: "PaymentIntent (unverified)", value: typeof payment_intent_id === "string" ? payment_intent_id : "none" },
                         ],
                         source: "labels seller-link binding backstop",
                     });
