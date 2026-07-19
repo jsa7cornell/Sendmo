@@ -23,6 +23,7 @@ import LabelPrintPage from "@/pages/LabelPrintPage";
 import LegacyTrackingRedirect from "@/pages/LegacyTrackingRedirect";
 import LinksNew from "@/pages/LinksNew";
 import LinksEdit from "@/pages/LinksEdit";
+import SellerBuilder from "@/pages/SellerBuilder";
 import NotFound from "@/pages/NotFound";
 import AppHeader from "@/components/AppHeader";
 import RecipientStepPathChoice from "@/components/recipient/RecipientStepPathChoice";
@@ -39,11 +40,12 @@ function OnboardingPathPicker() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-background to-muted/50">
       <AppHeader />
-      <div className="max-w-3xl mx-auto px-4 py-8">
+      <div className="max-w-5xl mx-auto px-4 py-8">
         <RecipientStepPathChoice
-          onSelect={(p) =>
-            navigate(p === "full_label" ? "/onboarding/full-label/destination" : "/onboarding/flexible/destination")
-          }
+          onSelect={(p) => {
+            if (p === "seller_link") { navigate("/sell"); return; }
+            navigate(p === "full_label" ? "/onboarding/full-label/destination" : "/onboarding/flexible/destination");
+          }}
         />
       </div>
     </div>
@@ -75,6 +77,9 @@ function App() {
             <Route index element={<Navigate to="destination" replace />} />
             <Route path=":stepSlug" element={<RecipientOnboarding />} />
           </Route>
+
+          {/* Seller-builder — buyer-pays "Sell & Ship" link (separate from the recipient flow) */}
+          <Route path="/sell" element={<SellerBuilder />} />
 
           <Route path="/s/:shortCode" element={<SenderFlow />} />
           <Route

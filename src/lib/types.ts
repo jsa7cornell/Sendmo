@@ -34,8 +34,10 @@ export interface Address {
 }
 
 // ─── SendMo Links ────────────────────────────────────────────
-export type LinkType = "full_label" | "flexible";
-export type LinkStatus = "draft" | "active" | "used" | "expired" | "cancelled";
+export type LinkType = "full_label" | "flexible" | "seller_link";
+// NOTE: 'in_use'/'completed' per migration 020 (renamed 'used' → 'in_use', added 'completed').
+export type LinkStatus = "draft" | "active" | "in_use" | "completed" | "expired" | "cancelled";
+export type LinkFunder = "buyer" | "seller";
 
 export interface SendmoLink {
     id: string;
@@ -43,13 +45,23 @@ export interface SendmoLink {
     short_code: string;
     link_type: LinkType;
     status: LinkStatus;
-    recipient_address_id: string;
+    funder: LinkFunder;
+    /** Recipient/full-label: the destination. NULL for seller links (destination unknown until the buyer completes). */
+    recipient_address_id: string | null;
+    /** Seller links only: the seller's ship-FROM address. NULL for recipient/full-label links. */
+    origin_address_id: string | null;
     sender_name: string | null;
     max_price_cents: number;
     preferred_speed: string | null;
     preferred_carrier: string | null;
     size_hint: string | null;
     weight_hint_oz: number | null;
+    /** Seller links: the seller's specced package dims (weight reuses weight_hint_oz). */
+    length_in: number | null;
+    width_in: number | null;
+    height_in: number | null;
+    /** NULL = reusable (each buyer spawns a child shipment); 1 = single-use. */
+    max_shipments: number | null;
     notes: string | null;
     expires_at: string | null;
     created_at: string;
@@ -83,6 +95,9 @@ export interface Shipment {
     length_in: number;
     width_in: number;
     height_in: number;
+    /** Seller-link shipments: the paying buyer's email + optional claimed account (else NULL). */
+    buyer_email: string | null;
+    recipient_user_id: string | null;
     created_at: string;
     updated_at: string;
 }
@@ -184,6 +199,8 @@ export type PackagingType = 'box' | 'envelope' | 'tube';
 export type SpeedTier = 'economy' | 'standard' | 'express';
 export type DistanceTier = 'nearby' | 'regional' | 'cross';
 export type RecipientPath = 'full_label' | 'flexible';
+/** The /onboarding picker choice. 'seller_link' routes to a SEPARATE seller-builder (not the recipient state machine). */
+export type OnboardingChoice = RecipientPath | 'seller_link';
 
 export interface ShippingMethodOption extends ShippingRate {
     speed_tier: SpeedTier;
