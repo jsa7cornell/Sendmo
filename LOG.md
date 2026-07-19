@@ -12,6 +12,20 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-07-18] Seller Link — migration 040 APPLIED TO PROD (build-on-prod, per John)
+
+**Category:** deploy | Schema | Payments
+**Deploy:** Migration 040 applied to **PROD** (`fkxykvzsqdjzhurntgah`) via Supabase MCP `apply_migration`, 2026-07-18. Additive + idempotent; existing data untouched.
+**Cross-link:** [supabase/migrations/040_seller_link_schema.sql](supabase/migrations/040_seller_link_schema.sql) | [proposals/2026-07-17_seller-link-buyer-pays_reviewed-2026-07-17_decided-2026-07-17.md](proposals/2026-07-17_seller-link-buyer-pays_reviewed-2026-07-17_decided-2026-07-17.md)
+
+**What & why:** John's call to build + test the seller link directly on prod (nil traffic — 51 links / 36 shipments total; the way the original site was built), which restores the run-and-watch verify loop this session couldn't get otherwise (Docker off + no `docker` CLI, Supabase MCP branch-locked, no `sendmo-staging` project). Applied additive 040: `sendmo_links` += `funder` / `origin_address_id` / `length_in` / `width_in` / `height_in` / `max_shipments`, `recipient_address_id` NOT NULL relaxed + airtight per-`link_type` CHECK, `link_type` += `seller_link`; `shipments` += `buyer_email` / `recipient_user_id` + buyer SELECT RLS + claim-backfill index.
+
+**Verified post-apply (SQL read):** links=51, shipments=36 (**unchanged**); all 6 link cols + 2 shipment cols present; `link_type` check now 3-value; `null_funder_rows=0` (default applied to every existing link); `recipient_address_id` nullable=YES. No existing-row violations (additive ADD COLUMN + the per-type CHECK all validated against the 51 live rows).
+
+**⚠️ Prod schema now AHEAD of `main`:** 040 is live on prod, but its migration *file* lives on the unmerged `seller-link` branch — `main`'s set is still 001–039. Deploying `main` is safe (won't remove 040). When `seller-link` merges, 040's idempotent file re-applies as a no-op. Merge `seller-link` to resync `main`'s migration history.
+
+**Next:** deploy edge functions to prod to test the money path in test mode — `seller-checkout` (new, inert until wired) first, then modified `rates/` (regression-test flex/full-label immediately after, since it's shared).
+
 ### [2026-07-17] Seller Link (3rd shipment type) — proposed → reviewed → DECIDED same day
 
 **Category:** decision | Onboarding | Payments
