@@ -15,7 +15,7 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 ### [2026-07-18] Admin "New label created" notice — enriched to full shipment detail (fraud-review)
 
 **Category:** feat | Labels | Observability
-**Deploy:** In PR #57 — not merged, not deployed. Deploys the `labels` edge function on merge to `main`.
+**Deploy:** **Deployed** to prod on merge of PR #57 → `main` `d3d6401` (2026-07-18). "Deploy changed Edge Functions" + "Provide Tests" + Vercel all green; the `labels` edge function (incl. Deno type-check) redeployed.
 **Cross-link:** [PR #57](https://github.com/jsa7cornell/Sendmo/pull/57) | prompted by the first live package (KMDCNEW, 2026-07-17) | new `_shared/label-notice.ts` + `_shared/alert.ts` + `labels/index.ts`
 
 **What & why:** the per-label admin FYI (`sendAdminAlert` variant `notice`, fired on every successful label — test/comp/live) previously carried 7 rows (mode, carrier, charged, SendMo cost, tracking, city→city, public code). John wants every transaction to support a manual fraud check + learning, so it now surfaces **everything in scope**, grouped into **Shipment / Parties / Money / IDs**: both parties' names/emails/phones, **sender IP**, full from/to addresses, item description, parcel weight+dims, ETA; a full cost breakdown — charged, EasyPost cost, **est. Stripe fee (2.9% + 30¢)**, **est. net margin**, flex price cap, payment method, Stripe PI id + status; plus all IDs (EasyPost shipment/tracker, SendMo shipment UUID, link code, session). KMDCNEW reads charged $12.14 / EP $9.69 / fee $0.65 / **net margin $1.80**; comp → $0.00 charged, margin −$9.69 (SendMo eats the carrier cost).
