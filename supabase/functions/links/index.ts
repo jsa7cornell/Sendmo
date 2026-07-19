@@ -341,6 +341,9 @@ Deno.serve(async (req: Request) => {
                 created_at,
                 recipient_address:addresses!recipient_address_id (
                     name, street1, city, state, zip
+                ),
+                origin_address:addresses!origin_address_id (
+                    city, state
                 )
             `)
             .eq("short_code", code)
@@ -357,6 +360,15 @@ Deno.serve(async (req: Request) => {
         if (link.status === "cancelled" || link.status === "expired") {
             return new Response(
                 JSON.stringify({ error: "This link is no longer active", status: link.status }),
+                { status: 410, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+
+        // Seller links: only 'active' is buyable. A single-use link that has sold
+        // closes to 'in_use'/'completed'; a reusable link stays 'active'.
+        if (link.link_type === "seller_link" && link.status !== "active") {
+            return new Response(
+                JSON.stringify({ error: "This item is no longer available", status: link.status }),
                 { status: 410, headers: { ...corsHeaders, "Content-Type": "application/json" } }
             );
         }
@@ -445,6 +457,11 @@ Deno.serve(async (req: Request) => {
                 recipient_state: link.recipient_address?.state ?? null,
                 recipient_zip: link.recipient_address?.zip ?? null,
                 recipient_name: link.recipient_address?.name ?? null,
+                // Seller links: the buyer's "ships from" hint (city/state only —
+                // the origin street is never exposed to the buyer's client; rates/
+                // + labels/ resolve the full origin server-side).
+                origin_city: (link.origin_address as unknown as { city?: string } | null)?.city ?? null,
+                origin_state: (link.origin_address as unknown as { state?: string } | null)?.state ?? null,
                 // Tells the sender flow whether the full address is on file.
                 // False → show an error immediately rather than failing at label creation.
                 recipient_address_complete: !!(link.recipient_address as unknown as { street1?: string } | null)?.street1,
