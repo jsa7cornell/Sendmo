@@ -12,6 +12,36 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-07-19] Seller Link M2–M7 — full feature built, deployed to prod (test-mode), unit-tested, browser-verified to the card swipe
+
+**Category:** ship | Payments | Seller Link
+**Deploy:** `links`, `labels`, `cancel-label`, `tracking` (+ earlier `seller-checkout`, `rates`) all deployed to PROD via CI dispatch from `seller-link`, 2026-07-19. Frontend on the `seller-link` Vercel branch preview (NOT merged to `main` — real users must not see the 3rd onboarding card until launch).
+**Cross-link:** plan `~/.claude/plans/zazzy-toasting-parrot.md` (M2–M7) | proposal `proposals/2026-07-17_seller-link-buyer-pays_decided-2026-07-17.md` | [labels](supabase/functions/labels/index.ts) | [tracking](supabase/functions/tracking/index.ts) | [cancel-label](supabase/functions/cancel-label/index.ts) | [BuyerFlow](src/pages/BuyerFlow.tsx) | [SellerBuilder](src/pages/SellerBuilder.tsx)
+
+**What shipped (branch `seller-link`, all pushed):**
+- **M2** — `links/` POST seller branch (creates seller_link: origin address insert + dims + max_shipments + funder='buyer') and GET-by-code (returns origin city/state + dims + carrier constraint; only-`active`-is-buyable → 410 otherwise). Seller-builder form `src/pages/SellerBuilder.tsx` (details→review→ready, reuses MagicGuestimator/SmartAddressInput/FlexPreferencesForm/LinkShareCard). 3rd onboarding card (`RecipientStepPathChoice`, "How do you want to ship?").
+- **M3** — buyer rate-shopping: `BuyerFlow.tsx` address→rates (price-VISIBLE fork; buyer supplies only destination, server resolves origin+parcel).
+- **M4** — `labels/` seller buy branch (additive FIRST branch): from_address from origin, **to_address resolved server-side from the EasyPost shipment (B1)**, PI-verify + replay guards + **buyer_email REQUIRED (B2)**, buyer_email post-insert UPDATE (F4).
+- **M5** — payer-identity keyed strictly on `shipments.buyer_email` (F1): tracking `viewerRole` flips (buyer=payer sees receipt; seller=sender_flex, no receipt); cancel-label refund email → buyer; labels notification contacts inverted so the buyer gets the tokenized `/t/?cancel=` email. Non-seller paths byte-for-byte unchanged.
+- **M6** — single-use close BEFORE the buy (**B4**: atomic `UPDATE … WHERE status='active' RETURNING id`; concurrent loser refunds its captured PI + admin-alerts + 409, no label bought; targets the REAL `resolvedLink.id`). Reusable links skip it.
+- **M7** — tests + verification (below).
+
+**Verified (prod test-mode + local):**
+- **Unit:** full suite **638 passing / 60 files**; `tsc -b` clean. Added `pricing.test.ts` cases for `applyMarkup` incl. a cross-consistency proof that the server-derived buyer charge == the frontend-displayed price (buyer-sees == charged). Refreshed `schemaColumnAudit` snapshot (migration 040 cols) + App onboarding heading.
+- **Backend curl (prod test-mode):** GET-by-code (seller fields) ✓ · seller `rates` (17 priced rates, buyer supplies only to_address) ✓ · `seller-checkout` creates a valid test PI, amount server-derived, **buyer_email guard → 400** ✓ · `labels` full-label **regression → 402 "No such payment_intent"** (shared path unbroken after every deploy) + seller branch **missing buyer_email → 400** ✓.
+- **Pricing confirmed no mismatch:** `rates.display_price = round(raw×1.15×100+100)/100` and `applyMarkup(raw)` are the SAME formula → buyer sees $8.45, seller-checkout charges $8.45.
+
+**Browser-verified:**
+- mcp-session: local dev (`seller-link-wt` :5199 → prod test-mode functions), seed link `SELLE2E01`, buyer `/s/SELLE2E01` flow driven address → rates → review → pay.
+- variants-covered: buyer address step (origin "Ships from San Francisco, CA", proxied autocomplete → Verified), rates step (price-visible fork, USPS $8.45 / UPS $8.69 / FedEx $24.63), review step (correct ship-to/ship-from/method, **Total $8.45**), pay button ("Pay $8.45 & generate label" — charge == displayed price).
+- **NOT covered (env-blocked, not a code defect):** the final card-entry → confirm → `labels/` buy → shipment persist leg. The Stripe Payment Element can't initialize locally (`VITE_STRIPE_PUBLISHABLE_KEY_TEST` absent from `.env.local` — the original build tested payments on the Vercel preview, which has the key but is SSO-gated for anonymous visitors). Remaining manual step for John: complete one test-card buy on the Vercel preview (logged in) OR provide the public test key / lift preview protection so the anonymous buyer can be driven locally. No orphan data from the aborted attempt (unconfirmed PI → 0 charges, 0 shipments; confirmed via SQL).
+
+**Scope calls (v1, all tracked in WISHLIST "Seller Link — deferred follow-ups"):** F1 root-cause repoint of `shipments.link_id` (DEFER, John 2026-07-19) · N1 budget exclusion (lives in `_shared/budget.ts` → fan-out redeploy; dormant in test-mode) · F5 buy-time carrier gate (carrier already enforced at rate-shop) · single-use no-auto-reopen on refund · buyer email uses flex copy · **LIVE-mode `buyerLiveMode=false` gap (launch-blocker before any LIVE seller link)**.
+
+**Code review:** high-rigor multi-agent adversarial review of the money paths kicked off in-session (labels buy branch / payer-identity / anon endpoints / migration+RLS). The billed `/code-review ultra` cloud review is user-triggered — John runs that himself if desired.
+
+**Test data on prod:** seller_link `SELLE2E01` (is_test, reusable) + `SELLTEST01` (M1) + their origin addresses remain — usable for John's manual card-swipe verification; clean up post-launch.
+
 ### [2026-07-19] Seller Link M1 — seller-checkout + rates/ seller branch DEPLOYED TO PROD + verified (test mode)
 
 **Category:** deploy | Payments | Seller Link

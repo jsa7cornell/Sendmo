@@ -45,18 +45,22 @@ SendMo Label Links. Recipients create a link once, share it with anyone who need
 | **Price Cap** | Maximum the recipient will pay per shipment. Default: $100. |
 | **Speed Tier** | Economy / Standard / Express — recipient's preference for delivery speed. |
 
-### Two Recipient Paths (Both MVP)
+### Recipient & Seller Paths
 
-SendMo offers two distinct onboarding paths:
+The first two paths are **recipient-pays** (the link creator receives the package and pays). The third — the **Seller Link** — flips it: the **seller** creates the link and an anonymous **buyer** pays on-session. It is the first SendMo flow where the payer is not the account holder.
 
 1. **Full Prepaid Label** — When the recipient knows exactly what's being shipped. They enter the origin address, package details, choose a carrier/speed, and get an exact price. Results in a downloadable PDF label.
 2. **Flexible Shipping Link** — When shipment details are unknown. The recipient sets distance, size hints, and speed preferences. The sender fills in the rest later. Results in a shareable link.
+3. **Seller Link** — The seller specs the package (origin address + size/weight) up front and shares `sendmo.co/s/<code>`. An anonymous buyer opens it, enters their destination, picks a speed, and **pays on-session** (Stripe Payment Element). The seller gets the label to print; the buyer gets a receipt + tracking + a tokenized `/t/<code>?cancel=<token>` link to manage the shipment with no account. `max_shipments`=1 (single-use, closes after the first sale) or NULL (reusable). Funding-agnostic via `funder` (buyer today; "seller covers shipping" is a future seam).
 
 | Type | Status | Description |
 |------|--------|-------------|
 | **Full Prepaid Label** | MVP | Recipient enters all details, gets exact price + PDF label immediately |
 | **Flexible Shipping Link** | MVP | Reusable link. Sender configures package details later. |
+| **Seller Link** | Built — test-mode, launch-gated | Seller specs package; anonymous buyer pays on-session. Not merged to `main`; see proposal `proposals/2026-07-17_seller-link-buyer-pays_decided-2026-07-17.md` + plan `zazzy-toasting-parrot`. Live-mode has one remaining launch-blocker (BuyerFlow `buyerLiveMode` — WISHLIST). |
 | **Private Shipment Link** | Phase 3 | QR code instead of label, no address exposure. |
+
+**Data model:** all three types share one shape — `User (profiles) → Link (sendmo_links, discriminated by link_type) → Shipment(s) → Transaction(s)` — differing only by attributes, **zero new tables** (migration 040 added `sendmo_links.{funder, origin_address_id, length/width/height_in, max_shipments}` + `shipments.{buyer_email, recipient_user_id}`; `link_type` ∈ {full_label, flexible, seller_link}). Seller sales are discriminated by `shipments.buyer_email IS NOT NULL` (the buy RPC mints a throwaway internal `full_label` link, so `shipments.link_id.link_type` is not reliable — the real link is resolved from the request's `link_short_code`).
 
 ---
 
