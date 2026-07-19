@@ -18,7 +18,15 @@ import { log } from "./logger.ts";
 
 export interface AdminAlertRow {
     label: string;
-    value: string;
+    /** Omitted on a `heading` row (rendered full-width, no value column). */
+    value?: string;
+    /**
+     * Render this row as a full-width bold section header instead of a
+     * label/value pair — lets a long notice (e.g. the label-created FYI) group
+     * its rows into "Shipment / Parties / Money / IDs" sections. Backward
+     * compatible: existing callers pass `{label, value}` and are untouched.
+     */
+    heading?: boolean;
 }
 
 export interface AdminAlertOptions {
@@ -62,16 +70,18 @@ function escapeHtml(s: string): string {
 }
 
 /**
- * Sends an alert email to the SendMo admin. Fire-and-forget safe: catches
- * everything internally and resolves either way.
+ * Renders the admin-alert email to { subject, html } WITHOUT sending. Pure —
+ * split out from sendAdminAlert so the markup (rows, section headers, notice vs
+ * alert framing) is unit-testable and can be previewed without a live send.
  */
-export async function sendAdminAlert(opts: AdminAlertOptions): Promise<void> {
-    const adminEmail = Deno.env.get("SENDMO_ADMIN_EMAIL") || "jsa7cornell@gmail.com";
+export function renderAdminAlertEmail(opts: AdminAlertOptions): { subject: string; html: string } {
     const rowsHtml = (opts.rows ?? [])
         .map(
             (r) =>
-                `  <tr><td style="padding:6px 0;color:#6B7280;width:180px;">${escapeHtml(r.label)}</td>` +
-                `<td style="padding:6px 0;font-family:monospace;">${escapeHtml(r.value)}</td></tr>`,
+                r.heading
+                    ? `  <tr><td colspan="2" style="padding:18px 0 4px;font-weight:600;color:#111827;border-bottom:1px solid #E5E7EB;">${escapeHtml(r.label)}</td></tr>`
+                    : `  <tr><td style="padding:6px 0;color:#6B7280;width:180px;vertical-align:top;">${escapeHtml(r.label)}</td>` +
+                      `<td style="padding:6px 0;font-family:monospace;">${escapeHtml(r.value ?? "")}</td></tr>`,
         )
         .join("\n");
     const actionHtml = opts.actionUrl
@@ -82,11 +92,9 @@ export async function sendAdminAlert(opts: AdminAlertOptions): Promise<void> {
     const headingColor = isNotice ? "#2563EB" : "#DC2626";
     const headingIcon = isNotice ? "" : "&#x26A0;&#xFE0F; ";
     const footerLabel = isNotice ? "SendMo automated notice" : "SendMo automated alert";
-    try {
-        await sendEmail({
-            to: adminEmail,
-            subject: `${subjectPrefix} ${opts.subject}`,
-            html: `<!DOCTYPE html><html><body style="font-family:sans-serif;padding:24px;">
+    return {
+        subject: `${subjectPrefix} ${opts.subject}`,
+        html: `<!DOCTYPE html><html><body style="font-family:sans-serif;padding:24px;">
 <h2 style="color:${headingColor};">${headingIcon}${escapeHtml(opts.heading)}</h2>
 <p>${opts.intro}</p>
 <table style="border-collapse:collapse;width:100%;max-width:480px;">
@@ -95,7 +103,18 @@ ${rowsHtml}
 ${actionHtml}
 <p style="font-size:13px;color:#9CA3AF;margin-top:24px;">${footerLabel} — ${escapeHtml(opts.source)}</p>
 </body></html>`,
-        });
+    };
+}
+
+/**
+ * Sends an alert email to the SendMo admin. Fire-and-forget safe: catches
+ * everything internally and resolves either way.
+ */
+export async function sendAdminAlert(opts: AdminAlertOptions): Promise<void> {
+    const adminEmail = Deno.env.get("SENDMO_ADMIN_EMAIL") || "jsa7cornell@gmail.com";
+    const { subject, html } = renderAdminAlertEmail(opts);
+    try {
+        await sendEmail({ to: adminEmail, subject, html });
     } catch (emailErr) {
         const msg = emailErr instanceof Error ? emailErr.message : String(emailErr);
         console.error(`[alert] admin alert email failed (${opts.source}):`, msg);
