@@ -45,6 +45,17 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 **Honest scope:** **two** new builds, not one — the on-session buyer checkout *and* the payer-identity rewiring. Implement in a worktree off `main`, ~6 PRs.
 
+### [2026-07-18] Tracking page rendered literal "unknown" for just-created labels — EasyPost `unknown` status leaked through untranslated
+
+**Category:** fix | Tracking | Edge Functions
+**Deploy:** Edge function was deployed directly to prod 2026-07-17 (`supabase functions deploy tracking`) to close the live window; git reconciled to `main` 2026-07-18 (this entry). Original PR #53 (early branch) was abandoned as conflicting/tangled; the identical one-line fix was re-applied on a clean branch off `main`.
+**Cross-link:** [`supabase/functions/tracking/index.ts`](supabase/functions/tracking/index.ts) L134 | repro shipment `KMDCNEW`
+
+**Bug (from a user screenshot):** a label bought ~2 min earlier showed a big **"unknown"** header. Record was healthy (`status=label_created`). The `tracking` fn polls EasyPost live; a brand-new unscanned label returns `tracker.status: "unknown"`, and L134 only translated `pre_transit` → `label_created`, so `unknown` passed straight into the response (`status: liveStatus`). The frontend has no mapping for `unknown` → hit the UNKNOWN-STATUS-FALLBACK branch and printed the raw string. Self-healing on first carrier scan.
+**Gotcha:** the write-back `UPDATE shipments SET status='unknown'` silently violated `shipments_status_check` (allowed set has no `unknown`) and was swallowed by the catch — which is why the row was never corrupted (`updated_at == created_at`). The bad value only ever leaked to the client.
+**Fix:** L134 maps `pre_transit` **and** `unknown` → `label_created`.
+**Browser-verified:** n/a-category: infra — edge-function status-mapping fix; the rendered effect (hero shows "Label Created" not "unknown") was verified live post-deploy 2026-07-17 by loading `sendmo.co/t/KMDCNEW` (hero = "Your label is ready to print"); deployed endpoint returns `status: 'label_created'`.
+
 ### [2026-07-17] Label print page — item description printed in the blank sheet area
 
 **Category:** ship | Tracking | Frontend
