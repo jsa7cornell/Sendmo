@@ -254,6 +254,43 @@ Deno.serve(async (req: Request) => {
                     );
                 }
                 const epData = await epResp.json();
+                // ── Seller-link binding backstop (review BLOCKER) ─────────────
+                // seller-checkout already verified shipment.reference === link.id
+                // before creating the PI, and the PI-metadata pin below ties the
+                // bought shipment to that PI. This is defense-in-depth: refuse to
+                // BUY a shipment not minted from this link (rates/ stamps
+                // reference = link.id on the seller path). On the should-be-
+                // impossible mismatch, refund the buyer's captured charge + alert.
+                if (epData.reference !== link.id) {
+                    if (payment_intent_id && typeof payment_intent_id === "string") {
+                        try {
+                            await createRefund({
+                                payment_intent_id,
+                                reason: "requested_by_customer",
+                                metadata: { easypost_shipment_id, failure_reason: "seller_link_binding_mismatch" },
+                                idempotency_key: `refund_${easypost_shipment_id}_binding_mismatch`,
+                                liveMode: sIsLive,
+                            });
+                        } catch (_e) { /* alert fires regardless */ }
+                    }
+                    await sendAdminAlert({
+                        subject: "Seller-link binding mismatch at buy time — label refused",
+                        heading: "Seller-Link Binding Mismatch",
+                        intro: "labels/ refused to buy a shipment whose EasyPost reference did not match the seller link. " +
+                            "seller-checkout should have caught this before the charge — investigate a possible bypass.",
+                        rows: [
+                            { label: "EasyPost shipment", value: easypost_shipment_id },
+                            { label: "Seller link", value: link.id },
+                            { label: "Shipment reference", value: String(epData.reference ?? "none") },
+                            { label: "PaymentIntent", value: typeof payment_intent_id === "string" ? payment_intent_id : "none" },
+                        ],
+                        source: "labels seller-link binding backstop",
+                    });
+                    return new Response(
+                        JSON.stringify({ error: "This shipment does not belong to this seller link." }),
+                        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                    );
+                }
                 const t = epData.to_address;
                 if (!t?.street1) {
                     return new Response(
@@ -1408,6 +1445,24 @@ Deno.serve(async (req: Request) => {
                         payment_intent_id: verifiedPaymentIntent?.id ?? null,
                     },
                 });
+                // Distinguish a TRUE race (no row → another buyer claimed it) from a
+                // TRANSIENT DB error (claimErr → claim state unknown). Both refund the
+                // buyer safely; only the copy + status differ so the buyer sees honest
+                // messaging ("just sold" 409 vs "temporary problem, try again" 503).
+                if (claimErr) {
+                    return new Response(
+                        JSON.stringify({
+                            error: "claim_failed",
+                            code: "SELLER_LINK_CLAIM_ERROR",
+                            message: refundIssued
+                                ? "We hit a temporary problem completing your purchase — your charge was reversed. Please try again."
+                                : "We hit a temporary problem completing your purchase; our team has been alerted. If your card was charged it will be refunded. Reference: " + (verifiedPaymentIntent?.id ?? "n/a"),
+                            refunded: refundIssued,
+                            payment_intent_id: verifiedPaymentIntent?.id ?? null,
+                        }),
+                        { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                    );
+                }
                 return new Response(
                     JSON.stringify({
                         error: "already_sold",
@@ -1445,6 +1500,22 @@ Deno.serve(async (req: Request) => {
 
         if (!buyResponse.ok || buyData.error) {
             const errorMsg = buyData.error?.message || "Failed to purchase label";
+
+            // Single-use seller link (review): the claim flipped active→in_use
+            // BEFORE this buy. The buy failed → no sale happened, so revert the
+            // claim; otherwise the seller's item is permanently marked sold with
+            // zero completed sales (no-auto-reopen rule). Scoped to the REAL link
+            // and idempotent (only flips a row still in_use).
+            if (resolvedLink?.link_type === "seller_link" && resolvedLink.max_shipments === 1) {
+                const { error: reopenErr } = await supabase
+                    .from("sendmo_links")
+                    .update({ status: "active" })
+                    .eq("id", resolvedLink.id)
+                    .eq("status", "in_use");
+                if (reopenErr) {
+                    console.error(`[Session ${sessionId}] [labels] single-use reopen after buy-failure FAILED:`, reopenErr.message);
+                }
+            }
 
             log({
                 event_type: "label.buy_error",
@@ -1838,14 +1909,54 @@ Deno.serve(async (req: Request) => {
                         // IS the downstream seller-sale marker (F1); it was already
                         // required + validated in the seller charge branch.
                         if (shipmentId && resolvedLink?.link_type === "seller_link" && typeof buyer_email === "string") {
-                            const { error: buyerErr } = await supabase
-                                .from('shipments')
-                                .update({ buyer_email })
-                                .eq('id', shipmentId);
-                            if (buyerErr) {
-                                // Non-fatal for the label, but this breaks the F1
-                                // discriminator downstream — log loudly.
-                                console.error('buyer_email write error (seller-link marker):', buyerErr);
+                            // buyer_email IS the F1 seller-sale discriminator. If it
+                            // stays NULL, tracking/cancel-label treat the sale as a
+                            // full-label one → the SELLER is shown as payer on /t/
+                            // (sees the buyer's amount + card last4) and the buyer
+                            // loses their receipt + tokenized cancel email. The RPC
+                            // has no buyer_email param, so it's a follow-up UPDATE —
+                            // RETRY it, and if it still fails, ALERT loudly so a human
+                            // backfills it before the seller can view the receipt.
+                            // (Ideal future fix: fold buyer_email into the RPC for
+                            // true atomicity — WISHLIST.)
+                            let buyerEmailWritten = false;
+                            let lastBuyerErr: string | null = null;
+                            for (let attempt = 0; attempt < 3 && !buyerEmailWritten; attempt++) {
+                                const { error: buyerErr } = await supabase
+                                    .from('shipments')
+                                    .update({ buyer_email })
+                                    .eq('id', shipmentId);
+                                if (!buyerErr) { buyerEmailWritten = true; break; }
+                                lastBuyerErr = buyerErr.message ?? String(buyerErr);
+                                console.error(`buyer_email write error (seller-link marker), attempt ${attempt + 1}:`, lastBuyerErr);
+                            }
+                            if (!buyerEmailWritten) {
+                                log({
+                                    event_type: "label.buyer_email_write_failed",
+                                    session_id: sessionId,
+                                    severity: "error",
+                                    entity_type: "shipment",
+                                    entity_id: shipmentId,
+                                    properties: {
+                                        error_message: lastBuyerErr,
+                                        requires_manual_intervention: true,
+                                        easypost_shipment_id,
+                                    },
+                                });
+                                await sendAdminAlert({
+                                    subject: "Seller-link buyer_email write FAILED — seller may see buyer's receipt",
+                                    heading: "buyer_email Marker Not Persisted",
+                                    intro: "A seller-link sale's buyer_email could not be written after retries. Until it is set, " +
+                                        "the SELLER is treated as the payer on /t/ (sees the buyer's amount + card last4) and the " +
+                                        "buyer loses their receipt + tokenized cancel email. Set shipments.buyer_email manually now.",
+                                    rows: [
+                                        { label: "Shipment id", value: shipmentId },
+                                        { label: "buyer_email", value: buyer_email },
+                                        { label: "EasyPost shipment", value: easypost_shipment_id },
+                                        { label: "Error", value: lastBuyerErr ?? "unknown" },
+                                    ],
+                                    source: "labels seller-link buyer_email persist",
+                                });
                             }
                         }
 

@@ -110,6 +110,14 @@ Deno.serve(async (req: Request) => {
         // exposure; the buy-side gates protect the money.
         let linkIsTest: boolean | null = null;
         let linkType: string | null = null;
+        // Seller-link binding (review blocker): when a SELLER link mints the
+        // EasyPost shipment below, we stamp shipment.reference = link.id so the
+        // downstream money path (seller-checkout + labels) can prove the priced/
+        // bought shipment was created FROM this link's origin+parcel — not an
+        // arbitrary cheap shipment the anonymous buyer minted elsewhere. An
+        // attacker can't forge this (no EasyPost API key; the non-link rate path
+        // never sets it).
+        let sellerLinkId: string | null = null;
         if (link_short_code && typeof link_short_code === "string") {
             const sbUrl = Deno.env.get("SUPABASE_URL") || Deno.env.get("VITE_SUPABASE_URL");
             const sbKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || Deno.env.get("SB_SERVICE_ROLE_KEY");
@@ -120,7 +128,7 @@ Deno.serve(async (req: Request) => {
                 const { data: link } = await supabase
                     .from("sendmo_links")
                     .select(`
-                        status, link_type, is_test, max_price_cents, preferred_carrier, preferred_speed,
+                        id, status, link_type, is_test, max_price_cents, preferred_carrier, preferred_speed,
                         length_in, width_in, height_in, weight_hint_oz,
                         recipient_address:addresses!recipient_address_id (
                             name, street1, street2, city, state, zip, country, phone
@@ -174,6 +182,7 @@ Deno.serve(async (req: Request) => {
                     // enforced SERVER-SIDE (B5); any client-supplied prefs on this
                     // leg are ignored.
                     linkType = "seller_link";
+                    sellerLinkId = (link as unknown as { id: string }).id;
                     const o = link.origin_address as unknown as {
                         name: string; street1: string; street2: string | null;
                         city: string; state: string; zip: string; country: string | null;
@@ -307,6 +316,11 @@ Deno.serve(async (req: Request) => {
                 },
                 body: JSON.stringify({
                     shipment: {
+                        // Seller-link binding: stamp reference = link.id so
+                        // seller-checkout + labels can verify this shipment was
+                        // minted from the link (blocker fix). Only set on the
+                        // seller path; null/omitted for flex + full-label.
+                        ...(sellerLinkId ? { reference: sellerLinkId } : {}),
                         from_address: builtFrom,
                         to_address: builtTo,
                         parcel: {

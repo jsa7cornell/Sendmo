@@ -120,7 +120,12 @@ Deno.serve(async (req: Request) => {
         // buyer's receipt / tracking / tokenized cancel link go to. Without it,
         // cancel-label + tracking can't tell the sale apart from a full-label
         // one and would route the buyer's receipt to the seller.
-        if (!body.buyer_email || typeof body.buyer_email !== "string" || !body.buyer_email.includes("@")) {
+        if (
+            !body.buyer_email ||
+            typeof body.buyer_email !== "string" ||
+            !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.buyer_email.trim()) ||
+            body.buyer_email.length > 254
+        ) {
             return jsonResponse({ error: "Missing or invalid buyer_email" }, 400);
         }
 
@@ -160,6 +165,22 @@ Deno.serve(async (req: Request) => {
         // when they created the link. is_test is the server-side source of truth.
         const isLive = link.is_test !== true;
 
+        // ─── Kill switch (review — the "one-flip halt" must cover the 3rd money
+        // path). When live money is globally paused (SENDMO_LIVE_DEFAULT != "true"),
+        // refuse to create a LIVE seller-checkout PI, just as labels/ refuses the
+        // flex + full-label buys. Test mode is never gated. The charge originates
+        // HERE, so this is the correct place to halt it.
+        if (isLive && Deno.env.get("SENDMO_LIVE_DEFAULT") !== "true") {
+            log({
+                event_type: "payment.live_paused_by_kill_switch",
+                session_id: sessionId,
+                severity: "warn",
+                entity_type: "payment_intent",
+                properties: { source: "sendmo_seller_link", seller_user_id: link.user_id },
+            });
+            return jsonResponse({ error: "Live payments are temporarily paused. Please try again shortly." }, 503);
+        }
+
         // ─── Live-charge allowlist gate — gate the SELLER (link owner) ────────
         // Mirrors the flex leg, which gates resolvedLink.user_id (not the caller).
         if (isLive) {
@@ -183,6 +204,40 @@ Deno.serve(async (req: Request) => {
         if (!rateKey) {
             return jsonResponse({ error: `EasyPost ${isLive ? "Live" : "Test"} API key not configured` }, 500);
         }
+
+        // ─── Seller-link binding (review BLOCKER) ─────────────────────────────
+        // The anonymous buyer supplies easypost_shipment_id, so we must prove it
+        // was minted FROM THIS link's origin+parcel via the seller rate path —
+        // otherwise a buyer could mint a cheap 1oz shipment through the no-link
+        // rate path and pay its price for a label the seller applies to the real
+        // (heavier) item, collapsing "server derives the amount" into "buyer picks
+        // the amount". rates/ stamps shipment.reference = link.id on the seller
+        // path; an attacker can't forge it (no EasyPost API key). Verify it here,
+        // before pricing, and again at buy time in labels/.
+        const bindResp = await fetch(
+            `https://api.easypost.com/v2/shipments/${easypost_shipment_id}`,
+            { headers: { Authorization: "Basic " + btoa(rateKey + ":") } },
+        );
+        if (!bindResp.ok) {
+            return jsonResponse({ error: "Could not verify shipment" }, 502);
+        }
+        const bindShip = await bindResp.json();
+        if (!bindShip || bindShip.reference !== link.id) {
+            log({
+                event_type: "seller_checkout.shipment_link_mismatch",
+                session_id: sessionId,
+                severity: "warn",
+                entity_type: "payment_intent",
+                entity_id: easypost_shipment_id,
+                properties: {
+                    link_short_code: link.short_code,
+                    expected_link_id: link.id,
+                    got_reference: bindShip?.reference ?? null,
+                },
+            });
+            return jsonResponse({ error: "This shipment does not belong to this seller link." }, 403);
+        }
+
         let amountCents: number;
         const rateResp = await fetch(
             `https://api.easypost.com/v2/shipments/${easypost_shipment_id}/rates/${easypost_rate_id}`,
