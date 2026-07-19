@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Loader2, AlertCircle, ArrowLeft, ArrowRight, Lock, MapPin, Truck, Package,
@@ -6,9 +7,12 @@ import {
 import { Button } from "@/components/ui/button";
 import AppHeader from "@/components/AppHeader";
 import AddressForm from "@/components/forms/AddressForm";
-import { fetchBuyerRates, formatCents } from "@/lib/api";
+import StripePaymentForm from "@/components/recipient/StripePaymentForm";
+import {
+  fetchBuyerRates, formatCents, createSellerCheckoutPI, buyLabelSeller, BuyLabelRateChangedError,
+} from "@/lib/api";
 import type { LinkData } from "@/lib/api";
-import type { AddressInput, ShippingRate } from "@/lib/types";
+import type { AddressInput, ShippingRate, LabelResult } from "@/lib/types";
 import { emptyAddress, carrierDisplayName, serviceDisplayName } from "@/lib/utils";
 import { isUsablePhone } from "@/lib/phone";
 import { isValidEmail, isPreferredRate, pickBestPerCarrier } from "@/components/sender/senderState";
@@ -20,20 +24,22 @@ import { isValidEmail, isPreferredRate, pickBestPerCarrier } from "@/components/
 // the buyer supplies ONLY their destination, sees PRICE-VISIBLE rates, picks
 // one, and pays on-session. No auth, no account creation.
 //
-// This component owns the flow up to and including rate selection. The final
-// "review/pay" step is a clean placeholder — the payment step (Stripe / label
-// purchase) is built separately in M4. The review step already exposes
-// { selectedRate, buyerAddress, buyerEmail } in local state so a payment
-// handler can be wired in without restructuring.
+// This component owns the whole flow, including the on-session payment. The
+// review step shows the order, and on "Pay & get label" it mounts the shared
+// StripePaymentForm with a seller-checkout createIntent (server derives the
+// amount from the link — the buyer's client never sends one). After the card
+// clears, buyLabelSeller buys the EasyPost label and we redirect to the
+// tracking page. See M4 (seller-checkout + labels seller branch, deployed).
 
 type BuyerStep = "address" | "rates" | "review";
 
 const STEP_ORDER: BuyerStep[] = ["address", "rates", "review"];
 
 export default function BuyerFlow({ linkData }: { linkData: LinkData }) {
+  const navigate = useNavigate();
   const [step, setStep] = useState<BuyerStep>("address");
 
-  // ── Buyer-supplied inputs (the payment handler in M4 reads these) ──
+  // ── Buyer-supplied inputs (the payment handler reads these) ──
   const [buyerAddress, setBuyerAddress] = useState<AddressInput>(emptyAddress());
   const [buyerEmail, setBuyerEmail] = useState("");
   const [tried, setTried] = useState(false); // show validation errors once submitted
@@ -43,9 +49,24 @@ export default function BuyerFlow({ linkData }: { linkData: LinkData }) {
   const [ratesLoading, setRatesLoading] = useState(false);
   const [ratesError, setRatesError] = useState<string | null>(null);
   const [selectedRate, setSelectedRate] = useState<ShippingRate | null>(null);
+  // One EasyPost Shipment backs the whole rate list; seller-checkout + the
+  // label buy both key off it. Threaded out of fetchBuyerRates (like fetchRates).
+  const [easypostShipmentId, setEasypostShipmentId] = useState("");
 
-  // ── Review-step placeholder (M4 replaces this with the payment handler) ──
-  const [payPlaceholder, setPayPlaceholder] = useState(false);
+  // ── Payment (review step) ──
+  // Flip on "Pay & get label" so StripePaymentForm mounts (and creates the PI)
+  // only after the buyer commits — not on every review render.
+  const [paying, setPaying] = useState(false);
+  // Set when the buy-time rate gate trips; shown as a banner back on the rates
+  // step after we bounce the buyer there to re-shop.
+  const [rateChangedNotice, setRateChangedNotice] = useState<string | null>(null);
+
+  // LinkData (seller-link GET-by-code) exposes no is_test/live signal, so the
+  // buyer client runs in TEST mode. The server still derives the true mode from
+  // the link for both seller-checkout and the label buy; this only selects the
+  // Stripe publishable key for Elements. Revisit if GET-by-code starts
+  // returning is_test.
+  const buyerLiveMode = false;
 
   const originLine = linkData.origin_city && linkData.origin_state
     ? `${linkData.origin_city}, ${linkData.origin_state}`
@@ -61,8 +82,9 @@ export default function BuyerFlow({ linkData }: { linkData: LinkData }) {
     setRatesLoading(true);
     setRatesError(null);
     setSelectedRate(null);
+    setPaying(false);
     try {
-      const r = await fetchBuyerRates(
+      const { rates: r, easypost_shipment_id } = await fetchBuyerRates(
         {
           name: buyerAddress.name,
           street1: buyerAddress.street,
@@ -73,6 +95,7 @@ export default function BuyerFlow({ linkData }: { linkData: LinkData }) {
         },
         linkData.short_code,
       );
+      setEasypostShipmentId(easypost_shipment_id);
       // Price-visible buyers shop on price: trim to one best option per carrier,
       // then order cheapest-first. Default-select the cheapest so there's always
       // a selection.
@@ -92,8 +115,60 @@ export default function BuyerFlow({ linkData }: { linkData: LinkData }) {
   function handleAddressContinue() {
     setTried(true);
     if (!addressComplete || !emailValid) return;
+    setRateChangedNotice(null);
     loadRates();
   }
+
+  // Redirect to the canonical tracking page after a successful label buy.
+  // Copies RecipientStepPayment.redirectToTracking: ?fresh=1 flags the
+  // celebration state, and ?cancel=<hex> passes the cancel_token so
+  // TrackingPage writes it to sessionStorage on first render (enabling the
+  // buyer's in-session Cancel). { replace: true } drops the payment step from
+  // history.
+  function redirectToTracking(result: LabelResult) {
+    if (!result.public_code) return;
+    const cancelSuffix = result.cancel_token ? `&cancel=${result.cancel_token}` : "";
+    navigate(`/t/${result.public_code}?fresh=1${cancelSuffix}`, { replace: true });
+  }
+
+  // Called by StripePaymentForm AFTER the buyer's card is charged. Buys the
+  // EasyPost label with the captured PI id, then redirects to tracking.
+  async function handleBuyerSuccess(paymentIntentId: string) {
+    if (!selectedRate || !easypostShipmentId) {
+      throw new Error("Missing rate or shipment id");
+    }
+    try {
+      const result = await buyLabelSeller({
+        easypost_shipment_id: easypostShipmentId,
+        easypost_rate_id: selectedRate.id,
+        link_short_code: linkData.short_code,
+        payment_intent_id: paymentIntentId,
+        buyer_email: buyerEmail,
+      });
+      redirectToTracking(result);
+    } catch (err) {
+      // Buy-time rate gate trip — the PI was refunded server-side. Bounce back
+      // to fresh rates with a notice. Do NOT re-throw: StripePaymentForm would
+      // otherwise render it as a card error.
+      if (err instanceof BuyLabelRateChangedError) {
+        setRateChangedNotice("The shipping price changed — please re-check rates.");
+        setPaying(false);
+        loadRates();
+        return;
+      }
+      throw err; // Let StripePaymentForm surface the inline error.
+    }
+  }
+
+  // Fresh PI factory for StripePaymentForm — server derives the amount from the
+  // link + rate; the buyer's client never sends one.
+  const createSellerIntent = () =>
+    createSellerCheckoutPI({
+      link_short_code: linkData.short_code,
+      easypost_shipment_id: easypostShipmentId,
+      easypost_rate_id: selectedRate?.id ?? "",
+      buyer_email: buyerEmail,
+    });
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-background to-muted/50 flex flex-col">
@@ -132,9 +207,10 @@ export default function BuyerFlow({ linkData }: { linkData: LinkData }) {
                   rates={rates}
                   loading={ratesLoading}
                   error={ratesError}
+                  notice={rateChangedNotice}
                   selectedRate={selectedRate}
                   onSelectRate={setSelectedRate}
-                  onContinue={() => setStep("review")}
+                  onContinue={() => { setRateChangedNotice(null); setStep("review"); }}
                   onBack={() => setStep("address")}
                   onRetry={loadRates}
                 />
@@ -148,9 +224,15 @@ export default function BuyerFlow({ linkData }: { linkData: LinkData }) {
                   buyerEmail={buyerEmail}
                   selectedRate={selectedRate}
                   originLine={originLine}
-                  payPlaceholder={payPlaceholder}
-                  onPay={() => setPayPlaceholder(true)}
-                  onBack={() => setStep("rates")}
+                  liveMode={buyerLiveMode}
+                  easypostShipmentId={easypostShipmentId}
+                  paying={paying}
+                  onStartPay={() => setPaying(true)}
+                  createIntent={createSellerIntent}
+                  onPaymentSuccess={handleBuyerSuccess}
+                  // While paying, Back returns to the review summary; otherwise
+                  // to the rates step.
+                  onBack={() => (paying ? setPaying(false) : setStep("rates"))}
                 />
               </motion.div>
             )}
@@ -248,12 +330,13 @@ function AddressStep({
 // ─── Step 2: PRICE-VISIBLE rate selection ───────────────────
 
 function RatesStep({
-  linkData, rates, loading, error, selectedRate, onSelectRate, onContinue, onBack, onRetry,
+  linkData, rates, loading, error, notice, selectedRate, onSelectRate, onContinue, onBack, onRetry,
 }: {
   linkData: LinkData;
   rates: ShippingRate[];
   loading: boolean;
   error: string | null;
+  notice: string | null;
   selectedRate: ShippingRate | null;
   onSelectRate: (r: ShippingRate) => void;
   onContinue: () => void;
@@ -313,6 +396,13 @@ function RatesStep({
           You pay for shipping — pick the speed and price that work for you.
         </p>
       </div>
+
+      {notice && (
+        <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800 flex items-start gap-2">
+          <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+          <span>{notice}</span>
+        </div>
+      )}
 
       <div className="space-y-3">
         {rates.map((rate) => {
@@ -375,17 +465,22 @@ function RatesStep({
   );
 }
 
-// ─── Step 3: review + pay (PLACEHOLDER — M4 wires the payment) ──
+// ─── Step 3: review + on-session pay ────────────────────────
 
 function ReviewStep({
-  buyerAddress, buyerEmail, selectedRate, originLine, payPlaceholder, onPay, onBack,
+  buyerAddress, buyerEmail, selectedRate, originLine, liveMode, easypostShipmentId,
+  paying, onStartPay, createIntent, onPaymentSuccess, onBack,
 }: {
   buyerAddress: AddressInput;
   buyerEmail: string;
   selectedRate: ShippingRate;
   originLine: string | null;
-  payPlaceholder: boolean;
-  onPay: () => void;
+  liveMode: boolean;
+  easypostShipmentId: string;
+  paying: boolean;
+  onStartPay: () => void;
+  createIntent: () => Promise<{ client_secret: string; payment_intent_id: string }>;
+  onPaymentSuccess: (paymentIntentId: string) => Promise<void>;
   onBack: () => void;
 }) {
   return (
@@ -446,24 +541,36 @@ function ReviewStep({
         </span>
       </div>
 
-      {payPlaceholder && (
-        <div className="rounded-xl border border-primary/30 bg-primary/5 px-4 py-3 text-sm text-foreground">
-          Payment step wired next (M4).
+      {paying ? (
+        <div className="space-y-4">
+          {/* Mounting this creates the on-session PI (seller-checkout) and, once
+              the card clears, calls onPaymentSuccess(paymentIntentId) → the
+              label buy. The server derives the amount; totalCents is display
+              only. accessToken=undefined — the buyer is anonymous. */}
+          <StripePaymentForm
+            liveMode={liveMode}
+            totalCents={selectedRate.display_price_cents}
+            easypostShipmentId={easypostShipmentId}
+            receiptEmail={buyerEmail}
+            accessToken={undefined}
+            createIntent={createIntent}
+            onSuccess={onPaymentSuccess}
+          />
+          <Button variant="outline" onClick={onBack} className="rounded-xl w-full">
+            <ArrowLeft className="w-4 h-4 mr-1" /> Back
+          </Button>
+        </div>
+      ) : (
+        <div className="flex gap-3">
+          <Button variant="outline" onClick={onBack} className="rounded-xl">
+            <ArrowLeft className="w-4 h-4 mr-1" /> Back
+          </Button>
+          <Button onClick={onStartPay} className="flex-1 rounded-xl shadow-sm">
+            <Lock className="w-4 h-4 mr-1.5" />
+            Pay &amp; get label
+          </Button>
         </div>
       )}
-
-      <div className="flex gap-3">
-        <Button variant="outline" onClick={onBack} className="rounded-xl">
-          <ArrowLeft className="w-4 h-4 mr-1" /> Back
-        </Button>
-        {/* Placeholder: M4 replaces onPay with the real payment handler, which
-            has everything it needs in this component's props:
-            { selectedRate, buyerAddress, buyerEmail }. */}
-        <Button onClick={onPay} className="flex-1 rounded-xl shadow-sm">
-          <Lock className="w-4 h-4 mr-1.5" />
-          Pay &amp; get label
-        </Button>
-      </div>
     </div>
   );
 }

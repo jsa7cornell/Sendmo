@@ -21,6 +21,13 @@ interface StripePaymentFormProps {
   // Optional user JWT — when present, the payments fn stamps PI metadata.user_id
   // off auth.uid() (proposal 2026-05-11_account-creation-timing, §7 step 5).
   accessToken?: string;
+  // Optional PI factory. When provided, the form obtains its client_secret +
+  // payment_intent_id from this caller-supplied function INSTEAD of the internal
+  // createPaymentIntent(amount_cents) call — used by the anonymous seller-link
+  // buyer, where the server derives the amount + mode from the link (the buyer's
+  // client must not send an amount). When absent, behavior is unchanged
+  // (recipient / full-label callers). totalCents is display-only in this path.
+  createIntent?: () => Promise<{ client_secret: string; payment_intent_id: string }>;
 }
 
 // Outer component creates the PaymentIntent + mounts Stripe Elements.
@@ -38,6 +45,17 @@ export default function StripePaymentForm(props: StripePaymentFormProps) {
     let cancelled = false;
     (async () => {
       try {
+        if (props.createIntent) {
+          // Seller-link buyer path: the caller creates the PI (server derives
+          // the amount + mode from the link). An anonymous buyer has no saved
+          // cards, so there's no Customer Session — keep it null.
+          const result = await props.createIntent();
+          if (cancelled) return;
+          setClientSecret(result.client_secret);
+          setPaymentIntentId(result.payment_intent_id);
+          setCustomerSessionClientSecret(null);
+          return;
+        }
         const result = await createPaymentIntent({
           easypost_shipment_id: props.easypostShipmentId,
           amount_cents: props.totalCents,
@@ -55,6 +73,11 @@ export default function StripePaymentForm(props: StripePaymentFormProps) {
       }
     })();
     return () => { cancelled = true; };
+    // createIntent intentionally omitted from deps: the PI is keyed to the
+    // shipment id and created once (StrictMode-safe), matching the
+    // createPaymentIntent idempotency-by-shipment behavior. The seller caller
+    // passes a fresh inline fn each render, so listing it would re-create the PI.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.easypostShipmentId, props.totalCents, props.liveMode, props.receiptEmail, props.accessToken]);
 
   const elementsOptions = useMemo(

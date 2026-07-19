@@ -776,10 +776,15 @@ export async function fetchSenderRates(
 // Same /rates endpoint + anon-key headers as fetchSenderRates. The server
 // returns display_price in DOLLARS (already margin-applied); we convert to
 // cents here exactly like fetchSenderRates.
+//
+// Returns the easypost_shipment_id alongside the rates (mirrors fetchRates/
+// fetchSenderRates): one EasyPost Shipment backs the whole rate list, and the
+// on-session payment + label buy both need that id. ShippingRate itself stays
+// shipment-id-free — the id belongs to the shipment, not each rate.
 export async function fetchBuyerRates(
   destAddress: { name: string; street1: string; city: string; state: string; zip: string; phone: string },
   linkShortCode: string,
-): Promise<ShippingRate[]> {
+): Promise<{ rates: ShippingRate[]; easypost_shipment_id: string }> {
   const body = {
     to_address: { ...destAddress, country: "US" },
     // No from_address, no parcel — the server resolves the seller's origin +
@@ -788,7 +793,7 @@ export async function fetchBuyerRates(
   };
   const data = await post<RatesResponse>("rates", body);
 
-  return (data.rates || []).map((r) => ({
+  const rates: ShippingRate[] = (data.rates || []).map((r) => ({
     id: r.easypost_rate_id,
     carrier: r.carrier,
     service: r.service,
@@ -797,6 +802,67 @@ export async function fetchBuyerRates(
     estimated_days: r.delivery_days,
     currency: "USD",
   }));
+
+  const shipmentId = data.rates?.[0]?.easypost_shipment_id || "";
+  return { rates, easypost_shipment_id: shipmentId };
+}
+
+// ─── Seller Checkout (on-session PaymentIntent) ─────────────
+//
+// The anonymous buyer's on-session PI. Server-derives the amount from the
+// link + selected rate — the buyer's client must NOT send an amount (contrast
+// with createPaymentIntent, which takes amount_cents from a trusted caller).
+// Anon key only (no user JWT — the buyer has no account). The returned
+// client_secret + payment_intent_id feed StripePaymentForm via its createIntent
+// prop; the id is later handed to buyLabelSeller.
+export async function createSellerCheckoutPI(params: {
+  link_short_code: string;
+  easypost_shipment_id: string;
+  easypost_rate_id: string;
+  buyer_email: string;
+}): Promise<{ client_secret: string; payment_intent_id: string; status: string }> {
+  return post<{ client_secret: string; payment_intent_id: string; status: string }>(
+    "seller-checkout",
+    {
+      link_short_code: params.link_short_code,
+      easypost_shipment_id: params.easypost_shipment_id,
+      easypost_rate_id: params.easypost_rate_id,
+      buyer_email: params.buyer_email,
+    },
+  );
+}
+
+// Buys the EasyPost label for a seller-link buyer AFTER their card is charged.
+// Sends ONLY the 5 fields the server needs — it resolves from/to addresses +
+// parcel from the link itself (never trust the buyer's client for those), and
+// derives live-ness from the link's is_test (so no live_mode either). Mirrors
+// buyLabel's typed 409/rate_changed handling.
+export async function buyLabelSeller(params: {
+  easypost_shipment_id: string;
+  easypost_rate_id: string;
+  link_short_code: string;
+  payment_intent_id: string;
+  buyer_email: string;
+}): Promise<LabelResult> {
+  const res = await fetch(`${BASE_URL}/functions/v1/labels`, {
+    method: "POST",
+    headers: headers(), // anon — the buyer has no account
+    body: JSON.stringify({
+      easypost_shipment_id: params.easypost_shipment_id,
+      easypost_rate_id: params.easypost_rate_id,
+      link_short_code: params.link_short_code,
+      payment_intent_id: params.payment_intent_id,
+      buyer_email: params.buyer_email,
+    }),
+  });
+  const data = await res.json();
+  if (res.status === 409 && data?.error === "rate_changed") {
+    throw new BuyLabelRateChangedError(data);
+  }
+  if (!res.ok) {
+    throw new Error(data.error || data.message || `API error ${res.status}`);
+  }
+  return data as LabelResult;
 }
 
 // ─── Pricing Helpers ────────────────────────────────────────
