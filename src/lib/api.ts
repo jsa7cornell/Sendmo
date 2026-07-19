@@ -570,6 +570,11 @@ export interface LinkData {
   // Populated for full_label viewer links so the client can redirect to
   // /t/<public_code>. Null for flex-links.
   public_code?: string | null;
+  // Seller links: the buyer's "ships from" hint (city/state only — the origin
+  // street is resolved server-side, never exposed to the buyer's client).
+  // Null for flex/full-label links.
+  origin_city?: string | null;
+  origin_state?: string | null;
 }
 
 export interface UpdateLinkParams {
@@ -759,6 +764,39 @@ export async function fetchSenderRates(
 
   const shipmentId = data.rates?.[0]?.easypost_shipment_id || "";
   return { rates, easypost_shipment_id: shipmentId };
+}
+
+// ─── Buyer Rates (seller-link, PRICE-VISIBLE) ──────────────
+//
+// The anonymous buyer at /s/<code> supplies ONLY their destination address;
+// the seller's origin + package (and carrier/price constraints) are resolved
+// server-side from link_short_code. Unlike the sender flow, the buyer pays,
+// so the returned display_price_cents is shown to them verbatim.
+//
+// Same /rates endpoint + anon-key headers as fetchSenderRates. The server
+// returns display_price in DOLLARS (already margin-applied); we convert to
+// cents here exactly like fetchSenderRates.
+export async function fetchBuyerRates(
+  destAddress: { name: string; street1: string; city: string; state: string; zip: string; phone: string },
+  linkShortCode: string,
+): Promise<ShippingRate[]> {
+  const body = {
+    to_address: { ...destAddress, country: "US" },
+    // No from_address, no parcel — the server resolves the seller's origin +
+    // package from the link. link_short_code drives the seller-link branch.
+    link_short_code: linkShortCode,
+  };
+  const data = await post<RatesResponse>("rates", body);
+
+  return (data.rates || []).map((r) => ({
+    id: r.easypost_rate_id,
+    carrier: r.carrier,
+    service: r.service,
+    rate_cents: Math.round((r.display_price * 100 - 100) / 1.15), // back-calculate base
+    display_price_cents: Math.round(r.display_price * 100),
+    estimated_days: r.delivery_days,
+    currency: "USD",
+  }));
 }
 
 // ─── Pricing Helpers ────────────────────────────────────────
