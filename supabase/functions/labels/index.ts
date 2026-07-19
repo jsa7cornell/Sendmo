@@ -14,6 +14,7 @@ import {
 } from "../_shared/stripe.ts";
 import { checkRateLimit } from "../_shared/ratelimit.ts";
 import { sendAdminAlert } from "../_shared/alert.ts";
+import { buildLabelCreatedNoticeRows } from "../_shared/label-notice.ts";
 import { resolveLiveMode } from "../_shared/mode.ts";
 import { assertKeysMatchEnv } from "../_shared/env-guard.ts";
 import { checkLiveChargeAllowed } from "../_shared/allowlist.ts";
@@ -1477,27 +1478,65 @@ Deno.serve(async (req: Request) => {
                     // trivially scopeable to live-only later if it gets noisy.
                     {
                         const noticeMode = isComp ? "comp" : (isLive ? "live" : "test");
-                        const noticeRateCents = Math.round(parseFloat(buyData.selected_rate?.rate || "0") * 100);
-                        const noticeChargedCents = isComp ? 0 : (gateDisplayCents > 0 ? gateDisplayCents : noticeRateCents);
-                        const fmt = (c: number) => `$${(c / 100).toFixed(2)}`;
+                        // Carrier cost (what SendMo pays EasyPost) and the true
+                        // amount charged. Prefer the VERIFIED PI amount over the
+                        // gate basis so the "Charged" figure is Stripe-truth, not
+                        // a client-derived display price.
+                        const noticeEasypostCents = Math.round(parseFloat(buyData.selected_rate?.rate || "0") * 100);
+                        const noticeChargedCents = isComp
+                            ? 0
+                            : (verifiedPaymentIntent?.amount ?? (gateDisplayCents > 0 ? gateDisplayCents : noticeEasypostCents));
+                        const noticeEta = buyData.selected_rate?.delivery_date
+                            ? new Date(buyData.selected_rate.delivery_date).toISOString().slice(0, 10)
+                            : (buyData.selected_rate?.delivery_days ? `${buyData.selected_rate.delivery_days} business days` : null);
+                        // Payer = authenticated account that paid. Full-label: the
+                        // caller (JWT). Flex: the link owner (recipient) who prepaid.
+                        const noticePayerEmail = callerEmail ?? (resolvedLink ? recipient_email : null);
+                        const noticeRows = buildLabelCreatedNoticeRows({
+                            mode: noticeMode,
+                            flow: resolvedLink ? "flexible link" : "full prepaid",
+                            carrier,
+                            service,
+                            eta: noticeEta,
+                            itemDescription: typeof parcel?.description === "string" ? parcel.description : null,
+                            weightOz: Number(buyData.parcel?.weight ?? parcel?.weight_oz ?? 0) || null,
+                            lengthIn: Number(buyData.parcel?.length ?? parcel?.length_in ?? 0) || null,
+                            widthIn: Number(buyData.parcel?.width ?? parcel?.width_in ?? 0) || null,
+                            heightIn: Number(buyData.parcel?.height ?? parcel?.height_in ?? 0) || null,
+                            publicCode: publicCode ?? null,
+                            trackingNumber: trackingNumber ?? null,
+                            senderName: from_address?.name ?? null,
+                            senderEmail: sender_email ?? null,
+                            senderPhone: from_address?.phone ?? null,
+                            senderIp,
+                            recipientName: to_address?.name ?? null,
+                            recipientEmail: recipient_email ?? null,
+                            recipientPhone: to_address?.phone ?? null,
+                            payerEmail: noticePayerEmail,
+                            fromAddress: from_address ?? null,
+                            toAddress: to_address ?? null,
+                            isComp,
+                            chargedCents: noticeChargedCents,
+                            easypostCents: noticeEasypostCents,
+                            stripeFeePct: STRIPE_FEE_PCT,
+                            stripeFeeFlatCents: STRIPE_FEE_FLAT_CENTS,
+                            priceCapCents: resolvedLink?.max_price_cents ?? null,
+                            paymentMethod: isComp ? "comp (no charge)" : "card",
+                            paymentIntentId: verifiedPaymentIntent?.id ?? null,
+                            paymentStatus: verifiedPaymentIntent?.status ?? null,
+                            easypostShipmentId: easypost_shipment_id,
+                            easypostTrackerId: buyData.tracker?.id ?? null,
+                            shipmentId,
+                            linkShortCode: resolvedLink?.short_code ?? null,
+                            sessionId,
+                        });
                         runInBackground(
                             sendAdminAlert({
                                 variant: "notice",
                                 subject: `New label (${noticeMode}) — ${publicCode ?? easypost_shipment_id}`,
                                 heading: `New ${noticeMode} label created`,
-                                intro: `A ${noticeMode}-mode label was just generated on SendMo.`,
-                                rows: [
-                                    { label: "Mode", value: noticeMode },
-                                    { label: "Carrier", value: `${carrier} ${service}`.trim() || "—" },
-                                    { label: "Charged", value: isComp ? "$0.00 (comp)" : fmt(noticeChargedCents) },
-                                    { label: "SendMo cost", value: fmt(noticeRateCents) },
-                                    { label: "Tracking", value: trackingNumber ?? "—" },
-                                    {
-                                        label: "From → To",
-                                        value: `${from_address?.city ?? "?"}, ${from_address?.state ?? "?"} → ${to_address?.city ?? "?"}, ${to_address?.state ?? "?"}`,
-                                    },
-                                    { label: "Public code", value: publicCode ?? "—" },
-                                ],
+                                intro: `A ${noticeMode}-mode label was just generated on SendMo. Full shipment detail below for review.`,
+                                rows: noticeRows,
                                 actionUrl: publicCode ? `https://sendmo.co/t/${publicCode}` : undefined,
                                 actionLabel: "View tracking page",
                                 source: "labels label.created admin notice",
