@@ -448,6 +448,14 @@ Deno.serve(async (req: Request) => {
                 short_code: link.short_code,
                 link_type: link.link_type,
                 status: link.status,
+                // Mode signal for the anonymous buyer client (seller-link): the
+                // buyer confirms the on-session PI client-side, so it must load the
+                // Stripe publishable key that MATCHES the mode seller-checkout
+                // creates the PI in (derived server-side from this same is_test).
+                // Without it BuyerFlow hardcodes test → a LIVE seller link would
+                // confirm a live PI with the test key and fail. Just a boolean;
+                // both publishable keys are public.
+                is_test: link.is_test === true,
                 max_price_cents: link.max_price_cents,
                 preferred_speed: link.preferred_speed,
                 preferred_carrier: link.preferred_carrier,

@@ -575,6 +575,10 @@ export interface LinkData {
   // Null for flex/full-label links.
   origin_city?: string | null;
   origin_state?: string | null;
+  // Mode of the link (seller-link): the anonymous buyer confirms the on-session
+  // PI client-side, so BuyerFlow must load the Stripe publishable key that
+  // matches the mode seller-checkout creates the PI in (both derived from this).
+  is_test?: boolean;
 }
 
 export interface UpdateLinkParams {

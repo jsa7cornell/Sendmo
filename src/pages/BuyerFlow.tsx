@@ -61,12 +61,14 @@ export default function BuyerFlow({ linkData }: { linkData: LinkData }) {
   // step after we bounce the buyer there to re-shop.
   const [rateChangedNotice, setRateChangedNotice] = useState<string | null>(null);
 
-  // LinkData (seller-link GET-by-code) exposes no is_test/live signal, so the
-  // buyer client runs in TEST mode. The server still derives the true mode from
-  // the link for both seller-checkout and the label buy; this only selects the
-  // Stripe publishable key for Elements. Revisit if GET-by-code starts
-  // returning is_test.
-  const buyerLiveMode = false;
+  // Mode for the buyer's Stripe Elements. The buyer confirms the on-session PI
+  // client-side, so this MUST match the mode seller-checkout creates the PI in —
+  // both derive from the link's is_test server-side. GET-by-code returns is_test
+  // for seller links; default to TEST when absent (unlaunched/unknown), never
+  // live, so a missing signal can't confirm a test PI with the live key or vice
+  // versa. (Fixes the live-mode launch blocker: a live seller link creates a
+  // live PI; without this the test key would be used and confirmation would fail.)
+  const buyerLiveMode = linkData.is_test === false;
 
   const originLine = linkData.origin_city && linkData.origin_state
     ? `${linkData.origin_city}, ${linkData.origin_state}`
