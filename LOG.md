@@ -12,7 +12,19 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
-### [2026-07-19] Seller Link — both PRE-LIVE blockers fixed + deployed (test-mode); ready for merge decision
+### [2026-07-19] Seller Link — MERGED to main (PR #60) + deployed to prod; launch-gated OFF
+
+**Category:** ship | Payments | Seller Link
+**Deploy:** `seller-link` → `main` via **PR #60** (merge commit `7ba9486`), 2026-07-19. Push to main auto-deployed: edge functions (all, via the `_shared` fan-out — deploy run green) + Vercel frontend (sendmo.co).
+**Cross-link:** [PR #60](https://github.com/jsa7cornell/Sendmo/pull/60) | [RecipientStepPathChoice](src/components/recipient/RecipientStepPathChoice.tsx) (launch gate)
+
+**What & why:** the whole feature is now on `main` and live on prod, but **the "Sell & Ship" onboarding card is launch-gated OFF** behind `VITE_ENABLE_SELLER_LINK` (default off; follows the `VITE_SENDMO_LIVE_DEFAULT` convention). So the merge is a **zero-user-impact** history-resync: migration 040 was already applied to prod (idempotent no-op file merge), all edge functions were already deployed (test-mode; the fan-out redeployed identical code), and the card is invisible to real users. Merge preserved main's `unknown→label_created` fix (#59) and label-notice enrichment (#57) — auto-merged, verified both sets of changes coexist.
+
+**Verified post-merge on prod:** sendmo.co/onboarding shows only the 2 existing cards (card hidden — flag off) · money-path smoke green (binding attack → 403, legit seller-checkout → `requires_payment_method`, full-label → 402, tracking boots) · `npm run build` clean (2791 modules) · 655 unit tests + `tsc -b` green pre-merge · edge-deploy run success.
+
+**⚠️ TO LAUNCH (John's calls, separate):** (1) set `VITE_ENABLE_SELLER_LINK=true` in the Vercel prod env → the card appears. (2) When ready for REAL money: flip `SENDMO_LIVE_DEFAULT` + allowlist the seller for live charges. Until (1), the flow is reachable only by direct URL (`/sell`, `/s/<code>`) in test mode. **Test data on prod:** seller_link `SELLE2E01` + `SELLTEST01` (+ origin addresses) remain for launch verification — clean up post-launch.
+
+### [2026-07-19] Seller Link — both PRE-LIVE blockers fixed + deployed (test-mode); pre-merge
 
 **Category:** fix | Payments | Seller Link
 **Deploy:** `links` (fix 1), then `labels` + `tracking` + `webhooks` (fix 2, + `_shared` templates bundled) deployed to PROD via CI dispatch from `seller-link`, 2026-07-19.
