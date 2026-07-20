@@ -313,3 +313,71 @@ describe("trackingUpdateEmail — optional fields", () => {
     expect(result.subject).toBeDefined();
   });
 });
+
+// ─── Seller-link copy variants (pre-live fix 2, 2026-07-19) ─────────────────
+// The buyer PAID (unlike a flex sender), so "no charge to you / you shipped it"
+// contradicts their Stripe receipt. These lock the reframed copy and, critically,
+// the regression that the buyer's email never says "no charge".
+describe("seller-link email copy variants", () => {
+  const base = {
+    publicCode: "SELL999",
+    carrierTracking: "9400100000000000000000",
+    carrier: "USPS",
+    eta: "2 business days",
+    trackingUrl: "https://sendmo.co/t/SELL999",
+  };
+
+  it("labelConfirmationEmail seller_link: seller gets 'you made a sale' + 'Print your label'", () => {
+    const r = labelConfirmationEmail({ ...base, variant: "seller_link", displayPriceCents: 845 });
+    expect(r.subject).toContain("You made a sale");
+    expect(r.html).toContain("You made a sale!");
+    expect(r.html).toContain("Print your label");
+    // Amount relabeled so the seller (who did NOT pay) doesn't read it as a charge.
+    expect(r.html).toContain("Shipping paid by buyer");
+    expect(r.html).toContain("$8.45");
+    expect(r.html).not.toContain("Your label is ready!");
+  });
+
+  it("senderLabelReadyEmail sellerLink: buyer gets 'purchase confirmed', NOT 'no charge to you'", () => {
+    const r = senderLabelReadyEmail({
+      ...base,
+      cancelToken: "abc123def456",
+      sellerLink: true,
+      amountCents: 845,
+    });
+    expect(r.subject).toContain("Your purchase is confirmed");
+    expect(r.html).toContain("Your purchase is on the way");
+    // The contradiction with the buyer's receipt is the whole bug — must be gone.
+    expect(r.html).not.toContain("no charge to you");
+    expect(r.html).not.toContain("You created a shipping label");
+    // Shows what they paid + keeps the tokenized cancel CTA.
+    expect(r.html).toContain("You paid");
+    expect(r.html).toContain("$8.45");
+    expect(r.html).toContain("?cancel=abc123def456");
+  });
+
+  it("senderLabelReadyEmail WITHOUT sellerLink is unchanged (flex sender: 'no charge to you')", () => {
+    const r = senderLabelReadyEmail({ ...base, cancelToken: "tok" });
+    expect(r.html).toContain("no charge to you");
+    expect(r.html).not.toContain("Your purchase is on the way");
+    expect(r.html).not.toContain("You paid");
+  });
+
+  it("trackingUpdateEmail isSellerLink: buyer(sender)='item you bought', seller(recipient)='item you sold'", () => {
+    const buyer = trackingUpdateEmail("in_transit", "SELL999", "TRK", "USPS", undefined, base.trackingUrl, "sender", true);
+    const seller = trackingUpdateEmail("in_transit", "SELL999", "TRK", "USPS", undefined, base.trackingUrl, "recipient", true);
+    expect(buyer.html).toContain("The item you bought is on its way.");
+    expect(buyer.subject).toContain("Item you bought is");
+    expect(seller.html).toContain("The item you sold is on its way");
+    expect(seller.subject).toContain("Item you sold is");
+    // Neither says the flex "package you sent" / "your package".
+    expect(buyer.html).not.toContain("package you sent");
+    expect(seller.html).not.toContain("Your package is on its way");
+  });
+
+  it("trackingUpdateEmail WITHOUT isSellerLink is unchanged (flex/full-label copy)", () => {
+    const r = trackingUpdateEmail("in_transit", "SELL999", "TRK", "USPS", undefined, base.trackingUrl, "sender");
+    expect(r.html).toContain("The package you sent is on its way.");
+    expect(r.html).not.toContain("item you bought");
+  });
+});

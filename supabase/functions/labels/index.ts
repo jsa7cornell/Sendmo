@@ -2064,9 +2064,18 @@ Deno.serve(async (req: Request) => {
                                     : "Estimated upon pickup",
                                 tracking_url: `https://sendmo.co/t/${publicCode}`,
                                 is_flex: resolvedLink !== null,
+                                // Seller sale → reframe the label_created copy (buyer gets
+                                // "purchase confirmed", seller gets "you made a sale"). is_flex
+                                // stays true so routing is unchanged; this only picks the copy.
+                                is_seller_link: isSellerLink,
                                 sender_name: from_address?.name ?? null,
                                 item_description: typeof parcel?.description === "string" ? parcel.description : null,
-                                display_price_cents: typeof display_price_cents === "number" ? display_price_cents : null,
+                                // For a seller sale the "You paid" (buyer) / "Shipping paid by
+                                // buyer" (seller) amount must be what the buyer ACTUALLY paid —
+                                // use the server-verified PI amount, not the client body value.
+                                display_price_cents: isSellerLink
+                                    ? (verifiedPaymentIntent?.amount ?? null)
+                                    : (typeof display_price_cents === "number" ? display_price_cents : null),
                                 // Rides the flex SENDER's senderLabelReadyEmail only (the
                                 // tokenized cancel/change CTA — decided 2026-07-06, restoring
                                 // 2026-05-12 §3.2). Null when token-minting failed above; the

@@ -28,6 +28,13 @@ export interface NotificationContext {
   // copy AND so dispatch routes it to the right role: full-label payer is the
   // `sender` contact; flex payer (the link owner) is the `recipient` contact.
   is_flex?: boolean;
+  // Seller-link sale: the label_created + tracking copy is reframed so the BUYER
+  // (who PAID, mapped to the `sender` contact) gets "purchase confirmed — the
+  // seller ships your item — track/cancel" instead of the flex "you shipped this,
+  // no charge" copy, and the SELLER (the `recipient`/payer-role contact) gets
+  // "you made a sale — print your label". Seller links set is_flex=true for the
+  // routing (payer = recipient contact); is_seller_link only changes the COPY.
+  is_seller_link?: boolean;
   sender_name?: string | null;       // "From" row on the label-created email
   item_description?: string | null;  // "Item" row
   display_price_cents?: number | null; // "Amount" row
@@ -71,6 +78,10 @@ const channelHandlers: Record<string, ChannelHandler> = {
           trackingUrl: ctx.tracking_url,
           cancelToken: ctx.cancel_token || "",
           itemDescription: ctx.item_description ?? null,
+          // Seller-link buyer render: "purchase confirmed" copy + the amount they
+          // paid, instead of the flex "no charge to you" copy.
+          sellerLink: ctx.is_seller_link === true,
+          amountCents: ctx.display_price_cents ?? null,
         })
       : eventType === LABEL_CREATED_EVENT
       ? labelConfirmationEmail({
@@ -82,7 +93,8 @@ const channelHandlers: Record<string, ChannelHandler> = {
           senderName: ctx.sender_name ?? null,
           itemDescription: ctx.item_description ?? null,
           displayPriceCents: ctx.display_price_cents ?? null,
-          variant: ctx.is_flex ? "flex" : "full_label",
+          // Seller-link SELLER render: "you made a sale — print your label".
+          variant: ctx.is_seller_link ? "seller_link" : ctx.is_flex ? "flex" : "full_label",
         })
       : trackingUpdateEmail(
           eventType,
@@ -92,6 +104,7 @@ const channelHandlers: Record<string, ChannelHandler> = {
           ctx.estimated_delivery,
           ctx.tracking_url,
           contact.role,
+          ctx.is_seller_link === true,
         );
     const { id } = await sendEmail({
       to: contact.address,

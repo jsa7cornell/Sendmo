@@ -802,7 +802,7 @@ Deno.serve(async (req: Request) => {
     // notify the wrong contacts.
     const { data: candidates, error: fetchErr } = await supabase
       .from("shipments")
-      .select("id, status, tracking_number, public_code, carrier")
+      .select("id, status, tracking_number, public_code, carrier, buyer_email")
       .eq("tracking_number", trackingCode);
 
     if (fetchErr || !candidates || candidates.length === 0) {
@@ -927,6 +927,9 @@ Deno.serve(async (req: Request) => {
         carrier: shipment.carrier || "",
         estimated_delivery: estDelivery,
         tracking_url: `${APP_URL}/t/${shipment.public_code}`,
+        // Seller sale (F1: buyer_email present) → "item you bought"/"item you sold"
+        // tracking copy instead of "the package you sent".
+        is_seller_link: ((shipment as { buyer_email?: string | null }).buyer_email ?? null) != null,
       }), "webhook_dispatch");
     }
 

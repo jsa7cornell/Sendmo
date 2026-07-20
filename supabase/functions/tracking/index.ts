@@ -177,6 +177,10 @@ Deno.serve(async (req: Request) => {
               carrier: shipment.carrier || "",
               estimated_delivery: estDeliveryFmt,
               tracking_url: `${APP_URL}/t/${shipment.public_code}`,
+              // Seller sale (F1: buyer_email present) → tracking copy speaks to
+              // "the item you bought" (buyer=sender contact) / "the item you sold"
+              // (seller=recipient contact) instead of "the package you sent".
+              is_seller_link: ((shipment as { buyer_email?: string | null }).buyer_email ?? null) != null,
             }), "tracking_dispatch");
           }
         }
