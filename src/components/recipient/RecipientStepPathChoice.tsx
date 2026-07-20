@@ -5,6 +5,13 @@ import {
 } from "lucide-react";
 import type { OnboardingChoice } from "@/lib/types";
 
+// Launch gate for the seller-link ("Sell & Ship") path. Default OFF so merging
+// to main doesn't expose the flow to real users before it's live — in test mode
+// a real buyer can't pay (test publishable key rejects real cards). Flip
+// VITE_ENABLE_SELLER_LINK="true" in the Vercel env (with SENDMO_LIVE_DEFAULT) to
+// launch. Follows the existing VITE_SENDMO_LIVE_DEFAULT flag convention.
+const SELLER_LINK_ENABLED = import.meta.env.VITE_ENABLE_SELLER_LINK === "true";
+
 interface Props {
   onSelect: (choice: OnboardingChoice) => void;
 }
@@ -153,7 +160,8 @@ export default function RecipientStepPathChoice({ onSelect }: Props) {
           </div>
         </motion.button>
 
-        {/* ── Sell & Ship (buyer-pays seller link) ── */}
+        {/* ── Sell & Ship (buyer-pays seller link) ── launch-gated ── */}
+        {SELLER_LINK_ENABLED && (
         <motion.button
           type="button"
           whileTap={{ scale: 0.985 }}
@@ -222,6 +230,7 @@ export default function RecipientStepPathChoice({ onSelect }: Props) {
             </div>
           </div>
         </motion.button>
+        )}
       </div>
     </div>
   );
