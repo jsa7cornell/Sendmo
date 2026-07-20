@@ -12,6 +12,24 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-07-19] Seller Link — both PRE-LIVE blockers fixed + deployed (test-mode); ready for merge decision
+
+**Category:** fix | Payments | Seller Link
+**Deploy:** `links` (fix 1), then `labels` + `tracking` + `webhooks` (fix 2, + `_shared` templates bundled) deployed to PROD via CI dispatch from `seller-link`, 2026-07-19.
+**Cross-link:** [BuyerFlow](src/pages/BuyerFlow.tsx) | [links](supabase/functions/links/index.ts) | [_shared/email-templates.ts](supabase/functions/_shared/email-templates.ts) | [_shared/notifications.ts](supabase/functions/_shared/notifications.ts) | WISHLIST (both items now `[x]`)
+
+**What & why:** cleared the two pre-live blockers the code review surfaced, so the only thing left before launch is the merge decision (still needs the rebase).
+
+- **Fix 1 — live-mode key gap** (`3efa1a1`): BuyerFlow hardcoded `buyerLiveMode=false`, so a LIVE seller link (live PI created server-side) would confirm with the TEST publishable key → mismatch → buyer can't pay. Now `links` GET-by-code returns `is_test`; `LinkData` carries it; `BuyerFlow` sets `buyerLiveMode = (is_test === false)`. Its review proved this reduces to exactly the server predicate `is_test !== true`, so the key and PI mode can NEVER diverge (missing signal → test, never live). Verified: GET-by-code SELLE2E01 → `is_test:true`.
+- **Fix 2 — notification copy inversion** (`26cc22f` + `616f73f`): the buyer who PAID got `senderLabelReadyEmail`'s flex copy ("…no charge to you") — contradicting their Stripe receipt — and tracking copy was inverted. Threaded an additive `is_seller_link` signal through the shared notification layer: buyer → "Your purchase is on the way / You paid $X" (amount from the verified PI), tokenized cancel CTA intact, never "no charge"; seller → "You made a sale — print your label" (`Amount`→`Shipping paid by buyer`); tracking → "item you bought"/"item you sold". Wired in `labels` (label_created + the contacts-failure fallback), `tracking` + `webhooks` (status updates, keyed on `buyer_email`). **Flex + full-label byte-for-byte unchanged** (all new params optional/defaulted; the only non-dispatcher caller — the labels fallback — was made variant-aware).
+
+**Verified:** full unit suite **643 passing** (+5 new locking the seller-link copy AND the "buyer email never says no charge" regression); `tsc -b` clean; `labels` full-label regression → **402** after the `_shared` bundle redeploy (shared path unbroken). Fix 1's review = sound; fix 2's adversarial review focuses on the flex/full-label no-regression guarantee.
+
+**Browser-verified:**
+- spec: [tests/unit/emailTemplates.test.ts](tests/unit/emailTemplates.test.ts) — seller-link copy variants (buyer "purchase confirmed" + no "no charge to you"; seller "you made a sale" + "Shipping paid by buyer"; tracking "item you bought"/"item you sold") AND the flex/full-label-unchanged regressions.
+- variants-covered: buyer label-ready email, seller label-created email, tracking-update email (in_transit) — each with is_seller_link on AND off (off = flex/full-label unchanged).
+- Fix 1's BuyerFlow key-selection is pure-logic (predicate reduces to the server's `is_test !== true`, review-proven); no live seller link exists to browser-drive the live path, and the local Payment Element can't mount without the test-key env (env-blocked, not a code gap) — GET-by-code `is_test` confirmed via curl.
+
 ### [2026-07-19] Seller Link — high code-review (4 adversarial agents) + blocker fixes DEPLOYED to prod (test-mode)
 
 **Category:** fix | Payments | Seller Link | Security
