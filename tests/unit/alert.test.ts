@@ -136,6 +136,36 @@ describe("sendAdminAlert", () => {
         expect(call.html).toContain("automated notice");
     });
 
+    // ── heading rows (section grouping for long notices) ──────────────────
+    it("renders a heading row as a full-width bold section header (no monospace value cell)", async () => {
+        await sendAdminAlert({
+            ...BASE,
+            variant: "notice",
+            rows: [
+                { label: "Money", heading: true },
+                { label: "Charged", value: "$12.14" },
+            ],
+        });
+        const html = mockSendEmail.mock.calls[0][0].html;
+        // Section header spans both columns and is bold — not a label/value pair.
+        expect(html).toContain('colspan="2"');
+        expect(html).toContain("font-weight:600");
+        expect(html).toContain(">Money</td>");
+        // The normal row underneath still renders label + monospace value.
+        expect(html).toContain(">Charged</td>");
+        expect(html).toContain(">$12.14</td>");
+    });
+
+    it("heading rows carry no value and still escape the label", async () => {
+        await sendAdminAlert({
+            ...BASE,
+            rows: [{ label: "<b>Parties</b>", heading: true }],
+        });
+        const html = mockSendEmail.mock.calls[0][0].html;
+        expect(html).not.toContain("<b>Parties</b>");
+        expect(html).toContain("&lt;b&gt;Parties&lt;/b&gt;");
+    });
+
     it('variant "notice" still escapes rows and never throws (shared contract)', async () => {
         mockSendEmail.mockRejectedValueOnce(new Error("resend down"));
         await expect(

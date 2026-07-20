@@ -113,6 +113,25 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 **Next:** deploy edge functions to prod to test the money path in test mode — `seller-checkout` (new, inert until wired) first, then modified `rates/` (regression-test flex/full-label immediately after, since it's shared).
 
+### [2026-07-18] Admin "New label created" notice — enriched to full shipment detail (fraud-review)
+
+**Category:** feat | Labels | Observability
+**Deploy:** **Deployed** to prod on merge of PR #57 → `main` `d3d6401` (2026-07-18). "Deploy changed Edge Functions" + "Provide Tests" + Vercel all green; the `labels` edge function (incl. Deno type-check) redeployed.
+**Cross-link:** [PR #57](https://github.com/jsa7cornell/Sendmo/pull/57) | prompted by the first live package (KMDCNEW, 2026-07-17) | new `_shared/label-notice.ts` + `_shared/alert.ts` + `labels/index.ts`
+
+**What & why:** the per-label admin FYI (`sendAdminAlert` variant `notice`, fired on every successful label — test/comp/live) previously carried 7 rows (mode, carrier, charged, SendMo cost, tracking, city→city, public code). John wants every transaction to support a manual fraud check + learning, so it now surfaces **everything in scope**, grouped into **Shipment / Parties / Money / IDs**: both parties' names/emails/phones, **sender IP**, full from/to addresses, item description, parcel weight+dims, ETA; a full cost breakdown — charged, EasyPost cost, **est. Stripe fee (2.9% + 30¢)**, **est. net margin**, flex price cap, payment method, Stripe PI id + status; plus all IDs (EasyPost shipment/tracker, SendMo shipment UUID, link code, session). KMDCNEW reads charged $12.14 / EP $9.69 / fee $0.65 / **net margin $1.80**; comp → $0.00 charged, margin −$9.69 (SendMo eats the carrier cost).
+
+**How / gotchas:**
+- `_shared/alert.ts` — `AdminAlertRow` gains an optional `heading` flag (full-width bold section-header row); extracted a pure `renderAdminAlertEmail()` from `sendAdminAlert()` so the markup is unit-testable/previewable without a live send. Backward compatible — the 6 existing alert callers are untouched.
+- `_shared/label-notice.ts` (**new**) — pure `buildLabelCreatedNoticeRows(facts)`. Extracted out of the handler deliberately: `labels/index.ts` calls `serve()` at import, so it can't be unit-imported — the Stripe-fee/net-margin math needed a home vitest can reach.
+- Builder is provably non-throwing (typed primitives + `?.` / `?? ""` / `Number()→||null` guards), preserving the "a notice failure never breaks label-buy" contract. PII in the body is intended (admin's own inbox); all row values are HTML-escaped; nothing added to `event_logs`.
+
+**Tests:** `tests/unit/label-notice.test.ts` (10 — margin math, comp/flex variants, full-address formatting, gap `—`) + 2 new `alert.test.ts` heading-row cases. **644 unit green**, `tsc -b --noEmit` clean. (Deno type-check of `labels/index.ts` runs on the PR / merge-deploy — Deno isn't installed locally.)
+
+**Browser-verified:**
+  mcp-session: previews/admin-label-notice.html — rendered live full-prepaid + live comp/flex emails through the real `renderAdminAlertEmail` + `buildLabelCreatedNoticeRows` path; screenshot in session transcript
+  variants-covered: [live/full-prepaid, comp/flexible-link, sparse/missing-fields]
+
 ### [2026-07-17] Seller Link (3rd shipment type) — proposed → reviewed → DECIDED same day
 
 **Category:** decision | Onboarding | Payments
@@ -126,6 +145,17 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 **Review caught (all accepted):** B1 — `status='used'` was renamed to `'in_use'` in migration 020; the proposal's reuse would have thrown a CHECK violation (same class as the 2026-07-16 H2 nonexistent-column incident). B2 — the stripe-webhook only writes the ledger, never buys; "webhook buys on success" was a new inversion risking double-buys → use the client-triggered synchronous `labels/` buy. B3 (blind spot) — refund emails/receipts/ledger are hardcoded to `link.user_id` (`cancel-label:448` "payer is the link owner"), so as-written the **seller** would get the buyer's refund email; the "payer can always manage their purchase" invariant needs real payer-identity rewiring across `cancel-label`/`tracking`/emails. B4/B5 — server-derive price from the buyer's `rate_id` (not the D1-vulnerable full-label leg) and enforce carrier constraints at buy-time.
 
 **Honest scope:** **two** new builds, not one — the on-session buyer checkout *and* the payer-identity rewiring. Implement in a worktree off `main`, ~6 PRs.
+
+### [2026-07-18] Tracking page rendered literal "unknown" for just-created labels — EasyPost `unknown` status leaked through untranslated
+
+**Category:** fix | Tracking | Edge Functions
+**Deploy:** Edge function was deployed directly to prod 2026-07-17 (`supabase functions deploy tracking`) to close the live window; git reconciled to `main` 2026-07-18 (this entry). Original PR #53 (early branch) was abandoned as conflicting/tangled; the identical one-line fix was re-applied on a clean branch off `main`.
+**Cross-link:** [`supabase/functions/tracking/index.ts`](supabase/functions/tracking/index.ts) L134 | repro shipment `KMDCNEW`
+
+**Bug (from a user screenshot):** a label bought ~2 min earlier showed a big **"unknown"** header. Record was healthy (`status=label_created`). The `tracking` fn polls EasyPost live; a brand-new unscanned label returns `tracker.status: "unknown"`, and L134 only translated `pre_transit` → `label_created`, so `unknown` passed straight into the response (`status: liveStatus`). The frontend has no mapping for `unknown` → hit the UNKNOWN-STATUS-FALLBACK branch and printed the raw string. Self-healing on first carrier scan.
+**Gotcha:** the write-back `UPDATE shipments SET status='unknown'` silently violated `shipments_status_check` (allowed set has no `unknown`) and was swallowed by the catch — which is why the row was never corrupted (`updated_at == created_at`). The bad value only ever leaked to the client.
+**Fix:** L134 maps `pre_transit` **and** `unknown` → `label_created`.
+**Browser-verified:** n/a-category: infra — edge-function status-mapping fix; the rendered effect (hero shows "Label Created" not "unknown") was verified live post-deploy 2026-07-17 by loading `sendmo.co/t/KMDCNEW` (hero = "Your label is ready to print"); deployed endpoint returns `status: 'label_created'`.
 
 ### [2026-07-17] Label print page — item description printed in the blank sheet area
 
@@ -4264,6 +4294,18 @@ Returns the new `shipments.id`. Called via `supabase.rpc('admin_insert_shipment'
 ## Deploy Log
 
 Every merge to `main` triggers a Vercel auto-deploy. This section tracks what shipped and when.
+
+### [2026-07-18] — Label print page + mobile scale + item description (PRs #54, #55, #56)
+
+**Branches:** `feat/label-print-page` (#54), `fix/label-print-mobile-scale` (#55), `feat/print-item-description` (#56) → all squash-merged to `main` (HEAD `3119a35`).
+**Deploy:** Vercel production auto-deploy — **delayed ~a day**: the #54/#55/#56 merges all hit a Vercel **Hobby-plan deployment rate limit** ("retry in 24h", account-wide cap shared across all of John's projects; SendMo itself only made 3 preview deploys — not the culprit). Once the window cleared, the deploy went green. **Verified live 2026-07-18**: prod bundle `index-D9ru1gvu.js` contains the print page (`Open the raw label file`), tips, responsive `orientationchange` handler, `sheet-half`, and the `item-desc`/`Contents` block. Frontend-only; no schema/edge changes.
+
+**What shipped**
+- New `/t/:code/print` route (`LabelPrintPage.tsx`) replacing the raw-file-in-a-tab Print flow: layout presets (**4×6 default**, half-sheet, full-page), printer-config tips, reused drop-off strip, always-present raw-label fallback link. Tracking-page "Print" CTA now routes here.
+- Item description printed as a "Contents" block in the blank sheet area (right of label on 4×6, bottom half on half-sheet, hidden on full-page).
+- Responsive preview scale (no horizontal scroll on ≤360px phones); guarded 0-width collapse.
+- Ride-along bug fixes: Download filename `.pdf`→`.png` (label is a PNG); mislabeled "(PDF)" copy. (Latent: Download `fetch()` is CORS-dead on S3 → falls back to `window.open`; true proxied download deferred.)
+**Gotcha for future deploys:** Vercel Hobby caps deployments/day **account-wide** across all projects, and **preview deploys count**. A day heavy on other projects (or many branch pushes) can rate-limit an unrelated project's prod deploy. Levers: upgrade to Pro, wait for the rolling window, or cut previews on the high-volume project. (SendMo is a commercial app on Stripe — Vercel Hobby is officially non-commercial, so Pro is warranted regardless.)
 
 ### [2026-07-06] — Receipt card last4 + stranded x-cancel-token CORS fix (PR #44)
 

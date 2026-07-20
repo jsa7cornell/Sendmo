@@ -502,9 +502,17 @@ discounted = amount x 0.95 (for Balance tab)
 ### Step 4: Label Ready
 - **Success banner** -- Green with CheckCircle2: "Label ready!"
 - **Label preview** -- Dark header, FROM/TO addresses, service + price, tracking #
-- **Print CTA**: "Print Label (PDF)" -- largest button in the app
+- **Print CTA**: "Print" -- routes to the dedicated print page `/t/:code/print` (was: opened the raw label file in a new tab). See below.
+- **Download**: saves the label file as `sendmo-<code>.png` (the carrier label is a **PNG**, 4x6 portrait @300dpi — not a PDF; older "(PDF)" copy was wrong)
 - **Drop-off instructions** -- Carrier location info, package attachment reminder
-- **Label printing CSS**: 4x6 thermal label support (`@page { size: 4in 6in; margin: 0; }`)
+
+#### Label print page (`/t/:code/print`)
+Decided 2026-07-17 (proposal `2026-07-17_label-print-page`), deployed 2026-07-18. Component `LabelPrintPage.tsx`. A SendMo-owned print experience replacing the raw-file-in-a-tab flow:
+- **Layout presets** (persisted to `localStorage`, default **4×6**): `4×6` (native carrier label, top-left), `half-sheet` (label rotated 90° onto the top half of a Letter page, fold guide at 5.5in), `full-page` (enlarged to fill Letter). Print CSS uses `@page { size: letter portrait; margin: 0 }` + physical inches; screen preview scales responsively (`--s = min(0.44, availWidth/816px)`).
+- **Item description** printed as a "Contents" block in the blank sheet area (never over the label): right of the label on 4×6, bottom half on half-sheet, hidden on full-page.
+- **Printer-config tips** (print at Actual Size/100%, no headers/footers) + reused `HowToShipStrip`.
+- **Always-present raw-label fallback link** (`label_url`) that bypasses all rendering — also the guard if the label format ever changes.
+- Print-count logging (`label.printed`) fires here on the Print action.
 
 ---
 
