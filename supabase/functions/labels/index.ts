@@ -78,7 +78,6 @@ Deno.serve(async (req: Request) => {
             easypost_shipment_id,
             easypost_rate_id,
             live_mode,
-            from_address,
             to_address: bodyToAddress,
             parcel,
             display_price_cents: bodyDisplayPriceCents,
@@ -87,12 +86,18 @@ Deno.serve(async (req: Request) => {
             payment_intent_id,
             comp,  // admin override — bypass payment requirement (live comp labels)
             link_short_code,  // sender-flow flex-link auth claim
+            buyer_email,      // seller-link buyer email (persisted on the shipment; F1 marker)
+            from_address: bodyFromAddress,
         } = await req.json();
 
         // Per proposal 2026-05-11_sender-flow-wizard B3: when link_short_code is
         // present, the server resolves to_address + recipient_email and ignores
         // any client-supplied values for those fields. This prevents an attacker
         // from buying a label to a different address than the recipient set.
+        // For a SELLER link the polarity flips: the server resolves the FROM
+        // (origin) from the link and the TO (destination) from the EasyPost
+        // shipment (B1) — so from_address is mutable too.
+        let from_address = bodyFromAddress;
         let to_address = bodyToAddress;
         let recipient_email = bodyRecipientEmail;
         let display_price_cents = bodyDisplayPriceCents;
@@ -161,6 +166,9 @@ Deno.serve(async (req: Request) => {
             user_id: string;
             max_price_cents: number;
             is_test: boolean;
+            link_type: string;
+            preferred_carrier: string | null;
+            max_shipments: number | null;
         } | null = null;
         if (link_short_code) {
             if (typeof link_short_code !== "string" || !link_short_code.match(/^[a-zA-Z0-9]{1,20}$/)) {
@@ -178,8 +186,11 @@ Deno.serve(async (req: Request) => {
             const { data: link, error: linkErr } = await supabase
                 .from("sendmo_links")
                 .select(`
-                    id, short_code, user_id, status, link_type, max_price_cents, is_test,
+                    id, short_code, user_id, status, link_type, max_price_cents, is_test, preferred_carrier, max_shipments,
                     recipient_address:addresses!recipient_address_id (
+                        name, street1, street2, city, state, zip, country, phone
+                    ),
+                    origin_address:addresses!origin_address_id (
                         name, street1, street2, city, state, zip, country, phone
                     )
                 `)
@@ -199,47 +210,147 @@ Deno.serve(async (req: Request) => {
             }
             // The DB stores 'flexible' (not 'flexible_link') per links/index.ts:189
             // and the migration-001 CHECK constraint. Author-response B1.
-            if (link.link_type !== "flexible") {
+            if (link.link_type !== "flexible" && link.link_type !== "seller_link") {
                 return new Response(
-                    JSON.stringify({ error: "Link is not a flexible link" }),
+                    JSON.stringify({ error: "Link type not supported for label purchase" }),
                     { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
                 );
             }
-            // Resolve to_address from the link (ignore any client-supplied value).
-            const recipientAddr = link.recipient_address as unknown as {
-                name: string; street1: string; street2: string | null;
-                city: string; state: string; zip: string; country: string | null;
-                phone: string | null;
-            } | null;
-            if (!recipientAddr || !recipientAddr.street1) {
-                return new Response(
-                    JSON.stringify({ error: "Link has no resolvable destination address" }),
-                    { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            if (link.link_type === "seller_link") {
+                // ── Seller link: from = the seller's ORIGIN (from the link);
+                // to = the buyer's destination, resolved from the EasyPost
+                // shipment rates/ already built (B1 — never trust a client
+                // to_address here). buyer_email = the package recipient contact.
+                const originAddr = link.origin_address as unknown as {
+                    name: string; street1: string; street2: string | null;
+                    city: string; state: string; zip: string; country: string | null;
+                    phone: string | null;
+                } | null;
+                if (!originAddr || !originAddr.street1) {
+                    return new Response(
+                        JSON.stringify({ error: "Seller link has no resolvable ship-from address" }),
+                        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                    );
+                }
+                from_address = {
+                    name: originAddr.name,
+                    street1: originAddr.street1,
+                    street2: originAddr.street2 ?? undefined,
+                    city: originAddr.city,
+                    state: originAddr.state,
+                    zip: originAddr.zip,
+                    country: originAddr.country ?? "US",
+                    phone: originAddr.phone ?? undefined,
+                };
+                const sIsLive = link.is_test !== true;
+                const epKey = Deno.env.get(sIsLive ? "EASYPOST_API_KEY" : "EASYPOST_TEST_API_KEY");
+                const epResp = await fetch(
+                    `https://api.easypost.com/v2/shipments/${easypost_shipment_id}`,
+                    { headers: { Authorization: "Basic " + btoa(epKey + ":") } },
                 );
+                if (!epResp.ok) {
+                    return new Response(
+                        JSON.stringify({ error: "Could not resolve the destination address" }),
+                        { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                    );
+                }
+                const epData = await epResp.json();
+                // ── Seller-link binding backstop (review BLOCKER) ─────────────
+                // Pure defense-in-depth: seller-checkout already verified
+                // reference === link.id BEFORE the PI was created, and the charge
+                // branch's PI-metadata pin (below) requires this request's
+                // easypost_shipment_id === pi.metadata.easypost_shipment_id — so
+                // labels can only operate on the shipment seller-checkout bound.
+                // This branch is therefore unreachable via the legit client; a
+                // mismatch means tampering or a seller-checkout bug.
+                //
+                // Do NOT auto-refund here (adversarial-review fix): payment_intent_id
+                // is UNVERIFIED at this point — its metadata pin runs later, in the
+                // charge branch — so refunding it would let an attacker refund an
+                // ARBITRARY PaymentIntent they merely name (e.g. their own prior
+                // purchase → free shipping) by deliberately constructing a mismatch.
+                // Reject + alert only; a genuinely-charged buyer's PI is handled by
+                // the charge branch's own verify/refund path, never here.
+                if (epData.reference !== link.id) {
+                    await sendAdminAlert({
+                        subject: "Seller-link binding mismatch at buy time — label refused",
+                        heading: "Seller-Link Binding Mismatch",
+                        intro: "labels/ refused to buy a shipment whose EasyPost reference did not match the seller link. " +
+                            "seller-checkout should have caught this before the charge — investigate tampering or a bypass. " +
+                            "No auto-refund was issued (the supplied PaymentIntent is unverified in this branch).",
+                        rows: [
+                            { label: "EasyPost shipment", value: easypost_shipment_id },
+                            { label: "Seller link", value: link.id },
+                            { label: "Shipment reference", value: String(epData.reference ?? "none") },
+                            { label: "PaymentIntent (unverified)", value: typeof payment_intent_id === "string" ? payment_intent_id : "none" },
+                        ],
+                        source: "labels seller-link binding backstop",
+                    });
+                    return new Response(
+                        JSON.stringify({ error: "This shipment does not belong to this seller link." }),
+                        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                    );
+                }
+                const t = epData.to_address;
+                if (!t?.street1) {
+                    return new Response(
+                        JSON.stringify({ error: "Shipment has no destination address" }),
+                        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                    );
+                }
+                to_address = {
+                    name: t.name,
+                    street1: t.street1,
+                    street2: t.street2 ?? undefined,
+                    city: t.city,
+                    state: t.state,
+                    zip: t.zip,
+                    country: t.country ?? "US",
+                    phone: t.phone ?? undefined,
+                };
+                // The BUYER receives the package → their email is the shipment's
+                // recipient contact (M5 refines the email routing).
+                recipient_email = typeof buyer_email === "string" ? buyer_email : null;
+            } else {
+                // Resolve to_address from the link (ignore any client-supplied value).
+                const recipientAddr = link.recipient_address as unknown as {
+                    name: string; street1: string; street2: string | null;
+                    city: string; state: string; zip: string; country: string | null;
+                    phone: string | null;
+                } | null;
+                if (!recipientAddr || !recipientAddr.street1) {
+                    return new Response(
+                        JSON.stringify({ error: "Link has no resolvable destination address" }),
+                        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                    );
+                }
+                to_address = {
+                    name: recipientAddr.name,
+                    street1: recipientAddr.street1,
+                    street2: recipientAddr.street2 ?? undefined,
+                    city: recipientAddr.city,
+                    state: recipientAddr.state,
+                    zip: recipientAddr.zip,
+                    country: recipientAddr.country ?? "US",
+                    phone: recipientAddr.phone ?? undefined,
+                };
+                // Resolve recipient_email server-side (never returned to client).
+                const { data: prof } = await supabase
+                    .from("profiles")
+                    .select("email")
+                    .eq("id", link.user_id)
+                    .single();
+                recipient_email = prof?.email ?? null;
             }
-            to_address = {
-                name: recipientAddr.name,
-                street1: recipientAddr.street1,
-                street2: recipientAddr.street2 ?? undefined,
-                city: recipientAddr.city,
-                state: recipientAddr.state,
-                zip: recipientAddr.zip,
-                country: recipientAddr.country ?? "US",
-                phone: recipientAddr.phone ?? undefined,
-            };
-            // Resolve recipient_email server-side (never returned to client).
-            const { data: prof } = await supabase
-                .from("profiles")
-                .select("email")
-                .eq("id", link.user_id)
-                .single();
-            recipient_email = prof?.email ?? null;
             resolvedLink = {
                 id: link.id,
                 short_code: link.short_code,
                 user_id: link.user_id,
                 max_price_cents: link.max_price_cents,
                 is_test: link.is_test === true,
+                link_type: link.link_type,
+                preferred_carrier: (link.preferred_carrier as string | null) ?? null,
+                max_shipments: (link.max_shipments as number | null) ?? null,
             };
 
             // Link-derived mode (T1-1, review B2): link.is_test is the
@@ -452,7 +563,69 @@ Deno.serve(async (req: Request) => {
         //      is succeeded and metadata matches easypost_shipment_id.
         let verifiedPaymentIntent: { id: string; amount: number; status: string } | null = null;
 
-        if (!isComp && resolvedLink) {
+        if (!isComp && resolvedLink?.link_type === "seller_link") {
+            // ── Seller-link buyer verify path (on-session, mirrors full-label) ──
+            // The buyer already paid on-session via seller-checkout. Verify that
+            // PI, require buyer_email (B2), and confirm the PI was minted for THIS
+            // shipment + THIS link (replay guard). Price is enforced by the shared
+            // buy-time rate gate below (which refunds on drift), so no separate
+            // amount check is needed here (review B5).
+            if (!payment_intent_id || typeof payment_intent_id !== "string") {
+                return new Response(
+                    JSON.stringify({ error: "Missing required field: payment_intent_id" }),
+                    { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+            if (!buyer_email || typeof buyer_email !== "string" || !buyer_email.includes("@")) {
+                return new Response(
+                    JSON.stringify({ error: "Missing or invalid buyer_email" }),
+                    { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+            try {
+                const pi = await retrievePaymentIntent(payment_intent_id, isLive);
+                if (pi.status !== "succeeded") {
+                    return new Response(
+                        JSON.stringify({ error: `Payment not captured (status=${pi.status})` }),
+                        { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                    );
+                }
+                // Replay guard. A mismatch means this PI is not this shipment's
+                // payment — 403 WITHOUT refunding (it may be a legit payment for a
+                // different shipment; the rate gate handles this shipment's own PI).
+                if (
+                    pi.metadata?.easypost_shipment_id !== easypost_shipment_id ||
+                    pi.metadata?.txn_kind !== "cit_seller_link" ||
+                    pi.metadata?.link_short_code !== resolvedLink.short_code
+                ) {
+                    log({
+                        event_type: "label.pi_shipment_mismatch",
+                        session_id: sessionId,
+                        severity: "error",
+                        entity_type: "payment_intent",
+                        entity_id: payment_intent_id,
+                        properties: {
+                            flow: "seller_link",
+                            requested_shipment_id: easypost_shipment_id,
+                            pi_metadata_shipment_id: pi.metadata?.easypost_shipment_id ?? null,
+                            pi_txn_kind: pi.metadata?.txn_kind ?? null,
+                        },
+                    });
+                    return new Response(
+                        JSON.stringify({ error: "PaymentIntent does not match this seller link" }),
+                        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                    );
+                }
+                verifiedPaymentIntent = { id: pi.id, amount: pi.amount, status: pi.status };
+            } catch (err) {
+                const msg = err instanceof Error ? err.message : "PI verification failed";
+                console.error(`[Session ${sessionId}] [labels] seller PI verify error:`, msg);
+                return new Response(
+                    JSON.stringify({ error: `Payment verification failed: ${msg}` }),
+                    { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+        } else if (!isComp && resolvedLink) {
             // ── Flex off_session charge path (Pattern D, Phase F) ───
             // Per proposal
             // 2026-05-16_flex-payment-pattern-d-execution_reviewed-2026-05-16_decided-2026-05-18.md
@@ -1206,6 +1379,105 @@ Deno.serve(async (req: Request) => {
             }
         }
 
+        // ── Single-use seller link: claim BEFORE the buy (review B4) ──────
+        // A max_shipments=1 seller link sells exactly once. Claim it here —
+        // AFTER price/PI validation, BEFORE spending money at EasyPost —
+        // by flipping status active→in_use atomically and requiring a row
+        // back. If a concurrent buyer already claimed it (no row returned),
+        // refund THIS buyer's captured PI and return a "just sold" 409
+        // without buying a label. Uses the REAL seller link id
+        // (resolvedLink.id), never shipments.link_id — the RPC mints a
+        // throwaway full_label link there (F1/B3). Reusable links
+        // (max_shipments=null) skip this entirely.
+        if (resolvedLink?.link_type === "seller_link" && resolvedLink.max_shipments === 1) {
+            const { data: claimed, error: claimErr } = await supabase
+                .from("sendmo_links")
+                .update({ status: "in_use" })
+                .eq("id", resolvedLink.id)
+                .eq("status", "active")
+                .select("id")
+                .maybeSingle();
+            if (claimErr || !claimed) {
+                // Lost the race (or the link is no longer active). Refund the
+                // buyer's captured PI — nobody pays for a label we won't buy.
+                let refundIssued = false;
+                let refundErrorMsg: string | null = null;
+                if (verifiedPaymentIntent) {
+                    try {
+                        await createRefund({
+                            payment_intent_id: verifiedPaymentIntent.id,
+                            reason: "requested_by_customer",
+                            metadata: { easypost_shipment_id, failure_reason: "seller_link_already_sold" },
+                            idempotency_key: `refund_${easypost_shipment_id}_already_sold`,
+                            liveMode: isLive,
+                        });
+                        refundIssued = true;
+                    } catch (refundErr) {
+                        refundErrorMsg = refundErr instanceof Error ? refundErr.message : String(refundErr);
+                        console.error(`[Session ${sessionId}] [labels] ALREADY-SOLD REFUND FAILED:`, refundErrorMsg);
+                        await sendAdminAlert({
+                            subject: "Auto-refund FAILED after seller-link already-sold — buyer charged, no label",
+                            heading: "Auto-Refund Failed — Manual Refund Required",
+                            intro: "A single-use seller link was already sold to another buyer; this buyer's " +
+                                "captured charge could not be auto-refunded. Refund manually in Stripe.",
+                            rows: [
+                                { label: "PaymentIntent", value: verifiedPaymentIntent.id },
+                                { label: "EasyPost shipment", value: easypost_shipment_id },
+                                { label: "Seller link", value: resolvedLink.id },
+                                { label: "Refund error", value: refundErrorMsg },
+                                { label: "Mode", value: isLive ? "LIVE" : "Test" },
+                            ],
+                            source: "labels seller-link single-use close (review B4)",
+                        });
+                    }
+                }
+                log({
+                    event_type: "label.seller_link_already_sold",
+                    session_id: sessionId,
+                    severity: "warn",
+                    entity_type: "label",
+                    entity_id: easypost_shipment_id,
+                    properties: {
+                        link_id: resolvedLink.id,
+                        refunded: refundIssued,
+                        refund_error: refundErrorMsg,
+                        claim_error: claimErr?.message ?? null,
+                        payment_intent_id: verifiedPaymentIntent?.id ?? null,
+                    },
+                });
+                // Distinguish a TRUE race (no row → another buyer claimed it) from a
+                // TRANSIENT DB error (claimErr → claim state unknown). Both refund the
+                // buyer safely; only the copy + status differ so the buyer sees honest
+                // messaging ("just sold" 409 vs "temporary problem, try again" 503).
+                if (claimErr) {
+                    return new Response(
+                        JSON.stringify({
+                            error: "claim_failed",
+                            code: "SELLER_LINK_CLAIM_ERROR",
+                            message: refundIssued
+                                ? "We hit a temporary problem completing your purchase — your charge was reversed. Please try again."
+                                : "We hit a temporary problem completing your purchase; our team has been alerted. If your card was charged it will be refunded. Reference: " + (verifiedPaymentIntent?.id ?? "n/a"),
+                            refunded: refundIssued,
+                            payment_intent_id: verifiedPaymentIntent?.id ?? null,
+                        }),
+                        { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                    );
+                }
+                return new Response(
+                    JSON.stringify({
+                        error: "already_sold",
+                        code: "SELLER_LINK_ALREADY_SOLD",
+                        message: refundIssued
+                            ? "This item was just sold to someone else — your card was not charged (any authorization has been reversed)."
+                            : "This item was just sold to someone else. We're refunding your charge and our team has been alerted. Reference: " + (verifiedPaymentIntent?.id ?? "n/a"),
+                        refunded: refundIssued,
+                        payment_intent_id: verifiedPaymentIntent?.id ?? null,
+                    }),
+                    { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+        }
+
         // Buy the label with EndShipper
         const buyStart = Date.now();
         const buyResponse = await fetch(
@@ -1228,6 +1500,22 @@ Deno.serve(async (req: Request) => {
 
         if (!buyResponse.ok || buyData.error) {
             const errorMsg = buyData.error?.message || "Failed to purchase label";
+
+            // Single-use seller link (review): the claim flipped active→in_use
+            // BEFORE this buy. The buy failed → no sale happened, so revert the
+            // claim; otherwise the seller's item is permanently marked sold with
+            // zero completed sales (no-auto-reopen rule). Scoped to the REAL link
+            // and idempotent (only flips a row still in_use).
+            if (resolvedLink?.link_type === "seller_link" && resolvedLink.max_shipments === 1) {
+                const { error: reopenErr } = await supabase
+                    .from("sendmo_links")
+                    .update({ status: "active" })
+                    .eq("id", resolvedLink.id)
+                    .eq("status", "in_use");
+                if (reopenErr) {
+                    console.error(`[Session ${sessionId}] [labels] single-use reopen after buy-failure FAILED:`, reopenErr.message);
+                }
+            }
 
             log({
                 event_type: "label.buy_error",
@@ -1653,6 +1941,63 @@ Deno.serve(async (req: Request) => {
                             }
                         }
 
+                        // Seller-link buyer identity (F4) — the admin_insert_shipment
+                        // RPC has no buyer_email param, so persist via a follow-up
+                        // UPDATE (same pattern as item_description above). buyer_email
+                        // IS the downstream seller-sale marker (F1); it was already
+                        // required + validated in the seller charge branch.
+                        if (shipmentId && resolvedLink?.link_type === "seller_link" && typeof buyer_email === "string") {
+                            // buyer_email IS the F1 seller-sale discriminator. If it
+                            // stays NULL, tracking/cancel-label treat the sale as a
+                            // full-label one → the SELLER is shown as payer on /t/
+                            // (sees the buyer's amount + card last4) and the buyer
+                            // loses their receipt + tokenized cancel email. The RPC
+                            // has no buyer_email param, so it's a follow-up UPDATE —
+                            // RETRY it, and if it still fails, ALERT loudly so a human
+                            // backfills it before the seller can view the receipt.
+                            // (Ideal future fix: fold buyer_email into the RPC for
+                            // true atomicity — WISHLIST.)
+                            let buyerEmailWritten = false;
+                            let lastBuyerErr: string | null = null;
+                            for (let attempt = 0; attempt < 3 && !buyerEmailWritten; attempt++) {
+                                const { error: buyerErr } = await supabase
+                                    .from('shipments')
+                                    .update({ buyer_email })
+                                    .eq('id', shipmentId);
+                                if (!buyerErr) { buyerEmailWritten = true; break; }
+                                lastBuyerErr = buyerErr.message ?? String(buyerErr);
+                                console.error(`buyer_email write error (seller-link marker), attempt ${attempt + 1}:`, lastBuyerErr);
+                            }
+                            if (!buyerEmailWritten) {
+                                log({
+                                    event_type: "label.buyer_email_write_failed",
+                                    session_id: sessionId,
+                                    severity: "error",
+                                    entity_type: "shipment",
+                                    entity_id: shipmentId,
+                                    properties: {
+                                        error_message: lastBuyerErr,
+                                        requires_manual_intervention: true,
+                                        easypost_shipment_id,
+                                    },
+                                });
+                                await sendAdminAlert({
+                                    subject: "Seller-link buyer_email write FAILED — seller may see buyer's receipt",
+                                    heading: "buyer_email Marker Not Persisted",
+                                    intro: "A seller-link sale's buyer_email could not be written after retries. Until it is set, " +
+                                        "the SELLER is treated as the payer on /t/ (sees the buyer's amount + card last4) and the " +
+                                        "buyer loses their receipt + tokenized cancel email. Set shipments.buyer_email manually now.",
+                                    rows: [
+                                        { label: "Shipment id", value: shipmentId },
+                                        { label: "buyer_email", value: buyer_email },
+                                        { label: "EasyPost shipment", value: easypost_shipment_id },
+                                        { label: "Error", value: lastBuyerErr ?? "unknown" },
+                                    ],
+                                    source: "labels seller-link buyer_email persist",
+                                });
+                            }
+                        }
+
                         // Pattern D (Phase F): flex links stay 'active' indefinitely.
                         // The Phase E active→in_use flip was removed here per the
                         // decided proposal §3.2 — flex is reusable, so 'in_use'
@@ -1685,21 +2030,49 @@ Deno.serve(async (req: Request) => {
                         // Store notification contacts for this shipment.
                         if (shipmentId) {
                             const contacts: Array<{ shipment_id: string; role: string; channel: string; address: string }> = [];
-                            const recipientAddr = (recipient_email && typeof recipient_email === "string") ? recipient_email : null;
-                            // Payer email for the `sender` contact: the client-supplied
-                            // sender_email if present, else (full-label only) the authed
-                            // caller's email — full-label authed users send an empty
-                            // sender_email, so without this the payer has no contact and
-                            // never gets the label-created email. Flex resolves its payer
-                            // (the owner) into the `recipient` role at line ~218, so the
-                            // fallback is gated to the non-flex path (resolvedLink === null).
-                            const senderAddr = (sender_email && typeof sender_email === "string")
-                                ? sender_email
-                                : (resolvedLink ? null : callerEmail);
+
+                            // Seller-link buy (F1: buyer_email is set; resolvedLink is the
+                            // seller_link) inverts the sender/recipient contact roles vs.
+                            // flex. The anonymous BUYER is the paying party who cancels/
+                            // changes the label, so they take the `sender` role and receive
+                            // the tokenized senderLabelReadyEmail (/t/<code>?cancel=<token>).
+                            // The SELLER (link owner) takes the payer `recipient` role and
+                            // gets the normal labelConfirmationEmail — never the buyer's
+                            // cancel token. is_flex stays true (resolvedLink !== null), so the
+                            // dispatcher routes payer→recipient and the tokenized copy→sender
+                            // exactly as this inversion needs. Flex + full-label are untouched.
+                            const isSellerLink = resolvedLink?.link_type === "seller_link";
+                            let sellerOwnerEmail: string | null = null;
+                            if (isSellerLink && resolvedLink) {
+                                const { data: ownerProf } = await supabase
+                                    .from("profiles")
+                                    .select("email")
+                                    .eq("id", resolvedLink.user_id)
+                                    .maybeSingle();
+                                sellerOwnerEmail = (ownerProf as { email?: string | null } | null)?.email ?? null;
+                            }
+
+                            const recipientAddr = isSellerLink
+                                ? sellerOwnerEmail
+                                : ((recipient_email && typeof recipient_email === "string") ? recipient_email : null);
+                            // Payer email for the `sender` contact: seller-link routes the
+                            // BUYER (buyer_email) here so they receive the tokenized cancel
+                            // email. Otherwise the client-supplied sender_email if present,
+                            // else (full-label only) the authed caller's email — full-label
+                            // authed users send an empty sender_email, so without this the
+                            // payer has no contact and never gets the label-created email.
+                            // Flex resolves its payer (the owner) into the `recipient` role at
+                            // line ~218, so the fallback is gated to the non-flex path
+                            // (resolvedLink === null).
+                            const senderAddr = isSellerLink
+                                ? ((buyer_email && typeof buyer_email === "string") ? buyer_email : null)
+                                : ((sender_email && typeof sender_email === "string")
+                                    ? sender_email
+                                    : (resolvedLink ? null : callerEmail));
                             // The payer's contact role differs by flow: full-label payer is
-                            // the `sender`; flex payer (the link owner) is the `recipient`.
-                            // Mirrors the dispatcher's payerRole logic — used by both the
-                            // self-send dedupe and the creation-email fallback below.
+                            // the `sender`; flex + seller-link payer (the link owner) is the
+                            // `recipient`. Mirrors the dispatcher's payerRole logic — used by
+                            // both the self-send dedupe and the creation-email fallback below.
                             const payerRole = resolvedLink ? "recipient" : "sender";
                             const payerAddr = resolvedLink ? recipientAddr : senderAddr;
                             // OQ4 dedupe: if payer and recipient are the same inbox, store a
@@ -1730,9 +2103,18 @@ Deno.serve(async (req: Request) => {
                                     : "Estimated upon pickup",
                                 tracking_url: `https://sendmo.co/t/${publicCode}`,
                                 is_flex: resolvedLink !== null,
+                                // Seller sale → reframe the label_created copy (buyer gets
+                                // "purchase confirmed", seller gets "you made a sale"). is_flex
+                                // stays true so routing is unchanged; this only picks the copy.
+                                is_seller_link: isSellerLink,
                                 sender_name: from_address?.name ?? null,
                                 item_description: typeof parcel?.description === "string" ? parcel.description : null,
-                                display_price_cents: typeof display_price_cents === "number" ? display_price_cents : null,
+                                // For a seller sale the "You paid" (buyer) / "Shipping paid by
+                                // buyer" (seller) amount must be what the buyer ACTUALLY paid —
+                                // use the server-verified PI amount, not the client body value.
+                                display_price_cents: isSellerLink
+                                    ? (verifiedPaymentIntent?.amount ?? null)
+                                    : (typeof display_price_cents === "number" ? display_price_cents : null),
                                 // Rides the flex SENDER's senderLabelReadyEmail only (the
                                 // tokenized cancel/change CTA — decided 2026-07-06, restoring
                                 // 2026-05-12 §3.2). Null when token-minting failed above; the
@@ -1771,7 +2153,10 @@ Deno.serve(async (req: Request) => {
                                             senderName: labelCreatedCtx.sender_name,
                                             itemDescription: labelCreatedCtx.item_description,
                                             displayPriceCents: labelCreatedCtx.display_price_cents,
-                                            variant: resolvedLink ? "flex" : "full_label",
+                                            // Seller sale → the payer contact is the SELLER; give
+                                            // them the "you made a sale" copy on this degraded path
+                                            // too (not flex "label created with your prepaid link").
+                                            variant: isSellerLink ? "seller_link" : resolvedLink ? "flex" : "full_label",
                                         });
                                         // runInBackground (fix 2026-07-06): keep the send alive
                                         // past the handler return via EdgeRuntime.waitUntil.

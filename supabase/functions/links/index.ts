@@ -341,6 +341,9 @@ Deno.serve(async (req: Request) => {
                 created_at,
                 recipient_address:addresses!recipient_address_id (
                     name, street1, city, state, zip
+                ),
+                origin_address:addresses!origin_address_id (
+                    city, state
                 )
             `)
             .eq("short_code", code)
@@ -357,6 +360,15 @@ Deno.serve(async (req: Request) => {
         if (link.status === "cancelled" || link.status === "expired") {
             return new Response(
                 JSON.stringify({ error: "This link is no longer active", status: link.status }),
+                { status: 410, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+
+        // Seller links: only 'active' is buyable. A single-use link that has sold
+        // closes to 'in_use'/'completed'; a reusable link stays 'active'.
+        if (link.link_type === "seller_link" && link.status !== "active") {
+            return new Response(
+                JSON.stringify({ error: "This item is no longer available", status: link.status }),
                 { status: 410, headers: { ...corsHeaders, "Content-Type": "application/json" } }
             );
         }
@@ -436,6 +448,14 @@ Deno.serve(async (req: Request) => {
                 short_code: link.short_code,
                 link_type: link.link_type,
                 status: link.status,
+                // Mode signal for the anonymous buyer client (seller-link): the
+                // buyer confirms the on-session PI client-side, so it must load the
+                // Stripe publishable key that MATCHES the mode seller-checkout
+                // creates the PI in (derived server-side from this same is_test).
+                // Without it BuyerFlow hardcodes test → a LIVE seller link would
+                // confirm a live PI with the test key and fail. Just a boolean;
+                // both publishable keys are public.
+                is_test: link.is_test === true,
                 max_price_cents: link.max_price_cents,
                 preferred_speed: link.preferred_speed,
                 preferred_carrier: link.preferred_carrier,
@@ -445,6 +465,11 @@ Deno.serve(async (req: Request) => {
                 recipient_state: link.recipient_address?.state ?? null,
                 recipient_zip: link.recipient_address?.zip ?? null,
                 recipient_name: link.recipient_address?.name ?? null,
+                // Seller links: the buyer's "ships from" hint (city/state only —
+                // the origin street is never exposed to the buyer's client; rates/
+                // + labels/ resolve the full origin server-side).
+                origin_city: (link.origin_address as unknown as { city?: string } | null)?.city ?? null,
+                origin_state: (link.origin_address as unknown as { state?: string } | null)?.state ?? null,
                 // Tells the sender flow whether the full address is on file.
                 // False → show an error immediately rather than failing at label creation.
                 recipient_address_complete: !!(link.recipient_address as unknown as { street1?: string } | null)?.street1,
@@ -528,6 +553,120 @@ Deno.serve(async (req: Request) => {
                     properties: { user_id: user.id, reason: gate.reason },
                 });
             }
+        }
+
+        // ─── Seller link (buyer-pays) — a distinct create flow ────────────
+        // A seller link stores the SELLER's ORIGIN + package + carrier
+        // constraint up front; the buyer supplies their destination at checkout.
+        // Kept as an early-return block so the flex path below is untouched
+        // (additive-branch discipline, review §2c). is_test is already derived.
+        if (body.link_type === "seller_link") {
+            const { origin_address, length_in, width_in, height_in, weight_oz, max_shipments } = body;
+
+            if (!origin_address?.street1 || !origin_address?.city || !origin_address?.state || !origin_address?.zip) {
+                return new Response(
+                    JSON.stringify({ error: "Missing required ship-from address fields" }),
+                    { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+            if (!isUsablePhone(origin_address?.phone)) {
+                return new Response(
+                    JSON.stringify({ error: "We need a phone number for your ship-from address — the shipping carriers require one." }),
+                    { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+            // Dims required (review): a null parcel → 0×0×0 → junk/failed rates.
+            const dims = [length_in, width_in, height_in, weight_oz].map((v) => Number(v));
+            if (dims.some((v) => !Number.isFinite(v) || v <= 0)) {
+                return new Response(
+                    JSON.stringify({ error: "Package length, width, height, and weight are all required" }),
+                    { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+
+            // Insert the seller's ORIGIN address.
+            const { data: originAddr, error: originErr } = await supabase
+                .from("addresses")
+                .insert({
+                    user_id: user.id,
+                    name: origin_address.name || "Seller",
+                    street1: origin_address.street1,
+                    street2: origin_address.street2 || null,
+                    city: origin_address.city,
+                    state: origin_address.state,
+                    zip: origin_address.zip,
+                    country: "US",
+                    phone: origin_address.phone,
+                    is_verified: origin_address.verified || false,
+                })
+                .select("id")
+                .single();
+            if (originErr || !originAddr) {
+                console.error("Origin address insert error:", originErr);
+                return new Response(
+                    JSON.stringify({ error: "Failed to save ship-from address" }),
+                    { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+
+            // Unique short code.
+            let sellerCode = "";
+            let sRetries = 0;
+            while (sRetries < 3) {
+                const candidate = generateShortCode();
+                const { error: codeError } = await supabase
+                    .from("sendmo_links").select("id").eq("short_code", candidate).single();
+                if (codeError) { sellerCode = candidate; break; }
+                sRetries++;
+            }
+            if (!sellerCode) {
+                return new Response(
+                    JSON.stringify({ error: "Failed to generate unique link code" }),
+                    { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+
+            const sPriceCap = typeof price_cap_dollars === "number" ? price_cap_dollars : 100;
+            const { data: sellerLink, error: sellerLinkErr } = await supabase
+                .from("sendmo_links")
+                .insert({
+                    user_id: user.id,
+                    short_code: sellerCode,
+                    link_type: "seller_link",
+                    status: "active",            // buyer-pays: active immediately, no draft/PM dance
+                    is_test: linkIsTest,
+                    funder: "buyer",
+                    origin_address_id: originAddr.id,
+                    // recipient_address_id stays NULL — required by the airtight per-type CHECK.
+                    length_in: dims[0],
+                    width_in: dims[1],
+                    height_in: dims[2],
+                    weight_hint_oz: dims[3],      // weight reuses weight_hint_oz (migration 040)
+                    max_shipments: Number(max_shipments) === 1 ? 1 : null,  // 1 = single-use, null = reusable
+                    max_price_cents: Math.round(sPriceCap * 100),
+                    preferred_speed: speed_preference || null,
+                    preferred_carrier: preferred_carrier === "any" ? null : (preferred_carrier || null),
+                    notes: notes || null,
+                })
+                .select("id, short_code")
+                .single();
+            if (sellerLinkErr || !sellerLink) {
+                console.error("Seller link insert error:", sellerLinkErr);
+                return new Response(
+                    JSON.stringify({ error: "Failed to create seller link" }),
+                    { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+
+            return new Response(
+                JSON.stringify({
+                    id: sellerLink.id,
+                    short_code: sellerLink.short_code,
+                    url: `https://sendmo.co/s/${sellerLink.short_code}`,
+                    status: "active",
+                }),
+                { status: 201, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
         }
 
         let startStatus: "draft" | "active";

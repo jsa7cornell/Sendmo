@@ -91,29 +91,33 @@ Deno.serve(async (req: Request) => {
     }
 
     try {
-        const { from_address, to_address: bodyToAddress, parcel, live_mode, preferred_carrier, preferred_speed, max_price_cents, link_short_code } = await req.json();
-
-        if (!from_address || !bodyToAddress || !parcel) {
-            logRateError("missing_required_fields", "warn", {
-                has_from: !!from_address, has_to: !!bodyToAddress, has_parcel: !!parcel,
-            });
-            return new Response(
-                JSON.stringify({ error: "Missing required fields: from_address, to_address, parcel" }),
-                { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-            );
-        }
-
-        // When the sender flow calls rates with a link_short_code, resolve the
-        // full to_address server-side. The sender's client only has city/state
-        // (Rule 7), and EasyPost rejects /buy on a shipment with no street1
-        // even though /shipments accepts it and returns rates. Mirrors the
-        // labels function's server-resolve pattern (proposal §3.5/B3).
-        let to_address = bodyToAddress;
-        // T1-1 gate F (review B2/N2): when a flex link resolves below, its
-        // is_test drives the EasyPost key choice and the client live_mode is
-        // ignored on that path. Non-link callers keep the client hint —
-        // quote-only exposure; the buy-side gates protect the money.
+        const body = await req.json();
+        const { live_mode, link_short_code } = body;
+        // Working address/parcel/pref vars. A FLEX link resolves to_address from
+        // the link (the sender supplies from + parcel); a SELLER link resolves
+        // from_address + parcel + the seller's carrier constraints from the link
+        // (the buyer supplies only to_address). So these are mutable and the
+        // required-fields check runs AFTER link resolution below.
+        let from_address = body.from_address;
+        let to_address = body.to_address;
+        let parcel = body.parcel;
+        let preferred_carrier = body.preferred_carrier;
+        let preferred_speed = body.preferred_speed;
+        let max_price_cents = body.max_price_cents;
+        // T1-1 gate F (review B2/N2): when a link resolves below, its is_test
+        // drives the EasyPost key choice and the client live_mode is ignored on
+        // that path. Non-link callers keep the client hint — quote-only
+        // exposure; the buy-side gates protect the money.
         let linkIsTest: boolean | null = null;
+        let linkType: string | null = null;
+        // Seller-link binding (review blocker): when a SELLER link mints the
+        // EasyPost shipment below, we stamp shipment.reference = link.id so the
+        // downstream money path (seller-checkout + labels) can prove the priced/
+        // bought shipment was created FROM this link's origin+parcel — not an
+        // arbitrary cheap shipment the anonymous buyer minted elsewhere. An
+        // attacker can't forge this (no EasyPost API key; the non-link rate path
+        // never sets it).
+        let sellerLinkId: string | null = null;
         if (link_short_code && typeof link_short_code === "string") {
             const sbUrl = Deno.env.get("SUPABASE_URL") || Deno.env.get("VITE_SUPABASE_URL");
             const sbKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || Deno.env.get("SB_SERVICE_ROLE_KEY");
@@ -124,19 +128,27 @@ Deno.serve(async (req: Request) => {
                 const { data: link } = await supabase
                     .from("sendmo_links")
                     .select(`
-                        status, link_type, is_test,
+                        id, status, link_type, is_test, max_price_cents, preferred_carrier, preferred_speed,
+                        length_in, width_in, height_in, weight_hint_oz,
                         recipient_address:addresses!recipient_address_id (
+                            name, street1, street2, city, state, zip, country, phone
+                        ),
+                        origin_address:addresses!origin_address_id (
                             name, street1, street2, city, state, zip, country, phone
                         )
                     `)
                     .eq("short_code", link_short_code)
                     .single();
-                const addr = link?.recipient_address as unknown as {
-                    name: string; street1: string; street2: string | null;
-                    city: string; state: string; zip: string; country: string | null;
-                    phone: string | null;
-                } | null;
+
                 if (link && link.status === "active" && link.link_type === "flexible") {
+                    // Flex — resolve the recipient's delivery address. The
+                    // sender's client only sent city/state (Rule 7). Mirrors labels/.
+                    linkType = "flexible";
+                    const addr = link.recipient_address as unknown as {
+                        name: string; street1: string; street2: string | null;
+                        city: string; state: string; zip: string; country: string | null;
+                        phone: string | null;
+                    } | null;
                     if (!addr?.street1) {
                         // The link was created with an incomplete address (no street).
                         // Return a clear error so the sender sees it immediately rather
@@ -162,8 +174,64 @@ Deno.serve(async (req: Request) => {
                         phone: addr.phone ?? undefined,
                     };
                     linkIsTest = link.is_test === true;
+                } else if (link && link.status === "active" && link.link_type === "seller_link") {
+                    // Seller link — the INVERSE of flex: the SELLER's ship-from
+                    // origin + package + carrier constraints come from the link;
+                    // the buyer supplies only their destination (to_address, from
+                    // the body). Carrier / speed / cap are read from the link and
+                    // enforced SERVER-SIDE (B5); any client-supplied prefs on this
+                    // leg are ignored.
+                    linkType = "seller_link";
+                    sellerLinkId = (link as unknown as { id: string }).id;
+                    const o = link.origin_address as unknown as {
+                        name: string; street1: string; street2: string | null;
+                        city: string; state: string; zip: string; country: string | null;
+                        phone: string | null;
+                    } | null;
+                    if (!o?.street1) {
+                        logRateError("seller_origin_incomplete", "warn", {
+                            link_short_code: link_short_code ?? null,
+                        });
+                        return new Response(
+                            JSON.stringify({ error: "This seller link's ship-from address is incomplete. The seller needs to finish setting up the link before you can get a rate." }),
+                            { status: 422, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                        );
+                    }
+                    from_address = {
+                        name: o.name,
+                        street1: o.street1,
+                        street2: o.street2 ?? undefined,
+                        city: o.city,
+                        state: o.state,
+                        zip: o.zip,
+                        country: o.country ?? "US",
+                        phone: o.phone ?? undefined,
+                    };
+                    parcel = {
+                        length: Number(link.length_in),
+                        width: Number(link.width_in),
+                        height: Number(link.height_in),
+                        weight_oz: Number(link.weight_hint_oz),
+                    };
+                    preferred_carrier = link.preferred_carrier ?? undefined;
+                    preferred_speed = link.preferred_speed ?? undefined;
+                    max_price_cents = typeof link.max_price_cents === "number" ? link.max_price_cents : max_price_cents;
+                    linkIsTest = link.is_test === true;
                 }
             }
+        }
+
+        // Required fields — checked AFTER link resolution (a seller link resolves
+        // from_address + parcel from the link above; a flex link resolves to_address).
+        if (!from_address || !to_address || !parcel) {
+            logRateError("missing_required_fields", "warn", {
+                has_from: !!from_address, has_to: !!to_address, has_parcel: !!parcel,
+                link_type: linkType,
+            });
+            return new Response(
+                JSON.stringify({ error: "Missing required fields: from_address, to_address, parcel" }),
+                { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
         }
 
         // Phone is required on BOTH addresses (2026-05-19). The phone is baked
@@ -185,12 +253,11 @@ Deno.serve(async (req: Request) => {
             );
         }
         if (!isUsablePhone(to_address?.phone)) {
-            // When a link_short_code is present the to_address was resolved from
-            // the link's stored delivery address — so a missing phone is the
-            // link owner's to fix, not the sender's. Point them at the owner
-            // (mirrors the incomplete-address message above). The generic
-            // wording is kept for non-link callers (e.g. /label-test).
-            const linkCase = !!link_short_code;
+            // On a FLEX link the to_address was resolved from the link's stored
+            // delivery address — so a missing phone is the link owner's to fix.
+            // On a SELLER link the to_address is the BUYER's own address, and for
+            // non-link callers it's the caller's — both get the generic wording.
+            const linkCase = linkType === "flexible";
             const msg = linkCase
                 ? "This shipping link's delivery address doesn't have a phone number, which the carriers require. The person who created this link needs to add one (from their SendMo dashboard) before you can ship."
                 : "The delivery address is missing a phone number — shipping carriers require one to generate a label.";
@@ -249,6 +316,11 @@ Deno.serve(async (req: Request) => {
                 },
                 body: JSON.stringify({
                     shipment: {
+                        // Seller-link binding: stamp reference = link.id so
+                        // seller-checkout + labels can verify this shipment was
+                        // minted from the link (blocker fix). Only set on the
+                        // seller path; null/omitted for flex + full-label.
+                        ...(sellerLinkId ? { reference: sellerLinkId } : {}),
                         from_address: builtFrom,
                         to_address: builtTo,
                         parcel: {

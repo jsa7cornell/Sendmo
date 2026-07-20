@@ -8,6 +8,7 @@ import {
   fetchLink, fetchSenderRates, buyLabel, BuyLabelRateChangedError,
 } from "@/lib/api";
 import { RateChangedDialog } from "@/components/RateChangedDialog";
+import BuyerFlow from "@/pages/BuyerFlow";
 import type { LinkData } from "@/lib/api";
 import type { AddressInput, ShippingRate } from "@/lib/types";
 import { emptyAddress } from "@/lib/utils";
@@ -76,6 +77,16 @@ export default function SenderFlow() {
         // rendering the sender wizard (which expects a flex-link).
         if (data.link_type === "full_label" && data.public_code) {
           navigate(`/t/${data.public_code}`, { replace: true });
+          return;
+        }
+        // Seller links (link_type='seller_link') are a different flow entirely:
+        // an anonymous buyer supplies only their destination, sees price-visible
+        // rates, and pays on-session. Hand off to the standalone BuyerFlow (it
+        // owns its own step state + shell). setStep just exits the loading gate;
+        // the render early-return below swaps in BuyerFlow.
+        if (data.link_type === "seller_link") {
+          setLinkData(data);
+          setStep("intro");
           return;
         }
         // Fail fast if the destination address is incomplete — better to show
@@ -212,6 +223,13 @@ export default function SenderFlow() {
     } finally {
       setSubmitting(false);
     }
+  }
+
+  // Seller links render the standalone anonymous buyer rate-shopping flow.
+  // Placed after all hooks (above) so hook order stays stable; only reachable
+  // once the fetch resolves and sets a seller_link linkData.
+  if (linkData?.link_type === "seller_link") {
+    return <BuyerFlow linkData={linkData} />;
   }
 
   return (

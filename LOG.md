@@ -12,6 +12,107 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-07-19] Seller Link — both PRE-LIVE blockers fixed + deployed (test-mode); ready for merge decision
+
+**Category:** fix | Payments | Seller Link
+**Deploy:** `links` (fix 1), then `labels` + `tracking` + `webhooks` (fix 2, + `_shared` templates bundled) deployed to PROD via CI dispatch from `seller-link`, 2026-07-19.
+**Cross-link:** [BuyerFlow](src/pages/BuyerFlow.tsx) | [links](supabase/functions/links/index.ts) | [_shared/email-templates.ts](supabase/functions/_shared/email-templates.ts) | [_shared/notifications.ts](supabase/functions/_shared/notifications.ts) | WISHLIST (both items now `[x]`)
+
+**What & why:** cleared the two pre-live blockers the code review surfaced, so the only thing left before launch is the merge decision (still needs the rebase).
+
+- **Fix 1 — live-mode key gap** (`3efa1a1`): BuyerFlow hardcoded `buyerLiveMode=false`, so a LIVE seller link (live PI created server-side) would confirm with the TEST publishable key → mismatch → buyer can't pay. Now `links` GET-by-code returns `is_test`; `LinkData` carries it; `BuyerFlow` sets `buyerLiveMode = (is_test === false)`. Its review proved this reduces to exactly the server predicate `is_test !== true`, so the key and PI mode can NEVER diverge (missing signal → test, never live). Verified: GET-by-code SELLE2E01 → `is_test:true`.
+- **Fix 2 — notification copy inversion** (`26cc22f` + `616f73f`): the buyer who PAID got `senderLabelReadyEmail`'s flex copy ("…no charge to you") — contradicting their Stripe receipt — and tracking copy was inverted. Threaded an additive `is_seller_link` signal through the shared notification layer: buyer → "Your purchase is on the way / You paid $X" (amount from the verified PI), tokenized cancel CTA intact, never "no charge"; seller → "You made a sale — print your label" (`Amount`→`Shipping paid by buyer`); tracking → "item you bought"/"item you sold". Wired in `labels` (label_created + the contacts-failure fallback), `tracking` + `webhooks` (status updates, keyed on `buyer_email`). **Flex + full-label byte-for-byte unchanged** (all new params optional/defaulted; the only non-dispatcher caller — the labels fallback — was made variant-aware).
+
+**Verified:** full unit suite **643 passing** (+5 new locking the seller-link copy AND the "buyer email never says no charge" regression); `tsc -b` clean; `labels` full-label regression → **402** after the `_shared` bundle redeploy (shared path unbroken). **Both reviews = SOUND.** Fix 2's adversarial review rendered parent vs current templates and diffed every non-seller output: flex + full-label byte-for-byte IDENTICAL, routing is copy-only (reads `is_flex`, never `is_seller_link`), buyer copy never says "no charge", "You paid $X" = the verified-PI charge (graceful on null/comp). Two minor notes it raised: (a) an inert-whitespace nit (empty `${paidRow}` line — renders identically, same convention as `${itemRow}`; no action); (b) **LOW copy-only degradation** — labels keys `is_seller_link` on the in-memory `resolvedLink.link_type` but tracking/webhooks key on persisted `buyer_email`, so in the rare, already-admin-alerted `buyer_email`-write-failure window, later *tracking* emails fall back to flex copy ("the package you sent") until an admin backfills. Not introduced here; tracked in WISHLIST.
+
+**Browser-verified:**
+- spec: [tests/unit/emailTemplates.test.ts](tests/unit/emailTemplates.test.ts) — seller-link copy variants (buyer "purchase confirmed" + no "no charge to you"; seller "you made a sale" + "Shipping paid by buyer"; tracking "item you bought"/"item you sold") AND the flex/full-label-unchanged regressions.
+- variants-covered: buyer label-ready email, seller label-created email, tracking-update email (in_transit) — each with is_seller_link on AND off (off = flex/full-label unchanged).
+- Fix 1's BuyerFlow key-selection is pure-logic (predicate reduces to the server's `is_test !== true`, review-proven); no live seller link exists to browser-drive the live path, and the local Payment Element can't mount without the test-key env (env-blocked, not a code gap) — GET-by-code `is_test` confirmed via curl.
+
+### [2026-07-19] Seller Link — high code-review (4 adversarial agents) + blocker fixes DEPLOYED to prod (test-mode)
+
+**Category:** fix | Payments | Seller Link | Security
+**Deploy:** `rates`, `seller-checkout`, `labels` redeployed to PROD via CI dispatch from `seller-link`, 2026-07-19 (commit `1ecf440`). Test-mode verified.
+**Cross-link:** [rates](supabase/functions/rates/index.ts) | [seller-checkout](supabase/functions/seller-checkout/index.ts) | [labels](supabase/functions/labels/index.ts) | WISHLIST "Seller Link — deferred follow-ups"
+
+**Review:** ran a 4-agent adversarial review of the money paths (labels buy-branch / payer-identity / anon endpoints / migration+RLS) + a 5th adversarial verify pass on the fix. The billed `/code-review ultra` cloud review is user-triggered (John runs it if he wants a second engine). Data-model/RLS got a clean bill (per-type CHECK airtight; buyer RLS correctly scoped — anon reads 0 rows, no enumeration by buyer_email; migration idempotent + correctly constraint-named; discriminator consistent).
+
+**The verify pass caught a bug in the FIX itself (fixed same session, commit `c40954b`):** the first cut of the labels binding *backstop* auto-refunded the raw body `payment_intent_id` — which is UNVERIFIED at that point (the metadata pin runs later). An attacker could name any PaymentIntent (e.g. their own completed purchase), deliberately construct a reference mismatch, and get it refunded → free shipping / arbitrary-refund griefing. Fixed: the backstop now rejects + alerts ONLY (no refund) — it's unreachable via the legit client, and a genuinely-charged buyer's PI is handled by the charge branch's own verify/refund path. Verified on prod test-mode: junk shipment + SELLE2E01 + attacker-named PI → 403, no refund attempted; full-label regression → 402. Lesson: adversarially verify the fix, not just the original code.
+
+**🔴 BLOCKER found + FIXED + verified — shipment↔link binding.** The anonymous buyer supplied `easypost_shipment_id`, and neither `seller-checkout` nor `labels` verified it was minted from the link's origin+parcel → a buyer could mint a cheap 1oz shipment via the **no-link** `rates` path and pay its price for a label the seller applies to a real heavy item ("server derives amount" → "buyer picks amount"). **Fix:** `rates/` stamps EasyPost `shipment.reference = link.id` on the seller path (unforgeable — the no-link path never sets it, and minting via the seller path forces the link's parcel); `seller-checkout` verifies `reference === link.id` BEFORE pricing (403); `labels` verifies before the buy (refund + admin-alert backstop). **Verified on prod (test mode):** attack (cheap no-link shipment → seller-checkout) → **403 "does not belong to this seller link"**; legit (seller-path shipment) → **200** PI created; full-label regression → **402** unbroken.
+
+**Also fixed (same deploy):**
+- **HIGH — `buyer_email` atomicity** (flagged by 2 agents): the F1 marker was a non-fatal post-insert UPDATE; if it failed the SELLER saw the buyer's receipt/last4. Now retried 3× + `sendAdminAlert` on final failure.
+- **MEDIUM — kill switch:** `seller-checkout` now honors `SENDMO_LIVE_DEFAULT` (the "one-flip halt" must cover the 3rd money path; the charge originates there).
+- **MEDIUM — single-use revert:** if the EasyPost buy fails after the `active→in_use` claim, the link is reopened (not left permanently sold with no sale).
+- **LOW:** stricter `buyer_email` regex; transient claim DB error → 503 "try again" vs true race → 409 "just sold".
+
+**Deferred to WISHLIST (all pre-live, none block the test-mode merge):** notification **copy inversion** (buyer who paid gets "no charge to you" — contradicts their Stripe receipt; elevated to PRE-LIVE blocker, needs bespoke templates + its own review) + contacts-failure fallback; `buyer_email`↔PI-metadata pin; pre-existing EndShipper/EP-key 500 no-refund (shared with full-label); tracking `link_type` echo; DB dims CHECK; seller-cancel copy.
+
+**⚠️ MERGE BLOCKER (must reconcile before `seller-link` → `main`):** the branch's `tracking/index.ts` predates main's `tracker.status === "unknown" → "label_created"` mapping fix and **dropped it** (branch is behind main on this file). A naive merge would REGRESS that fix and can violate `shipments_status_check` on webhook write-back. Rebase `seller-link` on `main` (or hand-reconcile `tracking/`, `labels/`, any other files main advanced) BEFORE merging, and re-run the tracking tests.
+
+### [2026-07-19] Seller Link M2–M7 — full feature built, deployed to prod (test-mode), unit-tested, browser-verified to the card swipe
+
+**Category:** ship | Payments | Seller Link
+**Deploy:** `links`, `labels`, `cancel-label`, `tracking` (+ earlier `seller-checkout`, `rates`) all deployed to PROD via CI dispatch from `seller-link`, 2026-07-19. Frontend on the `seller-link` Vercel branch preview (NOT merged to `main` — real users must not see the 3rd onboarding card until launch).
+**Cross-link:** plan `~/.claude/plans/zazzy-toasting-parrot.md` (M2–M7) | proposal `proposals/2026-07-17_seller-link-buyer-pays_decided-2026-07-17.md` | [labels](supabase/functions/labels/index.ts) | [tracking](supabase/functions/tracking/index.ts) | [cancel-label](supabase/functions/cancel-label/index.ts) | [BuyerFlow](src/pages/BuyerFlow.tsx) | [SellerBuilder](src/pages/SellerBuilder.tsx)
+
+**What shipped (branch `seller-link`, all pushed):**
+- **M2** — `links/` POST seller branch (creates seller_link: origin address insert + dims + max_shipments + funder='buyer') and GET-by-code (returns origin city/state + dims + carrier constraint; only-`active`-is-buyable → 410 otherwise). Seller-builder form `src/pages/SellerBuilder.tsx` (details→review→ready, reuses MagicGuestimator/SmartAddressInput/FlexPreferencesForm/LinkShareCard). 3rd onboarding card (`RecipientStepPathChoice`, "How do you want to ship?").
+- **M3** — buyer rate-shopping: `BuyerFlow.tsx` address→rates (price-VISIBLE fork; buyer supplies only destination, server resolves origin+parcel).
+- **M4** — `labels/` seller buy branch (additive FIRST branch): from_address from origin, **to_address resolved server-side from the EasyPost shipment (B1)**, PI-verify + replay guards + **buyer_email REQUIRED (B2)**, buyer_email post-insert UPDATE (F4).
+- **M5** — payer-identity keyed strictly on `shipments.buyer_email` (F1): tracking `viewerRole` flips (buyer=payer sees receipt; seller=sender_flex, no receipt); cancel-label refund email → buyer; labels notification contacts inverted so the buyer gets the tokenized `/t/?cancel=` email. Non-seller paths byte-for-byte unchanged.
+- **M6** — single-use close BEFORE the buy (**B4**: atomic `UPDATE … WHERE status='active' RETURNING id`; concurrent loser refunds its captured PI + admin-alerts + 409, no label bought; targets the REAL `resolvedLink.id`). Reusable links skip it.
+- **M7** — tests + verification (below).
+
+**Verified (prod test-mode + local):**
+- **Unit:** full suite **638 passing / 60 files**; `tsc -b` clean. Added `pricing.test.ts` cases for `applyMarkup` incl. a cross-consistency proof that the server-derived buyer charge == the frontend-displayed price (buyer-sees == charged). Refreshed `schemaColumnAudit` snapshot (migration 040 cols) + App onboarding heading.
+- **Backend curl (prod test-mode):** GET-by-code (seller fields) ✓ · seller `rates` (17 priced rates, buyer supplies only to_address) ✓ · `seller-checkout` creates a valid test PI, amount server-derived, **buyer_email guard → 400** ✓ · `labels` full-label **regression → 402 "No such payment_intent"** (shared path unbroken after every deploy) + seller branch **missing buyer_email → 400** ✓.
+- **Pricing confirmed no mismatch:** `rates.display_price = round(raw×1.15×100+100)/100` and `applyMarkup(raw)` are the SAME formula → buyer sees $8.45, seller-checkout charges $8.45.
+
+**Browser-verified:**
+- mcp-session: local dev (`seller-link-wt` :5199 → prod test-mode functions), seed link `SELLE2E01`, buyer `/s/SELLE2E01` flow driven address → rates → review → pay.
+- variants-covered: buyer address step (origin "Ships from San Francisco, CA", proxied autocomplete → Verified), rates step (price-visible fork, USPS $8.45 / UPS $8.69 / FedEx $24.63), review step (correct ship-to/ship-from/method, **Total $8.45**), pay button ("Pay $8.45 & generate label" — charge == displayed price).
+- **NOT covered (env-blocked, not a code defect):** the final card-entry → confirm → `labels/` buy → shipment persist leg. The Stripe Payment Element can't initialize locally (`VITE_STRIPE_PUBLISHABLE_KEY_TEST` absent from `.env.local` — the original build tested payments on the Vercel preview, which has the key but is SSO-gated for anonymous visitors). Remaining manual step for John: complete one test-card buy on the Vercel preview (logged in) OR provide the public test key / lift preview protection so the anonymous buyer can be driven locally. No orphan data from the aborted attempt (unconfirmed PI → 0 charges, 0 shipments; confirmed via SQL).
+
+**Scope calls (v1, all tracked in WISHLIST "Seller Link — deferred follow-ups"):** F1 root-cause repoint of `shipments.link_id` (DEFER, John 2026-07-19) · N1 budget exclusion (lives in `_shared/budget.ts` → fan-out redeploy; dormant in test-mode) · F5 buy-time carrier gate (carrier already enforced at rate-shop) · single-use no-auto-reopen on refund · buyer email uses flex copy · **LIVE-mode `buyerLiveMode=false` gap (launch-blocker before any LIVE seller link)**.
+
+**Code review:** high-rigor multi-agent adversarial review of the money paths kicked off in-session (labels buy branch / payer-identity / anon endpoints / migration+RLS). The billed `/code-review ultra` cloud review is user-triggered — John runs that himself if desired.
+
+**Test data on prod:** seller_link `SELLE2E01` (is_test, reusable) + `SELLTEST01` (M1) + their origin addresses remain — usable for John's manual card-swipe verification; clean up post-launch.
+
+### [2026-07-19] Seller Link M1 — seller-checkout + rates/ seller branch DEPLOYED TO PROD + verified (test mode)
+
+**Category:** deploy | Payments | Seller Link
+**Deploy:** `seller-checkout` (new) + `rates/` (seller_link branch) deployed to PROD via CI dispatch from `seller-link` branch, 2026-07-19. Test-mode verified.
+**Cross-link:** plan `~/.claude/plans/zazzy-toasting-parrot.md` (M1) | [supabase/functions/seller-checkout/index.ts](supabase/functions/seller-checkout/index.ts) | [supabase/functions/rates/index.ts](supabase/functions/rates/index.ts)
+
+**What:** first backend of the buyer-pays money path is live on prod. `seller-checkout` (on-session PI, server-gated amount) got the review fixes before deploy — **buyer_email now REQUIRED (B2)**, **link_id + buyer_email added to PI metadata (F2** → webhook stamps `transactions.link_id` so N1 budget-exclusion can key off it**)**, and **`[functions.seller-checkout] verify_jwt=false` pinned in config.toml** (absent-section-401 incident class). `rates/` gained the seller_link branch (resolves origin+package+carrier from the link server-side; buyer supplies only destination).
+
+**Verified on prod (test mode):**
+- `seller-checkout` smoke: `POST {}` → **HTTP 400** "Missing or invalid link_short_code" — loads clean (no 500), gateway allows anon (no 401 → verify_jwt pin works).
+- `rates/` **regression** (existing non-seller path, from+to+parcel, no link) → **HTTP 200** with real rates (UPSDAP/USPS) — the top-of-function restructure did NOT break live flex/full-label rate-shopping.
+- `rates/` **seller path**: seeded a test `seller_link` (`SELLTEST01`, is_test=true, SF origin + 10×8×4/16oz + $100 cap; the airtight per-type CHECK accepted origin-set/recipient-null). Buyer `POST {to_address, link_short_code}` (no from/parcel) → **HTTP 200** with priced rates resolved from the link's origin+package.
+
+**Gotcha confirmed:** test mode isolates the *money*, not the *code* — a shared-function bug would break live buys regardless of mode, so each shared deploy (`rates` here) is regression-tested against the existing paths immediately. Held.
+
+**Test data on prod:** seller_link `SELLTEST01` (is_test) + its origin address remain for M2–M4 testing; clean up at M7.
+
+### [2026-07-18] Seller Link — migration 040 APPLIED TO PROD (build-on-prod, per John)
+
+**Category:** deploy | Schema | Payments
+**Deploy:** Migration 040 applied to **PROD** (`fkxykvzsqdjzhurntgah`) via Supabase MCP `apply_migration`, 2026-07-18. Additive + idempotent; existing data untouched.
+**Cross-link:** [supabase/migrations/040_seller_link_schema.sql](supabase/migrations/040_seller_link_schema.sql) | [proposals/2026-07-17_seller-link-buyer-pays_reviewed-2026-07-17_decided-2026-07-17.md](proposals/2026-07-17_seller-link-buyer-pays_reviewed-2026-07-17_decided-2026-07-17.md)
+
+**What & why:** John's call to build + test the seller link directly on prod (nil traffic — 51 links / 36 shipments total; the way the original site was built), which restores the run-and-watch verify loop this session couldn't get otherwise (Docker off + no `docker` CLI, Supabase MCP branch-locked, no `sendmo-staging` project). Applied additive 040: `sendmo_links` += `funder` / `origin_address_id` / `length_in` / `width_in` / `height_in` / `max_shipments`, `recipient_address_id` NOT NULL relaxed + airtight per-`link_type` CHECK, `link_type` += `seller_link`; `shipments` += `buyer_email` / `recipient_user_id` + buyer SELECT RLS + claim-backfill index.
+
+**Verified post-apply (SQL read):** links=51, shipments=36 (**unchanged**); all 6 link cols + 2 shipment cols present; `link_type` check now 3-value; `null_funder_rows=0` (default applied to every existing link); `recipient_address_id` nullable=YES. No existing-row violations (additive ADD COLUMN + the per-type CHECK all validated against the 51 live rows).
+
+**⚠️ Prod schema now AHEAD of `main`:** 040 is live on prod, but its migration *file* lives on the unmerged `seller-link` branch — `main`'s set is still 001–039. Deploying `main` is safe (won't remove 040). When `seller-link` merges, 040's idempotent file re-applies as a no-op. Merge `seller-link` to resync `main`'s migration history.
+
+**Next:** deploy edge functions to prod to test the money path in test mode — `seller-checkout` (new, inert until wired) first, then modified `rates/` (regression-test flex/full-label immediately after, since it's shared).
+
 ### [2026-07-18] Admin "New label created" notice — enriched to full shipment detail (fraud-review)
 
 **Category:** feat | Labels | Observability
