@@ -2114,7 +2114,10 @@ Deno.serve(async (req: Request) => {
                                             senderName: labelCreatedCtx.sender_name,
                                             itemDescription: labelCreatedCtx.item_description,
                                             displayPriceCents: labelCreatedCtx.display_price_cents,
-                                            variant: resolvedLink ? "flex" : "full_label",
+                                            // Seller sale → the payer contact is the SELLER; give
+                                            // them the "you made a sale" copy on this degraded path
+                                            // too (not flex "label created with your prepaid link").
+                                            variant: isSellerLink ? "seller_link" : resolvedLink ? "flex" : "full_label",
                                         });
                                         // runInBackground (fix 2026-07-06): keep the send alive
                                         // past the handler return via EdgeRuntime.waitUntil.
