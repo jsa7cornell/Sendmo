@@ -12,6 +12,13 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-07-21] Investigated buyer payment failure — 3DS authentication failure, not a SendMo bug
+
+**Category:** investigation | Payments
+**Cross-link:** [payments/index.ts](supabase/functions/payments/index.ts) (PI creation w/ `setup_future_usage: off_session`)
+
+**What & why:** a buyer (joneshenryanderson@gmail.com, Link + Mastercard Debit ••2755) reported "We are unable to authenticate your payment method" on a $9.07 live full-label checkout. Traced `pi_2TvrNlxS6gsndgF31qxx7epT`: PI created fine (edge fn 200), two confirm attempts ~1 min apart both failed with Stripe code `payment_intent_authentication_failure` — the card's 3D Secure challenge failed at the buyer's bank. `stripe_intents` and `event_logs` (webhook `stripe.payment_failed`) recorded it correctly; the error copy on screen is Stripe's own, rendered by PaymentElement. Only failure in 14 days (2 other live PIs succeeded) — one-off, bank-side, no code change. Note: `setup_future_usage: off_session` (save-card for carrier adjustments, H2 D1) makes banks request 3DS more often — deliberate trade-off, unchanged. Resolution for the buyer: retry, complete the bank's verification prompt, or use a different card.
+
 ### [2026-07-19] Seller Link — MERGED to main (PR #60) + deployed to prod; launch-gated OFF
 
 **Category:** ship | Payments | Seller Link
