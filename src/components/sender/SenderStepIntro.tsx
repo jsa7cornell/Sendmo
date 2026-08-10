@@ -1,6 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Package2, MapPin, Printer, ArrowRight } from "lucide-react";
 import type { LinkData } from "@/lib/api";
+import { displayName } from "@/lib/name";
 
 interface Props {
   linkData: LinkData;
@@ -11,7 +12,7 @@ interface Props {
 // City/state is the only location detail shown — Rule 7: never show street/zip
 // in sender UI text. The printed label is the only address surface.
 export default function SenderStepIntro({ linkData, onContinue }: Props) {
-  const recipientName = linkData.recipient_name?.trim() || null;
+  const recipientName = displayName(linkData.recipient_name);
   const headline = recipientName
     ? `You're sending a package to ${recipientName}`
     : "You're sending a package via this prepaid link";

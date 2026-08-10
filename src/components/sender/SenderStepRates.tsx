@@ -4,6 +4,7 @@ import type { LinkData } from "@/lib/api";
 import type { ShippingRate } from "@/lib/types";
 import { isPreferredRate, sortRatesForSender, priceTierSymbol } from "./senderState";
 import { carrierDisplayName, serviceDisplayName } from "@/lib/utils";
+import { displayName } from "@/lib/name";
 
 interface Props {
   linkData: LinkData;
@@ -72,7 +73,7 @@ export default function SenderStepRates({
     );
   }
 
-  const recipient = linkData.recipient_name?.trim() || "the recipient";
+  const recipient = displayName(linkData.recipient_name) || "the recipient";
 
   return (
     <div className="space-y-5">

@@ -6,6 +6,7 @@ import MagicGuestimator from "@/components/recipient/MagicGuestimator";
 import type { LinkData } from "@/lib/api";
 import type { AddressInput, GuestimatorResult } from "@/lib/types";
 import { isUsablePhone } from "@/lib/phone";
+import { displayName } from "@/lib/name";
 import type { SenderParcel, PackagingType } from "./senderState";
 
 interface Props {
@@ -70,7 +71,7 @@ export default function SenderStepPackage({
   const addrIncomplete = tried && (!senderAddress.street || !senderAddress.city || !senderAddress.state || !senderAddress.zip);
   const phoneIncomplete = tried && !isUsablePhone(senderAddress.phone);
   const dimsIncomplete = tried && (!length || !width || (packaging !== "envelope" && !height) || !weightLbs);
-  const recipient = linkData.recipient_name?.trim();
+  const recipient = displayName(linkData.recipient_name);
   const cityState = linkData.recipient_city && linkData.recipient_state
     ? `${linkData.recipient_city}, ${linkData.recipient_state}`
     : null;

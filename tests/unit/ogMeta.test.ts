@@ -13,10 +13,10 @@ import { resolve } from "node:path";
 import {
   buildOgStrings,
   injectOgTags,
-  titleCaseName,
   DEFAULT_TITLE,
   DEFAULT_DESC,
 } from "@/lib/ogMeta";
+import { titleCaseName, displayName } from "@/lib/name";
 
 // vitest runs with cwd at the project root (jsdom makes import.meta.url an
 // http: URL, so resolve from cwd instead).
@@ -46,6 +46,18 @@ describe("titleCaseName", () => {
 
   it("handles hyphens and apostrophes", () => {
     expect(titleCaseName("mary-jane o'brien")).toBe("Mary-Jane O'Brien");
+  });
+});
+
+describe("displayName", () => {
+  it("returns null for empty/missing values so callers can fall back", () => {
+    expect(displayName(null)).toBeNull();
+    expect(displayName(undefined)).toBeNull();
+    expect(displayName("   ")).toBeNull();
+  });
+
+  it("trims and capitalises", () => {
+    expect(displayName("  john anderson ")).toBe("John Anderson");
   });
 });
 

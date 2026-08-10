@@ -7,6 +7,7 @@ import { Package, Truck, ArrowLeft, Loader2, AlertCircle, Pencil } from "lucide-
 import type { LinkData } from "@/lib/api";
 import type { AddressInput, ShippingRate } from "@/lib/types";
 import { carrierDisplayName, serviceDisplayName } from "@/lib/utils";
+import { displayName } from "@/lib/name";
 import { isValidEmail, type SenderParcel } from "./senderState";
 
 interface Props {
@@ -43,7 +44,7 @@ export default function SenderStepReview({
   const emailFormatBad = senderEmail.length > 0 && !isValidEmail(senderEmail);
   const emailInvalid = emailMissing || emailFormatBad;
 
-  const recipient = linkData.recipient_name?.trim() || "the recipient";
+  const recipient = displayName(linkData.recipient_name) || "the recipient";
   const cityState = linkData.recipient_city && linkData.recipient_state
     ? `${linkData.recipient_city}, ${linkData.recipient_state}`
     : "this prepaid link";

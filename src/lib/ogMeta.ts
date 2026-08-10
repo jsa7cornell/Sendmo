@@ -13,6 +13,8 @@
 // a package to John" / "John already paid". Rule 7 — city/state only, never
 // street or zip in sender-facing text.
 
+import { titleCaseName } from "./name";
+
 export interface OgLinkPayload {
   recipient_name: string | null;
   recipient_city: string | null;
@@ -40,19 +42,6 @@ export function escapeHtml(str: string): string {
     .replace(/"/g, "&quot;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
-}
-
-// Names are typed casually at onboarding ("john anderson"), and the preview is
-// the most public surface we have — so capitalise it. Only all-lowercase
-// segments are touched, which leaves deliberate casing alone (McDonald, DeLuca,
-// JAY). Splits on spaces, hyphens and apostrophes: "mary-jane o'brien" →
-// "Mary-Jane O'Brien".
-export function titleCaseName(name: string): string {
-  return name
-    .trim()
-    .replace(/[^\s\-']+/g, (word) =>
-      /[A-Z]/.test(word) ? word : word.charAt(0).toUpperCase() + word.slice(1)
-    );
 }
 
 export function buildOgStrings(link: OgLinkPayload | null): OgStrings {
