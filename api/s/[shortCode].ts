@@ -1,18 +1,17 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
+import {
+  buildOgStrings,
+  injectOgTags,
+  type OgLinkPayload,
+} from "../../src/lib/ogMeta";
 
 // ─── OG Meta Tag Handler for /s/:shortCode ─────────────────────────────────
 //
-// Intercepts sender-flow URLs before the SPA catch-all so social crawlers
-// (iMessage, Slack, WhatsApp, Twitter) get personalised OG meta tags:
-//
-//   "John's Prepaid Label → Portola Valley, CA"
-//
-// Real browsers receive the same index.html they always would — the SPA boots
-// normally and React Router renders <SenderFlow />.
-//
-// Architecture:
-//   vercel.json routes /s/:shortCode → this function (before the /(*) rewrite)
-//   Function fetches link data → fetches index.html → injects OG tags → returns HTML
+// ⚠️ NOT the live path. Vercel's CDN serves the SPA catch-all rewrite for
+// /s/:shortCode before this function is ever invoked — that's why the real
+// implementation is Edge Middleware (middleware.ts at the project root). This
+// file is kept as the serverless fallback and shares the same copy/injection
+// module, so the two can't drift. Edit src/lib/ogMeta.ts, not this file.
 //
 // Supabase env vars needed in Vercel:
 //   VITE_SUPABASE_URL       (already set — used by the Vite client build)
@@ -21,26 +20,7 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL ?? "";
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY ?? "";
 
-// Default OG copy shown when the link isn't found or has no address data.
-const DEFAULT_TITLE = "You've been sent a prepaid shipping label";
-const DEFAULT_DESC =
-  "Someone has set up a prepaid shipping label for you. Tap to ship your package — the cost is already covered.";
-
-function escapeHtml(str: string): string {
-  return str
-    .replace(/&/g, "&amp;")
-    .replace(/"/g, "&quot;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
-
-interface LinkPayload {
-  recipient_name: string | null;
-  recipient_city: string | null;
-  recipient_state: string | null;
-}
-
-async function fetchLinkData(shortCode: string): Promise<LinkPayload | null> {
+async function fetchLinkData(shortCode: string): Promise<OgLinkPayload | null> {
   if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return null;
   try {
     const res = await fetch(
@@ -53,52 +33,10 @@ async function fetchLinkData(shortCode: string): Promise<LinkPayload | null> {
       }
     );
     if (!res.ok) return null;
-    return (await res.json()) as LinkPayload;
+    return (await res.json()) as OgLinkPayload;
   } catch {
     return null;
   }
-}
-
-function buildOgStrings(link: LinkPayload | null): { title: string; description: string } {
-  if (!link?.recipient_name) return { title: DEFAULT_TITLE, description: DEFAULT_DESC };
-
-  const firstName = link.recipient_name.split(" ")[0];
-  const city = link.recipient_city;
-  const state = link.recipient_state;
-
-  const title = city && state
-    ? `${firstName}'s Prepaid Label → ${city}, ${state}`
-    : `${firstName}'s Prepaid Label`;
-
-  const description = city
-    ? `${link.recipient_name} has set up a prepaid shipping label to ${city}. Tap to ship your package — the cost is already covered.`
-    : `${link.recipient_name} has set up a prepaid shipping label for you. Tap to ship your package — the cost is already covered.`;
-
-  return { title, description };
-}
-
-function injectOgTags(html: string, title: string, description: string, url: string): string {
-  const t = escapeHtml(title);
-  const d = escapeHtml(description);
-  const u = escapeHtml(url);
-
-  const tags = [
-    `<title>${t}</title>`,
-    `<meta property="og:title" content="${t}" />`,
-    `<meta property="og:description" content="${d}" />`,
-    `<meta property="og:type" content="website" />`,
-    `<meta property="og:url" content="${u}" />`,
-    `<meta property="og:image" content="https://sendmo.co/og-image.png" />`,
-    `<meta property="og:site_name" content="SendMo" />`,
-    `<meta name="twitter:card" content="summary" />`,
-    `<meta name="twitter:title" content="${t}" />`,
-    `<meta name="twitter:description" content="${d}" />`,
-  ].join("\n    ");
-
-  // Remove any existing <title> injected by Vite, then add ours right after <head>
-  return html
-    .replace(/<title>[^<]*<\/title>/i, "")
-    .replace("<head>", `<head>\n    ${tags}`);
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -129,7 +67,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return;
   }
 
-  const modifiedHtml = injectOgTags(html, title, description, canonicalUrl);
+  const modifiedHtml = injectOgTags(html, {
+    title,
+    description,
+    url: canonicalUrl,
+  });
 
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   // Cache for 60s at the CDN; allow up to 5 min stale-while-revalidate
