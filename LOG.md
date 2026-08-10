@@ -12,6 +12,30 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-10] Shared links unfurled the generic SendMo card — duplicate OG tags (deployed)
+
+**Category:** fix | Sender Flow | Growth
+**Deploy:** `claude/og-personal` → `main` (`ccedc38`, `609271a`), 2026-08-10. Vercel auto-deploy, verified live on sendmo.co (bundle `index-jhtZoV7S` → `index-B3ROMyss`).
+**Cross-link:** [SPEC §8 "Step -1: Link Preview"](SPEC.md) | [middleware.ts](middleware.ts) | [src/lib/ogMeta.ts](src/lib/ogMeta.ts) | [src/lib/name.ts](src/lib/name.ts) | supersedes the OG half of LOG [2026-05-22] "Bug 4 — OG meta tags not personalizing"
+
+**What & why:** John shared `sendmo.co/s/C4hLV3uFub` in WhatsApp and got the generic marketing card — "SendMo — Prepaid Shipping Made Easy" — with no name and no destination. The 2026-05-22 Edge Middleware fix was live and *was* injecting personalised tags; the miss is that it only stripped the existing `<title>`. `index.html`'s own `og:title`/`og:description`/`og:image`/`twitter:*` tags stayed in the document, so every crawler saw **two** `og:title` values and unfurled the generic one. Confirmed by `curl`-ing prod before the fix: personalised tags at the top of `<head>`, generic tags 15 lines below.
+
+**Fix:** strip `<title>`, `og:*`, `twitter:*`, and `meta[name=description]` from the fetched `index.html` **before** injecting, so exactly one set survives. Verified on prod: 1 × each tag.
+
+**Also in this change:**
+- **Copy now matches the page the link opens.** Was `john's Prepaid Label → Portola Valley, CA` (techy, lowercase, possessive). Now `You're sending a package to John — Portola Valley, CA`, mirroring SenderStepIntro's headline, with `John Anderson already paid the postage…` as the description. Name + destination both land in the title, which is all iMessage shows on a large-image card.
+- **Names are title-cased for display.** Recipients type "john anderson" at onboarding; that string was going straight into the preview *and* the sender wizard. New dependency-free [`src/lib/name.ts`](src/lib/name.ts) (`titleCaseName`/`displayName`, the `phone.ts`/`mode.ts` precedent) applied at the preview + the four sender-wizard sites. Only all-lowercase segments are touched, so McDonald/DeLuca/JAY survive. **Display only** — the stored address and the printed label keep what was entered.
+- **One source of truth.** Copy + injection moved into `src/lib/ogMeta.ts`, imported by both `middleware.ts` (the live path) and the CDN-bypassed `api/s/[shortCode].ts`, which had already drifted into a second, separately-maintained implementation of the same thing.
+- **`seller_link` deliberately keeps the neutral copy** — the buyer pays there, so "already covered" would be false. Flagged for when that flow launches.
+
+**Gotcha for future agents:** `index.html` is the marketing site's head *and* the SPA shell every `/s/` link is built from. Any `og:*` tag added there is a duplicate waiting to happen — `tests/unit/ogMeta.test.ts` now asserts exactly-one-of-each against the real file, so the suite catches it. Also: crawler caches are long (iMessage 30–60 min, WhatsApp days). Verify with `curl -A "facebookexternalhit/1.1"`, never by re-sharing into a thread.
+
+**Tests:** 14 new unit tests in `tests/unit/ogMeta.test.ts` (copy variants, tag counts against the real `index.html`, HTML escaping) + 2 for `displayName`. Full suite 671 passed / 62 files, `tsc -b` clean, eslint clean.
+
+**Browser-verified:**
+- mcp-session: Claude Browser MCP, 2026-08-10, https://sendmo.co/s/C4hLV3uFub (prod, real link)
+- variants-covered: crawler fetch as `facebookexternalhit/1.1` + `WhatsApp/2.23` → 1 × `og:title`/`og:description`/`og:image`/`twitter:card`/`<title>`, all personalised · real-browser load → SPA boots normally, `document.title` = "You're sending a package to John — Portola Valley, CA", intro headline reads "You're sending a package to **John Anderson**" and step 3 "John Anderson already paid" (was lowercase pre-fix) · pre-fix control: same URL returned 2 × `og:title` with the generic card winning
+
 ### [2026-07-21] Investigated buyer payment failure — Link-funded issuer decline, NOT missing 3DS (browser-verified)
 
 **Category:** investigation | Payments

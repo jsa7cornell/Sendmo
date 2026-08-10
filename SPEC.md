@@ -465,9 +465,26 @@ discounted = amount x 0.95 (for Balance tab)
 
 5-step linear wizard. Sender never pays. Progress bar is NOT clickable.
 
+### Step -1: Link Preview (how `/s/:shortCode` unfurls in iMessage / WhatsApp / Slack)
+
+The preview is the first thing a sender sees — before the page, inside someone else's text thread. Vercel **Edge Middleware** ([`middleware.ts`](middleware.ts), matcher `/s/:shortCode*`) intercepts the request ahead of the CDN cache, fetches the link's public payload, and rewrites `index.html`'s `<head>`. Copy + rewriting live in [`src/lib/ogMeta.ts`](src/lib/ogMeta.ts); the serverless copy at `api/s/[shortCode].ts` is bypassed by the SPA rewrite (see LOG 2026-05-22) and imports the same module so the two can't drift.
+
+| Link data | `og:title` | `og:description` |
+|---|---|---|
+| name + city/state | `You're sending a package to {First} — {City}, {ST}` | `{Full Name} already paid the postage. Tap to tell us about your package and print the prepaid label — it costs you nothing.` |
+| name, no city | `You're sending a package to {First}` | same |
+| city/state, no name | `You're sending a package to {City}, {ST}` | `The postage is already paid. …` |
+| no data, or `seller_link` | `You've been sent a prepaid shipping label` | generic fallback |
+
+**Invariant — exactly one of each preview tag.** `index.html` ships generic marketing `og:*`/`twitter:*` tags for the root domain, so the middleware **strips them before injecting**: appending alone leaves duplicates and crawlers unfurl the generic SendMo card (the 2026-08-10 bug). [`tests/unit/ogMeta.test.ts`](tests/unit/ogMeta.test.ts) asserts the counts against the real `index.html`, so adding a static tag there without teaching `ogMeta.ts` to strip it turns the suite red.
+
+Card stays `summary_large_image` on the shared brand image (`/og-image.png`) — the personalisation is in the text.
+
+`seller_link` keeps the neutral copy on purpose: the **buyer** pays there, so "already covered" would be false. Revisit when that flow launches.
+
 ### Step 0: Intro
 - Badge: "SendMo Label Link"
-- Title: "You're sending a package to {recipientName}"
+- Title: "You're sending a package to {recipientName}" — title-cased for display via [`src/lib/name.ts`](src/lib/name.ts) `displayName()`, so a casually typed "john anderson" reads "John Anderson". Display only: the stored address and the printed label keep what the recipient entered. Applies to every sender-facing use of the name (Intro, Package, Rates, Review).
 - Insurance banner (conditional): green badge if recipient enabled protection
 - How it works: 3 numbered steps in styled cards
 - **CTA**: "Get Started"
