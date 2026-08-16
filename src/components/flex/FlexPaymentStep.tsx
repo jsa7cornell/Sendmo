@@ -770,19 +770,24 @@ function FlexSetupForm({
           <p className="text-xs text-destructive">{error}</p>
           {authFailed && (
             <p className="text-xs text-muted-foreground">
-              Banks often refuse when saved autofill details don't match the card.
-              Entering the card by hand usually clears it.
+              Your bank wouldn't approve this card for automatic charges. That's decided
+              by the bank, so retrying the same card usually won't help — a different
+              card is the quickest fix.
             </p>
           )}
           {/* Every failure gets a way forward. Without this the only move was
               resubmitting the same form, which is exactly what one account did
-              four times in fourteen minutes on 2026-08-16 before giving up. */}
+              four times in fourteen minutes on 2026-08-16 before giving up.
+              The copy above deliberately points at a different card rather than
+              at re-entering the same one: on 2026-08-16 the same card was
+              rejected identically across two accounts, with and without Link
+              autofill, so "type it in manually" is not a fix. */}
           <button
             type="button"
             onClick={onRestart}
             className="text-xs font-medium text-primary hover:underline"
           >
-            {bypassLink ? "Start over with a new card form" : "Enter card details manually instead"}
+            {authFailed ? "Try a different card" : "Start over with a new card form"}
           </button>
         </div>
       )}
