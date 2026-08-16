@@ -12,6 +12,35 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-16] Flex-link activation failed 4× — Link autofill attached a stale name, issuer rejected 3DS (in PR, not deployed)
+
+**Category:** investigation | Payments
+**Cross-link:** [FlexPaymentStep.tsx](src/components/flex/FlexPaymentStep.tsx) | [AddCardModal.tsx](src/components/dashboard/AddCardModal.tsx) | [stripe-webhook/index.ts](supabase/functions/stripe-webhook/index.ts) | [_shared/stripe.ts](supabase/functions/_shared/stripe.ts) (`createSetupIntent`, `usage: off_session`) | supersedes the "one-off, bank-side" read in LOG [2026-07-21]
+
+**What & why:** a real user (joneshenryanderson@gmail.com, `cus_UvipZ9yuIGyPhr`) hit *"We are unable to authenticate your payment method"* on the **"Save card & activate link"** screen. Root cause: **Stripe Link autofilled a stale cardholder name onto the user's own card, and the issuer's ACS rejected 3DS because the name didn't match its records.** Not a flagged card, not unauthorized use, not our 3DS integration.
+
+**The chain:** the user's Link wallet carried the name `eugene golovko` — a past shipping recipient from an unrelated BambuLab purchase (confirmed from the user's own Link receipt) — against a card the user does own. Link autofilled that name into `PaymentElement`; `billing_details.name` on `pm_0U5AXmxS6gsndgF35ot5Ki7i` shows it, alongside the *correct* account email. 3DS2 sends cardholder name to the issuer; the name didn't match; the ACS returned `result: "failed"`, `result_reason: "rejected"`, `authentication_flow: null` — **rejected outright, no challenge ever presented**, ~4s after `requires_action`. There was nothing the user could do. Same wrong metadata explains the July `generic_decline` on the same card.
+
+**Two diagnostic errors worth not repeating.**
+1. **Matched the wrong Stripe object.** The screenshot is a card-*save* screen → **SetupIntent**. First-pass diagnosis queried PaymentIntents, `charges`, and `payment_intent.payment_failed` events, matched on email + card last-4, and concluded "same already-diagnosed July incident." Wrong transaction, wrong object type, wrong month — and the "only 1 failure in 14 days" claim used a denominator that structurally could not contain this event. **Check that the Stripe object type matches the screen before pulling data.**
+2. **Over-read a name mismatch as fraud.** A cardholder name ≠ account name, plus two issuer refusals, looked like unauthorized card use. It wasn't. `addresses` shows the account's sender address is 231 Canyon Drive, Portola Valley — the same address as 18 other rows under John/Katherine Anderson. Household, not an attacker.
+
+**Data-leak scare — ruled out, six ways.** The name's provenance was escalated as possible cross-user leakage. It is not: (a) zero rows matching `eugene`/`golovko`/`94404`/`catamaran` anywhere in `profiles`, `addresses`, or `sendmo_links`; (b) no Stripe customer id shared across profiles; (c) `cus_UvipZ9yuIGyPhr` maps to exactly one profile; (d) SetupIntent idempotency is user-scoped (`seti_create:${userId}:${mode}:retry-${N}`), so two users cannot collide; (e) our client sends no name at all — no `defaultValues`, no `fields.billingDetails`, no name input on the form; (f) we never read, store, or render `billing_details` anywhere. **Decisive tell:** the PM's billing *email* is the account's own. A crossed session would have carried the other party's email too — Link autofills name and email from one wallet record. The name reached only Stripe's PaymentMethod object, never our DB.
+
+**Gotcha — `usage: "off_session"` is what puts 3DS in the path.** Hardcoded at [_shared/stripe.ts:553](supabase/functions/_shared/stripe.ts). It declares intent to charge unattended later, so networks/issuers demand authentication up front — an on-session save often skips 3DS entirely. **Keep it:** flex links charge later by design, and moving to `on_session` relocates the failure to charge time when the user isn't present to fix it. It surfaced a real data problem early rather than creating one.
+
+**Gotcha — card-save failures were invisible.** The Stripe endpoint has always subscribed to `setup_intent.setup_failed` (verified against live endpoint config), but `stripe-webhook` had no `case` for it, so events fell through `default` into `webhook_events` and nowhere else. Four failures (20:06:25, 20:06:57, 20:08:10, 20:20:39) produced zero signal in `stripe_intents` or `event_logs`. Diagnosis required manual Stripe API queries. **If a webhook event is subscribed but absent from `event_logs`, check for a missing `case` before assuming Stripe didn't send it.**
+
+**Gotcha — the failed SetupIntent is reusable.** It returns to `requires_payment_method`; all four confirm attempts ran against one intent. Code that assumes a failed SI is terminal and force-rebuilds is doing unnecessary work — and in `AddCardModal` that rebuild unmounted the error message before the user could read it.
+
+**In PR, not merged, not deployed:**
+- [#61](https://github.com/jsa7cornell/Sendmo/pull/61) — `setup_intent.setup_failed` handler. Mirrors `status: "failed"` to `stripe_intents`, logs warn-severity with `error_code`, `decline_code`, card brand/last4, and `wallet_type` (`"link"` distinguishes bad-wallet-data from a plain issuer decline). Billing details deliberately excluded — Link can attach third-party PII. Edge function; `verify_jwt = false` already set.
+- [#62](https://github.com/jsa7cornell/Sendmo/pull/62) — recovery path on every card-save failure across both surfaces. Recovery remounts with `wallets: { link: "never" }` + `defaultValues.billingDetails.name` from `user_metadata`, so the bad autofill leaves the path. Also fixes two latent bugs: `AddCardModal` discarding its error via remount, and `FlexPaymentStep`'s poll-timeout branch setting an `error` it never rendered.
+
+**Verification status:** #61 and #62 are `tsc` + `vite build` + 671 unit tests clean, eslint at baseline (no new debt). **Neither is browser-verified** — exercising them needs an authenticated session plus a card that genuinely fails 3DS. Before merging #62, check that Add-a-card still mounts and a normal test card still saves (the `PaymentElement` options changed — that's the regression risk), then force a failure and confirm the error persists with a working recovery button.
+
+**Resolution for the user:** fix the name on that card at link.com, or complete the form without letting Link autofill. Not rate-limited — 1 of 5 card-adds used in the rolling 24h ([PM_ADD_LIMIT_PER_DAY](supabase/functions/payment-methods/index.ts)).
+
 ### [2026-08-10] Shared links unfurled the generic SendMo card — duplicate OG tags (deployed)
 
 **Category:** fix | Sender Flow | Growth
