@@ -90,6 +90,23 @@ interface SetupIntentObj extends StripeObj {
     status?: string;
     usage?: string;
     metadata?: Record<string, string>;
+    // Present on setup_intent.setup_failed. The PaymentMethod is inlined
+    // here (not just an id) because a failed SetupIntent never attaches
+    // one — this is the only place the card details survive.
+    last_setup_error?: {
+        code?: string;
+        decline_code?: string;
+        message?: string;
+        type?: string;
+        payment_method?: {
+            id?: string;
+            card?: {
+                brand?: string;
+                last4?: string;
+                wallet?: { type?: string } | null;
+            };
+        };
+    } | null;
 }
 
 interface PaymentMethodObj extends StripeObj {
@@ -1141,6 +1158,68 @@ Deno.serve(async (req: Request) => {
                     entity_type: "setup_intent",
                     entity_id: seti.id,
                     properties: { live_mode: liveMode, user_id: userId, payment_method: seti.payment_method ?? null },
+                });
+                break;
+            }
+
+            case "setup_intent.setup_failed": {
+                // Card-save failed — issuer declined, or 3DS authentication
+                // was rejected. The Stripe endpoint has always subscribed to
+                // this event, but until 2026-08-16 there was no case for it:
+                // it fell through `default`, landing in webhook_events and
+                // nowhere else. An account could fail activation four times
+                // in fourteen minutes and leave zero operational signal;
+                // diagnosing it took manual Stripe API archaeology.
+                //
+                // Deliberately NOT recorded: last_setup_error.payment_method
+                // .billing_details. Link autofill can attach a third party's
+                // name and address to a card (see LOG 2026-08-16), so that
+                // field is other people's PII with no operational value here.
+                //
+                // Ordering caveat: a redelivered failure arriving after a
+                // later success would regress status to "failed". Stripe
+                // delivers in order in practice, `payment_methods` is the
+                // canonical record of a saved card, and a Stripe retry of the
+                // succeeded event restores it — so this mirrors the existing
+                // succeeded-case pattern rather than adding a read-guard.
+                const seti = obj as SetupIntentObj;
+                const userId = await resolveUserByCustomer(supabase, seti.customer, liveMode);
+                const setupErr = seti.last_setup_error ?? null;
+                const errPm = setupErr?.payment_method;
+
+                if (userId) {
+                    await supabase.from("stripe_intents").upsert({
+                        user_id: userId,
+                        stripe_intent_id: seti.id,
+                        intent_kind: "setup",
+                        funding_source: "card",
+                        status: "failed",
+                        mode,
+                        idempotency_key: `seti.${seti.id}:create`,
+                        last_event_at: new Date().toISOString(),
+                        updated_at: new Date().toISOString(),
+                    }, { onConflict: "stripe_intent_id" });
+                }
+
+                log({
+                    event_type: "stripe.setup_intent_failed",
+                    severity: "warn",
+                    entity_type: "setup_intent",
+                    entity_id: seti.id,
+                    properties: {
+                        live_mode: liveMode,
+                        user_id: userId,
+                        error_code: setupErr?.code ?? null,
+                        decline_code: setupErr?.decline_code ?? null,
+                        error_message: setupErr?.message ?? null,
+                        payment_method: errPm?.id ?? null,
+                        card_brand: errPm?.card?.brand ?? null,
+                        card_last4: errPm?.card?.last4 ?? null,
+                        // "link" means the card arrived via Link wallet
+                        // autofill — the signal that separates a bad-wallet-
+                        // data failure from a plain issuer decline.
+                        wallet_type: errPm?.card?.wallet?.type ?? null,
+                    },
                 });
                 break;
             }
