@@ -28,12 +28,39 @@ interface Props {
 export default function AddCardModal({ open, onClose, onSuccess }: Props) {
   // isAdmin: mode badge + test-card hint are admin dogfood affordances —
   // customers see a plain add-card form (customer-live-payments review N1).
-  const { session, liveMode, isAdmin } = useAuth();
+  const { session, user, liveMode, isAdmin } = useAuth();
   const [retryTrigger, setRetryTrigger] = useState(0);
   const idempotencyNonceRef = useRef<number>(0);
   const [clientSecret, setClientSecret] = useState<string | null>(null);
   const [setupIntentId, setSetupIntentId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // ─── Card-save recovery (2026-08-16) ───
+  // A failure no longer bumps retryTrigger on its own. It used to, which nulled
+  // clientSecret and unmounted <SetupForm/> mid-error — so the message the user
+  // needed to read was discarded and the form silently reset itself.
+  //
+  // The failed SetupIntent is reusable (it lands back in
+  // requires_payment_method; the 2026-08-16 incident confirmed this, with four
+  // confirm attempts against one intent), so the form can simply stay put and
+  // show the error. Only an explicit recovery click rebuilds it.
+  //
+  // `bypassLink` then re-mounts with the Link wallet off, which is the
+  // substantive part: Link autofill can attach a stale name from the user's
+  // wallet to their card, and a name the issuer can't match makes 3DS fail
+  // authentication outright, with no challenge for the user to complete.
+  const [bypassLink, setBypassLink] = useState(false);
+
+  function restartCardCollection() {
+    setBypassLink(true);
+    setRetryTrigger((n) => n + 1);
+  }
+
+  // Best-effort cardholder name for manual entry. OAuth users carry it in
+  // user_metadata; magic-link users may not, in which case we prefill nothing.
+  // Never sourced from the Link wallet.
+  const metadataName = (user?.user_metadata as { full_name?: string; name?: string } | undefined);
+  const defaultCardholderName = metadataName?.full_name ?? metadataName?.name ?? undefined;
 
   // Fetch SetupIntent client_secret each time the modal opens. The idempotency
   // nonce is regenerated per fetch so reopening the modal never collides with
@@ -129,10 +156,16 @@ export default function AddCardModal({ open, onClose, onSuccess }: Props) {
           ) : !clientSecret || !setupIntentId || !elementsOptions ? (
             <div className="h-48 rounded-xl bg-muted animate-pulse" />
           ) : (
-            <Elements stripe={getStripeForMode(liveMode)} options={elementsOptions}>
+            <Elements
+              key={`seti-${retryTrigger}`}
+              stripe={getStripeForMode(liveMode)}
+              options={elementsOptions}
+            >
               <SetupForm
                 onSuccess={onSuccess}
-                onRetry={() => setRetryTrigger((n) => n + 1)}
+                onRestart={restartCardCollection}
+                bypassLink={bypassLink}
+                defaultCardholderName={defaultCardholderName}
               />
             </Elements>
           )}
@@ -150,15 +183,29 @@ export default function AddCardModal({ open, onClose, onSuccess }: Props) {
 
 function SetupForm({
   onSuccess,
-  onRetry,
+  onRestart,
+  bypassLink,
+  defaultCardholderName,
 }: {
   onSuccess: () => void;
-  onRetry: () => void;
+  onRestart: () => void;
+  bypassLink: boolean;
+  defaultCardholderName?: string;
 }) {
   const stripe = useStripe();
   const elements = useElements();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Set when the bank specifically refused to authenticate, which earns
+  // different copy: retrying the same way cannot help, because no challenge was
+  // ever presented for the user to complete.
+  const [authFailed, setAuthFailed] = useState(false);
+
+  function fail(message: string, opts?: { authFailed?: boolean }) {
+    setError(message);
+    setAuthFailed(opts?.authFailed ?? false);
+    setSubmitting(false);
+  }
 
   async function handleSubmit() {
     if (!stripe || !elements || submitting) return;
@@ -167,8 +214,7 @@ function SetupForm({
 
     const { error: submitError } = await elements.submit();
     if (submitError) {
-      setError(submitError.message ?? "Card details are incomplete");
-      setSubmitting(false);
+      fail(submitError.message ?? "Card details are incomplete");
       return;
     }
 
@@ -188,17 +234,22 @@ function SetupForm({
     });
 
     if (confirmError) {
-      setError(confirmError.message ?? "Card setup failed");
-      setSubmitting(false);
-      // Bump retry so the next attempt creates a fresh SetupIntent (the
-      // current one is in a terminal-ish failed state).
-      onRetry();
+      // setup_intent_authentication_failure covers both a failed 3DS challenge
+      // and an issuer that rejected authentication without presenting one.
+      // Stripe's copy ("unable to authenticate your payment method") reads as
+      // user error in the second case, so we replace it rather than echo it.
+      const isAuthFailure = confirmError.code === "setup_intent_authentication_failure";
+      fail(
+        isAuthFailure
+          ? "Your bank couldn't verify this card."
+          : confirmError.message ?? "Card setup failed",
+        { authFailed: isAuthFailure },
+      );
       return;
     }
 
     if (setupIntent?.status !== "succeeded") {
-      setError(`Card status: ${setupIntent?.status ?? "unknown"} — please try again`);
-      setSubmitting(false);
+      fail(`Card status: ${setupIntent?.status ?? "unknown"} — please try again`);
       return;
     }
 
@@ -207,8 +258,39 @@ function SetupForm({
 
   return (
     <div className="space-y-4">
-      <PaymentElement options={{ layout: { type: "tabs", defaultCollapsed: false } }} />
-      {error && <p className="text-xs text-destructive">{error}</p>}
+      <PaymentElement
+        options={{
+          layout: { type: "tabs", defaultCollapsed: false },
+          // After a failure the Link wallet is suppressed, so the user types
+          // the card themselves and no stored profile can attach a mismatched
+          // name to it.
+          wallets: { link: bypassLink ? "never" : "auto" },
+          ...(defaultCardholderName
+            ? { defaultValues: { billingDetails: { name: defaultCardholderName } } }
+            : {}),
+        }}
+      />
+      {error && (
+        <div className="space-y-2 rounded-xl border border-destructive/30 bg-destructive/5 px-3 py-2.5">
+          <p className="text-xs text-destructive">{error}</p>
+          {authFailed && (
+            <p className="text-xs text-muted-foreground">
+              Banks often refuse when saved autofill details don't match the card.
+              Entering the card by hand usually clears it.
+            </p>
+          )}
+          {/* Every failure gets a way forward. Without this the only move was
+              resubmitting the same form — which is what one account did four
+              times in fourteen minutes on 2026-08-16 before giving up. */}
+          <button
+            type="button"
+            onClick={onRestart}
+            className="text-xs font-medium text-primary hover:underline"
+          >
+            {bypassLink ? "Start over with a new card form" : "Enter card details manually instead"}
+          </button>
+        </div>
+      )}
       <Button
         type="button"
         onClick={handleSubmit}
