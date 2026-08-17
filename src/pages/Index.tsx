@@ -42,8 +42,8 @@ export default function Index() {
             product's front entrance; before this it had none of its own.
             Launch-gated — with the flag off this renders as the single
             you-pay CTA it has always been. */}
-        <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mt-10">
-          <div className="flex flex-col items-center gap-2 w-full sm:w-auto">
+        <div className="flex flex-col sm:flex-row items-start justify-center gap-4 mt-10">
+          <div className="flex flex-col items-center gap-2 w-full sm:w-auto sm:max-w-xs">
             <Button
               className="rounded-xl text-lg py-6 px-8 shadow-md gap-2 w-full"
               onClick={() => window.location.href = "/onboarding"}
@@ -55,16 +55,25 @@ export default function Index() {
           </div>
 
           {SELLER_LINK_ENABLED && (
-            <div className="flex flex-col items-center gap-2 w-full sm:w-auto">
+            <div className="flex flex-col items-center gap-2 w-full sm:w-auto sm:max-w-xs">
               <Button
                 variant="outline"
                 className="rounded-xl text-lg py-6 px-8 gap-2 w-full"
                 onClick={() => window.location.href = "/sell"}
               >
-                Sell an item
+                SendMo for Sellers
                 <ArrowRight className="w-5 h-5" />
               </Button>
-              <span className="text-xs text-muted-foreground">The buyer pays for shipping</span>
+              <span className="text-xs text-muted-foreground text-center text-balance">
+                Create a buyer shipping experience for Marketplaces, eBay, and more
+              </span>
+              {/* Who-pays stays its own line and stays parallel with the door
+                  beside it. The decided seller-link proposal (OQ1) required the
+                  payer flip to be unmistakable on this surface, and "buyer
+                  shipping experience" hints at it without stating it. */}
+              <span className="text-xs font-medium text-muted-foreground">
+                The buyer pays for shipping
+              </span>
             </div>
           )}
         </div>
