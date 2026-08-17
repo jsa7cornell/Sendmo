@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { AlertCircle, Sparkles } from "lucide-react";
+import { AlertCircle, Sparkles, MapPin, HelpCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import SmartAddressInput from "@/components/ui/SmartAddressInput";
@@ -11,7 +11,20 @@ import { fetchRates, pickRecommendedRate, formatCents } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { getTotalPriceCents, getTotalWeightOz, canFetchRates } from "@/hooks/useRecipientFlow";
 import type { RecipientFlowState } from "@/hooks/useRecipientFlow";
-import type { AddressInput, GuestimatorResult, PackagingType, ShippingRate, SpeedTier } from "@/lib/types";
+import type { AddressInput, GuestimatorResult, PackagingType, SenderKind, ShippingRate, SpeedTier } from "@/lib/types";
+
+// Mirrors the origin half of step 10's validation (see getValidationErrors).
+// The "Shipping from" confirm row may only replace the form when every field
+// the form would have blocked on is already satisfied — otherwise collapsing
+// it would hide a required field behind a "Change" button.
+function isOriginComplete(addr: AddressInput): boolean {
+  return (
+    !!addr.verified &&
+    !!addr.street &&
+    !!addr.name &&
+    (addr.phone ?? "").replace(/\D/g, "").length >= 10
+  );
+}
 
 // ─── Packaging Options ──────────────────────────────────────
 
@@ -35,17 +48,27 @@ function GuestimatorTitle({ children }: { children: React.ReactNode }) {
 
 interface Props {
   state: RecipientFlowState;
+  sender: SenderKind | null;
   errors: string[];
   tried: boolean;
   onUpdate: (partial: Partial<RecipientFlowState>) => void;
   onContinue: () => void;
   onBack: () => void;
+  /** "I don't have their address" — converts the flow to a shipping link. */
+  onNoAddress: () => void;
   liveMode?: boolean;
 }
 
 export default function RecipientStepFullShipping({
-  state, errors, tried, onUpdate, onContinue, onBack, liveMode = false,
+  state, sender, errors, tried, onUpdate, onContinue, onBack, onNoAddress, liveMode = false,
 }: Props) {
+  // 'self' → this address is the account holder's own; it was prefilled from
+  // their saved address, so it collapses to a confirmable row.
+  // 'other' → it belongs to the person shipping to them, and is the one thing
+  // they may not know — hence the escape.
+  const isSelfSender = sender === "self";
+  const [editingOrigin, setEditingOrigin] = useState(false);
+  const originConfirmable = isSelfSender && isOriginComplete(state.originAddress) && !editingOrigin;
   const [ratesLoading, setRatesLoading] = useState(false);
   const [ratesError, setRatesError] = useState<string | null>(null);
   const [usedGuestimator, setUsedGuestimator] = useState(false);
@@ -170,32 +193,89 @@ export default function RecipientStepFullShipping({
 
       {/* Origin Address */}
       <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
-        <h3 className="text-sm font-semibold text-foreground mb-3">Origin address</h3>
-        <SmartAddressInput
-          label="origin"
-          value={state.originAddress}
-          onChange={(addr: AddressInput) => onUpdate({ originAddress: addr })}
-          error={tried && !state.originAddress.verified ? "Origin address is required" : undefined}
-          nameLabel="Sender's name"
-          nameHint=""
-          addressPlaceholder="Start typing the origin address…"
-        />
-        {tried && !state.originAddress.name && (
-          <p className="text-xs text-destructive mt-1">Sender name is required for the shipping label</p>
-        )}
-        <div className="mt-4">
-          <label htmlFor="sender-email" className="text-sm font-medium text-foreground">
-            Sender's email <span className="text-muted-foreground font-normal">(optional — they'll get tracking updates)</span>
-          </label>
-          <Input
-            id="sender-email"
-            type="email"
-            value={state.senderEmail}
-            onChange={(e) => onUpdate({ senderEmail: e.target.value })}
-            placeholder="sender@example.com"
-            className="mt-1.5 rounded-xl"
-          />
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-semibold text-foreground">
+            {isSelfSender ? "Shipping from" : "Origin address"}
+          </h3>
+          {originConfirmable && (
+            <button
+              type="button"
+              onClick={() => setEditingOrigin(true)}
+              className="text-xs font-medium text-primary rounded-lg px-2 py-1 transition-colors hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            >
+              Change
+            </button>
+          )}
         </div>
+
+        {originConfirmable ? (
+          /* Confirm row — the generic outbound case is faster than a form when
+             we already know the account holder's address. Only rendered when
+             every field step-10 validation requires is present. */
+          <div className="flex items-start gap-2.5 rounded-xl bg-muted px-4 py-3">
+            <MapPin className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" aria-hidden="true" />
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-foreground truncate">{state.originAddress.name}</p>
+              <p className="text-sm text-muted-foreground">
+                {state.originAddress.street}, {state.originAddress.city}, {state.originAddress.state} {state.originAddress.zip}
+              </p>
+            </div>
+          </div>
+        ) : (
+          <>
+            <SmartAddressInput
+              label="origin"
+              value={state.originAddress}
+              onChange={(addr: AddressInput) => onUpdate({ originAddress: addr })}
+              error={tried && !state.originAddress.verified ? "Origin address is required" : undefined}
+              nameLabel={isSelfSender ? "Your name" : "Sender's name"}
+              nameHint=""
+              addressPlaceholder={isSelfSender ? "Start typing your address…" : "Start typing the origin address…"}
+            />
+            {tried && !state.originAddress.name && (
+              <p className="text-xs text-destructive mt-1">
+                {isSelfSender
+                  ? "Your name is required for the shipping label"
+                  : "Sender name is required for the shipping label"}
+              </p>
+            )}
+          </>
+        )}
+
+        {/* The sender's email is only worth asking for when the sender is
+            someone else. When it's the account holder, the labels function
+            resolves their email server-side from the session (decided
+            2026-06-27 OQ5-A), so a field here would be asking twice. */}
+        {!isSelfSender && (
+          <div className="mt-4">
+            <label htmlFor="sender-email" className="text-sm font-medium text-foreground">
+              Sender's email <span className="text-muted-foreground font-normal">(optional — they'll get tracking updates)</span>
+            </label>
+            <Input
+              id="sender-email"
+              type="email"
+              value={state.senderEmail}
+              onChange={(e) => onUpdate({ senderEmail: e.target.value })}
+              placeholder="sender@example.com"
+              className="mt-1.5 rounded-xl"
+            />
+          </div>
+        )}
+
+        {/* The escape. This is the whole reason the shipping-link product
+            exists, surfaced at the exact moment the user discovers they can't
+            answer — not as a product choice made before they knew the
+            question. Typed input is preserved if they come back. */}
+        {!isSelfSender && (
+          <button
+            type="button"
+            onClick={onNoAddress}
+            className="mt-4 inline-flex items-center gap-1.5 text-sm text-muted-foreground rounded-xl px-2 py-1.5 -ml-2 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+          >
+            <HelpCircle className="w-3.5 h-3.5" aria-hidden="true" />
+            I don't have their address
+          </button>
+        )}
       </div>
 
       {/* Magic Guestimator — primary input */}

@@ -234,13 +234,13 @@ test.describe("URL-based step routing", () => {
     await page.goto("/onboarding");
     await expect(page).toHaveURL(/\/onboarding$/);
 
-    await page.getByText("Completed Prepaid Label").click();
+    await page.getByRole("button", { name: /Someone else/ }).click();
     await expect(page).toHaveURL(/\/onboarding\/full-label\/destination$/);
   });
 
   test("URL updates to /onboarding/full-label/shipping when advancing from destination step", async ({ page }) => {
     await page.goto("/onboarding");
-    await page.getByText("Completed Prepaid Label").click();
+    await page.getByRole("button", { name: /Someone else/ }).click();
     await expect(page).toHaveURL(/\/onboarding\/full-label\/destination$/);
 
     // Fill step 1
@@ -270,7 +270,7 @@ test.describe("URL-based step routing", () => {
     );
 
     await page.goto("/onboarding");
-    await page.getByText("Completed Prepaid Label").click();
+    await page.getByRole("button", { name: /Someone else/ }).click();
 
     // Step 1: destination.
     // NOTE: since a Supabase session is pre-injected, the identity pill renders
@@ -314,7 +314,7 @@ test.describe("URL-based step routing", () => {
 
   test("browser back button returns to previous step with data preserved", async ({ page }) => {
     await page.goto("/onboarding");
-    await page.getByText("Completed Prepaid Label").click();
+    await page.getByRole("button", { name: /Someone else/ }).click();
 
     // Fill step 1
     await page.locator("#destination-name").fill("Jane Doe");
@@ -337,14 +337,14 @@ test.describe("URL-based step routing", () => {
     await expect(page.getByText("Verified").first()).toBeVisible({ timeout: 3000 });
   });
 
-  test("browser back from destination step returns to path choice", async ({ page }) => {
+  test("browser back from destination step returns to the who-sending step", async ({ page }) => {
     await page.goto("/onboarding");
-    await page.getByText("Completed Prepaid Label").click();
+    await page.getByRole("button", { name: /Someone else/ }).click();
     await expect(page).toHaveURL(/\/onboarding\/full-label\/destination$/);
 
     await page.goBack();
     await expect(page).toHaveURL(/\/onboarding$/);
-    await expect(page.getByText("How should we set up your prepaid shipment?")).toBeVisible();
+    await expect(page.getByRole("heading", { name: /Who's sending the package/i })).toBeVisible();
   });
 
   // ── Step guards (direct URL access) ────────────────────────
@@ -376,7 +376,7 @@ test.describe("URL-based step routing", () => {
   test("flex slug rejected when full_label path is active", async ({ page }) => {
     await page.goto("/onboarding");
     // Select full label path first
-    await page.getByText("Completed Prepaid Label").click();
+    await page.getByRole("button", { name: /Someone else/ }).click();
     await expect(page).toHaveURL(/\/onboarding\/full-label\/destination$/);
 
     // Try navigating to a flex-only slug under the full-label path prefix.

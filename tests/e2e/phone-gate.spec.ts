@@ -76,7 +76,7 @@ test.describe("phone gate — onboarding", () => {
 
   test("step 1: a blank destination phone blocks Continue; a valid one lets it through", async ({ page }) => {
     await page.goto("/onboarding");
-    await page.getByText("Completed Prepaid Label").click();
+    await page.getByRole("button", { name: /Someone else/ }).click();
 
     await expect(
       page.getByRole("heading", { name: /Where should the package be delivered/i }),
@@ -118,7 +118,7 @@ test.describe("phone gate — onboarding", () => {
     });
 
     await page.goto("/onboarding");
-    await page.getByText("Completed Prepaid Label").click();
+    await page.getByRole("button", { name: /Someone else/ }).click();
 
     // Step 1 — fully valid, including the phone.
     await page.locator("#destination-name").fill("Jane Doe");

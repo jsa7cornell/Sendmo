@@ -6,9 +6,16 @@ interface Props {
   value: AddressInput;
   tried: boolean;
   onChange: (v: AddressInput) => void;
+  /**
+   * Whether the person at this destination is the account holder. Drives the
+   * name hint, which otherwise reads "(probably your name!)" — true when
+   * someone is shipping TO you, and actively misleading when you're the one
+   * mailing something out and this is the other party.
+   */
+  destinationIsSelf?: boolean;
 }
 
-export default function AddressForm({ value, tried, onChange }: Props) {
+export default function AddressForm({ value, tried, onChange, destinationIsSelf = true }: Props) {
   const phoneError = tried && !isUsablePhone(value.phone)
     ? "We need a phone number here — the shipping carriers require one to make the delivery (not our rule, theirs!)."
     : undefined;
@@ -19,6 +26,7 @@ export default function AddressForm({ value, tried, onChange }: Props) {
         value={value}
         onChange={onChange}
         addressLabel="Destination address"
+        nameHint={destinationIsSelf ? undefined : "who you're mailing it to"}
         error={tried && !value.verified ? "Select an address from the dropdown" : undefined}
       />
       {phoneError && (

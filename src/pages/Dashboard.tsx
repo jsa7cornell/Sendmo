@@ -4,13 +4,14 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
   Copy, Link2, MapPin, Zap, Shield, CreditCard,
   Package, Truck, CheckCircle2, ChevronRight,
-  LogOut, User, AlertCircle, Pencil, X,
+  LogOut, User, AlertCircle, Pencil, X, Tag,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn, carrierDisplayName } from "@/lib/utils";
 import SendMoLogo from "@/components/SendMoLogo";
 import { useAuth } from "@/contexts/AuthContext";
+import { SELLER_LINK_ENABLED } from "@/lib/featureFlags";
 import { supabase } from "@/lib/supabase";
 import LinksTab from "@/components/dashboard/LinksTab";
 import AddCardModal from "@/components/dashboard/AddCardModal";
@@ -469,6 +470,21 @@ export default function Dashboard() {
 
           <div className="flex items-center gap-3">
             <AdminModeToolbar />
+            {/* Signed-in users never see the marketing homepage (they're
+                redirected here), so this is the ONLY surface where a returning
+                seller can reach the buyer-pays flow. Without it the seller door
+                exists only on a page this audience can't get to — and repeat
+                sellers are exactly who that product was built for. */}
+            {SELLER_LINK_ENABLED && (
+              <Button
+                variant="outline"
+                className="rounded-xl gap-2 text-sm"
+                onClick={() => navigate("/sell")}
+              >
+                <Tag className="w-4 h-4" />
+                Sell an item
+              </Button>
+            )}
             <Button className="rounded-xl gap-2 text-sm" onClick={() => navigate("/onboarding")}>
               <SendMoLogo className="w-4 h-4" />
               Create a new shipment

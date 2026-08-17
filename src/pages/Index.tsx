@@ -4,6 +4,7 @@ import SendMoLogo from "@/components/SendMoLogo";
 import { Button } from "@/components/ui/button";
 import AppHeader from "@/components/AppHeader";
 import { useAuth } from "@/contexts/AuthContext";
+import { SELLER_LINK_ENABLED } from "@/lib/featureFlags";
 
 export default function Index() {
   // T3-3: signed-in users land on their dashboard, not the marketing homepage.
@@ -32,26 +33,49 @@ export default function Index() {
         </h1>
 
         <p className="text-lg text-muted-foreground mt-6 max-w-2xl mx-auto leading-relaxed">
-          Set up a link once. Share it with anyone who needs to send you something.
-          They click, enter package details, and print a label — you pay, they ship. No back-and-forth.
+          Set up a link once. Share it with anyone who needs to send you something —
+          they click, enter package details, and print a label. Or mail something out
+          yourself in the same few steps.
         </p>
 
-        <div className="flex flex-col sm:flex-row items-center justify-center gap-3 mt-10">
-          <Button
-            className="rounded-xl text-lg py-6 px-8 shadow-md gap-2"
-            onClick={() => window.location.href = "/onboarding"}
-          >
-            Get started — it's free
-            <ArrowRight className="w-5 h-5" />
-          </Button>
-          <Button
-            variant="outline"
-            className="rounded-xl text-lg py-6 px-8"
-            onClick={() => window.location.href = "/faq"}
-          >
-            Learn more
-          </Button>
+        {/* Two doors, split on who pays. The seller door is the buyer-pays
+            product's front entrance; before this it had none of its own.
+            Launch-gated — with the flag off this renders as the single
+            you-pay CTA it has always been. */}
+        <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mt-10">
+          <div className="flex flex-col items-center gap-2 w-full sm:w-auto">
+            <Button
+              className="rounded-xl text-lg py-6 px-8 shadow-md gap-2 w-full"
+              onClick={() => window.location.href = "/onboarding"}
+            >
+              Send or receive a package
+              <ArrowRight className="w-5 h-5" />
+            </Button>
+            <span className="text-xs text-muted-foreground">You pay for shipping</span>
+          </div>
+
+          {SELLER_LINK_ENABLED && (
+            <div className="flex flex-col items-center gap-2 w-full sm:w-auto">
+              <Button
+                variant="outline"
+                className="rounded-xl text-lg py-6 px-8 gap-2 w-full"
+                onClick={() => window.location.href = "/sell"}
+              >
+                Sell an item
+                <ArrowRight className="w-5 h-5" />
+              </Button>
+              <span className="text-xs text-muted-foreground">The buyer pays for shipping</span>
+            </div>
+          )}
         </div>
+
+        <button
+          type="button"
+          onClick={() => window.location.href = "/faq"}
+          className="mt-8 text-sm text-muted-foreground rounded-xl px-3 py-2 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+        >
+          Learn more
+        </button>
       </section>
 
       {/* How it works */}
@@ -177,7 +201,7 @@ export default function Index() {
             className="rounded-xl text-lg py-6 px-10 shadow-md gap-2"
             onClick={() => window.location.href = "/onboarding"}
           >
-            Create your label link
+            Get started
             <ArrowRight className="w-5 h-5" />
           </Button>
         </div>

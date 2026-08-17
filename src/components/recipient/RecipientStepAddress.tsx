@@ -6,12 +6,14 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
-import type { AddressInput, RecipientPath } from "@/lib/types";
+import type { AddressInput, RecipientPath, SenderKind } from "@/lib/types";
+import { prefillSlotFor } from "@/lib/recipientFlowStorage";
 
 interface Props {
   address: AddressInput;
   email: string;
   path: RecipientPath | null;
+  sender: SenderKind | null;
   errors: string[];
   tried: boolean;
   onAddressChange: (addr: AddressInput) => void;
@@ -21,10 +23,13 @@ interface Props {
 }
 
 export default function RecipientStepAddress({
-  address, email, path, errors, tried,
+  address, email, path, sender, errors, tried,
   onAddressChange, onEmailChange, onContinue, onBack,
 }: Props) {
   const showErrors = tried && errors.length > 0;
+  // On the 'self' branch this screen collects the OTHER party's address, so the
+  // account holder's own saved address must not be prefilled into it.
+  const destinationIsSelf = prefillSlotFor(sender) === "destination";
   const { user } = useAuth();
   const prefillAttempted = useRef(false);
   // Track the last email we primed an OTP for — keeps on-blur idempotent and
@@ -80,6 +85,13 @@ export default function RecipientStepAddress({
 
   // Silent prefill: returning signed-in user with empty fields gets their most
   // recent address and profile email pre-populated. User can still edit freely.
+  //
+  // The ADDRESS half is skipped when the account holder is the one shipping out
+  // ('self'), because this screen is then the other party's address — filling
+  // it with the user's own saved address, pre-verified, is how a user ends up
+  // mailing a package to themselves. The EMAIL half still applies in both
+  // branches (it's the account holder's email either way). Its sibling prefill
+  // in RecipientFlowContext routes the saved address to originAddress instead.
   useEffect(() => {
     if (!user || prefillAttempted.current) return;
     if (address.verified || address.street || email) return;
@@ -97,7 +109,7 @@ export default function RecipientStepAddress({
           .maybeSingle(),
       ]);
 
-      if (recentAddr) {
+      if (recentAddr && destinationIsSelf) {
         onAddressChange({
           name: recentAddr.name || profile?.full_name || "",
           street: recentAddr.street1 || "",
@@ -112,7 +124,7 @@ export default function RecipientStepAddress({
       const fillEmail = profile?.email ?? user.email ?? "";
       if (fillEmail) onEmailChange(fillEmail);
     })();
-  }, [user, address.verified, address.street, email, onAddressChange, onEmailChange]);
+  }, [user, address.verified, address.street, email, destinationIsSelf, onAddressChange, onEmailChange]);
 
   // Auto-advance after OAuth return when the address is already filled.
   // Fires only for fresh OAuth returns (wasNullOnMount=true), not for users
@@ -139,14 +151,26 @@ export default function RecipientStepAddress({
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-xl font-bold text-foreground">Where should the package be delivered?</h2>
+        <h2 className="text-xl font-bold text-foreground">
+          {destinationIsSelf ? "Where should the package be delivered?" : "Where's it going?"}
+        </h2>
         <p className="text-muted-foreground text-sm mt-1">
-          Enter the destination address and your email
+          {destinationIsSelf
+            ? "Enter the destination address and your email"
+            : // Carriers reject label buys with no phone on the delivery address
+              // (FedEx/UPS PHONENUMBER.EMPTY), and on this branch it's someone
+              // else's — say so before they're stuck mid-form without it.
+              "The address you're mailing to, plus your email. Carriers need a phone number for the delivery address, so have theirs handy."}
         </p>
       </div>
 
       {/* Destination address */}
-      <AddressForm value={address} tried={tried} onChange={onAddressChange} />
+      <AddressForm
+        value={address}
+        tried={tried}
+        onChange={onAddressChange}
+        destinationIsSelf={destinationIsSelf}
+      />
 
       {/* Identity / auth card. Google leads — if the user picks it, email
           auto-fills from OAuth and the verify step is skipped entirely. */}

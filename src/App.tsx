@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Outlet, Navigate, useNavigate } from "rea
 import * as Sentry from "@sentry/react";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { RecipientFlowProvider } from "@/contexts/RecipientFlowContext";
+import { startFlowAs } from "@/lib/recipientFlowStorage";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import Index from "@/pages/Index";
 import RecipientOnboarding from "@/pages/RecipientOnboarding";
@@ -26,26 +27,36 @@ import LinksEdit from "@/pages/LinksEdit";
 import SellerBuilder from "@/pages/SellerBuilder";
 import NotFound from "@/pages/NotFound";
 import AppHeader from "@/components/AppHeader";
-import RecipientStepPathChoice from "@/components/recipient/RecipientStepPathChoice";
+import RecipientStepWhoSending from "@/components/recipient/RecipientStepWhoSending";
 
 // T1-3 monitoring (proposal review B1): gives Sentry events parameterized
 // route names (/onboarding/:pathSlug/:stepSlug, not raw URLs). Pass-through
 // when Sentry.init was never called — route definitions are unchanged.
 const SentryRoutes = Sentry.withSentryReactRouterV7Routing(Routes);
 
-// Path picker — shown at /onboarding (no flow state needed yet).
-// Sends both anon and authed users into /onboarding/{path-slug}/destination.
-function OnboardingPathPicker() {
+// Step 0 — "Who's sending the package?", shown at /onboarding.
+//
+// Renders outside RecipientFlowProvider (the provider lives at
+// /onboarding/:pathSlug so its useParams can read the slugs), so the answer is
+// handed over through the flow's own sessionStorage seam via startFlowAs.
+//
+// BOTH answers enter the full-label path. "Someone else" defaults there
+// optimistically — it is the common case, and the only thing that moves a flow
+// to the shipping-link path is the "I don't have their address" escape at the
+// origin step. That keeps both URL slugs meaningful, leaves Sentry's
+// parameterized route names intact, and keeps every existing deep link valid.
+function OnboardingWhoSending() {
   const navigate = useNavigate();
   return (
     <div className="min-h-screen bg-gradient-to-b from-background to-muted/50">
       <AppHeader />
-      <div className="max-w-5xl mx-auto px-4 py-8">
-        <RecipientStepPathChoice
-          onSelect={(p) => {
-            if (p === "seller_link") { navigate("/sell"); return; }
-            navigate(p === "full_label" ? "/onboarding/full-label/destination" : "/onboarding/flexible/destination");
+      <div className="max-w-3xl mx-auto px-4 py-8">
+        <RecipientStepWhoSending
+          onSelect={(sender) => {
+            startFlowAs(sender);
+            navigate("/onboarding/full-label/destination");
           }}
+          onSellInstead={() => navigate("/sell")}
         />
       </div>
     </div>
@@ -71,7 +82,7 @@ function App() {
           <Route path="/login" element={<Login />} />
 
           {/* Recipient onboarding — path-scoped URL routing */}
-          <Route path="/onboarding" element={<OnboardingPathPicker />} />
+          <Route path="/onboarding" element={<OnboardingWhoSending />} />
           <Route path="/onboarding/:pathSlug" element={<OnboardingFlowLayout />}>
             {/* Bare /onboarding/{path} → redirect to first step */}
             <Route index element={<Navigate to="destination" replace />} />

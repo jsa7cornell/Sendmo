@@ -1,16 +1,14 @@
 import { createContext, useContext, useCallback, useEffect, useState, useRef } from "react";
 import { flushSync } from "react-dom";
 import { useNavigate, useParams } from "react-router-dom";
-import type {
-  AddressInput,
-  DistanceTier,
-  PackagingType,
-  RecipientPath,
-  ShippingRate,
-  SpeedTier,
-  LabelResult,
-} from "@/lib/types";
-import { emptyAddress } from "@/lib/utils";
+import type { RecipientPath } from "@/lib/types";
+import {
+  INITIAL_DATA,
+  loadPersisted,
+  persist,
+  prefillSlotFor,
+  type RecipientFlowData,
+} from "@/lib/recipientFlowStorage";
 import {
   pathSlugToPath,
   slugToStep,
@@ -23,84 +21,6 @@ import {
 import { getValidationErrors, type RecipientFlowState } from "@/hooks/useRecipientFlow";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
-
-// ─── State Shape ────────────────────────────────────────────
-
-export interface RecipientFlowData {
-  path: RecipientPath | null;
-  completedSteps: number[];
-
-  // Step 1
-  destinationAddress: AddressInput;
-  email: string;
-
-  // Step 10
-  originAddress: AddressInput;
-  senderEmail: string;
-  itemDescription: string;
-  packagingType: PackagingType;
-  dimensions: { length: string; width: string; height: string };
-  weight: { lbs: string; oz: string };
-  selectedRate: ShippingRate | null;
-  availableRates: ShippingRate[];
-  easypostShipmentId: string;
-  insurance: boolean;
-  recommendedSpeedHint: SpeedTier | null;
-
-  // Step 11-12
-  paymentStatus: "idle" | "processing" | "authorized" | "succeeded" | "failed";
-  labelResult: LabelResult | null;
-
-  // Step 20-23 (Flexible Link path)
-  distance_hint: DistanceTier;
-  size_hint: "envelope" | "smallbox" | "largebox" | null;
-  speed_preference: SpeedTier;
-  preferred_carrier: string;
-  price_cap: number;
-  verification_email: string;
-  email_verified: boolean;
-  short_code: string;
-  // Phase E: populated together with short_code when the flex link is created at step 22
-  linkId: string;
-
-  // Validation
-  tried: Record<number, boolean>;
-}
-
-const INITIAL_DATA: RecipientFlowData = {
-  path: null,
-  completedSteps: [],
-
-  destinationAddress: emptyAddress(),
-  email: "",
-
-  originAddress: emptyAddress(),
-  senderEmail: "",
-  itemDescription: "",
-  packagingType: "box",
-  dimensions: { length: "", width: "", height: "" },
-  weight: { lbs: "", oz: "" },
-  selectedRate: null,
-  availableRates: [],
-  easypostShipmentId: "",
-  insurance: false,
-  recommendedSpeedHint: null,
-
-  paymentStatus: "idle",
-  labelResult: null,
-
-  distance_hint: "regional",
-  size_hint: null,
-  speed_preference: "standard",
-  preferred_carrier: "any",
-  price_cap: 100,
-  verification_email: "",
-  email_verified: false,
-  short_code: "",
-  linkId: "",
-
-  tried: {},
-};
 
 // ─── Navigation direction for animation ─────────────────────
 
@@ -117,6 +37,8 @@ interface RecipientFlowContextValue {
   goBack: () => void;
   goToStep: (step: number) => void;
   selectPath: (path: RecipientPath) => void;
+  switchToShippingLink: () => void;
+  undoShippingLinkSwitch: () => void;
   markStepComplete: (step: number) => void;
   getErrors: (step: number) => string[];
   state: RecipientFlowState;
@@ -125,33 +47,6 @@ interface RecipientFlowContextValue {
 const RecipientFlowContext = createContext<RecipientFlowContextValue | null>(null);
 
 // ─── Provider ───────────────────────────────────────────────
-
-// SessionStorage-backed flow data so the Google OAuth roundtrip in
-// RecipientStepEmailVerifySupabase preserves user-entered destination, email,
-// shipping selection, etc. across the redirect to accounts.google.com and back.
-// Cleared when the user finishes (label step) or starts a new path.
-const STORAGE_KEY = "sendmo:recipient_flow:v1";
-
-function loadPersisted(): RecipientFlowData | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = window.sessionStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<RecipientFlowData>;
-    return { ...INITIAL_DATA, ...parsed };
-  } catch {
-    return null;
-  }
-}
-
-function persist(data: RecipientFlowData): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-  } catch {
-    /* sessionStorage full / disabled — best-effort, tolerate */
-  }
-}
 
 export function RecipientFlowProvider({ children }: { children: React.ReactNode }) {
   const [data, setData] = useState<RecipientFlowData>(() => loadPersisted() ?? INITIAL_DATA);
@@ -199,14 +94,30 @@ export function RecipientFlowProvider({ children }: { children: React.ReactNode 
     }));
   }, [urlPath, data.path]);
 
-  // Auth-aware prefill: when an authenticated user lands here without a
-  // destination address yet, fetch their most recent saved address + profile
-  // and prefill destination + email. Skip if they've already typed something.
+  // Auth-aware prefill: when an authenticated user lands here without an
+  // address yet, fetch their most recent saved address + profile and prefill.
+  //
+  // WHICH SLOT the saved address fills depends on step 0's answer, because the
+  // account holder is a different party in each branch:
+  //   sender='other' (or unknown) → they RECEIVE  → prefill destinationAddress
+  //   sender='self'               → they SHIP OUT → prefill originAddress
+  // Filling destination unconditionally would pre-populate the user's own
+  // address as "where the package is going" on the 'self' branch — pre-verified
+  // and green, so a user who doesn't overwrite it ships to themselves. Same
+  // class as the 2026-08-16 stale-autofill incident: data that was correct in
+  // its original role, silently landing in the inverted role.
   const prefillRan = useRef(false);
   useEffect(() => {
     if (prefillRan.current) return;
     if (!user) return;
-    if (data.destinationAddress.street || data.email) return;
+    // Wait for step 0 before prefilling anything — running early would fill the
+    // wrong slot and latch prefillRan so the correct one never happens.
+    if (!data.sender && !urlPath) return;
+    const fillsOrigin = prefillSlotFor(data.sender) === "origin";
+    const targetTouched = fillsOrigin
+      ? data.originAddress.street
+      : data.destinationAddress.street;
+    if (targetTouched || data.email) return;
     prefillRan.current = true;
 
     let cancelled = false;
@@ -228,28 +139,33 @@ export function RecipientFlowProvider({ children }: { children: React.ReactNode 
 
       setData((prev) => {
         // Bail out if the user has typed anything in the meantime
-        if (prev.destinationAddress.street || prev.email) return prev;
+        const prevTarget = fillsOrigin ? prev.originAddress : prev.destinationAddress;
+        if (prevTarget.street || prev.email) return prev;
+
+        const filled = recentComplete
+          ? {
+              name: recentAddr.name || profile?.full_name || "",
+              street: recentAddr.street1!,
+              city: recentAddr.city!,
+              state: recentAddr.state!,
+              zip: recentAddr.zip!,
+              phone: recentAddr.phone || profile?.phone || "",
+              verified: !!recentAddr.is_verified,
+            }
+          : profile?.full_name
+          ? { ...prevTarget, name: profile.full_name }
+          : prevTarget;
+
         return {
           ...prev,
-          destinationAddress: recentComplete
-            ? {
-                name: recentAddr.name || profile?.full_name || "",
-                street: recentAddr.street1!,
-                city: recentAddr.city!,
-                state: recentAddr.state!,
-                zip: recentAddr.zip!,
-                phone: recentAddr.phone || profile?.phone || "",
-                verified: !!recentAddr.is_verified,
-              }
-            : profile?.full_name
-            ? { ...prev.destinationAddress, name: profile.full_name }
-            : prev.destinationAddress,
+          // Only the slot the account holder actually owns in this branch.
+          ...(fillsOrigin ? { originAddress: filled } : { destinationAddress: filled }),
           email: profile?.email ?? user.email ?? prev.email,
         };
       });
     })();
     return () => { cancelled = true; };
-  }, [user, data.destinationAddress.street, data.email]);
+  }, [user, data.sender, urlPath, data.destinationAddress.street, data.originAddress.street, data.email]);
 
   // Backward-compat state object (step components still expect currentStep on it)
   const state: RecipientFlowState = { ...data, currentStep };
@@ -346,6 +262,37 @@ export function RecipientFlowProvider({ children }: { children: React.ReactNode 
     navigate(stepUrl(path, 1));
   }, [navigate]);
 
+  // ── The address escape ────────────────────────────────────
+  //
+  // "I don't have their address" is the ONLY place a flow changes product
+  // mid-session. Both branches start on full_label; this moves the user to the
+  // shipping-link (flexible) path, where the other party fills in the origin.
+  //
+  // Steps 0 and 1 are shared by both paths and are already complete here, so
+  // canAccessStep(20, …, 'flexible') passes without touching completedSteps.
+  // originAddress is deliberately NOT cleared — undo restores what was typed.
+  //
+  // Navigate ONLY — do not pre-set data.path here.
+  //
+  // The 2026-05-19 flushSync pattern exists for updates the page guard reads
+  // (completedSteps). This transition changes neither: steps 0 and 1 are
+  // already complete and are shared by both paths, so canAccessStep(20, [0,1],
+  // 'flexible') passes on the very first render after the URL flips.
+  //
+  // `data.path` is DERIVED from the URL by the sync effect above, so setting it
+  // here as well would only add a redundant write plus one render where
+  // data.path and the URL disagree. Let the URL stay the single source of truth
+  // for path, exactly as it is for every other entry into a path.
+  const switchToShippingLink = useCallback(() => {
+    directionRef.current = "forward";
+    navigate(stepUrl("flexible", 20));
+  }, [navigate]);
+
+  const undoShippingLinkSwitch = useCallback(() => {
+    directionRef.current = "backward";
+    navigate(stepUrl("full_label", 10));
+  }, [navigate]);
+
   const markStepComplete = useCallback((step: number) => {
     setData((prev) => ({
       ...prev,
@@ -368,6 +315,8 @@ export function RecipientFlowProvider({ children }: { children: React.ReactNode 
         goBack,
         goToStep,
         selectPath,
+        switchToShippingLink,
+        undoShippingLinkSwitch,
         markStepComplete,
         getErrors,
         state,
