@@ -1,0 +1,728 @@
+<meta charset="utf-8">
+<title>SendMo onboarding — path choice, Tier 2 copy + structure</title>
+<style>
+  .smo-wrap *, .smo-wrap *::before, .smo-wrap *::after { box-sizing: border-box; }
+  .smo-wrap {
+    /* Faithful repro of the product's light ground — matches src/index.css tokens. */
+    --bg: #f5f5f3;
+    --card: #ffffff;
+    --border: #e7e5e4;
+    --text: #1c1917;
+    --muted: #78716c;
+    --muted-box: #fafaf9;
+    --muted-box-border: #ececeb;
+    color: var(--text);
+    background: var(--bg);
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    line-height: 1.5;
+    padding: 0 0 72px;
+    min-height: 100%;
+  }
+
+  /* ---- page scaffolding for this preview doc (not product UI) ---- */
+  .smo-doc { max-width: 1180px; margin: 0 auto; padding: 0 24px; }
+  .smo-doc-head { padding: 40px 0 8px; }
+  .smo-doc-head h1 { font-size: 27px; font-weight: 800; letter-spacing: -0.02em; margin: 0; }
+  .smo-doc-head p { color: var(--muted); font-size: 15px; margin: 10px 0 0; max-width: 720px; }
+  .smo-sec { margin-top: 52px; }
+  .smo-sec-label {
+    display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+    padding-bottom: 12px; margin-bottom: 22px; border-bottom: 1px solid var(--border);
+  }
+  .smo-sec-label h2 { font-size: 17px; font-weight: 700; margin: 0; letter-spacing: -0.01em; }
+  .smo-sec-label span { font-size: 13.5px; color: var(--muted); }
+  .smo-note {
+    font-size: 13.5px; color: var(--muted); background: var(--card);
+    border: 1px solid var(--border); border-left: 3px solid #2563eb;
+    border-radius: 0 10px 10px 0; padding: 12px 16px; margin: 0 0 22px; max-width: 860px;
+  }
+  .smo-note b { color: var(--text); font-weight: 600; }
+  .smo-note--warn { border-left-color: #d97706; }
+  .smo-stage { background: var(--bg); border: 1px solid var(--border); border-radius: 14px; padding: 26px 0 34px; overflow: hidden; }
+
+  /* ---- product: heading ---- */
+  .smo-head { text-align: center; max-width: 760px; margin: 8px auto 0; padding: 0 20px; }
+  .smo-head h1 { font-size: 27px; font-weight: 800; letter-spacing: -0.02em; text-wrap: balance; margin: 0; }
+  .smo-head p { color: var(--muted); font-size: 15px; margin: 9px 0 0; }
+
+  /* ---- product: card grid ---- */
+  /* The fix: track count follows the number of visible cards, and the block width
+     is capped so two cards stay optically centered under the heading. */
+  .smo-cards { margin: 26px auto 0; padding: 0 24px; display: grid; gap: 18px; align-items: start; }
+  .smo-cards--2 { max-width: 812px; grid-template-columns: repeat(2, 1fr); }
+  .smo-cards--3 { max-width: 1148px; grid-template-columns: repeat(3, 1fr); }
+  /* Current live behaviour: 3 tracks, 2 cards, dead column on the right. */
+  .smo-cards--broken { max-width: 1040px; grid-template-columns: repeat(3, 1fr); }
+  .smo-ghost {
+    border: 1.5px dashed color-mix(in srgb, #dc2626 45%, transparent);
+    border-radius: 16px; background: color-mix(in srgb, #dc2626 4%, transparent);
+    display: grid; place-items: center; text-align: center; padding: 20px; min-height: 200px;
+  }
+  .smo-ghost span { font-size: 12.5px; font-weight: 600; color: #b91c1c; }
+
+  .smo-card {
+    --accent: #7c3aed; --ink: #5b21b6; --strong: #6d28d9;
+    background: var(--card); border: 1px solid var(--border); border-radius: 16px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.05); overflow: hidden;
+    display: flex; flex-direction: column;   /* ← kills the <button> auto-centering */
+    transition: box-shadow .18s ease, border-color .18s ease, transform .18s ease;
+    text-align: left;
+  }
+  .smo-card:hover { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); box-shadow: 0 8px 24px rgba(0,0,0,0.08); transform: translateY(-2px); }
+  .smo-card--violet  { --accent: #7c3aed; --ink: #5b21b6; --strong: #6d28d9; }
+  .smo-card--blue    { --accent: #2563eb; --ink: #1e40af; --strong: #1d4ed8; }
+  .smo-card--emerald { --accent: #059669; --ink: #065f46; --strong: #047857; }
+
+  .smo-cardhead {
+    display: flex; align-items: center; gap: 12px; padding: 16px 18px;
+    background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 15%, transparent), color-mix(in srgb, var(--accent) 4%, transparent));
+    position: relative; min-height: 74px;   /* ← shared baseline so titles line up */
+  }
+  .smo-ico { width: 38px; height: 38px; border-radius: 11px; background: color-mix(in srgb, var(--accent) 20%, transparent); color: var(--strong); display: grid; place-items: center; flex-shrink: 0; }
+  .smo-ico svg { width: 20px; height: 20px; }
+  .smo-titles { min-width: 0; }
+  .smo-titles h3 { margin: 0; font-size: 16.5px; font-weight: 680; line-height: 1.22; letter-spacing: -0.01em; display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+  .smo-titles p { margin: 3px 0 0; font-size: 12px; font-weight: 500; color: var(--muted); }
+
+  .smo-pay {
+    position: absolute; top: 11px; right: 13px;
+    font-size: 10.5px; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase;
+    padding: 3px 8px; border-radius: 999px; white-space: nowrap;
+  }
+  .smo-pay--you   { color: var(--muted); background: color-mix(in srgb, var(--muted) 12%, transparent); border: 1px solid color-mix(in srgb, var(--muted) 22%, transparent); }
+  .smo-pay--buyer { color: #047857; background: color-mix(in srgb, #059669 14%, transparent); border: 1px solid color-mix(in srgb, #059669 34%, transparent); }
+  .smo-newtag { font-size: 10px; font-weight: 800; letter-spacing: 0.04em; color: #fff; background: var(--accent); border-radius: 5px; padding: 1px 6px; text-transform: uppercase; }
+
+  .smo-body { padding: 15px 18px 17px; display: flex; flex-direction: column; gap: 13px; flex: 1; }
+
+  /* the single discriminator line — replaces the old "Best when…" panel */
+  .smo-when { margin: 0; font-size: 14px; font-weight: 600; color: var(--ink); }
+  .smo-when em { font-style: normal; background: color-mix(in srgb, var(--accent) 12%, transparent); border-radius: 4px; padding: 0 3px; }
+
+  .smo-steps { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 7px; }
+  .smo-steps li { display: flex; align-items: flex-start; gap: 9px; font-size: 13.5px; color: var(--text); }
+  .smo-num { width: 19px; height: 19px; border-radius: 999px; background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--strong); font-size: 11px; font-weight: 700; display: grid; place-items: center; flex-shrink: 0; margin-top: 1.5px; }
+
+  /* detail moved behind a disclosure */
+  .smo-more { border-top: 1px solid var(--border); padding-top: 11px; margin-top: auto; }
+  .smo-more summary {
+    list-style: none; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;
+    font-size: 12.5px; font-weight: 600; color: var(--muted);
+  }
+  .smo-more summary::-webkit-details-marker { display: none; }
+  .smo-more summary svg { width: 13px; height: 13px; transition: transform .18s ease; }
+  .smo-more[open] summary svg { transform: rotate(90deg); }
+  .smo-more summary:hover { color: var(--text); }
+  .smo-more-body { margin: 9px 0 0; font-size: 13px; color: var(--muted); }
+
+  /* real button instead of a fake text link */
+  .smo-cta {
+    margin-top: 12px; width: 100%; border: 0; border-radius: 10px; cursor: pointer;
+    background: var(--strong); color: #fff; font: inherit; font-size: 14px; font-weight: 600;
+    padding: 10px 14px; display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+    transition: filter .16s ease;
+  }
+  .smo-cta:hover { filter: brightness(1.08); }
+  .smo-cta:focus-visible { outline: 2px solid var(--strong); outline-offset: 2px; }
+  .smo-cta svg { width: 15px; height: 15px; }
+
+  /* legacy (before) card bits */
+  .smo-best { border-radius: 12px; padding: 12px 14px; background: color-mix(in srgb, var(--accent) 7%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent); }
+  .smo-best > p { margin: 0 0 8px; font-size: 13.5px; font-weight: 600; color: var(--ink); }
+  .smo-best ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+  .smo-best li { display: flex; align-items: flex-start; gap: 8px; font-size: 13.5px; color: var(--strong); }
+  .smo-best li svg { width: 15px; height: 15px; margin-top: 2px; flex-shrink: 0; }
+  .smo-hiw-label { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); margin: 0 0 -2px; }
+  .smo-does { border-radius: 12px; padding: 11px 14px; background: var(--muted-box); border: 1px solid var(--muted-box-border); }
+  .smo-does > p:first-child { margin: 0 0 3px; font-size: 11.5px; font-weight: 600; color: var(--muted); }
+  .smo-does > p:last-child { margin: 0; font-size: 13.5px; color: var(--text); }
+  .smo-choose { display: inline-flex; align-items: center; gap: 6px; font-size: 13.5px; font-weight: 600; color: var(--strong); margin-top: 2px; }
+  .smo-choose svg { width: 15px; height: 15px; }
+
+  /* measured word-count chip, filled in by script */
+  .smo-wc {
+    position: absolute; top: -11px; left: 12px; z-index: 2;
+    font-size: 11px; font-weight: 700; letter-spacing: 0.02em;
+    background: var(--text); color: #fff; border-radius: 999px; padding: 3px 9px;
+  }
+  .smo-wc--good { background: #047857; }
+  .smo-measured { position: relative; }
+
+  /* ---- mobile fold test ---- */
+  .smo-folds { display: flex; gap: 30px; flex-wrap: wrap; }
+  .smo-phone { width: 375px; }
+  .smo-phone > h4 { margin: 0 0 9px; font-size: 13px; font-weight: 700; }
+  .smo-phone > h4 span { font-weight: 500; color: var(--muted); }
+  .smo-viewport {
+    width: 375px; height: 812px; overflow: hidden; position: relative;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 16px;
+  }
+  .smo-viewport .smo-cards { padding: 0 16px; grid-template-columns: 1fr; max-width: none; gap: 14px; }
+  .smo-viewport .smo-head { margin-top: 22px; }
+  .smo-viewport .smo-head h1 { font-size: 23px; }
+  /* faithful stand-in for <AppHeader /> — 57px, same as the live page */
+  .smo-appbar {
+    height: 57px; display: flex; align-items: center; justify-content: space-between;
+    padding: 0 16px; background: var(--card); border-bottom: 1px solid var(--border);
+  }
+  .smo-appbar-brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 17px; letter-spacing: -0.01em; }
+  .smo-appbar-logo { width: 26px; height: 26px; border-radius: 7px; background: #2563eb; color: #fff; display: grid; place-items: center; font-weight: 800; font-size: 15px; }
+  .smo-appbar-nav { display: flex; align-items: center; gap: 14px; color: var(--muted); font-size: 13.5px; }
+  .smo-appbar-nav b { border: 1px solid var(--border); border-radius: 8px; padding: 5px 12px; color: var(--text); font-weight: 500; }
+  .smo-fold-line {
+    position: absolute; left: 0; right: 0; bottom: 0; height: 46px; pointer-events: none;
+    background: linear-gradient(to bottom, transparent, color-mix(in srgb, #dc2626 13%, transparent));
+    border-bottom: 2px dashed #dc2626;
+    display: flex; align-items: flex-end; justify-content: flex-end;
+  }
+  .smo-fold-line span { font-size: 10.5px; font-weight: 700; color: #b91c1c; background: var(--bg); padding: 1px 6px; border-radius: 5px 5px 0 0; margin-right: 8px; }
+
+  .smo-foot { margin-top: 46px; }
+  .smo-foot ul { margin: 0; padding-left: 20px; }
+  .smo-foot li { font-size: 14px; margin-bottom: 9px; }
+  .smo-foot b { font-weight: 600; }
+
+  @media (max-width: 900px) {
+    .smo-cards--broken, .smo-cards--3 { grid-template-columns: 1fr 1fr; }
+  }
+</style>
+
+<div class="smo-wrap">
+<div class="smo-doc">
+
+  <div class="smo-doc-head">
+    <h1>Path choice — Tier 2 mock</h1>
+    <p>
+      Copy and structure only. Three panels per card collapse to one discriminator line plus steps;
+      the detail moves behind a disclosure; the card title leads with <em>your situation</em> rather than the
+      product name. Word counts on each card are measured live from the DOM (collapsed disclosure content
+      excluded), not asserted.
+    </p>
+  </div>
+
+  <!-- ══════════ BEFORE ══════════ -->
+  <section class="smo-sec">
+    <div class="smo-sec-label">
+      <h2>Before</h2>
+      <span>what's live today at /onboarding — repro of the 992px container</span>
+    </div>
+    <p class="smo-note smo-note--warn">
+      <b>Two layout defects reproduced here.</b> The grid is <code>lg:grid-cols-3</code> but only two cards
+      render while <code>VITE_ENABLE_SELLER_LINK</code> is off, so a full column sits empty and the centered
+      heading floats 168px right of the card block. Separately, the cards are <code>&lt;button&gt;</code>
+      elements, which vertically center their content when grid-stretch makes them taller than their
+      contents — so card 2 sits 19px lower than card 1 and no row lines up across the pair.
+      Both are Tier 1 fixes, applied in every "after" stage below.
+    </p>
+    <div class="smo-stage">
+      <div class="smo-head">
+        <h1>How do you want to ship?</h1>
+        <p>Pick the setup that matches your situation</p>
+      </div>
+      <div class="smo-cards smo-cards--broken">
+        <div class="smo-card smo-card--violet smo-measured" style="margin-top:0">
+          <div class="smo-cardhead">
+            <span class="smo-pay smo-pay--you">You pay</span>
+            <div class="smo-ico">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 17H7A5 5 0 0 1 7 7h2"/><path d="M15 7h2a5 5 0 1 1 0 10h-2"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+            </div>
+            <div class="smo-titles" style="padding-right:52px">
+              <h3>Flexible Prepaid Shipping Link</h3>
+              <p style="color:#6d28d9;font-weight:550">Send a link — they handle the details</p>
+            </div>
+          </div>
+          <div class="smo-body">
+            <div class="smo-best">
+              <p>Best when you don't know…</p>
+              <ul>
+                <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12" y2="17"/></svg> The sender's address</li>
+                <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12" y2="17"/></svg> The item's weight or size</li>
+              </ul>
+            </div>
+            <p class="smo-hiw-label">How it works</p>
+            <ul class="smo-steps">
+              <li><span class="smo-num">1</span> You set your shipping preferences and a spending cap</li>
+              <li><span class="smo-num">2</span> Share a link with your sender via text or email</li>
+              <li><span class="smo-num">3</span> They enter the details and print the label</li>
+            </ul>
+            <div class="smo-does">
+              <p>What the sender does</p>
+              <p>Opens a link, enters their address and item info, prints the label. No account needed.</p>
+            </div>
+            <span class="smo-choose">Choose this option <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg></span>
+          </div>
+        </div>
+
+        <div class="smo-card smo-card--blue smo-measured" style="margin-top:19px">
+          <div class="smo-cardhead">
+            <span class="smo-pay smo-pay--you">You pay</span>
+            <div class="smo-ico">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+            </div>
+            <div class="smo-titles" style="padding-right:52px">
+              <h3>Completed Prepaid Label</h3>
+              <p style="color:#1d4ed8;font-weight:550">You fill everything in — they just print</p>
+            </div>
+          </div>
+          <div class="smo-body">
+            <div class="smo-best">
+              <p>Best when you already know…</p>
+              <ul>
+                <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Where the item is shipping from</li>
+                <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> What's being shipped (size, weight)</li>
+              </ul>
+            </div>
+            <p class="smo-hiw-label">How it works</p>
+            <ul class="smo-steps">
+              <li><span class="smo-num">1</span> You enter the sender's address and package details</li>
+              <li><span class="smo-num">2</span> Pick a carrier and shipping speed</li>
+              <li><span class="smo-num">3</span> Send them the label — all they do is print and stick it on the box</li>
+            </ul>
+            <div class="smo-does">
+              <p>What the sender does</p>
+              <p>Prints the label you made. That's it — zero decisions for them.</p>
+            </div>
+            <span class="smo-choose">Choose this option <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg></span>
+          </div>
+        </div>
+
+        <div class="smo-ghost"><span>empty third column<br>(320px of dead space)</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════ VARIANT A ══════════ -->
+  <section class="smo-sec">
+    <div class="smo-sec-label">
+      <h2>Variant A — situation first</h2>
+      <span>the title states who fills in the details; the product name drops to a subtitle</span>
+    </div>
+    <p class="smo-note">
+      <b>One axis, stated plainly.</b> The only thing separating these two paths is who supplies the address
+      and package size, so that becomes the headline. The product names stay — they appear later in the
+      dashboard and in emails — but they no longer carry the decision.
+    </p>
+    <div class="smo-stage">
+      <div class="smo-head">
+        <h1>How do you want to ship?</h1>
+        <p>Both options are prepaid by you — pick who fills in the details</p>
+      </div>
+      <div class="smo-cards smo-cards--2">
+
+        <div class="smo-card smo-card--violet smo-measured">
+          <div class="smo-cardhead">
+            <div class="smo-ico">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 17H7A5 5 0 0 1 7 7h2"/><path d="M15 7h2a5 5 0 1 1 0 10h-2"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+            </div>
+            <div class="smo-titles">
+              <h3>They fill in the details</h3>
+              <p>Flexible Prepaid Shipping Link</p>
+            </div>
+          </div>
+          <div class="smo-body">
+            <p class="smo-when">Best when you <em>don't know</em> their address or the package size.</p>
+            <ul class="smo-steps">
+              <li><span class="smo-num">1</span> Set your preferences and a spending cap</li>
+              <li><span class="smo-num">2</span> Text or email them the link</li>
+              <li><span class="smo-num">3</span> They fill in the rest and print</li>
+            </ul>
+            <details class="smo-more">
+              <summary><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg> What the sender does</summary>
+              <p class="smo-more-body">Opens your link, enters their address and item info, prints the label. No account needed. You're charged only when they print, never more than your cap.</p>
+            </details>
+            <button class="smo-cta">Choose this <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg></button>
+          </div>
+        </div>
+
+        <div class="smo-card smo-card--blue smo-measured">
+          <div class="smo-cardhead">
+            <div class="smo-ico">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+            </div>
+            <div class="smo-titles">
+              <h3>You fill in the details</h3>
+              <p>Completed Prepaid Label</p>
+            </div>
+          </div>
+          <div class="smo-body">
+            <p class="smo-when">Best when you <em>already know</em> their address and the package size.</p>
+            <ul class="smo-steps">
+              <li><span class="smo-num">1</span> Enter their address and package details</li>
+              <li><span class="smo-num">2</span> Pick a carrier and speed</li>
+              <li><span class="smo-num">3</span> Send the finished label</li>
+            </ul>
+            <details class="smo-more">
+              <summary><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg> What the sender does</summary>
+              <p class="smo-more-body">Prints the label you made and sticks it on the box. That's it — zero decisions for them, no account needed.</p>
+            </details>
+            <button class="smo-cta">Choose this <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg></button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════ VARIANT B ══════════ -->
+  <section class="smo-sec">
+    <div class="smo-sec-label">
+      <h2>Variant B — the heading asks, the cards answer</h2>
+      <span>same structure, but the decision moves up into the H1</span>
+    </div>
+    <p class="smo-note">
+      <b>Faster to scan, more committal.</b> The heading carries the whole question and each card is a
+      one-word answer, so the choice resolves before you read any body copy. It reads slightly quiz-like,
+      and it only works while there are exactly two you-pay paths — the Sell &amp; Ship card can't answer
+      the same question. Variant A survives that launch unchanged; B would need a rethink.
+    </p>
+    <div class="smo-stage">
+      <div class="smo-head">
+        <h1>Do you know their address and the package size?</h1>
+        <p>That's the only difference between the two setups</p>
+      </div>
+      <div class="smo-cards smo-cards--2">
+
+        <div class="smo-card smo-card--violet smo-measured">
+          <div class="smo-cardhead">
+            <div class="smo-ico">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 17H7A5 5 0 0 1 7 7h2"/><path d="M15 7h2a5 5 0 1 1 0 10h-2"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+            </div>
+            <div class="smo-titles">
+              <h3>No — send them a link</h3>
+              <p>Flexible Prepaid Shipping Link</p>
+            </div>
+          </div>
+          <div class="smo-body">
+            <p class="smo-when">They fill in their own address and package size.</p>
+            <ul class="smo-steps">
+              <li><span class="smo-num">1</span> Set your preferences and a spending cap</li>
+              <li><span class="smo-num">2</span> Text or email them the link</li>
+              <li><span class="smo-num">3</span> They fill in the rest and print</li>
+            </ul>
+            <details class="smo-more">
+              <summary><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg> What the sender does</summary>
+              <p class="smo-more-body">Opens your link, enters their address and item info, prints the label. No account needed. You're charged only when they print, never more than your cap.</p>
+            </details>
+            <button class="smo-cta">Choose this <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg></button>
+          </div>
+        </div>
+
+        <div class="smo-card smo-card--blue smo-measured">
+          <div class="smo-cardhead">
+            <div class="smo-ico">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+            </div>
+            <div class="smo-titles">
+              <h3>Yes — send a finished label</h3>
+              <p>Completed Prepaid Label</p>
+            </div>
+          </div>
+          <div class="smo-body">
+            <p class="smo-when">You fill everything in now; they only print.</p>
+            <ul class="smo-steps">
+              <li><span class="smo-num">1</span> Enter their address and package details</li>
+              <li><span class="smo-num">2</span> Pick a carrier and speed</li>
+              <li><span class="smo-num">3</span> Send the finished label</li>
+            </ul>
+            <details class="smo-more">
+              <summary><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg> What the sender does</summary>
+              <p class="smo-more-body">Prints the label you made and sticks it on the box. That's it — zero decisions for them, no account needed.</p>
+            </details>
+            <button class="smo-cta">Choose this <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg></button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════ THREE-CARD STATE ══════════ -->
+  <section class="smo-sec">
+    <div class="smo-sec-label">
+      <h2>Three-card state</h2>
+      <span>Variant A once VITE_ENABLE_SELLER_LINK flips on</span>
+    </div>
+    <p class="smo-note smo-note--warn">
+      <b>Open question — the axis breaks with three cards.</b> Cards 1 and 2 differ on <em>who fills in the
+      details</em>; card 3 differs on <em>who pays</em>. No single headline covers all three, so the "You pay /
+      Buyer pays" badge has to come back to carry that second axis — which is also the point at which the
+      badge stops being noise. The alternative is a two-step split (you-pay vs buyer-pays first, then the
+      details question), which is Tier 3 territory. Flagging rather than deciding.
+    </p>
+    <div class="smo-stage">
+      <div class="smo-head">
+        <h1>How do you want to ship?</h1>
+        <p>Pick the setup that matches your situation</p>
+      </div>
+      <div class="smo-cards smo-cards--3">
+
+        <div class="smo-card smo-card--violet smo-measured">
+          <div class="smo-cardhead">
+            <span class="smo-pay smo-pay--you">You pay</span>
+            <div class="smo-ico">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 17H7A5 5 0 0 1 7 7h2"/><path d="M15 7h2a5 5 0 1 1 0 10h-2"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+            </div>
+            <div class="smo-titles" style="padding-right:52px">
+              <h3>They fill in the details</h3>
+              <p>Flexible Prepaid Shipping Link</p>
+            </div>
+          </div>
+          <div class="smo-body">
+            <p class="smo-when">Best when you <em>don't know</em> their address or the package size.</p>
+            <ul class="smo-steps">
+              <li><span class="smo-num">1</span> Set your preferences and a spending cap</li>
+              <li><span class="smo-num">2</span> Text or email them the link</li>
+              <li><span class="smo-num">3</span> They fill in the rest and print</li>
+            </ul>
+            <details class="smo-more">
+              <summary><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg> What the sender does</summary>
+              <p class="smo-more-body">Opens your link, enters their address and item info, prints the label. No account needed.</p>
+            </details>
+            <button class="smo-cta">Choose this <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg></button>
+          </div>
+        </div>
+
+        <div class="smo-card smo-card--blue smo-measured">
+          <div class="smo-cardhead">
+            <span class="smo-pay smo-pay--you">You pay</span>
+            <div class="smo-ico">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+            </div>
+            <div class="smo-titles" style="padding-right:52px">
+              <h3>You fill in the details</h3>
+              <p>Completed Prepaid Label</p>
+            </div>
+          </div>
+          <div class="smo-body">
+            <p class="smo-when">Best when you <em>already know</em> their address and the package size.</p>
+            <ul class="smo-steps">
+              <li><span class="smo-num">1</span> Enter their address and package details</li>
+              <li><span class="smo-num">2</span> Pick a carrier and speed</li>
+              <li><span class="smo-num">3</span> Send the finished label</li>
+            </ul>
+            <details class="smo-more">
+              <summary><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg> What the sender does</summary>
+              <p class="smo-more-body">Prints the label you made and sticks it on the box. Zero decisions for them.</p>
+            </details>
+            <button class="smo-cta">Choose this <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg></button>
+          </div>
+        </div>
+
+        <div class="smo-card smo-card--emerald smo-measured">
+          <div class="smo-cardhead">
+            <span class="smo-pay smo-pay--buyer">Buyer pays</span>
+            <div class="smo-ico">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+            </div>
+            <div class="smo-titles" style="padding-right:62px">
+              <h3>The buyer pays <span class="smo-newtag">New</span></h3>
+              <p>Sell &amp; Ship</p>
+            </div>
+          </div>
+          <div class="smo-body">
+            <p class="smo-when">Best when you're <em>selling</em> and shipping costs are on the buyer.</p>
+            <ul class="smo-steps">
+              <li><span class="smo-num">1</span> Enter your address and package size</li>
+              <li><span class="smo-num">2</span> Share your link in the listing</li>
+              <li><span class="smo-num">3</span> They pay, you print</li>
+            </ul>
+            <details class="smo-more">
+              <summary><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg> What the buyer does</summary>
+              <p class="smo-more-body">Opens your link, enters their address, picks a speed, and pays. No account needed.</p>
+            </details>
+            <button class="smo-cta">Choose this <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg></button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════ MOBILE FOLD ══════════ -->
+  <section class="smo-sec">
+    <div class="smo-sec-label">
+      <h2>Mobile fold test</h2>
+      <span>real 375 × 812 frames — everything below the dashed line needs a scroll</span>
+    </div>
+    <p class="smo-note">
+      <b>The test Tier 2 has to pass.</b> Today card 1 is 552px tall and card 2 starts at y=745, so 67px of
+      the second option peeks above an 812px fold — the page reads as one option, not a choice.
+      <br><br>
+      <b>Collapsing one panel isn't enough.</b> Variant A's desktop card still runs ~350px on a phone, which
+      pushes card 2 about 75px past the fold. So below <code>sm</code> the numbered steps join the disclosure
+      too: the mobile card is title + one discriminator line + "How it works" + button. Both options then
+      land whole, with ~160px to spare. This is the one place the mock diverges by viewport, and it's the
+      change that actually makes the choice legible on a phone.
+    </p>
+    <div class="smo-folds">
+
+      <div class="smo-phone">
+        <h4>Before <span>— card 2 is a rumour</span></h4>
+        <div class="smo-viewport">
+          <div class="smo-appbar">
+            <div class="smo-appbar-brand"><span class="smo-appbar-logo">S</span> SendMo</div>
+            <div class="smo-appbar-nav">FAQ <b>Sign In</b></div>
+          </div>
+          <div class="smo-head">
+            <h1>How do you want to ship?</h1>
+            <p>Pick the setup that matches your situation</p>
+          </div>
+          <div class="smo-cards">
+            <div class="smo-card smo-card--violet">
+              <div class="smo-cardhead">
+                <span class="smo-pay smo-pay--you">You pay</span>
+                <div class="smo-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 17H7A5 5 0 0 1 7 7h2"/><path d="M15 7h2a5 5 0 1 1 0 10h-2"/><line x1="8" y1="12" x2="16" y2="12"/></svg></div>
+                <div class="smo-titles" style="padding-right:52px">
+                  <h3>Flexible Prepaid Shipping Link</h3>
+                  <p style="color:#6d28d9;font-weight:550">Send a link — they handle the details</p>
+                </div>
+              </div>
+              <div class="smo-body">
+                <div class="smo-best">
+                  <p>Best when you don't know…</p>
+                  <ul>
+                    <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12" y2="17"/></svg> The sender's address</li>
+                    <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12" y2="17"/></svg> The item's weight or size</li>
+                  </ul>
+                </div>
+                <p class="smo-hiw-label">How it works</p>
+                <ul class="smo-steps">
+                  <li><span class="smo-num">1</span> You set your shipping preferences and a spending cap</li>
+                  <li><span class="smo-num">2</span> Share a link with your sender via text or email</li>
+                  <li><span class="smo-num">3</span> They enter the details and print the label</li>
+                </ul>
+                <div class="smo-does">
+                  <p>What the sender does</p>
+                  <p>Opens a link, enters their address and item info, prints the label. No account needed.</p>
+                </div>
+                <span class="smo-choose">Choose this option <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg></span>
+              </div>
+            </div>
+            <div class="smo-card smo-card--blue">
+              <div class="smo-cardhead">
+                <span class="smo-pay smo-pay--you">You pay</span>
+                <div class="smo-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></div>
+                <div class="smo-titles" style="padding-right:52px">
+                  <h3>Completed Prepaid Label</h3>
+                  <p style="color:#1d4ed8;font-weight:550">You fill everything in — they just print</p>
+                </div>
+              </div>
+              <div class="smo-body"><div class="smo-best"><p>Best when you already know…</p></div></div>
+            </div>
+          </div>
+          <div class="smo-fold-line"><span>fold — 812px</span></div>
+        </div>
+      </div>
+
+      <div class="smo-phone">
+        <h4>After (Variant A) <span>— both options, whole, with room to spare</span></h4>
+        <div class="smo-viewport">
+          <div class="smo-appbar">
+            <div class="smo-appbar-brand"><span class="smo-appbar-logo">S</span> SendMo</div>
+            <div class="smo-appbar-nav">FAQ <b>Sign In</b></div>
+          </div>
+          <div class="smo-head">
+            <h1>How do you want to ship?</h1>
+            <p>Pick who fills in the details</p>
+          </div>
+          <div class="smo-cards">
+            <div class="smo-card smo-card--violet">
+              <div class="smo-cardhead">
+                <div class="smo-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 17H7A5 5 0 0 1 7 7h2"/><path d="M15 7h2a5 5 0 1 1 0 10h-2"/><line x1="8" y1="12" x2="16" y2="12"/></svg></div>
+                <div class="smo-titles">
+                  <h3>They fill in the details</h3>
+                  <p>Flexible Prepaid Shipping Link</p>
+                </div>
+              </div>
+              <div class="smo-body">
+                <p class="smo-when">Best when you <em>don't know</em> their address or the package size.</p>
+                <details class="smo-more">
+                  <summary><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg> How it works</summary>
+                  <ul class="smo-steps" style="margin-top:10px">
+                    <li><span class="smo-num">1</span> Set your preferences and a spending cap</li>
+                    <li><span class="smo-num">2</span> Text or email them the link</li>
+                    <li><span class="smo-num">3</span> They fill in the rest and print</li>
+                  </ul>
+                  <p class="smo-more-body">They open your link, enter their address and item info, and print. No account needed.</p>
+                </details>
+                <button class="smo-cta">Choose this <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg></button>
+              </div>
+            </div>
+            <div class="smo-card smo-card--blue">
+              <div class="smo-cardhead">
+                <div class="smo-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></div>
+                <div class="smo-titles">
+                  <h3>You fill in the details</h3>
+                  <p>Completed Prepaid Label</p>
+                </div>
+              </div>
+              <div class="smo-body">
+                <p class="smo-when">Best when you <em>already know</em> their address and the package size.</p>
+                <details class="smo-more">
+                  <summary><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg> How it works</summary>
+                  <ul class="smo-steps" style="margin-top:10px">
+                    <li><span class="smo-num">1</span> Enter their address and package details</li>
+                    <li><span class="smo-num">2</span> Pick a carrier and speed</li>
+                    <li><span class="smo-num">3</span> Send the finished label</li>
+                  </ul>
+                  <p class="smo-more-body">They print the label you made and stick it on the box. Zero decisions for them.</p>
+                </details>
+                <button class="smo-cta">Choose this <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg></button>
+              </div>
+            </div>
+          </div>
+          <div class="smo-fold-line"><span>fold — 812px</span></div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ══════════ IMPLEMENTATION NOTES ══════════ -->
+  <section class="smo-sec smo-foot">
+    <div class="smo-sec-label">
+      <h2>What this changes in the component</h2>
+      <span>src/components/recipient/RecipientStepPathChoice.tsx</span>
+    </div>
+    <ul>
+      <li><b>The card stops being one giant <code>&lt;button&gt;</code>.</b> A disclosure toggle can't nest
+        inside a button — invalid HTML, and the click targets would fight. The card becomes a
+        <code>&lt;div&gt;</code> with a real <code>&lt;button&gt;</code> CTA. That also fixes the 440-character
+        accessible name each card currently announces as a single control, and lets the app's blue focus
+        ring apply instead of the browser's default gray outline.</li>
+      <li><b>Grid tracks follow the visible card count</b> — 2 cards cap at ~812px, 3 cards at ~1148px. No
+        dead column in either state.</li>
+      <li><b>The numbered steps sit inside the disclosure below <code>sm</code>, outside it above.</b> One
+        <code>&lt;details&gt;</code> whose <code>&lt;summary&gt;</code> and contents change at the breakpoint —
+        it's what gets both options above the mobile fold.</li>
+      <li><b>The three cards collapse into one <code>&lt;PathCard&gt;</code> + a config array.</b> The markup is
+        currently repeated three times, which is how the padding hacks (<code>pr-14</code> vs
+        <code>pr-20</code>) drifted apart. ~237 lines → ~120.</li>
+      <li><b>The "You pay" badge renders only when a "Buyer pays" card is also on screen</b> — it's a
+        differentiator, so it should appear only when there's something to differentiate from.</li>
+      <li><b>Hardcoded <code>violet-*</code>/<code>blue-*</code> move to per-card CSS variables</b>, the way this
+        mock does it. Dark mode isn't shipped today, so this is consistency work, not a live bug fix.</li>
+    </ul>
+  </section>
+
+</div>
+</div>
+
+<script>
+  // Word counts are measured from the rendered DOM, not hand-asserted.
+  // Collapsed <details> content is excluded — it isn't on screen until asked for.
+  (function () {
+    document.querySelectorAll('.smo-wrap .smo-measured').forEach(function (card) {
+      var clone = card.cloneNode(true);
+      clone.querySelectorAll('details:not([open])').forEach(function (d) {
+        d.querySelectorAll(':scope > *:not(summary)').forEach(function (n) { n.remove(); });
+      });
+      var words = (clone.textContent || '').trim().split(/\s+/).filter(Boolean).length;
+      var chip = document.createElement('span');
+      chip.className = 'smo-wc' + (words <= 45 ? ' smo-wc--good' : '');
+      chip.textContent = words + ' words visible';
+      card.appendChild(chip);
+    });
+  })();
+</script>

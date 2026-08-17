@@ -12,6 +12,23 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-17] Onboarding "who's sending" proposal — REVIEWED (approve-with-changes)
+
+**Category:** review | Onboarding
+**Deploy:** None — docs only (proposal review; no code touched).
+**Cross-link:** [proposals/2026-08-17_onboarding-who-is-sending_reviewed-2026-08-17.md](proposals/2026-08-17_onboarding-who-is-sending_reviewed-2026-08-17.md) | reviews divergence from [proposals/2026-07-17_seller-link-buyer-pays_reviewed-2026-07-17_decided-2026-07-17.md](proposals/2026-07-17_seller-link-buyer-pays_reviewed-2026-07-17_decided-2026-07-17.md)
+
+**What:** fresh-eyes review of the proposal to delete the `/onboarding` path picker and replace it with "Who's sending the package?". Verdict **approve-with-changes** — direction endorsed, divergence from the decided seller-link OQ1 justified in principle but incomplete as specified. Two blockers, both file-plan fixes rather than architecture changes:
+
+- **B1 — signed-in users can never reach the new seller door.** `Index.tsx` (T3-3) redirects authed users to `/dashboard`; Dashboard's only creation CTA goes to `/onboarding`; zero `/sell` references anywhere on authed surfaces. The homepage-only door strands the repeat-seller audience the seller link was built for, and a seller answering "Who's sending?" with "I am" is actively mis-routed into the you-pay label flow.
+- **B2 — stale-prefill trap.** The authed prefill (`RecipientFlowContext.tsx:206-252`) writes the user's own saved address into `destinationAddress`; under the "I am" branch that pre-fills your own address as the *destination* — same wrong-party-autofill class as the 2026-08-16 card-save incident.
+
+**OQ answers:** OQ2 → recommended a third routing shape (c): keep both existing slugs, "someone else" defaults optimistically to `full-label`, the escape *navigates* to `flexible/preferences` through the existing flushSync'd transition — no third slug, Sentry route names and existing deep-link e2e entries survive. OQ3 → split: name the outbound case in-flow (yes) vs headline-market it (risky — SendMo prices at rate×1.15+$1 against Pirate Ship's free commercial rates; John's call). OQ1 → job-led "Sell an item" at launch. OQ4 → collapse to `primary` tokens; emerald is already Economy speed-tier semantics.
+
+**Also confirmed for the author:** the 2026-06-27 label-confirmation proposal's OQ4 self-send dedupe landed as decided (`labels/index.ts:2075-2078`).
+
+**Next:** author response (accept/reject per point), then John's calls on OQ1/OQ3.
+
 ### [2026-08-16] Flex-link activation fails — issuer rejects 3DS on this card; ROOT CAUSE STILL OPEN
 
 **Category:** investigation | Payments
