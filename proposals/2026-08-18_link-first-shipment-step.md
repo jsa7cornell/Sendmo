@@ -2,14 +2,14 @@
 title: Make sending a link a first-class answer, not an escape
 slug: link-first-shipment-step
 project: sendmo
-status: reviewed
+status: shipped
 blocked_on: null
 created: 2026-08-18
 last_updated: 2026-08-18
 reviewed: 2026-08-18
-decided: null
-executed: null
-pr: null
+decided: 2026-08-18
+executed: 2026-08-18
+pr: 67
 author: Claude Fable 5 — implementing session. Design direction ("every option could include a 'sender will fill it out' choice") is John's, 2026-08-18. Written after the link-first handoff and after checking real usage in the prod DB.
 reviewer: Claude Fable 5 — self-review (weaker than a fresh-eyes pass; every claim re-verified against code)
 outcome: approve-with-changes
@@ -208,3 +208,21 @@ disposition:  accept all
 **N3 — specify the deferred state. ✅ Accept.** When deferred, the package cards do not render. No second control.
 
 **Net:** one blocking change, adopted. Remaining for John: **OQ1** — ship the routing now and dogfood immediately after (author + reviewer both lean yes), versus gating the promotion on a successful dogfood first.
+
+## Decision
+
+```
+decided_by:  John
+decided_at:  2026-08-18
+outcome:     approve-with-changes — "looks right. proceed." + "carry this all the way out"
+```
+
+**Design direction is John's:** *"all the options could include a 'sender will fill out' option."* That reframing is what makes this work — it turns the link from an escape into an answer, and it generalises past the address in a way none of the five options in the handoff did.
+
+**OQ1 (dogfood timing) — resolved as: ship the routing, dogfood immediately after.** Both author and reviewer leaned this way and John's "carry this all the way out" endorses shipping. The obligation does not disappear with the merge: the LOG entry carries it as an open item with no owner, and a failure walking that path end-to-end is a **launch blocker, not a bug**.
+
+**OQ2 (banner copy) — resolved yes**, folded in during review: the banner states the recurring charge rather than a bare "You pay".
+
+**Scope call recorded:** independent *package* deferral was cut from v1. A flexible link has the sender supply everything, so an entered origin would be silently discarded — the mockup's "both deferred" appearance is one control's consequence, not two controls. It becomes coherent only once a link can carry an origin the sender flow prefills.
+
+Status → shipped. Merged via [PR #67](https://github.com/jsa7cornell/Sendmo/pull/67).

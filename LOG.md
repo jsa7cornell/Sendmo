@@ -15,7 +15,7 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 ### [2026-08-18] The shipping link becomes an answer, not an escape
 
 **Category:** ship | Onboarding
-**Deploy:** see verification below.
+**Deploy:** **DEPLOYED.** Merged via [PR #67](https://github.com/jsa7cornell/Sendmo/pull/67) (merge commit `51f718a`), 2026-08-18. Vercel production green; verified live on sendmo.co against bundle `/assets/index-BJ2EhkJS.js` — "Where's it shipping from", both answers, and the recurring-charge banner copy are all present, and "I don't have their address" is gone. Screenshot-confirmed on prod: the choice renders with "I have their address" pre-selected and the origin form open beneath it.
 **Cross-link:** [proposals/2026-08-18_link-first-shipment-step.md](proposals/2026-08-18_link-first-shipment-step.md) | corrects drift from [2026-08-17_onboarding-who-is-sending](proposals/2026-08-17_onboarding-who-is-sending_reviewed-2026-08-17_decided-2026-08-17.md) | handoff: [2026-08-18_link-first-onboarding-handoff.md](proposals/2026-08-18_link-first-onboarding-handoff.md)
 
 **What & why.** The homepage sells a shareable link; the funnel made that link reachable only by failing to complete a label form, where it appeared as muted help-text named after the user's *problem* ("I don't have their address") below a form they couldn't fill. The word "link" appeared nowhere in the flow. **This was drift I introduced** on 2026-08-17 when the two-door picker was removed — the reasoning (don't make users self-classify into product jargon) was right; leaving the link with *no* door was not.
