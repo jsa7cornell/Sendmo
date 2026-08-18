@@ -153,6 +153,24 @@ I hit this by deleting `.env.local` during cleanup: 11/11 specs "failed", then p
 
 Cheap fix: a `globalSetup` assertion that the required vars are present and fails with a one-line message naming the file, instead of letting 60+ specs fail meaninglessly. PLAYBOOK's e2e section documents the requirement in prose; making it enforce itself is strictly better.
 
+### A4c. Local e2e silently tests whatever is already on :5173 — including a different checkout
+
+Hit while shipping the follow-up to PR #63, and it produced a confident, completely wrong result: 17 of 28 specs "failed" against code that was correct.
+
+[`playwright.config.ts`](../playwright.config.ts) sets `webServer.reuseExistingServer: !process.env.CI`. Locally that means Playwright **does not start its own dev server if port 5173 is already listening** — it just uses whatever is there. A stale `vite` left over from an earlier run in a *different* directory (here: the main checkout, while the specs under test lived in a git worktree) therefore serves the wrong application, and every mismatch surfaces as an ordinary `toBeVisible` timeout with no hint that the server is not the code you edited.
+
+This matters more than it looks because the project's own concurrent-session rule tells agents to work in worktrees — so two checkouts of the same repo on one machine is the normal case, not an edge case.
+
+Diagnose with:
+
+```bash
+for pid in $(lsof -ti:5173); do lsof -a -p $pid -d cwd -Fn | grep '^n'; done
+```
+
+If the printed cwd is not the directory you are testing, every result from that run is meaningless in both directions — passes included.
+
+Options for the audit: set `reuseExistingServer: false` outright (costs a few seconds per run, removes the whole class), or give the config a `PORT`/`baseURL` env override so each worktree can claim its own port. Either is small; the current default is a false-result generator.
+
 ### A5. Not a finding, but confirm it stays true
 
 [`test.yml`](../.github/workflows/test.yml) hardcodes `VITE_SUPABASE_ANON_KEY` in plaintext. This is **fine and deliberate** — it's the publishable anon key that ships in every browser bundle, and there's an inline comment saying so. Flagging it only so the audit doesn't "discover" it and file a false Rule 0 alarm. Worth one check that it's still the anon key and not a service-role key.
