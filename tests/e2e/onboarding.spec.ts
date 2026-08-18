@@ -240,7 +240,14 @@ async function fillSmartAddress(page: Page, label: string) {
   await page.locator(`#${label}-phone`).fill("4155550100");
 }
 
-/** Drive Step 0 → Step 1 → Step 10, leaving the page on the shipment-details step. */
+/** Advance from step 10 (ship-from address) to step 14 (package + carrier). */
+async function gotoPackageStep(page: Page) {
+  await page.locator("#origin-name").fill("John Smith");
+  await fillSmartAddress(page, "origin");
+  await page.getByRole("button", { name: /Continue to package details/i }).click();
+}
+
+/** Drive Step 0 → Step 1 → Step 10, leaving the page on the ship-from address step. */
 async function gotoStep10(page: Page) {
   await page.goto("/onboarding");
   await page.getByRole("button", { name: /Someone else/ }).click();
@@ -340,6 +347,14 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
     await expect(page.locator("#origin-name")).toBeVisible({ timeout: 5000 });
 
     await page.getByRole("button", { name: /The sender will fill this in/i }).click();
+    // Deferring the address advances to the PACKAGE question — it must not skip
+    // it (that was the 2026-08-18 bug). Only deferring both makes it a link.
+    await expect(page).toHaveURL(/\/onboarding\/full-label\/package/);
+    // Wait for the step to actually MOUNT before clicking again. The URL flips
+    // before the outgoing step unmounts, so clicking on the URL alone re-hits
+    // the address step's button and silently re-runs the same defer.
+    await expect(page.locator("#origin-name")).toHaveCount(0);
+    await page.getByRole("button", { name: /The sender will fill this in/i }).click();
     await expect(page).toHaveURL(/\/onboarding\/flexible\/preferences/);
 
     // The way back must be rendered for this user too.
@@ -355,6 +370,12 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
     // The user starts filling in the other party's address, then realises they
     // don't have it — the exact moment the link product becomes the answer.
     await page.locator("#origin-name").fill("Sarah Smith");
+    await page.getByRole("button", { name: /The sender will fill this in/i }).click();
+
+    // The package question is still asked — deferring the address no longer
+    // leaps past it. Defer that too and the flow becomes a shipping link.
+    await expect(page).toHaveURL(/\/onboarding\/full-label\/package/);
+    await expect(page.locator("#origin-name")).toHaveCount(0);
     await page.getByRole("button", { name: /The sender will fill this in/i }).click();
 
     // Moves to the shipping-link path. Guard must admit step 20 off the shared
@@ -417,6 +438,14 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
 
     // Fill origin address
     await fillSmartAddress(page, "origin");
+
+    // ── Step 14: parcel + carrier ────────────────────────────
+    // Split out of step 10 on 2026-08-18 so the address and the package can be
+    // deferred independently.
+    await page.getByRole("button", { name: /Continue to package details/i }).click();
+    await expect(
+      page.getByRole("textbox", { name: "L", exact: true })
+    ).toBeVisible({ timeout: 5000 });
 
     // Dimensions — L, W, H (use exact role matching to avoid ambiguity)
     await page.getByRole("textbox", { name: "L", exact: true }).fill("10");
@@ -482,25 +511,36 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
     await expect(page.getByText("Enter a valid email address")).toBeVisible();
   });
 
-  test("Step 10: an empty Continue is blocked and lists validation errors", async ({
+  test("Step 10: an empty Continue is blocked on the address only", async ({
     page,
   }) => {
     await gotoStep10(page);
 
-    // Continue to payment with no origin address / dimensions / weight.
-    await page.getByRole("button", { name: /Continue to payment/i }).click();
+    await page.getByRole("button", { name: /Continue to package details/i }).click();
 
     await expect(page.getByText("Please fix the following:")).toBeVisible();
     // "Origin address is required" renders both inline and in the summary list
     // — .first() is enough to prove the error surfaced.
     await expect(page.getByText("Origin address is required").first()).toBeVisible();
+    // Parcel errors belong to step 14 now and must NOT appear here.
+    await expect(page.getByText("Length is required")).toHaveCount(0);
+  });
+
+  test("Step 14: an empty Continue is blocked on the parcel", async ({ page }) => {
+    await gotoStep10(page);
+    await gotoPackageStep(page);
+
+    await page.getByRole("button", { name: /Continue to payment/i }).click();
+
+    await expect(page.getByText("Please fix the following:")).toBeVisible();
     await expect(page.getByText("Length is required")).toBeVisible();
   });
 
-  test("Step 10: the Magic Guestimator auto-fills package dimensions", async ({
+  test("Step 14: the Magic Guestimator auto-fills package dimensions", async ({
     page,
   }) => {
     await gotoStep10(page);
+    await gotoPackageStep(page);
 
     await expect(
       page.getByRole("heading", { name: "Magic Guestimator" }),

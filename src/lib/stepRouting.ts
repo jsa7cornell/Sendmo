@@ -6,7 +6,8 @@ import type { RecipientPath } from "@/lib/types";
 //
 //   /onboarding                          → path picker (step 0)
 //   /onboarding/full-label/destination   → step 1 (recipient + email)
-//   /onboarding/full-label/shipping      → step 10
+//   /onboarding/full-label/shipping      → step 10  (ship-from address)
+//   /onboarding/full-label/package       → step 14  (shipment details + carrier)
 //   /onboarding/full-label/verify        → step 11  (Supabase OTP — proposal 2026-05-11_account-creation-timing)
 //   /onboarding/full-label/payment       → step 12
 //   /onboarding/full-label/label         → step 13
@@ -23,6 +24,7 @@ export type PathSlug = "full-label" | "flexible";
 export type StepSlug =
   | "destination"
   | "shipping"
+  | "package"
   | "payment"
   | "label"
   | "preferences"
@@ -46,9 +48,15 @@ export function pathToPathSlug(path: RecipientPath): PathSlug {
 
 // ─── Step Maps (per path) ───────────────────────────────────
 
+// `shipping` keeps step 10 so every existing /full-label/shipping deep link
+// still resolves — it just asks a narrower question now (the ship-from address
+// only). `package` (14) carries what used to sit below it: the parcel details
+// and the carrier choice. Numbers need not be ordered; sequence comes from
+// FULL_LABEL_STEPS below.
 const FULL_LABEL_STEP_BY_SLUG: Record<string, number> = {
   destination: 1,
   shipping: 10,
+  package: 14,
   verify: 11,
   payment: 12,
   label: 13,
@@ -57,6 +65,7 @@ const FULL_LABEL_STEP_BY_SLUG: Record<string, number> = {
 const FULL_LABEL_SLUG_BY_STEP: Record<number, StepSlug> = {
   1: "destination",
   10: "shipping",
+  14: "package",
   11: "verify",
   12: "payment",
   13: "label",
@@ -99,7 +108,7 @@ export function stepUrl(path: RecipientPath | null, step: number): string {
 
 // ─── Step Ordering ──────────────────────────────────────────
 
-const FULL_LABEL_STEPS = [0, 1, 10, 11, 12, 13];
+const FULL_LABEL_STEPS = [0, 1, 10, 14, 11, 12, 13];
 const FLEX_LINK_STEPS = [0, 1, 20, 21, 22, 23];
 
 export function stepsForPath(path: RecipientPath | null): number[] {
@@ -131,6 +140,7 @@ const STEP_TO_PROGRESS: Record<number, number> = {
   0: -1,
   1: 0,
   10: 1,
+  14: 1,
   11: 2,
   12: 2,
   13: 3,

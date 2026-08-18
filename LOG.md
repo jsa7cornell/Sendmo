@@ -12,6 +12,79 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-18] PR #68 code-review fixes — migration 041 applied to prod, parcel prefill wired, mid-deploy drafts recovered
+
+**Category:** fix | Onboarding + SenderFlow
+**Deploy:** Committed to the PR #68 branch (`feat/split-address-package`), NOT merged, NOT deployed. **Migration 041 IS now applied to production** — the merge-order blocker is cleared.
+**Cross-link:** review handoff [2026-08-18_pr68-code-review-handoff.md](proposals/2026-08-18_pr68-code-review-handoff.md)
+**Browser-verified:** spec: tests/e2e/sender-origin-prefill.spec.ts · variants-covered: parcel prefill present / link carries no parcel / malformed prefill (no weight) ignored
+
+An independent review of PR #68 confirmed five findings; all five are fixed in this commit:
+
+1. **Migration 041 applied to production** (project `fkxykvzsqdjzhurntgah`, via Supabase MCP `apply_migration`). Verified live before (constraint still had `AND origin_address_id IS NULL` — the review checked, it was NOT applied) and after (clause gone, seller invariants intact). Exact SQL = the file in `supabase/migrations/041_flexible_link_may_carry_origin.sql`. Strictly relaxing; no rows touched.
+2. **`package_prefill` was produced but never consumed.** The edge function returned the creator's parcel spec and `api.ts` typed it, but no client code read it — the sender still retyped dims the creator entered. `SenderFlow` now seeds the parcel from it before the intro step renders (SenderStepPackage reads `initialParcel` in useState initializers, so it must be set pre-mount). Weightless prefills are skipped: the creator-side gate requires weight, so one can only come from API misuse.
+3. **Mid-deploy drafts were unrecoverable — and the bug was deeper than the review first stated.** The pre-2026-08-18 code wrote a bare payload to **sessionStorage**; the new code read only the localStorage envelope, so the compat shim in `loadPersisted` could literally never fire, and `loadResumable`'s savedAt check excluded bare shapes anyway. Now a shared `readStored()` reads localStorage first, falls back to sessionStorage, and treats envelope-less payloads as saved *now* (their true age is unknowable; they predate the deploy by at most one session). `clearFlow` clears both stores — otherwise "Start over" resurrected the sessionStorage copy.
+4. **Stale duplicate step maps deleted.** `useRecipientFlow.ts` kept a private `FULL_LABEL_STEPS`/`nextStep`/`stepToProgressIndex` (and the unused hook itself) from before the provider existed — exporting the same names as `stepRouting.ts` but WITHOUT step 14. Nothing imported them, but the wrong import would have compiled cleanly and skipped step 14. The module now holds only the state shape + pure validation helpers. The hook's tests went with it; the `canFetchRates` phone-gate pins stay.
+5. **`deferToSender` cleaned up** — the unreachable `nextStep(14, "full_label")` branch (anyDeferred is always true after setting a flag) and the impure `next`-assignment inside the setState updater are gone; the navigation target is now computed outside.
+
+**Tests:** 685 unit (8 dead-hook tests removed, 5 storage-compat tests added), 82 passed / 6 skipped / 0 failed e2e (3 new parcel-prefill tests), tsc clean, eslint 27 — all unchanged from main or better.
+
+
+**Category:** ship | Onboarding
+**Deploy:** NOT merged, NOT deployed — PR only, awaiting an independent code review. **Merging requires migration 041 to be applied** (see below).
+**Cross-link:** follows [PR #67](https://github.com/jsa7cornell/Sendmo/pull/67) | handoff [2026-08-18_link-first-onboarding-handoff.md](proposals/2026-08-18_link-first-onboarding-handoff.md)
+
+**The bug (John, 2026-08-18):** choosing "The sender will fill this in" on the ship-from address jumped straight to shipping preferences — the package question was never asked. Deferring one thing silently deferred everything.
+
+**The fix:** step 10 was carrying two unrelated questions. It is now split — **10 = ship-from address**, **14 = shipment details + carrier** — each with its own "The sender will fill this in" answer. Deferring the address advances to the package question; the flow only becomes a shipping link once both have been put. Order is John's: recipient → sender address → shipment details → carrier.
+
+**Mechanics.** `deferredOrigin` / `deferredPackage` on flow state; skipping *is* answering, so the step is marked complete either way and the flow advances normally. `FULL_LABEL_STEPS` is `[0, 1, 10, 14, 11, 12, 13]` — order comes from the array, not the numbers, so `shipping` keeps step 10 and every existing `/full-label/shipping` deep link still resolves. Validation split to match: address on 10, parcel on 14.
+
+**Consequence worth knowing:** the parcel step is now unreachable without a valid origin phone, because step-10 validation gates it. That made the old phone-gate spec's scenario (everything filled *except* the origin phone) structurally impossible; it was restructured to assert the same invariant — no rate fetch without a phone — under the new shape.
+
+**Gotcha — the stale-DOM click, again.** A spec clicked "The sender will fill this in" twice in a row; the second click landed on the *outgoing* step's button because the URL flips before the old step unmounts, silently re-running the same defer. Same class as 2026-08-17. **Between two clicks that span a step transition, wait for the new step to mount** (`await expect(page.locator("#origin-name")).toHaveCount(0)`), never on the URL alone.
+
+**Resume after closing the tab (John, 2026-08-18): fixed here too.** He asked whether someone who stalls can come back and finish. Measured, not assumed — five scenarios in a real browser:
+
+| Scenario | Before |
+|---|---|
+| Back button across the new split | ✅ lands on the address step, typed origin intact |
+| Browser back/forward | ✅ both directions |
+| Refresh mid-flow | ✅ same step, fields intact |
+| Skip ahead by URL | ✅ bounced to the first unfinished step |
+| **New tab / closed tab** | ❌ **everything lost** — `/full-label/package` bounced to `/destination`, blank |
+
+Navigation was never the fragile part; the guard is strict rather than brittle. The gap was storage: flow data lived in **sessionStorage**, which dies with the tab, and nothing is written server-side until the card step — so destination, sender address and package were all tab-local. Pre-existing, but this change made the exposure worse by adding a step to stall on.
+
+Now **localStorage with a 7-day TTL**, plus an explicit resume offer on step 0 ("You have a shipment in progress" → Continue / Start over). Three guards keep a stale draft from silently resurrecting — the class of bug that put the wrong party's address on a label twice this week: `startFlowAs` still resets on every door pick, resuming is offered and never automatic, and drafts expire (an address typed weeks ago is likelier wrong than useful, and this is shared-computer data). Verified in a real browser: tab closed entirely, new context, banner offered, Continue restored name and email.
+
+**Two things this turned up.** jsdom in this project exposes `window.localStorage` as an object with **no methods** — `setItem` undefined — and `persist` swallows storage errors by design, so the unit tests would have asserted against a silent no-op; they now install an in-memory Storage. And my first `loadResumable` predicate required a completed step or a verified street, which classified "typed name + phone + email, hadn't hit Continue" as no progress — exactly the work people would be angriest to lose. Broadened, with a test naming that case.
+
+**The other half — carrying the origin — is now done.** A flexible link may optionally store the ship-from address and parcel its creator already knew, and the sender flow prefills from it. So "address given, package deferred" no longer discards the payer's typing.
+
+- `links` POST: accepts optional `origin_address` + dims on the **flexible** create. Validated only when supplied — an incomplete one 400s rather than being silently dropped, since silent dropping is the bug being fixed. Parcel dims are all-or-nothing (a partial parcel produces junk rates).
+- `links` GET: returns `origin_prefill` / `package_prefill` **for flexible links only**.
+- `SenderFlow`: fills a blank ship-from form from `origin_prefill`. Anything already typed, or a resumed draft, wins — it never overwrites.
+
+**🚩 Requires migration 041 — this will 500 in production without it.** Migration 040's per-type CHECK is `ELSE recipient_address_id IS NOT NULL AND origin_address_id IS NULL`, which **forbids an origin on a non-seller link**. Setting one throws `sendmo_links_addr_by_type_check`. Unit tests never touch the DB, so nothing local catches it — same class as the seller-link review's B1 (`status='used'`). [`041_flexible_link_may_carry_origin.sql`](supabase/migrations/041_flexible_link_may_carry_origin.sql) drops only the `AND origin_address_id IS NULL` clause; a seller link must still have an origin and no recipient, and every non-seller link must still have a recipient. Strictly relaxing, so no existing row can be invalidated.
+
+**🚩 Privacy call for the reviewer, stated not buried.** `origin_prefill` means **anyone holding a flexible link's URL can see the street the creator entered**. Scoped to `flexible` on purpose — seller links keep city/state, because there the origin is the seller's and the reader is a stranger buyer. The flex payload already exposes recipient name + city/state/zip to link-holders, so this extends an existing stance rather than inventing one, but it *is* an extension and worth a second opinion. Note PLAYBOOK Rule 7 is about the *recipient's* address in the sender UI; here the sender is being shown their own, which is a different party.
+
+**Test-scaffolding trap worth knowing.** Playwright checks `page.route` handlers **most-recent-first**. With a `functions/v1/**` catch-all registered after the specific `links**` mock, the catch-all wins, `linkData` is `{}`, and a prefill assertion passes *vacuously* against an empty form. Register the specific route last. Second trap in the same spec: a carried address arrives already verified, so `SmartAddressInput` renders it as a confirmed row rather than an editable field — asserting `toHaveValue` on the input fails for exactly the case that matters.
+
+**⚠️ Open — what is still not done.** John chose the "real fix" for the case where the payer gives the address and *then* defers the package: today a flexible link stores only size/weight hints, not an origin, and the sender flow doesn't prefill from it — so that address is discarded. Carrying it needs the `links` function to accept an origin for `flexible`, the GET-by-code to return it, and `SenderFlow` to prefill. Until then, "address given + package deferred" still wastes the payer's input. **This is the reason this PR is not merged.**
+
+**Also staged, not built:** collapsing `full_label`/`flexible` into one flow with `link_type` derived (John's idea 1), and a skippable *recipient* address (idea 2 — note it is the seller link's shape with the opposite payer, so it must never be described as the seller flow). Both need their own proposals.
+
+**Tests:** 688 unit / **80 e2e passed, 0 failed** / `tsc` clean / ESLint 27 vs 27 baseline.
+
+**Browser-verified:**
+- spec: [tests/e2e/onboarding.spec.ts](tests/e2e/onboarding.spec.ts) — deferring the address lands on `/full-label/package` (not preferences); deferring both reaches the link path; parcel validation belongs to 14 and no longer fires on 10.
+- mcp-session: Playwright-driven screenshots of both steps (`/tmp/s1-address.png`, `/tmp/s2-package.png`) — the preview pane cannot render step transitions.
+- variants-covered: [sender=other address step, sender=other package step, defer address → package, defer both → link, deep-link with sender=null]
+
+---
+
 ### [2026-08-18] Session durability Phase 0+1 — breadcrumbs, refresh-retry wrapper, www redirect, offline hold
 
 **Category:** fix | Auth | Session

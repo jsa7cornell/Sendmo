@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { Loader2, AlertCircle, Shield } from "lucide-react";
@@ -48,6 +48,28 @@ export default function SenderFlow() {
   // Pre-fill from localStorage when available (non-blocking nit).
   const saved = useMemo(() => loadSavedSender(), []);
   const [senderAddress, setSenderAddress] = useState<AddressInput>(saved?.senderAddress ?? emptyAddress());
+  // Prefill the ship-from address from the link when its creator already knew
+  // it (flexible only — `origin_prefill` is null for seller links). Anything
+  // the sender has already typed, or a resumed draft, wins: this fills a blank
+  // form, it never overwrites. Without it the creator's typed address was
+  // discarded and the sender retyped their own.
+  const prefilledOriginRef = useRef(false);
+  useEffect(() => {
+    if (prefilledOriginRef.current) return;
+    const p = linkData?.origin_prefill;
+    if (!p?.street1) return;
+    if (senderAddress.street || saved?.senderAddress?.street) return;
+    prefilledOriginRef.current = true;
+    setSenderAddress({
+      name: p.name ?? "",
+      street: p.street1,
+      city: p.city,
+      state: p.state,
+      zip: p.zip,
+      phone: p.phone ?? "",
+      verified: p.verified === true,
+    });
+  }, [linkData, senderAddress.street, saved?.senderAddress?.street]);
   const [senderEmail, setSenderEmail] = useState(saved?.senderEmail ?? "");
   const [saveInfo, setSaveInfo] = useState(true);
   const [shareContact, setShareContact] = useState(false);
@@ -106,6 +128,23 @@ export default function SenderFlow() {
           setLoadError(`This link isn't accepting payments right now. Please check back with ${name} once they've updated their payment method.`);
           setStep("error");
           return;
+        }
+        // Seed the parcel from the link when its creator already knew it
+        // (package_prefill, flexible only — the other half of origin_prefill
+        // above). Set before "intro" renders, so SenderStepPackage's
+        // initialParcel-based useState initializers see it on first mount.
+        // The sender can still edit every field. Weight is required by the
+        // creator-side gate, so a prefill without it is malformed — skip it.
+        const pp = data.package_prefill;
+        if (pp && pp.length_in > 0 && pp.width_in > 0 && pp.weight_oz && pp.weight_oz > 0) {
+          setParcel({
+            length: pp.length_in,
+            width: pp.width_in,
+            height: pp.height_in ?? 1,
+            weightOz: pp.weight_oz,
+            description: "",
+            packaging: "box",
+          });
         }
         setLinkData(data);
         setStep("intro");

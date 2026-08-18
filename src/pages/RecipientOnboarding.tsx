@@ -54,6 +54,7 @@ export default function RecipientOnboarding() {
     tryAdvance,
     getErrors,
     switchToShippingLink,
+    deferToSender,
     undoShippingLinkSwitch,
   } = useRecipientFlowContext();
 
@@ -192,13 +193,37 @@ export default function RecipientOnboarding() {
             {currentStep === 10 && (
               <RecipientStepFullShipping
                 state={state}
+                mode="address"
                 sender={data.sender}
                 errors={getErrors(10)}
                 tried={!!state.tried[10]}
                 onUpdate={updateData}
                 onContinue={() => tryAdvance(10)}
                 onBack={goBack}
-                onNoAddress={switchToShippingLink}
+                onNoAddress={() => deferToSender("origin")}
+                liveMode={liveMode}
+              />
+            )}
+
+            {/* Step 14: Shipment details + carrier. Split out of step 10 on
+                2026-08-18 so the two questions can be deferred independently —
+                skipping the ship-from address used to skip this one too. */}
+            {currentStep === 14 && (
+              <RecipientStepFullShipping
+                state={state}
+                mode="package"
+                sender={data.sender}
+                errors={getErrors(14)}
+                tried={!!state.tried[14]}
+                onUpdate={updateData}
+                // Leaving step 14: if either question was handed to the sender
+                // the price isn't knowable, so the flow becomes a shipping link.
+                onContinue={() => {
+                  if (data.deferredOrigin || data.deferredPackage) switchToShippingLink();
+                  else tryAdvance(14);
+                }}
+                onBack={goBack}
+                onNoAddress={() => deferToSender("package")}
                 liveMode={liveMode}
               />
             )}

@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>One flow, three skippable questions</title>
+<style>
+ :root{--bg:#f5f5f5;--card:#fff;--fg:#22262a;--muted:#6b7280;--border:#e1e5ea;--primary:#1876f2;--soft:#e8f1fe;--warn:#fff4e5;--warnb:#f0c48a}
+ *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 Inter,-apple-system,system-ui,sans-serif;padding:30px;max-width:1120px}
+ h1{font-size:20px;margin:0 0 4px}h2{font-size:14px;margin:26px 0 10px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+ .sub{color:var(--muted);margin:0 0 6px}
+ .flow{display:flex;gap:8px;align-items:stretch;flex-wrap:wrap;margin:14px 0}
+ .stepbox{flex:1;min-width:150px;background:var(--card);border:1px solid var(--border);border-radius:14px;padding:13px}
+ .stepbox .n{font-size:11px;font-weight:700;color:var(--primary);text-transform:uppercase;letter-spacing:.05em}
+ .stepbox .t{font-size:14px;font-weight:600;margin-top:3px}
+ .skip{display:inline-block;margin-top:8px;font-size:11.5px;color:var(--muted);background:#f1f3f6;border:1px solid var(--border);border-radius:999px;padding:2px 8px}
+ .skip.no{opacity:.45}
+ table{border-collapse:collapse;width:100%;background:var(--card);border:1px solid var(--border);border-radius:14px;overflow:hidden;font-size:13.5px}
+ th,td{text-align:left;padding:10px 13px;border-bottom:1px solid var(--border)}
+ th{background:#fafbfc;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+ tr:last-child td{border-bottom:none}
+ code{background:#f1f3f6;border-radius:5px;padding:1px 6px;font-size:12.5px}
+ .note{background:var(--soft);border:1px solid #bcd9fb;border-radius:12px;padding:12px 15px;font-size:13.5px;margin:10px 0}
+ .warn{background:var(--warn);border:1px solid var(--warnb);border-radius:12px;padding:12px 15px;font-size:13.5px;margin:10px 0}
+ .arrow{align-self:center;color:var(--muted);font-size:18px}
+</style></head><body>
+
+<h1>One flow. Three skippable questions. The product type is the <em>result</em>.</h1>
+<p class="sub">Skipping is not failing — it's telling us the other person will supply that piece.</p>
+
+<div class="flow">
+  <div class="stepbox"><div class="n">Step 1</div><div class="t">Recipient address</div><div class="skip">skippable →</div></div>
+  <div class="arrow">→</div>
+  <div class="stepbox"><div class="n">Step 2</div><div class="t">Sender address</div><div class="skip">skippable →</div></div>
+  <div class="arrow">→</div>
+  <div class="stepbox"><div class="n">Step 3</div><div class="t">Shipment details</div><div class="skip">skippable →</div></div>
+  <div class="arrow">→</div>
+  <div class="stepbox"><div class="n">Step 4</div><div class="t">Carrier &amp; speed</div><div class="skip no">exact price only if nothing skipped</div></div>
+</div>
+
+<h2>What each combination produces</h2>
+<table>
+ <tr><th>Skipped</th><th>What it is</th><th>Who fills the rest</th><th>Payment</th><th>Today?</th></tr>
+ <tr><td><em>nothing</em></td><td>Ordinary prepaid label</td><td>nobody — it's finished</td><td>charge now, exact price</td><td>✅ <code>full_label</code></td></tr>
+ <tr><td>Sender address</td><td>Shipping link</td><td>sender adds their address</td><td>save card, charge per use</td><td>✅ <code>flexible</code></td></tr>
+ <tr><td>Shipment details</td><td>Shipping link</td><td>sender describes the package</td><td>save card, charge per use</td><td>✅ <code>flexible</code></td></tr>
+ <tr><td>Sender + details</td><td>Shipping link</td><td>sender fills in both</td><td>save card, charge per use</td><td>✅ <code>flexible</code></td></tr>
+ <tr><td><strong>Recipient address</strong></td><td><strong>"Ship it wherever you want"</strong></td><td>the recipient says where</td><td>save card, charge per use</td><td>🆕 <strong>new shape</strong></td></tr>
+</table>
+
+<div class="note"><strong>Idea 1 — the separate path disappears.</strong> Fill everything in and it <em>is</em> an ordinary label; skip something and it's a link. So <code>/onboarding/full-label/…</code> vs <code>/onboarding/flexible/…</code> stops being a fork the user walks and becomes a value we compute at the end. One step map, one set of guards, one flow to test.</div>
+
+<div class="warn"><strong>Idea 2 — flag on the payer, not the shape.</strong> Skipping the <em>recipient</em> address gives the other party control of the destination while <strong>you still pay</strong>. That's the seller link's <em>shape</em> with the <em>opposite payer</em>. Real product ("I'll ship this wherever you want it" — gifts, prizes, "send it to your new place"), but it must never be described as the seller flow, where the buyer pays. Who-pays confusion is what the seller-link review spent most of its time on.</div>
+
+<h2>Why the payment step has to branch</h2>
+<table>
+ <tr><th>Condition</th><th>Payment</th><th>Why</th></tr>
+ <tr><td>Nothing skipped</td><td>Charge the exact amount now</td><td>The price is known — this is today's label flow</td></tr>
+ <tr><td>Anything skipped</td><td>Save a card + set a cap</td><td>Price isn't knowable until the other party fills in the rest</td></tr>
+</table>
+
+<h2>Staging</h2>
+<table>
+ <tr><th></th><th>Scope</th><th>Why here</th></tr>
+ <tr><td><strong>Now</strong></td><td>Split into Sender address → Shipment details, both skippable, fixing the skip-ahead bug. Carry the origin + package onto the link for real (edge function + sender-flow prefill).</td><td>Exactly what was asked; unambiguous; makes skipping lossless, which everything else depends on.</td></tr>
+ <tr><td><strong>Next</strong></td><td>Collapse the two paths into one flow and derive <code>link_type</code>.</td><td>Touches routing, guards, both step maps, every onboarding test. Needs a proposal.</td></tr>
+ <tr><td><strong>Then</strong></td><td>Skippable recipient address — the new shape.</td><td>New product behaviour and a new payer story. Needs its own decision, not a side effect.</td></tr>
+</table>
+
+</body></html>

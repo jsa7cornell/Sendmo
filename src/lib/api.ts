@@ -461,6 +461,27 @@ export interface CreateLinkParams {
   //   picks draft/active. Used by /links/new so returning users skip the
   //   inline SetupIntent step. The resolved status is returned in the response.
   initial_status?: "draft" | "active" | "auto";
+  /**
+   * Optional, flexible only (2026-08-18). Set when the link creator already
+   * knew the ship-from address and/or the parcel, so the sender isn't asked to
+   * retype their own address and the creator's typing isn't discarded.
+   * Requires migration 041 — before it, the per-type CHECK rejects an origin on
+   * a non-seller link.
+   */
+  origin_address?: {
+    name: string;
+    street1: string;
+    street2?: string;
+    city: string;
+    state: string;
+    zip: string;
+    phone: string;
+    verified?: boolean;
+  };
+  length_in?: number;
+  width_in?: number;
+  height_in?: number;
+  weight_oz?: number;
 }
 
 export interface CreateLinkResult {
@@ -575,6 +596,29 @@ export interface LinkData {
   // Null for flex/full-label links.
   origin_city?: string | null;
   origin_state?: string | null;
+  /**
+   * FLEXIBLE ONLY (2026-08-18). The ship-from address the link creator already
+   * knew, so the sender isn't asked to retype their own address. Null for
+   * seller links — there the origin is the seller's and the reader is a
+   * stranger buyer, so it stays city/state.
+   */
+  origin_prefill?: {
+    name: string;
+    street1: string;
+    street2?: string | null;
+    city: string;
+    state: string;
+    zip: string;
+    phone: string;
+    verified: boolean;
+  } | null;
+  /** FLEXIBLE ONLY. The parcel the creator specced, when they knew it. */
+  package_prefill?: {
+    length_in: number;
+    width_in: number;
+    height_in: number | null;
+    weight_oz: number | null;
+  } | null;
   // Mode of the link (seller-link): the anonymous buyer confirms the on-session
   // PI client-side, so BuyerFlow must load the Stripe publishable key that
   // matches the mode seller-checkout creates the PI in (both derived from this).

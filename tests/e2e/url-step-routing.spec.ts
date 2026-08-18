@@ -284,6 +284,9 @@ test.describe("URL-based step routing", () => {
     await expect(page).toHaveURL(/\/onboarding\/full-label\/shipping$/);
     await page.locator("#origin-name").fill("John Smith");
     await fillSmartAddress(page, "origin");
+    // Parcel fields moved to their own step (14) on 2026-08-18.
+    await page.getByRole("button", { name: /Continue to package details/i }).click();
+    await expect(page.getByRole("textbox", { name: "L", exact: true })).toBeVisible({ timeout: 5000 });
     await page.getByRole("textbox", { name: "L", exact: true }).fill("10");
     await page.getByRole("textbox", { name: "W", exact: true }).fill("10");
     await page.getByRole("textbox", { name: "H", exact: true }).fill("10");

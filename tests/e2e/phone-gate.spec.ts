@@ -125,23 +125,27 @@ test.describe("phone gate — onboarding", () => {
     await page.locator("#recipient-email").fill("e2e-phone-gate@example.com");
     await page.getByRole("button", { name: /Continue to shipment details/i }).click();
 
-    // Step 10 — fill the origin address + dimensions + weight, but NOT the
-    // origin phone.
+    // Step 10 (ship-from address) — address but NO phone. Since the parcel
+    // moved to its own step on 2026-08-18, the phone is now enforced BEFORE
+    // the rate step is reachable at all: step-10 validation blocks Continue.
     await expect(page.locator("#origin-name")).toBeVisible({ timeout: 5000 });
     await page.locator("#origin-name").fill("John Smith");
     await verifyAddressNoPhone(page, "origin");
+    await page.getByRole("button", { name: /Continue to package details/i }).click();
+    await expect(page.getByText("Please fix the following:")).toBeVisible();
+    await page.waitForTimeout(1800);
+    expect(ratesCalls, "rates must NOT be fetched without an origin phone").toBe(0);
+
+    // Add the origin phone → step 10 passes → the parcel step is reachable.
+    await page.locator("#origin-phone").fill("4155550142");
+    await page.getByRole("button", { name: /Continue to package details/i }).click();
+    await expect(
+      page.getByRole("textbox", { name: "L", exact: true })
+    ).toBeVisible({ timeout: 5000 });
     await page.getByRole("textbox", { name: "L", exact: true }).fill("10");
     await page.getByRole("textbox", { name: "W", exact: true }).fill("10");
     await page.getByRole("textbox", { name: "H", exact: true }).fill("10");
     await page.getByRole("textbox", { name: "lbs" }).fill("5");
-
-    // Everything is filled EXCEPT the origin phone → canFetchRates is false →
-    // no rate fetch fires, even well past the debounce window.
-    await page.waitForTimeout(1800);
-    expect(ratesCalls, "rates must NOT be fetched without an origin phone").toBe(0);
-
-    // Add the origin phone → canFetchRates passes → a rate fetch fires.
-    await page.locator("#origin-phone").fill("4155550142");
     await expect
       .poll(() => ratesCalls, {
         message: "rates should be fetched once the origin phone is present",

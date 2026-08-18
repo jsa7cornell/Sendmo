@@ -104,8 +104,10 @@ describe("Step 10 validation", () => {
     expect(errors).toContain("Origin address is required");
   });
 
+  // Parcel + carrier moved to step 14 on 2026-08-18 (split from 10 so the
+  // address and the package can be deferred independently).
   it("errors when dimensions missing", () => {
-    const errors = getValidationErrors(makeState({ originAddress: verifiedAddr() }), 10);
+    const errors = getValidationErrors(makeState({ originAddress: verifiedAddr() }), 14);
     expect(errors).toContain("Length is required");
     expect(errors).toContain("Width is required");
     expect(errors).toContain("Height is required");
@@ -120,7 +122,7 @@ describe("Step 10 validation", () => {
         weight: { lbs: "1", oz: "0" },
         selectedRate: mockRate,
       }),
-      10,
+      14,
     );
     expect(errors).not.toContain("Height is required");
   });
@@ -132,7 +134,7 @@ describe("Step 10 validation", () => {
         dimensions: { length: "10", width: "10", height: "10" },
         weight: { lbs: "0", oz: "0" },
       }),
-      10,
+      14,
     );
     expect(errors).toContain("Weight is required");
   });
@@ -144,7 +146,7 @@ describe("Step 10 validation", () => {
         dimensions: { length: "10", width: "10", height: "10" },
         weight: { lbs: "5", oz: "0" },
       }),
-      10,
+      14,
     );
     expect(errors).toContain("Select a shipping method");
   });

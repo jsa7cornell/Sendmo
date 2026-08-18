@@ -338,12 +338,13 @@ Deno.serve(async (req: Request) => {
                 id, short_code, link_type, status, user_id, is_test,
                 max_price_cents, preferred_speed, preferred_carrier,
                 size_hint, weight_hint_oz, notes, expires_at,
+                length_in, width_in, height_in,
                 created_at,
                 recipient_address:addresses!recipient_address_id (
                     name, street1, city, state, zip
                 ),
                 origin_address:addresses!origin_address_id (
-                    city, state
+                    name, street1, street2, city, state, zip, phone, is_verified
                 )
             `)
             .eq("short_code", code)
@@ -470,6 +471,40 @@ Deno.serve(async (req: Request) => {
                 // + labels/ resolve the full origin server-side).
                 origin_city: (link.origin_address as unknown as { city?: string } | null)?.city ?? null,
                 origin_state: (link.origin_address as unknown as { state?: string } | null)?.state ?? null,
+                // FLEXIBLE ONLY — the ship-from address the link creator already
+                // knew, so the sender doesn't retype their own address (and the
+                // creator's typing isn't discarded). Deliberately NOT sent for
+                // seller links: there the origin belongs to the seller and the
+                // reader is a stranger buyer, so it stays city/state.
+                //
+                // Tradeoff, stated rather than buried: for a flexible link this
+                // means anyone holding the URL can see the street the creator
+                // entered. The flex payload already exposes recipient name +
+                // city/state/zip to link-holders, so this extends an existing
+                // stance rather than inventing one — but it IS an extension.
+                origin_prefill:
+                    link.link_type === "flexible" && (link.origin_address as unknown as { street1?: string } | null)?.street1
+                        ? {
+                              name: (link.origin_address as unknown as { name?: string }).name ?? "",
+                              street1: (link.origin_address as unknown as { street1?: string }).street1 ?? "",
+                              street2: (link.origin_address as unknown as { street2?: string }).street2 ?? null,
+                              city: (link.origin_address as unknown as { city?: string }).city ?? "",
+                              state: (link.origin_address as unknown as { state?: string }).state ?? "",
+                              zip: (link.origin_address as unknown as { zip?: string }).zip ?? "",
+                              phone: (link.origin_address as unknown as { phone?: string }).phone ?? "",
+                              verified: (link.origin_address as unknown as { is_verified?: boolean }).is_verified === true,
+                          }
+                        : null,
+                // Package the creator specced, when they knew it. Same purpose.
+                package_prefill:
+                    link.link_type === "flexible" && link.length_in && link.width_in
+                        ? {
+                              length_in: Number(link.length_in),
+                              width_in: Number(link.width_in),
+                              height_in: link.height_in === null ? null : Number(link.height_in),
+                              weight_oz: link.weight_hint_oz === null ? null : Number(link.weight_hint_oz),
+                          }
+                        : null,
                 // Tells the sender flow whether the full address is on file.
                 // False → show an error immediately rather than failing at label creation.
                 recipient_address_complete: !!(link.recipient_address as unknown as { street1?: string } | null)?.street1,
@@ -513,6 +548,16 @@ Deno.serve(async (req: Request) => {
             // dashboard +New Link flow so a returning user with a saved card
             // skips the inline SetupIntent. Webhooks own all other transitions.
             initial_status,
+            // Optional, flexible only (2026-08-18). When the link creator
+            // already knew the ship-from address and/or the parcel, carry it
+            // onto the link so the sender doesn't retype their own address and
+            // the creator's typing isn't silently discarded. Absent = today's
+            // behaviour exactly.
+            origin_address: carriedOrigin,
+            length_in: carriedLength,
+            width_in: carriedWidth,
+            height_in: carriedHeight,
+            weight_oz: carriedWeightOz,
         } = body;
 
         // ─── Link mode derivation (T1-1 gate D, review B3) ──────
@@ -742,6 +787,53 @@ Deno.serve(async (req: Request) => {
             );
         }
 
+        // 1b. Optional carried ship-from address. Validated only when supplied —
+        // an incomplete one is rejected rather than silently dropped, because
+        // silently dropping it is the bug this exists to fix.
+        let carriedOriginId: string | null = null;
+        if (carriedOrigin) {
+            if (!carriedOrigin.street1 || !carriedOrigin.city || !carriedOrigin.state || !carriedOrigin.zip) {
+                return new Response(
+                    JSON.stringify({ error: "The ship-from address is incomplete" }),
+                    { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+            if (!isUsablePhone(carriedOrigin.phone)) {
+                return new Response(
+                    JSON.stringify({ error: "We need a phone number for the ship-from address — the shipping carriers require one." }),
+                    { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+            const { data: originRow, error: originErr } = await supabase
+                .from("addresses")
+                .insert({
+                    user_id: user.id,
+                    name: carriedOrigin.name || "Sender",
+                    street1: carriedOrigin.street1,
+                    street2: carriedOrigin.street2 || null,
+                    city: carriedOrigin.city,
+                    state: carriedOrigin.state,
+                    zip: carriedOrigin.zip,
+                    country: "US",
+                    phone: carriedOrigin.phone,
+                    is_verified: carriedOrigin.verified || false,
+                })
+                .select("id")
+                .single();
+            if (originErr || !originRow) {
+                console.error("Carried origin insert error:", originErr);
+                return new Response(
+                    JSON.stringify({ error: "Failed to save the ship-from address" }),
+                    { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+            carriedOriginId = originRow.id;
+        }
+
+        // Parcel dims are all-or-nothing: a partial parcel produces junk rates.
+        const dimVals = [carriedLength, carriedWidth, carriedHeight, carriedWeightOz].map((v) => Number(v));
+        const hasCarriedPackage = dimVals.slice(0, 2).every((v) => Number.isFinite(v) && v > 0);
+
         // 2. Generate short code with retry on collision
         let shortCode = "";
         let retries = 0;
@@ -785,6 +877,12 @@ Deno.serve(async (req: Request) => {
                 preferred_carrier: preferred_carrier === "any" ? null : (preferred_carrier || null),
                 size_hint: size_hint || null,
                 notes: notes || null,
+                // Carried from the creator when they knew it (2026-08-18).
+                origin_address_id: carriedOriginId,
+                length_in: hasCarriedPackage ? Number(carriedLength) : null,
+                width_in: hasCarriedPackage ? Number(carriedWidth) : null,
+                height_in: hasCarriedPackage && Number.isFinite(Number(carriedHeight)) ? Number(carriedHeight) : null,
+                weight_hint_oz: hasCarriedPackage && Number.isFinite(Number(carriedWeightOz)) ? Number(carriedWeightOz) : null,
             })
             .select("id, short_code")
             .single();

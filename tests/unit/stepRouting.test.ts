@@ -86,7 +86,9 @@ describe("stepToSlug", () => {
 
 describe("stepsForPath", () => {
   it("returns full-label steps including the new step 11 verify", () => {
-    expect(stepsForPath("full_label")).toEqual([0, 1, 10, 11, 12, 13]);
+    // Step 14 (package) split out of 10 on 2026-08-18 so the ship-from
+    // address and the parcel can be deferred independently.
+    expect(stepsForPath("full_label")).toEqual([0, 1, 10, 14, 11, 12, 13]);
   });
 
   it("returns flex steps", () => {
@@ -94,7 +96,7 @@ describe("stepsForPath", () => {
   });
 
   it("defaults to full-label when path is null", () => {
-    expect(stepsForPath(null)).toEqual([0, 1, 10, 11, 12, 13]);
+    expect(stepsForPath(null)).toEqual([0, 1, 10, 14, 11, 12, 13]);
   });
 });
 
@@ -102,7 +104,8 @@ describe("nextStep / prevStep", () => {
   it("next walks the full-label sequence including verify", () => {
     expect(nextStep(0, "full_label")).toBe(1);
     expect(nextStep(1, "full_label")).toBe(10);
-    expect(nextStep(10, "full_label")).toBe(11);
+    expect(nextStep(10, "full_label")).toBe(14);
+    expect(nextStep(14, "full_label")).toBe(11);
     expect(nextStep(11, "full_label")).toBe(12);
     expect(nextStep(12, "full_label")).toBe(13);
     expect(nextStep(13, "full_label")).toBeNull();
@@ -182,7 +185,9 @@ describe("canAccessStep", () => {
   });
 
   it("allows step 11 when 0, 1, 10 are completed", () => {
-    expect(canAccessStep(11, [0, 1, 10], "full_label")).toBe(true);
+    expect(canAccessStep(11, [0, 1, 10, 14], "full_label")).toBe(true);
+    // …and 14 is now genuinely required in between.
+    expect(canAccessStep(11, [0, 1, 10], "full_label")).toBe(false);
   });
 
   it("blocks steps not in the path", () => {
@@ -204,11 +209,12 @@ describe("firstIncompleteUrl", () => {
   });
 
   it("returns the verify URL when through shipping is completed", () => {
-    expect(firstIncompleteUrl([0, 1, 10], "full_label")).toBe("/onboarding/full-label/verify");
+    expect(firstIncompleteUrl([0, 1, 10], "full_label")).toBe("/onboarding/full-label/package");
+    expect(firstIncompleteUrl([0, 1, 10, 14], "full_label")).toBe("/onboarding/full-label/verify");
   });
 
   it("returns the last step URL when everything is completed", () => {
-    expect(firstIncompleteUrl([0, 1, 10, 11, 12, 13], "full_label")).toBe(
+    expect(firstIncompleteUrl([0, 1, 10, 14, 11, 12, 13], "full_label")).toBe(
       "/onboarding/full-label/label",
     );
   });
