@@ -2,14 +2,14 @@
 title: Onboarding — replace the path picker with "Who's sending the package?"
 slug: onboarding-who-is-sending
 project: sendmo
-status: decided
+status: shipped
 blocked_on: null
 created: 2026-08-17
-last_updated: 2026-08-17 (decided + implemented)
+last_updated: 2026-08-18 (merged via PR #63)
 reviewed: 2026-08-17
 decided: 2026-08-17
-executed: null
-pr: null
+executed: 2026-08-17
+pr: 63
 author: Claude Opus 5 — drafted from a John session that started as "this UI looks sloppy" on /onboarding and escalated to "simplify this whole step, in the context of the buyer option being released." Findings measured in a live browser against the running dev server; grounded in stepRouting.ts, migrations 001/040, and two decided proposals (seller-link-buyer-pays, label-confirmation-email-by-role). Mockups in previews/onboarding-simplification-concepts.html.
 reviewer: Claude Fable 5 — fresh-eyes session, loaded cold 2026-08-17; verified every cited file/line against the working tree (stepRouting.ts, RecipientFlowContext.tsx, App.tsx, Index.tsx, Dashboard.tsx, RecipientStepPathChoice.tsx, RecipientStepAddress.tsx, MagicGuestimator.tsx, labels/index.ts, migrations 001/040) and read both cited decided proposals in full
 outcome: approve-with-changes
@@ -354,4 +354,4 @@ outcome:     approve-with-changes — "go ahead and begin execution on this"
 
 Approved to build with the review's blockers folded in. OQ2–OQ4 took the reviewer's recommended defaults. **OQ1 was ruled on directly by John (2026-08-17): "SendMo for Sellers"** — see the author response for what was preserved alongside it and the one flagged concern (eBay). **OQ3 (positioning) has still not been separately ruled on** and is flagged as cheap to reverse: it's the hero subcopy plus a SPEC paragraph.
 
-Status → decided. Implementation on `feat/onboarding-who-is-sending`.
+Status → shipped. Merged to `main` via [PR #63](https://github.com/jsa7cornell/Sendmo/pull/63) (merge commit `c3b8024`) on 2026-08-18, after a code review that found and fixed three defects in the new branching logic — see the LOG entry.

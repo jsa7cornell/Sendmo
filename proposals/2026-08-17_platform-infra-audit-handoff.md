@@ -112,7 +112,25 @@ PLAYBOOK Rule 21 says "CI takes ~12 min." PR #63's run took **35m0s**.
 
 Contributing factors in [`playwright.config.ts`](../playwright.config.ts): `workers: 1` on CI (vs. 5 locally) and `retries: 2`. Serial execution plus two retries of anything failing is a plausible 3× on its own — which also means **the retry budget is being spent on specs that are expected to fail**, since nothing gates on them.
 
-Worth measuring rather than assuming: if a chunk of those 35 minutes is retrying known-red specs, fixing A1/A2 speeds up CI as a side effect. Either way PLAYBOOK Rule 21's "~12 min" should be corrected to observed reality so nobody treats a normal run as hung.
+**Now measured, not assumed** (2026-08-18, during the PR #63 merge). The e2e step *is* the run: everything through "Install Playwright Browsers" completes in the first couple of minutes, and the remaining ~30 lives entirely in the two Playwright steps. With `workers: 1` and `retries: 2`, the 16 red specs from A0 execute **48 times**, each burning its full 30s `toBeVisible` timeout — roughly 24 minutes of pure waiting for a step that cannot fail the build and whose report is overwritten before upload (A2). Fixing A0 therefore fixes most of A3 for free.
+
+### A3b. No `concurrency` group — every push leaves the previous run burning ~35 minutes
+
+Discovered while merging PR #63: two runs were in flight simultaneously — `32094374539` for `7b6e420` and `32095165618` for `59b5755` — because [`test.yml`](../.github/workflows/test.yml) declares no `concurrency` block, so pushing a new commit does not cancel the superseded run for the same branch.
+
+Each run costs ~35 minutes of runner time, and at A3's cadence a normal review loop of three or four pushes leaves three or four full runs grinding in parallel on results nobody will read. It also makes "is CI done?" ambiguous, since `gh run list --limit 1` may be answering about a SHA you have already replaced.
+
+Standard fix, a few lines:
+
+```yaml
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+```
+
+Cheap, independent of every other finding here, and it compounds with A0/A3 — shorter runs *and* fewer of them.
+
+Either way PLAYBOOK Rule 21's "~12 min" should be corrected to observed reality so nobody treats a normal run as hung.
 
 ### A4. Five e2e specs silently self-skip on missing env
 
