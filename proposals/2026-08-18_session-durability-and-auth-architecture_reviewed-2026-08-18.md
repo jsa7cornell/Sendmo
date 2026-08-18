@@ -2,17 +2,17 @@
 title: Session durability — why SendMo logs John out, and the auth architecture to fix it
 slug: session-durability-and-auth-architecture
 project: sendmo
-status: draft
+status: reviewed
 blocked_on: null
 created: 2026-08-18
-last_updated: 2026-08-18 15:10
-reviewed: null
+last_updated: 2026-08-18 16:05
+reviewed: 2026-08-18
 decided: null
 executed: null
 pr: null
 author: Claude Opus 5 — from a John session opening "sendmo logs me out nearly every day; we've tried to fix this before and it didn't work." Researched prior LOG attempts, then measured production directly (auth.sessions, auth.refresh_tokens, auth service logs), read the auth-js 2.97 source, probed the live Vercel routing, and compared against the Inlet codebase at John's direction. Market research covers the IETF browser-apps draft, WebKit ITP, and Clerk/Auth0/CIAM session-lifetime norms.
-reviewer: null
-outcome: null
+reviewer: Claude Fable 5 — fresh-eyes session per PROPOSAL-REVIEW-PROTOCOL; independently re-verified the auth-js source, live probes, config.toml, and surface counts before reviewing
+outcome: approve-with-changes
 ---
 
 > **What this is in one line:** the two prior "session length" fixes aimed at the server, but production data shows the server already grants 35-day sessions — the session is being destroyed **inside the browser**, and the durable fix is to move the long-lived credential out of `localStorage` and behind a server-set `HttpOnly` cookie, which is also what the relevant IETF draft recommends for apps like this one.
@@ -362,3 +362,82 @@ The one adjacency: `src/contexts/RecipientFlowContext.tsx` is in PR #68's diff *
 - [Supabase — custom domains](https://supabase.com/docs/guides/platform/custom-domains)
 - [Supabase — server-side auth](https://supabase.com/docs/guides/auth/server-side)
 - [FusionAuth — BFF security architecture](https://fusionauth.io/blog/backend-for-frontend-security-architecture)
+
+---
+
+## Review
+
+> **reviewer:** Claude Fable 5 — fresh session, proposal loaded cold; re-verified claims against the pinned `auth-js`/`supabase-js` sources, live probes, `config.toml`, and the e2e harness before writing this.
+> **reviewed_at:** 2026-08-18 16:05
+> **verdict:** approve-with-changes — Phase 0 + Phase 1 can proceed once B1/B3 are addressed; Phase 2 stays gated on Phase 0 evidence **plus** resolving B2 and B4 in the design.
+
+### Verification performed (what I checked rather than trusted)
+
+- `auth-js@2.97` `_recoverAndRefresh()` — quote is exact. One precision gap that matters, see B1.
+- `handleError` in `auth-js/dist/main/lib/fetch.js`: `NETWORK_ERROR_CODES = [502, 503, 504]`. Only those three statuses (plus true network failures) become `AuthRetryableFetchError`.
+- Live probes reproduced 2026-08-18 16:00: `https://www.sendmo.co/dashboard` → 200, no redirect; fresh `https://sendmo.co/api/review-probe-<ts>` → 200 / `text/html` / `x-vercel-cache: HIT`. Both §1.4-#1 and §4.1 confirmed independently.
+- `config.toml` allowlists only `sendmo.co/**` + localhost — the www claim holds.
+- §5 counts: 27 exported functions in `api.ts` (verified by grep), and the six user-token Edge Functions named are exactly the six that call `auth.getUser` on a user Bearer (`links`, `labels`, `payment-methods`, `tracking`, `cancel-label`, `payments`). Accurate.
+- `supabase-js@2.97` ships the `accessToken` hook with the documented two-client constraint. Accurate.
+- Prior fixes confirmed still in place in [AuthContext.tsx:93-156](../src/contexts/AuthContext.tsx).
+
+### Summary
+
+The diagnosis work is the best part of this proposal: it measured production before architecting, and it says plainly what it has not proven. The recommended destination (Option A) is the right shape and the phasing is honest. Three things need work before it's safe to act on: the 429 evidence is weaker than the prose implies (B1), Option A as sketched re-creates the exact concurrent-refresh/reuse-detection failure class this codebase already got burned by — just moved server-side (B2), and the migration silently breaks the authed e2e infrastructure that was rebuilt four days ago in PR #64, a cost missing from §5 entirely (B4).
+
+### Blocking issues
+
+**B1 — The 429 evidence comes from a different rate-limit bucket than the one that can kill a session.**
+- *Location:* §1.3 last paragraph; LOG 2026-08-18 entry repeats it.
+- *Issue:* The observed `429: email rate limit exceeded` is GoTrue's **email-send** limit (magic-link/OTP sends — project-wide, tied to SMTP). A session-killing 429 would have to come from `/auth/v1/token?grant_type=refresh_token`, which sits in a separate, far more generous per-IP bucket. An email 429 is evidence that *the project emits 429s somewhere*, not that John's refresh calls ever see one. Separately, "nearly every day" requires the refresh to fail nearly every day — a transient 429/interception doesn't naturally produce a *daily* rhythm, while a browser configured to clear site data on exit (or an extension doing so) produces exactly that rhythm. On frequency alone, cause #3 deserves higher prior than the prose gives it; "prime suspect" for #2 overstates. Also imprecise: retryable is not "network failures and 5xx" — it is network failures plus **502/503/504 only**. A plain **500 also destroys the session**, which slightly widens the bug (good for the argument, wrong in the text).
+- *Suggested fix:* Correct §1.3 and the LOG entry (bucket distinction + 502/503/504). Phase 0's breadcrumb must capture the failed refresh's **endpoint + status + body** (this answers §9-OQ1: yes, capture the body). Re-rank #3 to co-equal prime suspect. Cheap addition with high diagnostic yield: also breadcrumb `navigator.cookieEnabled` and whether Chrome's "clear on exit" pattern fits (breadcrumbs vanish at browser restart, not mid-day).
+
+**B2 — Option A re-creates the concurrent-refresh race server-side, and the design doesn't address it.**
+- *Location:* §6 Option A flow + `app_sessions` sketch.
+- *Issue:* Supabase refresh tokens are single-use with rotation + reuse detection — the mechanism behind the 2026-05-15 incident this very file cites. `GET /api/session/token` on "every app load" means two tabs opened together (or one tab + a hard refresh) fire two concurrent server-side refreshes with the **same stored refresh token**. Outside the ~10s reuse window, GoTrue revokes the token family — and now the durable 90-day session dies from the same class of bug the proposal exists to eliminate, except server-side where the retry wrapper can't save it. The sketch has no serialization, no atomic swap of the rotated token, and no short-term access-token cache to make concurrent loads not refresh at all.
+- *Suggested fix:* Design this before Phase 2 is approved: per-session `SELECT … FOR UPDATE` (or advisory lock) around the GoTrue refresh; store the rotated refresh token in the same transaction; cache the minted access token (with its expiry) on the session row and serve it to any request arriving while it has >5 min of life, so concurrent loads share one token instead of racing. This also mostly answers §9-risk-2's grace-window question.
+
+**B3 — Phase 0's "server-set cookie" has no server that can set it yet.**
+- *Location:* §7 Phase 0.
+- *Issue:* §4.1 proves `/api/*` is swallowed by the CDN, and the rewrite fix is scheduled *later* (Phase 1/2). As written, day-1 Phase 0 depends on an endpoint that cannot receive requests. First thing an implementer hits.
+- *Suggested fix:* Pick one explicitly: (a) pull the vercel.json rewrite fix into Phase 0 (it then needs the §4.1 re-probe on a preview first, per risk 5); (b) extend `middleware.ts`'s matcher — it already runs ahead of the CDN cache, the file says so in its own header comment; or (c) accept a JS-set cookie for Phase 0 — John is on Chrome (§4.2: zero Safari), where JS-set cookies are not lifetime-capped, and Phase 0 is diagnostic, not the durable fix. (c) is the cheapest and fully adequate for the discrimination table.
+
+**B4 — Option A breaks the authed e2e infrastructure rebuilt in PR #64 four days ago, and §5 doesn't count it.**
+- *Location:* §5 (sizing) + §6 Option A "What changes".
+- *Issue:* The entire authed e2e strategy — [mock-admin-auth.ts](../tests/e2e/mock-admin-auth.ts), [supabase-env.ts](../tests/e2e/supabase-env.ts), `global-setup.ts` — authenticates by planting a session under `sb-<ref>-auth-token` in **localStorage** (mock-admin-auth's own header comment explains supabase-js reads it from there on cold load). Option A stops reading localStorage: the data client gets its token from `accessToken: () => …` fed by `/api/session/token`. Every authed spec goes red (or worse, silently unauthed — the exact A0 failure mode LOG 2026-08-18 documents). The 2026-08-18 de-rot was ~15 specs; this would undo it in one merge.
+- *Suggested fix:* Add a test-plan line item to Phase 2: specs mint sessions by mocking `/api/session/token` (+ setting the `sm_session` cookie via Playwright's `context.addCookies`), with `supabase-env.ts` as the single derivation point again. Budget it in the 4–5 day estimate — it is real work, and per Rule 12 the regression specs come *with* the migration, not after.
+
+### Non-blocking concerns
+
+**N1 — A middleware-based variant of Option A deserves a paragraph.** The proposal already trusts `middleware.ts` as the fallback for the rewrite fix (§4.1) — but middleware could host the session endpoints themselves, sidestepping the "one bad negative-lookahead breaks every route" risk (risk 5) entirely. Edge Middleware sets real `Set-Cookie` headers (ITP-exempt, same as a serverless function). Maybe rejected for good reasons (edge runtime limits, crypto for token encryption at the edge) — but reject it in writing.
+
+**N2 — The Phase 1 retry wrapper needs scoping rules.** It must apply only to `/auth/v1/token` requests, cap retries with backoff, and honor `Retry-After` on 429 — an unbounded retry against a persistently-429ing endpoint from many tabs is a self-inflicted thundering herd. Note auth-js already retries `AuthRetryableFetchError` internally, so the wrapper's job is *reclassification* (throw a network-shaped error / return a synthetic 503 for 429 and 500), not its own retry loop — say which, because doing both stacks retries.
+
+**N3 — `app_sessions.id` should be hashed at rest.** The cookie carries the session id; the row stores it in plaintext as the PK. A read-only DB leak then yields forgeable cookies directly, independent of the refresh-token encryption. Store `sha256(id)` as the lookup key (the API-key pattern), and risk-3's "DB compromise" story improves measurably for one line of code.
+
+**N4 — §9-risk-4 (SameSite) can be answered now, not deferred:** `Strict` *does* break the flows named — on any top-level cross-site arrival (OAuth return, `/s/:shortCode` from iMessage, `/t/` from email) the cookie is not sent, so the first `GET /api/session/token` fails and the user lands signed-out until reload. `Lax` sends the cookie on top-level GET navigations and is the standard choice for exactly this. Since the exchange/refresh endpoints are a GET (idempotent, mints nothing dangerous cross-site) and any state-changing session endpoint is a POST (which Lax does not send cross-site), Lax is not a meaningful CSRF concession here. Recommend: decide `Lax` in this proposal.
+
+**N5 — Protocol structure: no Test plan / Verification-walkthrough sections.** The protocol's body template (sections 3–6) is approximated but a Test plan is genuinely absent, and B4 is the kind of hole that section exists to catch. Phase 3 covers production verification; add the test-layer plan (which of TESTING.md's four layers covers what) before Phase 2 starts.
+
+### Nits
+
+- §1.3 / LOG entry: "network failures and 5xx" → "network failures and 502/503/504; a 500 or 429 destroys the session."
+- Frontmatter said `status: draft` while README says "needs review" — per protocol, submission is `in-review`. (Now moot; set to `reviewed`.)
+- Proposal says the 429 appeared "on John's project"; the LOG entry says "on John's IP". Same-bucket wording should be corrected under B1 anyway — make the two artifacts agree.
+- §7 Phase 1 item 5 sets "rotation on at 10s" without saying what the knob is (refresh-token reuse interval) — one clause, since John reads this.
+
+### Predicted pitfalls (what most likely goes wrong if shipped as written)
+
+1. **Reuse-detection revocation returns, server-side.** Two tabs on a cold morning → concurrent `/api/session/token` → refresh-token reuse → GoTrue revokes the family → 90-day session dead. Direct recurrence of the 2026-05-15 replay-detection class (LOG 2026-05-15), migrated one layer down where the client retry wrapper can't reach it. (B2.)
+2. **The authed e2e suite goes dark in the Phase 2 merge.** Specs plant localStorage sessions the app no longer reads; per LOG 2026-08-18 A0, the failure mode isn't red specs — it's specs running *unauthenticated* against `/login` redirects, i.e., the exact "meaningless signal" class just eradicated. (B4.)
+3. **The vercel.json negative-lookahead ships under-verified.** This file's own history (2026-05-15 Bug 4, the dead `api/s/[shortCode].ts`, the OG-middleware workaround) shows every prior interaction with the SPA catch-all went subtly wrong. Risk 5's preview-deploy probe must also re-verify the `/s/:shortCode` middleware and OG path — the middleware fetches `index.html` from its own origin, and a rewrite change alters what that fetch returns for non-excluded paths.
+4. **Phase 2 iteration burns the account-wide Vercel Hobby deploy budget.** Session-endpoint development is preview-deploy-heavy (cookies need real domains); the Hobby cap is shared across all of John's projects (2026-08-17 infra-audit handoff), so a busy Phase 2 afternoon can block an unrelated prod hotfix.
+5. **Phase 0 misdiagnoses if its own instrumentation is storage-shaped like the thing it measures.** If breadcrumbs live only in script-writable storage (see B3) and the cause is a whole-origin wipe, evidence of the wipe is destroyed by the wipe — "breadcrumbs gone" then can't distinguish "wipe" from "breadcrumbs never written" (e.g., the endpoint 404ing per §4.1). Log a first breadcrumb receipt server-side (one row) so absence is distinguishable from destruction.
+
+### What the proposal got right
+
+- **Telemetry before architecture** (Rule 20 applied to its own history): querying `auth.sessions` before proposing anything is why this proposal won't be attempt #3 of fixing the wrong layer. The 35-day session row is the single most load-bearing fact in the document and it's real.
+- **Every checkable claim checked out.** Source quote exact, both live probes reproduce, §5 counts accurate, `accessToken` hook + two-client constraint real, config.toml www gap real. This is the standard.
+- **Honest anti-evidence.** §4.2 (zero Safari) prominently reported *against* the proposal's own urgency, and §7 explicitly legitimizes the "Phase 0+1 now, Phase 2 at launch" position. Rare and valuable.
+- **Withdrawing the Inlet sensitivity argument** while keeping the narrower, correct criticism (token design vs architecture) — and the `app_sessions` design genuinely fixes the thing it criticizes.
+- **The PR #68 adjacency check** (§8) — concrete, file-level, and it un-blocks John's other work-stream instead of defensively pausing it.

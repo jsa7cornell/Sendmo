@@ -44,6 +44,8 @@ The ~15 logins on 2026-08-18 06:19–06:46 UTC were all `user_agent: node` — t
   n/a-category: infra
   n/a-reason: Diagnosis session — no code changed. Findings are production queries (`auth.sessions`, `auth.refresh_tokens`, auth service logs), a read of the pinned `auth-js` source, and live `curl` probes against prod, all reproduced inline above.
 
+**Correction (2026-08-18 review, [proposal reviewed](proposals/2026-08-18_session-durability-and-auth-architecture_reviewed-2026-08-18.md) B1):** two precision fixes to this entry. (1) Retryable is not "network error or 5xx" — `auth-js` `handleError` retries only network failures and **502/503/504**; a plain **500 also destroys the session**. (2) The `429: email rate limit exceeded` is GoTrue's *email-send* bucket — the refresh endpoint (`/token?grant_type=refresh_token`) sits in a separate, much higher per-IP bucket and can never return that error, so the 429 log line is not direct evidence for the refresh-failure cause. A daily-rhythm symptom fits cause #3 (storage cleared on browser exit) at least as well; Phase 0 instrumentation discriminates.
+
 ---
 
 ### [2026-08-18] E2E de-rot — CI's e2e signal was meaningless, not just unreported
