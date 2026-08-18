@@ -109,7 +109,7 @@ export default function FlexPaymentStep({
 }: Props) {
   // isAdmin: mode badge + test-card hint are admin dogfood affordances —
   // customers see a plain checkout (customer-live-payments review N1).
-  const { session, user, liveMode, isAdmin } = useAuth();
+  const { session, liveMode, isAdmin } = useAuth();
   const estimate = getEstimate(input);
 
   const [linkId, setLinkId] = useState<string | null>(initialLinkId);
@@ -167,12 +167,6 @@ export default function FlexPaymentStep({
     setSetupIntentId(null);
     setClientSecret(null); // re-opens the SetupIntent effect below
   }
-
-  // Best-effort cardholder name for the manual-entry form. OAuth users carry
-  // it in user_metadata; magic-link users may not, in which case we prefill
-  // nothing and let them type it. Never sourced from the Link wallet.
-  const metadataName = (user?.user_metadata as { full_name?: string; name?: string } | undefined);
-  const defaultCardholderName = metadataName?.full_name ?? metadataName?.name ?? undefined;
 
   // Keep local state in sync if the parent supplies a linkId mid-flow
   // (e.g., onboarding restores from useRecipientFlow state).
@@ -566,7 +560,6 @@ export default function FlexPaymentStep({
                 linkId={linkId}
                 accessToken={session?.access_token ?? null}
                 bypassLink={bypassLink}
-                defaultCardholderName={defaultCardholderName}
                 onRestart={restartCardCollection}
                 onActivated={() => {
                   onContinue(linkId, shortCode ?? "");
@@ -603,14 +596,12 @@ function FlexSetupForm({
   linkId,
   accessToken,
   bypassLink,
-  defaultCardholderName,
   onRestart,
   onActivated,
 }: {
   linkId: string;
   accessToken: string | null;
   bypassLink: boolean;
-  defaultCardholderName?: string;
   onRestart: () => void;
   onActivated: () => void;
 }) {
@@ -774,9 +765,14 @@ function FlexSetupForm({
           // types the card themselves and no stored profile can attach a
           // mismatched name to it.
           wallets: { link: bypassLink ? "never" : "auto" },
-          ...(defaultCardholderName
-            ? { defaultValues: { billingDetails: { name: defaultCardholderName } } }
-            : {}),
+          // No defaultValues for billingDetails.name, deliberately. Prefilling
+          // the account holder's name is wrong whenever the cardholder differs
+          // — a spouse's or business card, or an OAuth profile carrying a
+          // nickname — and an already-filled field is one users skip past. That
+          // is the same mismatched-name condition Link suppression above exists
+          // to avoid. LOG 2026-08-16 also falsified the premise: the 22:49
+          // attempt sent billing_details.name = null with no Link and drew a
+          // byte-identical rejection, so the name was never the cause.
         }}
       />
 

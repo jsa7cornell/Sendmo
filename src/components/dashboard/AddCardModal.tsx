@@ -28,7 +28,7 @@ interface Props {
 export default function AddCardModal({ open, onClose, onSuccess }: Props) {
   // isAdmin: mode badge + test-card hint are admin dogfood affordances —
   // customers see a plain add-card form (customer-live-payments review N1).
-  const { session, user, liveMode, isAdmin } = useAuth();
+  const { session, liveMode, isAdmin } = useAuth();
   const [retryTrigger, setRetryTrigger] = useState(0);
   const idempotencyNonceRef = useRef<number>(0);
   const [clientSecret, setClientSecret] = useState<string | null>(null);
@@ -56,11 +56,23 @@ export default function AddCardModal({ open, onClose, onSuccess }: Props) {
     setRetryTrigger((n) => n + 1);
   }
 
-  // Best-effort cardholder name for manual entry. OAuth users carry it in
-  // user_metadata; magic-link users may not, in which case we prefill nothing.
-  // Never sourced from the Link wallet.
-  const metadataName = (user?.user_metadata as { full_name?: string; name?: string } | undefined);
-  const defaultCardholderName = metadataName?.full_name ?? metadataName?.name ?? undefined;
+  // Link suppression lasts one modal session, no longer. This modal is never
+  // unmounted — Dashboard renders it unconditionally and it returns null while
+  // closed — so `bypassLink` would otherwise survive every close and disable
+  // Link autofill for the rest of the page, including later card-adds that
+  // never failed. Reset on the way out rather than in an effect keyed on
+  // `open`, which would be a setState-in-effect (lint) for no benefit.
+  //
+  // These are the only two exits; a third would need the same reset.
+  function closeAndReset() {
+    setBypassLink(false);
+    onClose();
+  }
+
+  function succeedAndReset() {
+    setBypassLink(false);
+    onSuccess();
+  }
 
   // Fetch SetupIntent client_secret each time the modal opens. The idempotency
   // nonce is regenerated per fetch so reopening the modal never collides with
@@ -133,7 +145,7 @@ export default function AddCardModal({ open, onClose, onSuccess }: Props) {
           </div>
           <button
             type="button"
-            onClick={onClose}
+            onClick={closeAndReset}
             className="p-1.5 rounded-lg hover:bg-muted transition-colors"
             aria-label="Close"
           >
@@ -162,10 +174,9 @@ export default function AddCardModal({ open, onClose, onSuccess }: Props) {
               options={elementsOptions}
             >
               <SetupForm
-                onSuccess={onSuccess}
+                onSuccess={succeedAndReset}
                 onRestart={restartCardCollection}
                 bypassLink={bypassLink}
-                defaultCardholderName={defaultCardholderName}
               />
             </Elements>
           )}
@@ -185,12 +196,10 @@ function SetupForm({
   onSuccess,
   onRestart,
   bypassLink,
-  defaultCardholderName,
 }: {
   onSuccess: () => void;
   onRestart: () => void;
   bypassLink: boolean;
-  defaultCardholderName?: string;
 }) {
   const stripe = useStripe();
   const elements = useElements();
@@ -265,9 +274,14 @@ function SetupForm({
           // the card themselves and no stored profile can attach a mismatched
           // name to it.
           wallets: { link: bypassLink ? "never" : "auto" },
-          ...(defaultCardholderName
-            ? { defaultValues: { billingDetails: { name: defaultCardholderName } } }
-            : {}),
+          // No defaultValues for billingDetails.name, deliberately. Prefilling
+          // the account holder's name is wrong whenever the cardholder differs
+          // — a spouse's or business card, or an OAuth profile carrying a
+          // nickname — and an already-filled field is one users skip past. That
+          // is the same mismatched-name condition Link suppression above exists
+          // to avoid. LOG 2026-08-16 also falsified the premise: the 22:49
+          // attempt sent billing_details.name = null with no Link and drew a
+          // byte-identical rejection, so the name was never the cause.
         }}
       />
       {error && (
