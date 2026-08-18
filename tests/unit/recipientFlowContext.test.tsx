@@ -42,11 +42,19 @@ beforeEach(() => {
   mockOnAuthStateChange.mockReturnValue({
     data: { subscription: { unsubscribe: vi.fn() } },
   });
-  // Reset session-scoped persistence the provider hydrates from on mount.
-  try {
-    window.sessionStorage.removeItem("sendmo:recipient_flow:v1");
-  } catch {
-    /* jsdom may not expose sessionStorage in all environments */
+  // Reset the persistence the provider hydrates from on mount — BOTH stores,
+  // since 62e2ac1 moved the flow to localStorage (readStored falls back to
+  // sessionStorage for pre-deploy drafts). Clearing only sessionStorage here
+  // was a CI-only leak: this repo's local jsdom localStorage has no methods, so
+  // persist() no-ops locally and the leak was invisible, while CI's working
+  // localStorage carried one test's filled draft into the next ("tryAdvance
+  // with missing data" saw a hydrated step 1 and navigated).
+  for (const store of ["localStorage", "sessionStorage"] as const) {
+    try {
+      window[store].removeItem("sendmo:recipient_flow:v1");
+    } catch {
+      /* jsdom may not expose this store in all environments */
+    }
   }
 });
 
