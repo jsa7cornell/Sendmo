@@ -12,6 +12,35 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-18] E2E de-rot — CI's e2e signal was meaningless, not just unreported
+
+**Category:** fix | Testing / CI
+**Cross-link:** [PR #64](https://github.com/jsa7cornell/Sendmo/pull/64) | [proposals/2026-08-17_platform-infra-audit-handoff.md](proposals/2026-08-17_platform-infra-audit-handoff.md) (A0, A0b, A2, A3b, A4b, N1) | [supabase-env.ts](tests/e2e/supabase-env.ts) | [mock-admin-auth.ts](tests/e2e/mock-admin-auth.ts) | [test.yml](.github/workflows/test.yml)
+
+**Browser-verified:** spec: `tests/e2e/admin-refund-flow.spec.ts` (`Successful refund shows success state in modal`) — variants-covered: admin refund success state, reconciliation tab render, label-flow payment hand-off; full suite green locally and under CI's env.
+
+**The number that mattered.** Run `32100723813` reported `success` on **every step** while its artifact recorded **80 total / 43 passed / 28 failed / 9 skipped**. Locally the same commit had 0 failures. CI's e2e result was not merely invisible (A1/A2) — it was *meaningless*, so fixing the reporting alone would have surfaced noise.
+
+**N1 root cause — host mismatch.** Every spec hardcoded `https://fkxykvzsqdjzhurntgah.supabase.co` as its `page.route` target, and several hardcoded `sb-<prod-ref>-auth-token` as the session key. `test.yml` builds the app with `VITE_SUPABASE_URL=http://localhost:54321`, so the app requested localhost while the mocks listened on production: routes never matched, requests hit an address with nothing on it. `tests/e2e/supabase-env.ts` now derives both from the env var Vite inlines — 11 duplicated literals across 10 specs collapse into one derived source. **The two admin specs were absent from the failure list because the A0 work had already made them host-agnostic — that is what identified the cause.**
+
+**A0 — 15 of 16 red specs were one bug, and not text rot.** Both admin specs mocked HTTP, but supabase-js reads its session from **localStorage** on cold load and never issues the request they intercepted. `user` stayed null, `Admin.tsx:245` redirected, and every assertion waited for admin UI on `/login`. Probed directly: `/admin?tab=reconciliation` → `/login?redirectTo=/admin`. Structurally broken, never drifted.
+
+**Once the page rendered, five "failures" were strict-mode violations, not misses** — `/Reconciliation/i` matched 3 buttons, `/Net margin/` 3, `COMP` 4, `/5\.00/` 2. A loose regex that matched nothing while the page was broken matches several once it works; the second failure mode reads nothing like the first.
+
+**Product bug the red specs existed to catch.** `Admin.handleRefunded` cleared `refundTarget` on success, and the modal is mounted on `{refundTarget && …}` — so the dialog unmounted the instant a refund succeeded. An admin confirming a refund saw it vanish with no confirmation of the amount, and `RefundModal`'s success state (amount + Done) was unreachable in production. The modal owns its dismissal now; the 10s re-disable window is unchanged.
+
+**A4 gap closed.** `account-budget-admin` gated on `playwright/.auth/user.json`, so it self-skipped in CI — a money path with zero CI coverage, indistinguishable from passing. Now uses the synthetic session and runs everywhere.
+
+**Gotcha — a stale auth file fails opaquely instead of skipping.** `playwright/.auth/user.json` is gitignored but persists between runs, so a session minted against prod survives the suite being pointed elsewhere. The app then looks for `sb-localhost-auth-token`, the stale file supplies `sb-<prod-ref>-auth-token`, and specs run un-authenticated. `hasAuthStateForCurrentProject()` verifies the stored key matches the project the app is built against.
+
+**Gotcha — do not assert anything Stripe renders in the mocked suite.** CI sets no publishable key. `label-flow`'s "Pay $X & generate label" button never renders there; the rate summary line does, because it sits outside `StripePaymentForm`.
+
+**A2/A3b.** Each Playwright invocation gets its own report dir and artifact (the authed run used to overwrite the main suite before upload — the artifact preserved 1 test of 80). `test.yml` gained a concurrency group; superseded runs cancel on non-`main` refs.
+
+**Measured.** Local: 57 passed / 5 skipped / 16 failed → **75 / 5 / 0** (43s). Under CI's env: 45 passed / 30 failed (4.2m) → **74 passed / 6 skipped / 0 failed** (1.6m). Real CI wall-clock **35–37 min → 14m40s**; PLAYBOOK Rule 21 corrected from "~12 min" to ~15.
+
+**Still open (John's calls):** A1 — whether e2e becomes blocking, now that a green run means something. N2 — the Vercel dashboard Build Command is `mkdir -p dist && cp index.html dist/`; `vercel.json` wins today (prod verified serving a real Vite build) but deleting that one line would ship an assetless `index.html` with a green deploy. Vercel plan — tabled; note Hobby forbids commercial use and SendMo processes payments.
+
 ### [2026-08-17] Infra-audit handoff reviewed — A0 root-caused, two new findings, #62 unblocked
 
 **Category:** review | Infrastructure
