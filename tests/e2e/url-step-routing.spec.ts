@@ -323,7 +323,10 @@ test.describe("URL-based step routing", () => {
 
     // Now on step 10
     await expect(page).toHaveURL(/\/onboarding\/full-label\/shipping$/);
-    await expect(page.getByRole("heading", { name: /Origin address/i })).toBeVisible({ timeout: 5000 });
+    // Step-10 landmark. The "Origin address" heading was removed 2026-08-18 —
+    // the card is now headed by the "Where's it shipping from?" fieldset legend,
+    // which is the more accurate landmark for the same step.
+    await expect(page.getByText(/Where's it shipping from\?/i)).toBeVisible({ timeout: 5000 });
 
     // Hit browser back
     await page.goBack();

@@ -78,10 +78,6 @@ export default function RecipientStepFullShipping({
   // collapse once the user moves on and comes back.
   const [originWasCompleteOnOpen] = useState(() => isSelfSender && isOriginComplete(state.originAddress));
   const [editingOrigin, setEditingOrigin] = useState(false);
-  // Always false while this step is mounted — picking the other option navigates
-  // to the shipping-link path. Modelled as state so the control reads as a real
-  // two-way choice rather than a button that only fires one way.
-  const [deferOrigin, setDeferOrigin] = useState(false);
   const originConfirmable = originWasCompleteOnOpen && !editingOrigin;
   const [ratesLoading, setRatesLoading] = useState(false);
   const [ratesError, setRatesError] = useState<string | null>(null);
@@ -224,18 +220,17 @@ export default function RecipientStepFullShipping({
             <div className="space-y-2">
               <button
                 type="button"
-                onClick={() => setDeferOrigin(false)}
-                aria-pressed={!deferOrigin}
+                onClick={() => { /* already the current answer */ }}
                 className={cn(
                   "w-full flex items-start gap-3 rounded-xl border p-3.5 text-left transition-all",
-                  !deferOrigin ? "border-primary bg-primary/5" : "border-border hover:border-muted-foreground/30",
+                  "border-primary bg-primary/5",
                 )}
               >
                 <span className={cn(
                   "w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 mt-0.5",
-                  !deferOrigin ? "border-primary" : "border-muted-foreground/40",
+                  "border-primary",
                 )}>
-                  {!deferOrigin && <span className="w-2 h-2 rounded-full bg-primary" />}
+                  <span className="w-2 h-2 rounded-full bg-primary" />
                 </span>
                 <span className="min-w-0">
                   <span className="block text-sm font-medium text-foreground">I have their address</span>
@@ -246,17 +241,16 @@ export default function RecipientStepFullShipping({
               <button
                 type="button"
                 onClick={onNoAddress}
-                aria-pressed={deferOrigin}
                 className={cn(
                   "w-full flex items-start gap-3 rounded-xl border p-3.5 text-left transition-all",
-                  deferOrigin ? "border-primary bg-primary/5" : "border-border hover:border-muted-foreground/30",
+                  "border-border hover:border-muted-foreground/30",
                 )}
               >
                 <span className={cn(
                   "w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 mt-0.5",
-                  deferOrigin ? "border-primary" : "border-muted-foreground/40",
+                  "border-muted-foreground/40",
                 )}>
-                  {deferOrigin && <span className="w-2 h-2 rounded-full bg-primary" />}
+
                 </span>
                 <span className="min-w-0">
                   <span className="block text-sm font-medium text-foreground">The sender will fill this in</span>
@@ -270,9 +264,14 @@ export default function RecipientStepFullShipping({
         )}
 
         <div className="flex items-center justify-between mb-3">
-          <h3 className="text-sm font-semibold text-foreground">
-            {isSelfSender ? "Shipping from" : "Origin address"}
-          </h3>
+          {/* Only the 'self' branch needs a heading here: the 'other' branch is
+              already headed by the fieldset legend above, and rendering an
+              empty <h3> for it left a bare landmark in the a11y tree. */}
+          {isSelfSender ? (
+            <h3 className="text-sm font-semibold text-foreground">Shipping from</h3>
+          ) : (
+            <span />
+          )}
           {originConfirmable && (
             <button
               type="button"
