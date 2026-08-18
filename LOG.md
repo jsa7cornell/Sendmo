@@ -47,7 +47,17 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 CI's 75 passing now matches local's 75 exactly — the two environments agree, which is the actual point of the N1 fix. Before the A0 work the same workflow took 35–37 min. PLAYBOOK Rule 21 corrected from "~12 min" to **~4 min** (measured), not the ~15 an intermediate run suggested.
 
-**Still open (John's calls):** A1 — whether e2e becomes blocking, now that a green run means something. N2 — the Vercel dashboard Build Command is `mkdir -p dist && cp index.html dist/`; `vercel.json` wins today (prod verified serving a real Vite build) but deleting that one line would ship an assetless `index.html` with a green deploy. Vercel plan — tabled; note Hobby forbids commercial use and SendMo processes payments.
+**A1 — DECIDED 2026-08-18 (John): the mocked e2e suite is now BLOCKING.** `|| true` and `continue-on-error` are gone from the main Playwright step; a red suite stops the merge. Justified by run `32101768480` (81 total, 75 passed, 0 failed, 3m31s) — deterministic, fully mocked, and fast enough that gating on it costs ~4 min.
+
+The **authed** step stays non-blocking on purpose: it hits live GoTrue, so gating merges on it would couple every merge to Supabase's uptime. But its `|| true` is gone too. That was always the load-bearing half — the shell exited 0, so `continue-on-error` never engaged and GitHub recorded a clean green. With `continue-on-error` alone, a failure now renders as a visible warning that does not block. **Non-blocking and invisible are different things; the old config conflated them.**
+
+ESLint stays `|| true` — 30+ known pre-existing errors, tracked separately. Removing it would paint CI permanently yellow and train everyone to ignore it.
+
+**N2 — DONE 2026-08-18 (John's approval).** The Vercel dashboard's Build Command override was `mkdir -p dist && cp index.html dist/` — a no-op that copies one file and builds nothing. Cleared via `PATCH /v9/projects/prj_8UGjW3D4nJ9gfkxBxxCCuAG3h9NA` → `buildCommand: null`; verified by independent re-read. **Prior value recorded here for reversibility.**
+
+Nothing changed about how prod builds: `vercel.json`'s `"buildCommand": "npm run build"` took precedence then and still does, and prod was verified serving a real Vite build both before and after. What went away is the trap — deleting that one line from `vercel.json` as routine cleanup would have silently fallen back to the no-op, shipping an `index.html` referencing assets that were never built: a blank site with a **green** deploy and no error anywhere. The fallback is now the Vite framework preset, which is a real build.
+
+**Still open:** [#62](https://github.com/jsa7cornell/Sendmo/pull/62) — held at John's direction. Vercel plan — tabled; note Hobby forbids commercial use ("any method of requesting or processing payment") and SendMo processes payments through Stripe.
 
 ### [2026-08-17] Infra-audit handoff reviewed — A0 root-caused, two new findings, #62 unblocked
 

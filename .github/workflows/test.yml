@@ -45,9 +45,13 @@ jobs:
     - name: Install Playwright Browsers
       run: npx playwright install --with-deps chromium
 
-    - name: Run Playwright E2E Tests (non-blocking — Google Maps autocomplete + text drift; tracked separately)
-      run: npm run test:e2e || true
-      continue-on-error: true
+    # BLOCKING as of 2026-08-18. Fully mocked, deterministic, and green in CI
+    # (run 32101768480: 81 total, 75 passed, 0 failed) — a red result here now
+    # means a real regression, so it stops the merge. It was suppressed while
+    # the suite was failing 28 of 80 on a host mismatch; that is fixed
+    # (tests/e2e/supabase-env.ts).
+    - name: Run Playwright E2E Tests
+      run: npm run test:e2e
       env:
         # Own report dir — the authed step below runs Playwright again, and
         # both defaulting to playwright-report/ meant the second run
@@ -64,9 +68,15 @@ jobs:
       # The auth harness (tests/e2e/global-setup.ts) logs the dedicated test
       # user in against REAL GoTrue, so this step needs real Supabase values.
       # Scoped via -g "authed" to just the authed spec, so the mocked suite
-      # above (which runs against the localhost mock) is untouched. Non-blocking
-      # like the suite above, until the e2e de-rot makes the suite green.
-      run: npx playwright test tests/e2e/phone-gate.spec.ts -g "authed" --project=chromium || true
+      # above (which runs against the localhost mock) is untouched.
+      #
+      # Deliberately NOT blocking, unlike the mocked suite: this step depends on
+      # live Supabase, so making it a merge gate couples every merge to a third
+      # party's uptime. But `|| true` is gone — that was the half that made a
+      # failure render as a clean green `success`, because the shell exited 0 so
+      # `continue-on-error` never engaged. With only `continue-on-error`, a
+      # failure shows as a visible warning that does not block.
+      run: npx playwright test tests/e2e/phone-gate.spec.ts -g "authed" --project=chromium
       continue-on-error: true
       env:
         PLAYWRIGHT_HTML_REPORT: playwright-report-authed
