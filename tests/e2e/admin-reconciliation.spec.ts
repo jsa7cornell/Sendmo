@@ -12,6 +12,7 @@
  */
 
 import { test, expect, type Page } from "@playwright/test";
+import { mockAdminAuth } from "./mock-admin-auth";
 
 // ─── Shared fixtures ──────────────────────────────────────────────────────────
 
@@ -223,23 +224,25 @@ function mockSweep(page: Page) {
   });
 }
 
-// Mock Supabase auth so the page renders as admin.
-function mockSupabaseAuth(page: Page) {
-  return page.route("**/auth/v1/**", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        access_token: "mock-admin-token",
-        user: { id: "admin-user-id", email: "admin@sendmo.co", role: "authenticated" },
-      }),
-    });
-  });
+
+// Once the tab actually renders, three buttons match /Reconciliation/i: this
+// tab, AdminReconciliation's "Reconciliation" view-mode pill, and "Run
+// reconciliation now" — so the loose regex is a strict-mode violation, not a
+// match. The tab is the exact-named one in the nav strip, which always precedes
+// the panel in the DOM.
+function reconTabButton(page: Page) {
+  return page.getByRole("button", { name: "Reconciliation", exact: true }).first();
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 test.describe("Admin — Reconciliation tab", () => {
+  // Seeds the session + admin profile row. Without this the page redirects to
+  // /login and every assertion below waits for admin UI on the login page.
+  test.beforeEach(async ({ page }) => {
+    await mockAdminAuth(page);
+  });
+
   test("Reconciliation tab is present in the admin nav", async ({ page }) => {
     await mockAdminReport(page);
     await mockReconReport(page);
@@ -252,7 +255,7 @@ test.describe("Admin — Reconciliation tab", () => {
     await page.waitForLoadState("domcontentloaded");
 
     // The Reconciliation tab button should be visible.
-    const reconTab = page.getByRole("button", { name: /Reconciliation/i });
+    const reconTab = reconTabButton(page);
     await expect(reconTab).toBeVisible({ timeout: 10_000 });
   });
 
@@ -265,7 +268,7 @@ test.describe("Admin — Reconciliation tab", () => {
     await page.waitForLoadState("domcontentloaded");
 
     // Click the Reconciliation tab.
-    const reconTab = page.getByRole("button", { name: /Reconciliation/i });
+    const reconTab = reconTabButton(page);
     await reconTab.click();
 
     // Summary card: Reconciled count.
@@ -282,7 +285,7 @@ test.describe("Admin — Reconciliation tab", () => {
 
     await page.goto("http://localhost:5173/admin?tab=reconciliation");
     await page.waitForLoadState("domcontentloaded");
-    const reconTab = page.getByRole("button", { name: /Reconciliation/i });
+    const reconTab = reconTabButton(page);
     await reconTab.click();
 
     // Needs-Attention panel.
@@ -308,7 +311,7 @@ test.describe("Admin — Reconciliation tab", () => {
 
     await page.goto("http://localhost:5173/admin?tab=reconciliation");
     await page.waitForLoadState("domcontentloaded");
-    const reconTab = page.getByRole("button", { name: /Reconciliation/i });
+    const reconTab = reconTabButton(page);
     await reconTab.click();
 
     // Wait for Needs-Attention panel.
@@ -330,7 +333,7 @@ test.describe("Admin — Reconciliation tab", () => {
 
     await page.goto("http://localhost:5173/admin?tab=reconciliation");
     await page.waitForLoadState("domcontentloaded");
-    const reconTab = page.getByRole("button", { name: /Reconciliation/i });
+    const reconTab = reconTabButton(page);
     await reconTab.click();
 
     await expect(page.getByText(/Carrier adjustment over \$10/i)).toBeVisible({ timeout: 15_000 });
@@ -348,14 +351,16 @@ test.describe("Admin — Reconciliation tab", () => {
 
     await page.goto("http://localhost:5173/admin?tab=reconciliation");
     await page.waitForLoadState("domcontentloaded");
-    const reconTab = page.getByRole("button", { name: /Reconciliation/i });
+    const reconTab = reconTabButton(page);
     await reconTab.click();
 
     // "All shipments" table header.
     await expect(page.getByText("All shipments — every money movement")).toBeVisible({ timeout: 15_000 });
 
     // COMP badge on the comp shipment.
-    await expect(page.getByText("COMP")).toBeVisible();
+    // "COMP" also appears in the identity legend prose and in SM-COMP — scope
+    // to the badge inside the table.
+    await expect(page.getByRole("table").getByText("COMP", { exact: true })).toBeVisible();
 
     // Shipment IDs in the table.
     await expect(page.getByText("SM-ABCD")).toBeVisible();
@@ -368,13 +373,13 @@ test.describe("Admin — Reconciliation tab", () => {
 
     await page.goto("http://localhost:5173/admin?tab=reconciliation");
     await page.waitForLoadState("domcontentloaded");
-    const reconTab = page.getByRole("button", { name: /Reconciliation/i });
+    const reconTab = reconTabButton(page);
     await reconTab.click();
 
     // The legend must be present (from the mockup — preserved in the React port).
     await expect(page.getByText(/The reconcile identity/i)).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText(/Paid − Stripe fee/i)).toBeVisible();
-    await expect(page.getByText(/Net margin/)).toBeVisible();
+    await expect(page.getByRole("paragraph").filter({ hasText: /^Net margin$/ })).toBeVisible();
   });
 
   test("Run reconciliation now button triggers the sweep", async ({ page }) => {
@@ -384,7 +389,7 @@ test.describe("Admin — Reconciliation tab", () => {
 
     await page.goto("http://localhost:5173/admin?tab=reconciliation");
     await page.waitForLoadState("domcontentloaded");
-    const reconTab = page.getByRole("button", { name: /Reconciliation/i });
+    const reconTab = reconTabButton(page);
     await reconTab.click();
 
     await expect(page.getByRole("button", { name: /Run reconciliation now/i })).toBeVisible({ timeout: 10_000 });

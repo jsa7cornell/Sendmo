@@ -26,6 +26,21 @@ const ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY ?? "";
 const AUTH_FILE = "playwright/.auth/user.json";
 
 export default async function globalSetup(): Promise<void> {
+  // Fail loudly on missing app config before a single spec runs. Without these
+  // the dev server Playwright starts serves a blank page, and EVERY spec fails
+  // with an opaque `expect(locator).toBeVisible()` timeout — indistinguishable
+  // from a real regression. One named error beats 60+ meaningless ones.
+  const missing = (["VITE_SUPABASE_URL", "VITE_SUPABASE_ANON_KEY"] as const).filter(
+    (k) => !process.env[k],
+  );
+  if (missing.length > 0) {
+    throw new Error(
+      `[e2e global-setup] missing ${missing.join(", ")} — the dev server will ` +
+        "serve a blank page and every spec will fail with a toBeVisible timeout. " +
+        "Set them in .env.local (gitignored; see .env.example) or in the CI step env.",
+    );
+  }
+
   const email = process.env.E2E_TEST_USER_EMAIL;
   const password = process.env.E2E_TEST_USER_PASSWORD;
 

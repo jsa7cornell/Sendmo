@@ -13,6 +13,7 @@
  */
 
 import { test, expect, type Page } from "@playwright/test";
+import { mockAdminAuth } from "./mock-admin-auth";
 
 // ── Mock helpers ─────────────────────────────────────────────────────────────
 
@@ -95,22 +96,12 @@ function mockRefundsEndpoint(page: Page, opts: { success: boolean; error?: strin
   });
 }
 
-function mockSupabaseAuth(page: Page) {
-  // Mock the Supabase profile call so isAdmin resolves to true.
-  return page.route("**/rest/v1/profiles*", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify([{ id: "user-admin-001", role: "admin", email: "admin@sendmo.co" }]),
-    });
-  });
-}
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 test.describe("Admin — Refund button and modal (H3)", () => {
   test.beforeEach(async ({ page }) => {
-    await mockSupabaseAuth(page);
+    await mockAdminAuth(page);
     await mockAdminReport(page);
     await mockRefundsEndpoint(page);
   });
@@ -165,7 +156,9 @@ test.describe("Admin — Refund button and modal (H3)", () => {
 
     // Success state.
     await expect(page.getByText(/refund initiated/i)).toBeVisible({ timeout: 5000 });
-    await expect(page.getByText(/5\.00/i)).toBeVisible();
+    // Both the summary sentence and the refunded-amount field carry "$5.00" —
+    // assert the field so the locator names one element.
+    await expect(page.getByText("$5.00", { exact: true })).toBeVisible();
   });
 
   test("Zero amount shows validation error", async ({ page }) => {
