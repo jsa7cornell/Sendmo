@@ -7,6 +7,7 @@ import AppHeader from "@/components/AppHeader";
 import {
   stepToProgressIndex,
   progressIndexToStep,
+  stepsForPath,
   canAccessStep,
   firstIncompleteUrl,
   isSlugValidForPath,
@@ -95,7 +96,13 @@ export default function RecipientOnboarding() {
   // ── Progress bar ──────────────────────────────────────────
 
   const currentProgressIndex = stepToProgressIndex(currentStep);
+  // Only steps belonging to the active path may light its segments: a flow
+  // that deferred origin/package arrives on flexible with steps 10 + 14 in
+  // completedSteps, and their indexes (1, 2) would otherwise mark the flex
+  // bar's Preferences + Save Card complete — segments the user has never seen.
+  const pathSteps = stepsForPath(data.path);
   const completedProgressIndexes = data.completedSteps
+    .filter((s) => pathSteps.includes(s))
     .map((s) => stepToProgressIndex(s))
     .filter((i): i is number => i !== undefined && i >= 0);
 
@@ -131,6 +138,7 @@ export default function RecipientOnboarding() {
         {/* Progress bar (hidden on Step 0) */}
         {currentStep !== 0 && (
           <ProgressBar
+            path={data.path}
             activeIndex={currentProgressIndex}
             completedIndexes={completedProgressIndexes}
             onClickIndex={handleProgressClick}

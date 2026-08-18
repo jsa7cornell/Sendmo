@@ -133,17 +133,22 @@ export function stepIndex(step: number, path: RecipientPath | null): number {
 
 // ─── Progress Bar Mapping ───────────────────────────────────
 
-// Progress bar has 4 segments. Full-label collapses verify (11) + payment (12)
-// into the third segment so the visual cadence (destination/shipping/pay/label)
-// stays the same after inserting the OTP step.
+// One segment per question the user answers (John, 2026-08-18 — the bar must
+// represent where you ARE, and 10 + 14 sharing a segment meant completing the
+// origin advanced it by nothing). Full-label: 5 segments — Destination /
+// Origin / Package & Shipping / Payment / Label (verify 11 folds into the
+// Payment segment it opens, as before). Flexible: 4 — Destination /
+// Preferences / Save Card / Share (its shape is unchanged; only labels moved
+// into ProgressBar's per-path sets). Step numbers are disjoint across paths,
+// so one lookup serves both.
 const STEP_TO_PROGRESS: Record<number, number> = {
   0: -1,
   1: 0,
   10: 1,
-  14: 1,
-  11: 2,
-  12: 2,
-  13: 3,
+  14: 2,
+  11: 3,
+  12: 3,
+  13: 4,
   20: 1,
   21: 2,
   22: 2,
@@ -158,8 +163,8 @@ export function progressIndexToStep(index: number, path: RecipientPath | null): 
   if (path === "flexible") {
     return [1, 20, 21, 23][index] ?? 1;
   }
-  // Index 2 routes to verify (11) — payment (12) follows immediately after.
-  return [1, 10, 11, 13][index] ?? 1;
+  // Index 3 routes to verify (11) — payment (12) follows immediately after.
+  return [1, 10, 14, 11, 13][index] ?? 1;
 }
 
 // ─── Slug Validation ────────────────────────────────────────
