@@ -241,22 +241,28 @@ Asks **"Who's sending the package?"** — not which product the user wants. It's
 - The answer is stored as `sender: 'self' | 'other'` in flow state. **It decides which party owns which address slot, so every saved-address prefill must branch on it** via `prefillSlotFor()` in [`src/lib/recipientFlowStorage.ts`](src/lib/recipientFlowStorage.ts). Filling the destination unconditionally pre-fills the account holder's own address as "where it's going" on the 'self' branch — pre-verified and green, so a user who doesn't overwrite it ships to themselves.
 - A launch-gated link-out (`VITE_ENABLE_SELLER_LINK`) points sellers at `/sell`; the Dashboard carries the same gated CTA. Signed-in users are redirected past the marketing homepage, so those two are the only seller doors that audience ever sees.
 
-### Step 10 fork: who supplies the sender's address
+### Steps 10 + 14: two independently skippable questions (split 2026-08-18, PR #68)
 
-On the `sender: 'other'` branch, step 10 opens with **"Where's it shipping from?"** and two equally-weighted answers:
+The old combined step 10 was split: **10 = ship-from address** (`/full-label/shipping` — slug and step number kept so existing deep links resolve), **14 = shipment details + carrier** (`/full-label/package`). `FULL_LABEL_STEPS = [0, 1, 10, 14, 11, 12, 13]` — order comes from the array, not the numbers ([`src/lib/stepRouting.ts`](src/lib/stepRouting.ts)).
 
-| Answer | Result |
+On the `sender: 'other'` branch, **each** step offers "The sender will fill this in" as a first-class answer:
+
+| Deferred | Result |
 |---|---|
-| **I have their address** *(pre-selected)* | Origin form + package + rates. Stays `link_type = 'full_label'`. |
-| **The sender will fill this in** | Navigates to `/onboarding/flexible/preferences`. Becomes `link_type = 'flexible'`; the other party supplies the origin later. |
+| *nothing* | Ordinary prepaid label. Stays `link_type = 'full_label'`. |
+| address, package, or both | Becomes `link_type = 'flexible'` **on leaving step 14** — deferring the address still advances to the package question (deferring one must not silently defer the other; that was the bug). |
 
-**The product type is derived, never chosen.** The user answers a question they can actually answer; they are never asked to classify themselves as "full label" vs "flexible link". This replaced (2026-08-18) a muted help-text escape named after the user's problem, which left the link — the product the homepage sells — with no door at all.
+Skipping *is* answering: the step is marked complete (`deferredOrigin` / `deferredPackage` on flow state) and the flow advances normally. **Whatever the creator did answer is carried onto the link** (`origin_address` / dims on link create; requires migration 041, applied to prod 2026-08-18) and prefilled for the sender — deferring one question never discards the other's typing.
+
+**The product type is derived, never chosen.** The user answers questions they can actually answer; they are never asked to classify themselves as "full label" vs "flexible link". This replaced (2026-08-18) a muted help-text escape named after the user's problem, which left the link — the product the homepage sells — with no door at all.
 
 "I have their address" is pre-selected deliberately: the label path has produced every shipment to date and must not gain a click to advertise the link path. First-class means named, weighted and visible before the user can fail — not unavoidable.
 
-An undo bar on step 20 returns to step 10 with the typed origin intact (it is never cleared). Deferring the *package* independently is **not** offered: a flexible link has the sender supply everything, so an entered origin would be discarded — see the proposal's §2.
+An undo bar on step 20 returns to step 10 with the typed origin intact (it is never cleared).
 
 This is why there is no "flexible" door at step 0: the fork is a *fact about what the user can answer*, not a preference, and it's surfaced at the moment they discover it.
+
+**Draft persistence (2026-08-18):** flow state lives in **localStorage** (7-day TTL, [`src/lib/recipientFlowStorage.ts`](src/lib/recipientFlowStorage.ts)) so a closed tab no longer loses everything. Resume is *offered* via a banner on `/onboarding`, never automatic; `startFlowAs` resets on every door pick; `clearFlow` clears both localStorage and the legacy sessionStorage location (pre-deploy drafts are read from there as a fallback).
 
 **User-facing names** (strings only — `link_type` values are unchanged): `full_label` → "Prepaid label", `flexible` → "Shipping link", `seller_link` → "Seller link".
 
@@ -527,6 +533,7 @@ Card stays `summary_large_image` on the shared brand image (`/og-image.png`) —
 ### Step 1: Origin & Package Details
 - **Destination display** -- "Shipping to {recipientName} -- {address}"
 - **Ship from** -- Address input with auto-verification
+- **Creator-carried prefills (2026-08-18, PR #68)** — a flexible link's GET payload may include `origin_prefill` (full ship-from address) and `package_prefill` (dims + weight) when the creator answered those questions before deferring the rest. `SenderFlow` seeds the address and parcel from them; anything the sender typed, or a saved-sender draft, wins. Both are **null for seller links** — there the origin is the seller's and the reader is a stranger buyer, so it stays city/state. Trade-off, stated: anyone holding a flexible link's URL can see the street the creator entered (extends the existing flex-payload stance).
 - **Sendmo Package Guestimator** -- Same AI pre-filler as full label path
 - **Item description** -- Optional
 - **Packaging type** -- 3-option grid (Box, Envelope, Tube)
