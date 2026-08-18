@@ -15,7 +15,7 @@ outcome: null
 
 > **This is a handoff, not a proposal.** It hands a fresh session enough verified detail to run an infra audit without rediscovering any of it. Nothing here is decided; the recommendations are starting points.
 >
-> **One-line summary:** CI currently **cannot tell you whether the e2e suite passes**, and the Vercel deploy path has an account-wide throttle that isn't modelled anywhere. Neither is a code bug; both are stability problems in the surfaces John relies on to know whether things work.
+> **One-line summary:** **16 e2e specs are red on `main` right now**, CI is structurally incapable of reporting it, and the Vercel deploy path has an account-wide throttle that isn't modelled anywhere. None of this is a code bug in a feature; all of it is rot in the surfaces John relies on to know whether things work.
 
 ## Why this exists
 
@@ -30,6 +30,34 @@ While implementing PR #63 I hit three things that were not that change's fault a
 ---
 
 ## Part A — CI reports success it has not earned
+
+### A0. 16 e2e specs are failing on `main` today
+
+This is the concrete instance of everything in A1/A2, and it is the reason to act.
+
+Measured at `main` HEAD `f11c009` (the review-docs commit — **no application code changed**), running the three specs directly:
+
+| Spec | Failing |
+|---|---|
+| [`admin-reconciliation.spec.ts`](../tests/e2e/admin-reconciliation.spec.ts) | 8 |
+| [`admin-refund-flow.spec.ts`](../tests/e2e/admin-refund-flow.spec.ts) | 7 |
+| [`label-flow.spec.ts`](../tests/e2e/label-flow.spec.ts) | 1 |
+| **Total** | **16** |
+
+Full-suite shape: **78 tests = 57 passed / 5 skipped / 16 failed.** The failure mode is uniform — `expect(locator).toBeVisible()` timing out — which usually means the page under test never rendered its expected shell, not sixteen independent assertion bugs. That pattern suggests **one or two root causes**, not sixteen; likely candidates are a changed admin route/guard, a changed mocked-response shape, or a renamed heading (the same rot class that hit the onboarding specs). Diagnose before triaging individually.
+
+**Reproduce:**
+
+```bash
+npx playwright test tests/e2e/admin-reconciliation.spec.ts \
+  tests/e2e/admin-refund-flow.spec.ts \
+  tests/e2e/label-flow.spec.ts --reporter=line 2>&1 \
+  | grep -E '[0-9]+ (failed|passed|skipped)'
+```
+
+Two of the three cover **money surfaces** (reconciliation, refunds). They are the specs most worth trusting before launch, and they are currently the ones nobody is being told about.
+
+> **Reporting trap — this cost me a wrong claim, and it will get the next agent too.** Playwright's line reporter prints the failed-test *list* first and the `N failed` *count* immediately above the `skipped`/`passed` lines. A short `tail` therefore shows the failure list plus two green summary lines while cutting off the count, which reads exactly like a clean run — I reported "57 passed / 0 failed" from `| tail -6` before catching it. **Never infer "0 failed" from the absence of a failed line in truncated output.** Always `grep -E '[0-9]+ (failed|passed|skipped)'`.
 
 ### A1. Three of five test gates cannot fail the build
 
@@ -71,7 +99,7 @@ gh run download 32052410472 -R jsa7cornell/Sendmo -n playwright-report
 
 Aggregate stats in the uploaded report: **1 test** (`expected: 1, unexpected: 0, flaky: 0, skipped: 0`).
 
-The full suite is **62 tests** (57 passed / 5 skipped locally at the same commit). So the artifact preserves the single authed spec and destroys the entire main suite's results.
+The full suite is **78 tests** (57 passed / 5 skipped / 16 failed locally at the same commit — see A0). So the artifact preserves the single authed spec and destroys the entire main suite's results, **including all 16 failures**.
 
 **Combined with A1 this is the real problem:** e2e failures cannot fail the build, cannot be seen in the UI, and cannot be recovered from the artifact. There is currently **no path** by which anyone learns the e2e suite is broken. That is exactly how the stale heading assertions survived.
 
@@ -98,6 +126,14 @@ All are conditional skips gated on env vars, so they no-op quietly rather than f
 | [`phone-gate.spec.ts:221`](../tests/e2e/phone-gate.spec.ts) | `E2E_TEST_USER_EMAIL` / `_PASSWORD` |
 
 Self-skipping is the right pattern (PLAYBOOK: "a red e2e spec is worse than none"), but it means **sender-flow and anonymous-payment-gating coverage is probably not running anywhere**. The audit should determine which of these gates are satisfied in CI today and whether the unsatisfied ones represent coverage John believes he has. `account-budget-admin` and the payment-gating specs cover money paths, so this is not cosmetic.
+
+### A4b. The local suite depends on a gitignored file, and fails opaquely without it
+
+`playwright.config.ts` starts the dev server itself, and that server needs `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` from `.env.local` (gitignored) to boot. Without them the app serves a blank page and **every spec fails with `expect(locator).toBeVisible()`** — the same opaque error as a genuine regression, with nothing pointing at the real cause.
+
+I hit this by deleting `.env.local` during cleanup: 11/11 specs "failed", then passed immediately once it was restored. A fresh clone has the same experience on day one.
+
+Cheap fix: a `globalSetup` assertion that the required vars are present and fails with a one-line message naming the file, instead of letting 60+ specs fail meaninglessly. PLAYBOOK's e2e section documents the requirement in prose; making it enforce itself is strictly better.
 
 ### A5. Not a finding, but confirm it stays true
 
@@ -139,8 +175,8 @@ That's understood and documented. The audit item is narrower: **`api/s/[shortCod
 
 Roughly cheapest-and-highest-signal first:
 
-1. **A2** — split the two Playwright report dirs and upload both. Small, and it restores the ability to answer "is e2e green?" at all.
-2. **Read the answer.** With A2 in place, get an honest current pass/fail for the full suite. Everything below depends on knowing that number.
+1. **A0** — diagnose the 16 red specs on `main`. The uniform `toBeVisible` timeout points at one or two shared root causes, so start there rather than triaging sixteen tests. Two of the three files cover money surfaces.
+2. **A2** — split the two Playwright report dirs and upload both. Small, and it restores the ability to answer "is e2e green?" from CI at all.
 3. **A4** — determine which env-gated specs actually run in CI; treat unsatisfied money-path gates as coverage gaps, not as passing tests.
 4. **A1** — decide, with real numbers in hand, whether e2e becomes blocking (possibly a green subset first, with the known-rotten specs quarantined explicitly rather than globally suppressed).
 5. **A3** — re-measure CI wall-clock after the above and correct PLAYBOOK Rule 21.
