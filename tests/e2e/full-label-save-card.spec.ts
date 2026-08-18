@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { SUPABASE_URL } from "./supabase-env";
 
 // ─── E2E: full-label save-card consent disclosure (H2 D1) ───────────────────
 //
@@ -25,7 +26,6 @@ import { test, expect, type Page } from "@playwright/test";
 //     §Decision D1 (full-label save-card extension).
 //   proposals/2026-05-23_pre-launch-handoff-plan.md §Package H2.
 
-const SUPABASE_URL = "https://fkxykvzsqdjzhurntgah.supabase.co";
 
 async function mockEdgeFunctions(page: Page) {
   // /payments mock — returns a fake client secret + customer session so

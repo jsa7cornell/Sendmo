@@ -339,10 +339,27 @@ No production-path stubs remain. (Minor non-production leftovers: `src/pages/Sen
 21. **ALWAYS verify the deploy after pushing to `main`.** Every push to `main` triggers a production deploy (Vercel) and CI workflows. A push is **not "done"** until those are confirmed green — a red deploy is a production failure, not a finished task. After any push to `main`:
     - **Vercel** — confirm the production build at https://sendmo.co went live. Vercel's result is mirrored as a GitHub commit status (context `Vercel`) on the pushed SHA, so it shows up in the checks below.
     - **GitHub Actions** — run `gh run list --branch main --limit 5` and confirm the workflows for *your* commit are green: **"Provide Tests"** (lint / `tsc -b` / unit / e2e — note a `tsc -b` failure also breaks the Vercel build) and **"Deploy Supabase Edge Functions"** (only runs when `supabase/functions/**` changed).
-    - CI takes ~12 min. Wait for a **conclusive** result — `gh run watch <run-id>` or re-check — rather than ending the session on a still-running run. A pending run is not a green run.
+    - CI takes **~4 min** (run `32101768480`, 3m31s). It was 35–37 min before the 2026-08-18 e2e de-rot: `workers: 1` + `retries: 2` re-ran 28 failing specs at a 30s timeout each, so almost the entire wall-clock was spent retrying tests that could never pass. Wait for a **conclusive** result — `gh run watch <run-id>` or re-check — rather than ending the session on a still-running run. A pending run is not a green run.
     - If anything is red — a `tsc -b` error, a failed edge-function deploy, a red Vercel build — the work is **not** done. Fix forward immediately. Do not end the session on a red `main`.
 
     **Reference incident:** 2026-05-21 — a `tsc -b` error sat red on Vercel + CI for ~18h across 5 pushes because no agent verified the deploy after pushing.
+
+    **A PR with merge conflicts gets NO Actions run at all — silently.** For `pull_request` events GitHub builds against the merge ref, and a conflicting PR has no computable merge ref, so no workflow run and no check-suite are created. There is no failed run, no red X, nothing: `gh pr checks` shows only Vercel passing, which reads exactly like "checks are fine." **Absence of a run is not a pass.** Before trusting a PR's checks:
+
+    ```bash
+    gh pr view <n> --json mergeable,mergeStateStatus   # CONFLICTING/DIRTY = no CI ran
+    gh api repos/jsa7cornell/Sendmo/commits/<sha>/check-suites --jq '.check_suites[].app.slug'
+    ```
+
+    If `github-actions` is absent from that list, no tests ran on that commit. Resolve the conflict (merge `main` in — rebasing a pushed branch needs a force-push, which is gated) and confirm a run is created. **Reference incident:** 2026-08-18 — three commits on PR #64 sat with zero test coverage while the session reported "waiting on CI." The tell was that a newly-pushed commit failed to cancel the previous run via the concurrency group: no run existed to cancel.
+
+    **A green "Provide Tests" run does not mean the e2e suite passed.** The ESLint and both Playwright steps run `|| true` *and* `continue-on-error: true`, so they report `success` no matter what. The `|| true` is the load-bearing half: it makes the shell exit 0, so `continue-on-error` never engages and GitHub records a clean green rather than a yellow warning. To actually check e2e, download the report and read its stats:
+
+    ```bash
+    gh run download <run-id> -R jsa7cornell/Sendmo -n playwright-report-main
+    ```
+
+    **Reference incident:** 2026-08-18 — run `32100723813` reported `success` on every step while **28 of 80 e2e tests failed**. The cause was a host mismatch (specs mocked the production Supabase URL; CI built the app against `http://localhost:54321`), so CI's e2e signal was meaningless rather than merely unreported. Fixed by `tests/e2e/supabase-env.ts`, which derives the mock target from the same env var Vite inlines. Before 2026-08-18 the two Playwright steps also shared one report directory, so the second overwrote the first and the artifact preserved 1 test of 80 — these numbers were not recoverable at all.
 
     **Mechanical enforcement:** the `Stop` hook `scripts/claude-hooks/check-deploy-green.sh` (registered in `.claude/settings.json`) queries the GitHub check-runs + commit statuses for the current `main` HEAD at session close and prints any red/pending result. Advisory — exits 0 — but a red or pending result means Rule 21 is not yet satisfied.
 

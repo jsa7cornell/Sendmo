@@ -1,20 +1,25 @@
 import { test, expect, type Page } from "@playwright/test";
+import { SUPABASE_URL } from "./supabase-env";
 
-// E2E: the /label-test internal tool's happy path — addresses → rates →
-// rate selection → "Label Ready!".
+// E2E: the /label-test internal tool's happy path — addresses → package →
+// rates → rate selection → Payment step.
 //
 // /label-test is a public route. Every Supabase Edge Function it calls is
 // intercepted and mocked; no real EasyPost/Google/DB traffic leaves the test.
 // The phone-required gate on this same route is covered separately in
-// phone-gate.spec.ts; this spec proves the full four-step flow renders.
+// phone-gate.spec.ts.
 //
-// NOTE: against the *live* backend the final step is currently broken — the
-// `labels` Edge Function now requires a `payment_intent_id` that
-// LabelTest.tsx's purchaseLabel() never sends. That contract mismatch is a
-// backend concern caught by the real-service buy_label_debug.spec.ts; this
-// mocked spec deliberately stubs `labels` to exercise the frontend rendering.
+// Scope stops at the Payment step, deliberately. LabelTest.tsx gained STATE 4
+// (Payment) between rate selection and "Label Ready!", and reaching STATE 5
+// now requires a real Stripe Elements payment (`onSuccess(paymentIntentId)` →
+// `purchaseLabel`). Stripe Elements cannot be driven from the mocked suite —
+// CI sets no publishable key — so asserting "Label Ready!" here is asserting a
+// state this spec can never reach. Post-payment is the real-service
+// buy_label_debug.spec.ts's job (excluded from the default run via testIgnore).
+//
+// This spec previously asserted "Label Ready!" directly after rate selection
+// and had been red since the Payment step landed.
 
-const SUPABASE_URL = "https://fkxykvzsqdjzhurntgah.supabase.co";
 
 async function mockEdgeFunctions(page: Page) {
   // Address verification — distinct from/to so the "same address" guard passes.
@@ -107,7 +112,7 @@ test.describe("Label Test Flow", () => {
     await page.goto("/label-test");
   });
 
-  test("completes the full flow: addresses → rates → select → Label Ready", async ({ page }) => {
+  test("completes the mocked flow: addresses → package → rates → select → Payment", async ({ page }) => {
     // ── Step 1: Addresses ──────────────────────────────────────
     await expect(page.getByRole("heading", { name: "Label Test", level: 1 })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Addresses" })).toBeVisible();
@@ -132,9 +137,14 @@ test.describe("Label Test Flow", () => {
     expect(await selectButtons.count()).toBeGreaterThan(0);
     await selectButtons.first().click();
 
-    // ── Step 4: Label Ready ────────────────────────────────────
-    await expect(page.getByRole("heading", { name: "Label Ready!" })).toBeVisible({ timeout: 8000 });
-    await expect(page.getByText("Tracking Number")).toBeVisible();
-    await expect(page.getByRole("button", { name: "View Label" })).toBeVisible();
+    // ── Step 4: Payment ────────────────────────────────────────
+    // The selected rate ($9.20 Ground Advantage) carries into the payment step,
+    // so this asserts the hand-off rather than just that a step rendered. The
+    // summary line lives outside StripePaymentForm, so it renders with or
+    // without a Stripe publishable key — the "Pay $X & generate label" button
+    // does not, and asserting it would make this spec red in CI, which sets no
+    // Stripe key.
+    await expect(page.getByRole("heading", { name: "Payment", level: 2 })).toBeVisible({ timeout: 8000 });
+    await expect(page.getByText(/USPS.*\$9\.20/s)).toBeVisible();
   });
 });

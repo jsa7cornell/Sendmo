@@ -421,7 +421,12 @@ export default function Admin() {
     function handleRefunded(shipmentId: string, _expectedBalance: number) {
         const enableAt = Date.now() + 10_000;
         setRefundDisabledUntil(prev => ({ ...prev, [shipmentId]: enableAt }));
-        setRefundTarget(null);
+        // Deliberately does NOT clear refundTarget. The modal is mounted on
+        // `refundTarget &&`, so clearing it here unmounted the dialog the
+        // instant the refund succeeded — the admin saw it vanish with no
+        // confirmation of what was refunded, and RefundModal's success state
+        // (amount + Done) was unreachable. The modal owns its own dismissal:
+        // Done → handleClose → onClose → setRefundTarget(null).
         // Re-enable after 10s so state doesn't grow unboundedly.
         setTimeout(() => {
             setRefundDisabledUntil(prev => {

@@ -2,15 +2,15 @@
 title: Handoff — platform-wide infra audit (CI signal + Vercel deploy stability)
 slug: platform-infra-audit-handoff
 project: sendmo
-status: draft
+status: worked
 blocked_on: null
 created: 2026-08-17
-last_updated: 2026-08-17
+last_updated: 2026-08-18
 reviewed: 2026-08-17
 decided: null
 author: Claude Fable 5 — surfaced while implementing the who-is-sending onboarding change (PR #63). Every finding below was verified against the live workflow files, the actual CI run for PR #63, and its uploaded artifact — not inferred.
 reviewer: Claude Opus 5 — accept. Re-verified every claim at main f11c009; A0 root-caused (15/16 = one auth-mock bug, not text rot), A4 answered, B1 already unblocked, plus two new findings (CI has no Supabase; Vercel dashboard holds a no-op build command).
-outcome: null
+outcome: A0/A0b/A2/A3/A3b/A4/A4b/N1 fixed in PR #64; B3 needs no change; A1 + N2 open (John's calls). Headline: CI reported success on every step while 28 of 80 e2e tests failed — the signal was meaningless, not merely unreported.
 ---
 
 > **This is a handoff, not a proposal.** It hands a fresh session enough verified detail to run an infra audit without rediscovering any of it. Nothing here is decided; the recommendations are starting points.
@@ -328,3 +328,79 @@ Changes from the handoff's order: B1 moves to first (the window is open now), A0
 ### One process note
 
 This handoff lives on `feat/onboarding-who-is-sending`, so it reaches `main` only when [#63](https://github.com/jsa7cornell/Sendmo/pull/63) merges. Worth not stranding — most of its value is to a session that hasn't started yet.
+
+---
+
+## Outcome — 2026-08-18 ([PR #64](https://github.com/jsa7cornell/Sendmo/pull/64))
+
+Worked A0, A0b, A2, A3b, A4b, N1, B3. A1 and N2 remain John's calls; the Vercel plan question is tabled.
+
+**The finding that reframes the rest.** CI run `32100723813` reported `success` on every step while its artifact recorded **80 total / 43 passed / 28 failed / 9 skipped** — against 0 failures locally on the same commit. The handoff established that e2e failures could not be *seen*. They also could not be *trusted*: ~35% of the suite was failing in CI for a reason unrelated to product correctness, so fixing the reporting alone would have surfaced noise. **A1 was never answerable until N1 was fixed.**
+
+| Item | Outcome |
+|---|---|
+| **A0** | Fixed. 15 of 16 were one bug — see below. |
+| **A0b** | Fixed. `label-flow` predated the Payment step; rescoped. |
+| **A2** | Fixed. Separate report dirs + artifacts. This is what made the 28-failure number recoverable at all. |
+| **A3** | Measured and corrected: 35–37 min → **14m40s**. Rule 21 updated to ~15 min. |
+| **A3b** | Fixed. Concurrency group; superseded runs cancel on non-`main` refs. |
+| **A4** | Answered, and one gap closed — `account-budget-admin` now runs in CI. |
+| **A4b** | Fixed in the existing `global-setup.ts`; verified the throw fires. |
+| **A5** | Confirmed anon key. No action. |
+| **B3** | **No change needed** — see below. |
+| **N1** | Root-caused and fixed. |
+| **A1 / N2** | Open — John's calls. |
+
+### A0 was one bug, and the handoff's framing of it was wrong in a useful way
+
+The handoff read these as the same rot class as the renamed onboarding heading. They weren't. Both admin specs mocked HTTP responses, but supabase-js reads its session from **localStorage** on cold load and never issues the request they intercepted — so `user` stayed null and `Admin.tsx:245` redirected. Probed directly: `/admin?tab=reconciliation` → `/login?redirectTo=/admin`. **Structurally broken, never once working** — not drifted.
+
+Worth carrying forward: once the page rendered, five remaining "failures" were **strict-mode violations**, not misses. `/Reconciliation/i` matched 3 buttons, `/Net margin/` 3, `COMP` 4. A loose regex that matches nothing while a page is broken matches several once it works, and the two failure modes read nothing alike.
+
+### The specs were right and the product was wrong
+
+`Admin.handleRefunded` cleared `refundTarget` on success, and the modal is mounted on `{refundTarget && …}` — so the dialog unmounted the instant a refund succeeded. An admin confirming a refund saw it vanish with no confirmation of the amount, and `RefundModal`'s success state (amount refunded + Done) was unreachable in production.
+
+A money surface, silently degraded, caught by a spec nobody could hear. That is the clearest argument in this document for A1.
+
+### N1 — the answer was a host mismatch
+
+Every spec hardcoded `https://fkxykvzsqdjzhurntgah.supabase.co` as its `page.route` target; `test.yml` builds the app with `VITE_SUPABASE_URL=http://localhost:54321`. The app requested localhost while the mocks listened on production. New `tests/e2e/supabase-env.ts` derives the URL and storage key from the env var Vite inlines, collapsing 11 duplicated literals into one source.
+
+The two admin specs were *absent* from the CI failure list because the A0 work had already made them host-agnostic — that is what identified the cause.
+
+Under CI's env: 45 passed / 30 failed (4.2m) → **74 passed / 6 skipped / 0 failed** (1.6m). Locally: **75 / 5 / 0**.
+
+### B3 — the premise didn't hold
+
+The handoff argued the dead `api/s/[shortCode].ts` should be deleted or annotated "because the next person to debug link previews will read it and believe it runs." It already opens with *"⚠️ NOT the live path … Edit `src/lib/ogMeta.ts`, not this file"*, `middleware.ts` names it and explains why Edge Middleware wins, and both import the shared module so they cannot drift. Deleting a documented, drift-proofed fallback would be a regression. **Left as-is.**
+
+### Two gotchas worth grepping for
+
+- **A stale `playwright/.auth/user.json` fails opaquely rather than skipping.** It is gitignored but persists, so a session minted against prod survives the suite being pointed elsewhere; specs then run un-authenticated. `hasAuthStateForCurrentProject()` now verifies the stored key matches the current project.
+- **Never assert anything Stripe renders in the mocked suite.** CI sets no publishable key. `label-flow`'s "Pay $X" button does not render there; the rate summary line does, because it sits outside `StripePaymentForm`.
+
+### One process note for the next reader
+
+The handoff's reporting-trap warning is real and I nearly repeated it. I anchored my grep as `^\s+[0-9]+ (failed|passed)` — stricter than the pattern the handoff recommends — and read a 30-failure run as clean. **Use the handoff's pattern verbatim: `grep -E '[0-9]+ (failed|passed|skipped)'`.**
+
+### A6 (found while working this handoff) — a conflicting PR gets no CI run, silently
+
+Same failure class as A1/A2/N1, and it caught me mid-audit. For `pull_request` events GitHub builds against the merge ref; a conflicting PR has no computable merge ref, so **no workflow run and no check-suite are created at all**. Not a failure — an absence. `gh pr checks` shows only Vercel passing, which reads as "checks are fine."
+
+Three commits on PR #64 sat with zero test coverage while I reported waiting on CI. The tell: a newly-pushed commit failed to cancel the previous run through the new concurrency group, because no run existed to do the cancelling.
+
+Check before trusting a PR's checks:
+
+```bash
+gh pr view <n> --json mergeable,mergeStateStatus
+gh api repos/jsa7cornell/Sendmo/commits/<sha>/check-suites --jq '.check_suites[].app.slug'
+```
+
+`github-actions` absent from that list means no tests ran on that commit. Recorded in PLAYBOOK Rule 21.
+
+### Final state — A1 live and verified
+
+`32103312247` (`a770d97`), with the mocked suite **blocking**: **81 total / 75 passed / 0 failed / 6 skipped, `ok: true`, 3m33s.** Read from the artifact, not the step colour.
+
+Full arc for the workflow: **35–37 min and 28 silent failures → 3m33s and a suite that can stop a merge.**

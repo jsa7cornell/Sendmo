@@ -12,6 +12,52 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-18] E2E de-rot — CI's e2e signal was meaningless, not just unreported
+
+**Category:** fix | Testing / CI
+**Cross-link:** [PR #64](https://github.com/jsa7cornell/Sendmo/pull/64) | [proposals/2026-08-17_platform-infra-audit-handoff.md](proposals/2026-08-17_platform-infra-audit-handoff.md) (A0, A0b, A2, A3b, A4b, N1) | [supabase-env.ts](tests/e2e/supabase-env.ts) | [mock-admin-auth.ts](tests/e2e/mock-admin-auth.ts) | [test.yml](.github/workflows/test.yml)
+
+**Browser-verified:** spec: `tests/e2e/admin-refund-flow.spec.ts` (`Successful refund shows success state in modal`) — variants-covered: admin refund success state, reconciliation tab render, label-flow payment hand-off; full suite green locally and under CI's env.
+
+**The number that mattered.** Run `32100723813` reported `success` on **every step** while its artifact recorded **80 total / 43 passed / 28 failed / 9 skipped**. Locally the same commit had 0 failures. CI's e2e result was not merely invisible (A1/A2) — it was *meaningless*, so fixing the reporting alone would have surfaced noise.
+
+**N1 root cause — host mismatch.** Every spec hardcoded `https://fkxykvzsqdjzhurntgah.supabase.co` as its `page.route` target, and several hardcoded `sb-<prod-ref>-auth-token` as the session key. `test.yml` builds the app with `VITE_SUPABASE_URL=http://localhost:54321`, so the app requested localhost while the mocks listened on production: routes never matched, requests hit an address with nothing on it. `tests/e2e/supabase-env.ts` now derives both from the env var Vite inlines — 11 duplicated literals across 10 specs collapse into one derived source. **The two admin specs were absent from the failure list because the A0 work had already made them host-agnostic — that is what identified the cause.**
+
+**A0 — 15 of 16 red specs were one bug, and not text rot.** Both admin specs mocked HTTP, but supabase-js reads its session from **localStorage** on cold load and never issues the request they intercepted. `user` stayed null, `Admin.tsx:245` redirected, and every assertion waited for admin UI on `/login`. Probed directly: `/admin?tab=reconciliation` → `/login?redirectTo=/admin`. Structurally broken, never drifted.
+
+**Once the page rendered, five "failures" were strict-mode violations, not misses** — `/Reconciliation/i` matched 3 buttons, `/Net margin/` 3, `COMP` 4, `/5\.00/` 2. A loose regex that matched nothing while the page was broken matches several once it works; the second failure mode reads nothing like the first.
+
+**Product bug the red specs existed to catch.** `Admin.handleRefunded` cleared `refundTarget` on success, and the modal is mounted on `{refundTarget && …}` — so the dialog unmounted the instant a refund succeeded. An admin confirming a refund saw it vanish with no confirmation of the amount, and `RefundModal`'s success state (amount + Done) was unreachable in production. The modal owns its dismissal now; the 10s re-disable window is unchanged.
+
+**A4 gap closed.** `account-budget-admin` gated on `playwright/.auth/user.json`, so it self-skipped in CI — a money path with zero CI coverage, indistinguishable from passing. Now uses the synthetic session and runs everywhere.
+
+**Gotcha — a stale auth file fails opaquely instead of skipping.** `playwright/.auth/user.json` is gitignored but persists between runs, so a session minted against prod survives the suite being pointed elsewhere. The app then looks for `sb-localhost-auth-token`, the stale file supplies `sb-<prod-ref>-auth-token`, and specs run un-authenticated. `hasAuthStateForCurrentProject()` verifies the stored key matches the project the app is built against.
+
+**Gotcha — do not assert anything Stripe renders in the mocked suite.** CI sets no publishable key. `label-flow`'s "Pay $X & generate label" button never renders there; the rate summary line does, because it sits outside `StripePaymentForm`.
+
+**A2/A3b.** Each Playwright invocation gets its own report dir and artifact (the authed run used to overwrite the main suite before upload — the artifact preserved 1 test of 80). `test.yml` gained a concurrency group; superseded runs cancel on non-`main` refs.
+
+**Measured — confirmed in the real runner, not simulated.** The `playwright-report-main` artifact, which A2 made recoverable:
+
+| | Before (`f9108b1`) | After (`a856acf`) |
+|---|---|---|
+| total / passed / **failed** / skipped | 80 / 43 / **28** / 9 | 81 / 75 / **0** / 6 |
+| `ok` | `false` | `true` |
+| CI wall-clock | 14m40s | **3m31s** |
+
+CI's 75 passing now matches local's 75 exactly — the two environments agree, which is the actual point of the N1 fix. Before the A0 work the same workflow took 35–37 min. PLAYBOOK Rule 21 corrected from "~12 min" to **~4 min** (measured), not the ~15 an intermediate run suggested.
+
+**A1 — DECIDED 2026-08-18 (John): the mocked e2e suite is now BLOCKING.** `|| true` and `continue-on-error` are gone from the main Playwright step; a red suite stops the merge. Justified by run `32101768480` (81 total, 75 passed, 0 failed, 3m31s) — deterministic, fully mocked, and fast enough that gating on it costs ~4 min.
+
+The **authed** step stays non-blocking on purpose: it hits live GoTrue, so gating merges on it would couple every merge to Supabase's uptime. But its `|| true` is gone too. That was always the load-bearing half — the shell exited 0, so `continue-on-error` never engaged and GitHub recorded a clean green. With `continue-on-error` alone, a failure now renders as a visible warning that does not block. **Non-blocking and invisible are different things; the old config conflated them.**
+
+ESLint stays `|| true` — 30+ known pre-existing errors, tracked separately. Removing it would paint CI permanently yellow and train everyone to ignore it.
+
+**N2 — DONE 2026-08-18 (John's approval).** The Vercel dashboard's Build Command override was `mkdir -p dist && cp index.html dist/` — a no-op that copies one file and builds nothing. Cleared via `PATCH /v9/projects/prj_8UGjW3D4nJ9gfkxBxxCCuAG3h9NA` → `buildCommand: null`; verified by independent re-read. **Prior value recorded here for reversibility.**
+
+Nothing changed about how prod builds: `vercel.json`'s `"buildCommand": "npm run build"` took precedence then and still does, and prod was verified serving a real Vite build both before and after. What went away is the trap — deleting that one line from `vercel.json` as routine cleanup would have silently fallen back to the no-op, shipping an `index.html` referencing assets that were never built: a blank site with a **green** deploy and no error anywhere. The fallback is now the Vite framework preset, which is a real build.
+
+**Still open:** [#62](https://github.com/jsa7cornell/Sendmo/pull/62) — held at John's direction. Vercel plan — tabled; note Hobby forbids commercial use ("any method of requesting or processing payment") and SendMo processes payments through Stripe.
 ### [2026-08-18] Step 0 rebalanced + seller entry points shipped as "Coming soon"
 
 **Category:** ship | Onboarding | Growth

@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { existsSync } from "node:fs";
+import { SUPABASE_URL, AUTH_FILE, hasAuthStateForCurrentProject } from "./supabase-env";
 
 // ─── E2E: phone-required step gates ─────────────────────────────────────────
 //
@@ -13,13 +13,11 @@ import { existsSync } from "node:fs";
 // Every Supabase Edge Function call is intercepted and mocked — no auth,
 // EasyPost, Google, or Stripe traffic leaves the test.
 
-const SUPABASE_URL = "https://fkxykvzsqdjzhurntgah.supabase.co";
 
 // Authenticated storage state, written by tests/e2e/global-setup.ts when the
 // E2E_TEST_USER_* credentials are configured. Absent it, the authed describe
 // skips itself.
-const AUTH_FILE = "playwright/.auth/user.json";
-const hasAuthState = existsSync(AUTH_FILE);
+const hasAuthState = hasAuthStateForCurrentProject();
 
 async function mockEdgeFunctions(page: Page, opts: { mockAuth?: boolean } = {}) {
   // Address autocomplete — one prediction, enough to verify an address.

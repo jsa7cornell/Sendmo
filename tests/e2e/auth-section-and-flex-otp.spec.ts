@@ -10,9 +10,8 @@
  */
 
 import { test, expect, type Page } from "@playwright/test";
+import { SUPABASE_URL, SUPABASE_STORAGE_KEY } from "./supabase-env";
 
-const SUPABASE_URL = "https://fkxykvzsqdjzhurntgah.supabase.co";
-const SUPABASE_STORAGE_KEY = "sb-fkxykvzsqdjzhurntgah-auth-token";
 const FLOW_STORAGE_KEY = "sendmo:recipient_flow:v1";
 
 // ─── Shared mocks ───────────────────────────────────────────
