@@ -130,6 +130,44 @@ export default function FlexPaymentStep({
   const [activating, setActivating] = useState(false);
   const [activateError, setActivateError] = useState<string | null>(null);
 
+  // ─── Card-save recovery (2026-08-16) ───
+  // Every failure path in the card form used to be a dead end: the user saw
+  // Stripe's error text and had no way forward, so one account resubmitted the
+  // identical failing form four times in fourteen minutes before giving up.
+  //
+  // `retryN` drives the Elements remount on a recovery click. It is NOT the
+  // idempotency value — see idempotencyNonceRef below for why that distinction
+  // matters. `bypassLink` re-mounts the form with the Link wallet off.
+  //
+  // Suppressing Link is the substantive half, not just a reset. Link autofill
+  // can attach a stale name from the user's wallet to their card; a name the
+  // issuer can't match to the cardholder makes 3DS fail authentication
+  // outright, with no challenge shown and nothing the user can do about it.
+  // Typing the card in manually sidesteps the bad autofill entirely.
+  const [retryN, setRetryN] = useState(0);
+  const [bypassLink, setBypassLink] = useState(false);
+  // The SetupIntent idempotency nonce, regenerated per fetch.
+  //
+  // It must NOT be a counter seeded at mount. The server key is
+  // `seti_create:<user>:<mode>:retry-<n>` (payment-methods/index.ts) with no
+  // time component, so `retry-0` is the same key forever for a given user and
+  // mode — a counter that restarts at 0 on every mount makes Stripe replay
+  // whatever SetupIntent that key already created, including a `succeeded`
+  // one, which then 400s Elements and leaves the user unable to add a card.
+  //
+  // That is the 2026-05-14 BUG A, and AddCardModal already fixed it exactly
+  // this way; this component kept the counter until 2026-08-18. A counter is
+  // still correct *within* one mount, but only a nonce survives remounts.
+  const idempotencyNonceRef = useRef<number>(0);
+
+  function restartCardCollection() {
+    setBypassLink(true);
+    setRetryN((n) => n + 1);
+    setSetupError(null);
+    setSetupIntentId(null);
+    setClientSecret(null); // re-opens the SetupIntent effect below
+  }
+
   // Keep local state in sync if the parent supplies a linkId mid-flow
   // (e.g., onboarding restores from useRecipientFlow state).
   useEffect(() => {
@@ -261,9 +299,11 @@ export default function FlexPaymentStep({
     if (!session?.access_token) return;
     if (!useNewCard) return;
     let cancelled = false;
+    idempotencyNonceRef.current = Date.now();
+    const nonce = idempotencyNonceRef.current;
     (async () => {
       try {
-        const result = await createSetupIntent(session.access_token);
+        const result = await createSetupIntent(session.access_token, nonce);
         if (cancelled) return;
         setClientSecret(result.client_secret);
         setSetupIntentId(result.setup_intent_id);
@@ -273,7 +313,7 @@ export default function FlexPaymentStep({
       }
     })();
     return () => { cancelled = true; };
-  }, [linkId, clientSecret, session?.access_token, useNewCard]);
+  }, [linkId, clientSecret, session?.access_token, useNewCard, retryN]);
 
   const elementsOptions = useMemo(
     () => clientSecret ? {
@@ -508,10 +548,19 @@ export default function FlexPaymentStep({
                 ← Use saved {savedPm.brand ?? "card"} ending in {savedPm.last4 ?? "••••"} instead
               </button>
             )}
-            <Elements stripe={getStripeForMode(liveMode)} options={elementsOptions}>
+            {/* `key` forces a full remount on retry so Stripe re-initialises
+                against the new client secret with Link suppressed — changing
+                the option alone would not rebuild the mounted iframe. */}
+            <Elements
+              key={`seti-${retryN}`}
+              stripe={getStripeForMode(liveMode)}
+              options={elementsOptions}
+            >
               <FlexSetupForm
                 linkId={linkId}
                 accessToken={session?.access_token ?? null}
+                bypassLink={bypassLink}
+                onRestart={restartCardCollection}
                 onActivated={() => {
                   onContinue(linkId, shortCode ?? "");
                 }}
@@ -546,10 +595,14 @@ export default function FlexPaymentStep({
 function FlexSetupForm({
   linkId,
   accessToken,
+  bypassLink,
+  onRestart,
   onActivated,
 }: {
   linkId: string;
   accessToken: string | null;
+  bypassLink: boolean;
+  onRestart: () => void;
   onActivated: () => void;
 }) {
   const stripe = useStripe();
@@ -558,7 +611,17 @@ function FlexSetupForm({
   const [polling, setPolling] = useState(false);
   const [pollTimedOut, setPollTimedOut] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Set when the bank specifically refused to authenticate the card, which
+  // earns different copy: the user cannot fix it by retrying the same way,
+  // because no challenge was ever presented for them to complete.
+  const [authFailed, setAuthFailed] = useState(false);
   const pollIntervalRef = useRef<number | null>(null);
+
+  function fail(message: string, opts?: { authFailed?: boolean }) {
+    setError(message);
+    setAuthFailed(opts?.authFailed ?? false);
+    setSubmitting(false);
+  }
 
   // Poll the link's status server-side after SetupIntent confirms. The
   // payment_method.attached webhook flips status draft→active; this poll
@@ -629,8 +692,7 @@ function FlexSetupForm({
 
     const { error: submitError } = await elements.submit();
     if (submitError) {
-      setError(submitError.message ?? "Card details are incomplete");
-      setSubmitting(false);
+      fail(submitError.message ?? "Card details are incomplete");
       return;
     }
 
@@ -644,14 +706,22 @@ function FlexSetupForm({
     });
 
     if (confirmError) {
-      setError(confirmError.message ?? "Card setup failed");
-      setSubmitting(false);
+      // setup_intent_authentication_failure covers both a failed 3DS challenge
+      // and an issuer that rejected authentication without presenting one.
+      // Stripe's own copy ("unable to authenticate your payment method") reads
+      // as user error in the second case, so we replace it rather than echo it.
+      const isAuthFailure = confirmError.code === "setup_intent_authentication_failure";
+      fail(
+        isAuthFailure
+          ? "Your bank couldn't verify this card."
+          : confirmError.message ?? "Card setup failed",
+        { authFailed: isAuthFailure },
+      );
       return;
     }
 
     if (setupIntent?.status !== "succeeded") {
-      setError(`Card status: ${setupIntent?.status ?? "unknown"} — please try again`);
-      setSubmitting(false);
+      fail(`Card status: ${setupIntent?.status ?? "unknown"} — please try again`);
       return;
     }
 
@@ -675,6 +745,10 @@ function FlexSetupForm({
         <p className="text-sm text-foreground">
           Your card is saved. We're still confirming with our payment processor — refresh in a moment to continue.
         </p>
+        {/* A handleRefresh failure used to set `error` that this branch never
+            rendered, leaving the user on a Refresh button that silently did
+            nothing. */}
+        {error && <p className="text-xs text-destructive">{error}</p>}
         <Button type="button" onClick={handleRefresh} className="w-full rounded-xl">
           Refresh
         </Button>
@@ -684,8 +758,51 @@ function FlexSetupForm({
 
   return (
     <div className="space-y-4">
-      <PaymentElement options={{ layout: { type: "tabs", defaultCollapsed: false } }} />
-      {error && <p className="text-xs text-destructive">{error}</p>}
+      <PaymentElement
+        options={{
+          layout: { type: "tabs", defaultCollapsed: false },
+          // On a recovery attempt the Link wallet is suppressed, so the user
+          // types the card themselves and no stored profile can attach a
+          // mismatched name to it.
+          wallets: { link: bypassLink ? "never" : "auto" },
+          // No defaultValues for billingDetails.name, deliberately. Prefilling
+          // the account holder's name is wrong whenever the cardholder differs
+          // — a spouse's or business card, or an OAuth profile carrying a
+          // nickname — and an already-filled field is one users skip past. That
+          // is the same mismatched-name condition Link suppression above exists
+          // to avoid. LOG 2026-08-16 also falsified the premise: the 22:49
+          // attempt sent billing_details.name = null with no Link and drew a
+          // byte-identical rejection, so the name was never the cause.
+        }}
+      />
+
+      {error && (
+        <div className="space-y-2 rounded-xl border border-destructive/30 bg-destructive/5 px-3 py-2.5">
+          <p className="text-xs text-destructive">{error}</p>
+          {authFailed && (
+            <p className="text-xs text-muted-foreground">
+              Your bank wouldn't approve this card for automatic charges. That's decided
+              by the bank, so retrying the same card usually won't help — a different
+              card is the quickest fix.
+            </p>
+          )}
+          {/* Every failure gets a way forward. Without this the only move was
+              resubmitting the same form, which is exactly what one account did
+              four times in fourteen minutes on 2026-08-16 before giving up.
+              The copy above deliberately points at a different card rather than
+              at re-entering the same one: on 2026-08-16 the same card was
+              rejected identically across two accounts, with and without Link
+              autofill, so "type it in manually" is not a fix. */}
+          <button
+            type="button"
+            onClick={onRestart}
+            className="text-xs font-medium text-primary hover:underline"
+          >
+            {authFailed ? "Try a different card" : "Start over with a new card form"}
+          </button>
+        </div>
+      )}
+
       <Button
         type="button"
         onClick={handleSubmit}
