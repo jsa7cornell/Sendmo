@@ -47,4 +47,13 @@ describe("ProtectedRoute offline handling", () => {
     expect(screen.queryByText("login page")).not.toBeInTheDocument();
     expect(screen.getByText(/offline/i)).toBeInTheDocument();
   });
+
+  it("offers an escape hatch to /login from the offline hold", () => {
+    // A deliberately signed-out user (or a browser misreporting onLine=false)
+    // must never be trapped on the hold screen.
+    setOnLine(false);
+    renderProtected();
+    const link = screen.getByRole("link", { name: /sign-in/i });
+    expect(link).toHaveAttribute("href", "/login");
+  });
 });

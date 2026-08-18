@@ -43,8 +43,22 @@ const COOKIE_NAME = "sm_bc";
 const MAX_CRUMBS = 50;
 const COOKIE_MAX_AGE_S = 400 * 24 * 60 * 60; // 400 days — the browser cap
 
-/** Auth events worth a server-side row (SIGNED_OUT is the one that matters). */
-const SERVER_EVENTS = new Set(["SIGNED_IN", "SIGNED_OUT", "USER_UPDATED"]);
+// Server sends are prod-only: the diagnosis targets sendmo.co, and unsanctioned
+// senders (dev servers, e2e contexts) would pollute the very event_logs data
+// this module exists to collect. Tests opt in via the force key (the e2e spec
+// sets it in addInitScript, then mocks ingest).
+const PROD_ORIGIN = "https://sendmo.co";
+const FORCE_SEND_KEY = "sendmo-diag-send";
+
+/**
+ * Auth events worth an unconditional server-side row. SIGNED_OUT is the one
+ * the whole diagnosis waits for. SIGNED_IN is deliberately NOT here: auth-js
+ * fires it on every hidden→visible tab transition (GoTrueClient
+ * _onVisibilityChanged → _recoverAndRefresh), so an unconditional send would
+ * post to ingest on every tab focus, in every open tab. SIGNED_IN is sent
+ * only on a genuine re-auth transition — see recordAuthEvent.
+ */
+const SERVER_EVENTS = new Set(["SIGNED_OUT", "USER_UPDATED"]);
 
 function safe<T>(fn: () => T): T | undefined {
   // Diagnostics must never break auth itself.
@@ -92,17 +106,26 @@ function pushCrumb(crumb: AuthBreadcrumb): void {
   });
 }
 
+function serverSendEnabled(): boolean {
+  return (
+    safe(() => window.location.origin) === PROD_ORIGIN ||
+    safe(() => localStorage.getItem(FORCE_SEND_KEY)) === "1"
+  );
+}
+
+/** Resolves true only when ingest accepted the event. Never throws. */
 function sendToServer(
   event_type: string,
   severity: "info" | "warn" | "error",
   userId: string | null | undefined,
   properties: Record<string, unknown>,
-): void {
-  safe(() => {
+): Promise<boolean> {
+  try {
+    if (!serverSendEnabled()) return Promise.resolve(false);
     const url = import.meta.env.VITE_SUPABASE_URL;
     const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-    if (!url || !anonKey) return;
-    void fetch(`${url}/functions/v1/ingest`, {
+    if (!url || !anonKey) return Promise.resolve(false);
+    return fetch(`${url}/functions/v1/ingest`, {
       method: "POST",
       // keepalive lets the SIGNED_OUT event survive an immediate page unload.
       keepalive: true,
@@ -120,8 +143,12 @@ function sendToServer(
         entity_type: "auth",
         properties,
       }),
-    }).catch(() => {});
-  });
+    })
+      .then((res) => res.ok)
+      .catch(() => false);
+  } catch {
+    return Promise.resolve(false);
+  }
 }
 
 function baseCrumb(event: string): AuthBreadcrumb {
@@ -136,21 +163,37 @@ function baseCrumb(event: string): AuthBreadcrumb {
 
 /** Record an onAuthStateChange event. Called from AuthContext. */
 export function recordAuthEvent(event: string, userId?: string | null): void {
+  const prevEvent = readCrumbs().at(-1)?.event;
   const crumb = baseCrumb(event);
   pushCrumb(crumb);
 
   if (SERVER_EVENTS.has(event)) {
-    sendToServer("auth.breadcrumb", "info", userId, { ...crumb });
+    void sendToServer("auth.breadcrumb", "info", userId, { ...crumb });
+    return;
+  }
+  // SIGNED_IN fires on every tab focus (see SERVER_EVENTS note). Send it only
+  // on a genuine re-auth transition: the previous crumb was SIGNED_OUT, or the
+  // ring buffer is empty (a sign-in right after a storage wipe — diagnostic
+  // gold). Tab-focus SIGNED_INs always follow other crumbs and stay local.
+  if (event === "SIGNED_IN") {
+    if (prevEvent === "SIGNED_OUT" || prevEvent === undefined) {
+      void sendToServer("auth.breadcrumb", "info", userId, { ...crumb });
+    }
     return;
   }
   // INITIAL_SESSION fires on every page load — heartbeat it server-side at
   // most once per calendar day so event_logs shows liveness without spam.
+  // The day marker is set optimistically (keeps the once-a-day guarantee
+  // synchronous) but CLEARED if the send fails, so an offline first load
+  // doesn't burn the day's slot and produce a false "browser never opened".
   if (event === "INITIAL_SESSION") {
     const today = crumb.ts.slice(0, 10);
     const already = safe(() => localStorage.getItem(HEARTBEAT_KEY)) === today;
     if (!already) {
       safe(() => localStorage.setItem(HEARTBEAT_KEY, today));
-      sendToServer("auth.breadcrumb", "info", userId, { ...crumb });
+      void sendToServer("auth.breadcrumb", "info", userId, { ...crumb }).then((ok) => {
+        if (!ok) safe(() => localStorage.removeItem(HEARTBEAT_KEY));
+      });
     }
   }
 }
@@ -171,7 +214,7 @@ export function recordRefreshFailure(failure: {
     bodySnippet: failure.bodySnippet,
   };
   pushCrumb(crumb);
-  sendToServer("auth.refresh_failed", failure.final ? "error" : "warn", null, {
+  void sendToServer("auth.refresh_failed", failure.final ? "error" : "warn", null, {
     ...crumb,
     endpoint: failure.endpoint,
   });

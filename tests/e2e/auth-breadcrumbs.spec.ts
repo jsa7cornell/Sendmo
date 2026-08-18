@@ -17,6 +17,10 @@ test.describe("auth breadcrumbs", () => {
       await route.fulfill({ status: 200, json: { ok: true } });
     });
 
+    // Server sends are gated to the prod origin so ordinary specs and dev
+    // servers can't pollute prod event_logs; this spec opts in via the force
+    // key and mocks ingest above.
+    await page.addInitScript(() => window.localStorage.setItem("sendmo-diag-send", "1"));
     await page.goto("/login");
 
     await expect.poll(() => ingestBody, { timeout: 10_000 }).not.toBeNull();

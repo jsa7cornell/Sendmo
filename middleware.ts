@@ -29,6 +29,18 @@ export const config = {
 
 export default async function middleware(request: Request): Promise<Response | undefined> {
   const url = new URL(request.url);
+
+  // www → apex, before any OG work. Edge Middleware runs BEFORE vercel.json's
+  // `redirects`, so without this a www share link would be served here as 200
+  // SPA HTML on the www origin (separate localStorage → permanently signed-out
+  // — the session-durability bug) with og:url stamped as www, teaching
+  // crawlers to keep spreading www links. vercel.json still covers every
+  // non-/s/ path; this covers the paths the matcher intercepts.
+  if (url.hostname === "www.sendmo.co") {
+    url.hostname = "sendmo.co";
+    return Response.redirect(url.toString(), 308);
+  }
+
   const parts = url.pathname.split("/");
   const shortCode = parts[2]; // /s/:shortCode
 

@@ -41,6 +41,9 @@ function ingestCalls() {
 
 beforeEach(() => {
   localStorage.clear();
+  // Server sends are gated to the prod origin; tests opt in via the force key
+  // (jsdom's origin is localhost).
+  localStorage.setItem("sendmo-diag-send", "1");
   // jsdom cookies persist across tests within a file; expire the marker.
   document.cookie = "sm_bc=; max-age=0; path=/";
   vi.stubEnv("VITE_SUPABASE_URL", "https://test.supabase.co");
@@ -88,6 +91,43 @@ describe("recordAuthEvent", () => {
     expect(localStorage.getItem(HEARTBEAT_KEY)).toBe(new Date().toISOString().slice(0, 10));
     // All three still land in the local ring buffer.
     expect(crumbs().filter((c) => c.event === "INITIAL_SESSION")).toHaveLength(3);
+  });
+
+  it("does not burn the day's heartbeat slot when the send fails", async () => {
+    fetchMock.mockRejectedValue(new TypeError("offline"));
+    recordAuthEvent("INITIAL_SESSION");
+    await vi.waitFor(() => expect(localStorage.getItem(HEARTBEAT_KEY)).toBeNull());
+    // Next (now-online) load retries the heartbeat instead of being throttled.
+    fetchMock.mockResolvedValue(new Response("{}", { status: 200 }));
+    recordAuthEvent("INITIAL_SESSION");
+    expect(ingestCalls()).toHaveLength(2);
+    await vi.waitFor(() =>
+      expect(localStorage.getItem(HEARTBEAT_KEY)).toBe(new Date().toISOString().slice(0, 10)),
+    );
+  });
+
+  it("sends SIGNED_IN only on a genuine re-auth transition, not on tab focus", () => {
+    // auth-js fires SIGNED_IN on every hidden→visible transition; those follow
+    // existing crumbs and must stay local.
+    recordAuthEvent("TOKEN_REFRESHED");
+    recordAuthEvent("SIGNED_IN", "user-1");
+    expect(ingestCalls()).toHaveLength(0);
+    // But a SIGNED_IN right after SIGNED_OUT is a real re-login — send it.
+    recordAuthEvent("SIGNED_OUT", "user-1");
+    recordAuthEvent("SIGNED_IN", "user-1");
+    expect(ingestCalls()).toHaveLength(2); // the SIGNED_OUT + the transition SIGNED_IN
+  });
+
+  it("sends SIGNED_IN when the ring buffer is empty — a sign-in after a storage wipe", () => {
+    recordAuthEvent("SIGNED_IN", "user-1");
+    expect(ingestCalls()).toHaveLength(1);
+  });
+
+  it("skips server sends entirely off the prod origin without the force key", () => {
+    localStorage.removeItem("sendmo-diag-send");
+    recordAuthEvent("SIGNED_OUT", "user-1");
+    expect(ingestCalls()).toHaveLength(0);
+    expect(crumbs()).toHaveLength(1); // local channel still records
   });
 
   it("keeps TOKEN_REFRESHED local-only — no hourly server spam", () => {

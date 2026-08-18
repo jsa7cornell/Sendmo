@@ -114,4 +114,39 @@ describe("fetchWithRefreshRetry", () => {
       expect.objectContaining({ attempt: 1, final: true }),
     );
   });
+
+  it("caps the TOTAL retry window under the 10s rotation reuse interval", async () => {
+    // Two 8s Retry-After sleeps would put attempt 3 at ~16s after attempt 1 —
+    // outside the reuse window, where GoTrue reads the re-sent token as replay
+    // and revokes the session family. The budget must stop after attempt 2.
+    fetchMock.mockResolvedValue(res(429, "{}", { "Retry-After": "8" }));
+    const r = await run(REFRESH_URL, { method: "POST" });
+    expect(r.status).toBe(503);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(recordRefreshFailure).toHaveBeenLastCalledWith(
+      expect.objectContaining({ attempt: 2, final: true }),
+    );
+  });
+
+  it("honors the RFC 9110 HTTP-date form of Retry-After", async () => {
+    // A date ~3s ahead: within the wait cap, so the wrapper should wait and
+    // retry rather than misparse it as NaN and retry at 0.5s.
+    const headers = { "Retry-After": new Date(Date.now() + 3_000).toUTCString() };
+    fetchMock.mockResolvedValueOnce(res(429, "{}", headers)).mockResolvedValueOnce(res(200, "{}"));
+    const promise = fetchWithRefreshRetry(REFRESH_URL, { method: "POST" });
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1); // still waiting at 2s — not the 500ms fallback
+    await vi.advanceTimersByTimeAsync(58_000);
+    const r = await promise;
+    expect(r.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("bails immediately on an HTTP-date Retry-After beyond the wait cap", async () => {
+    const headers = { "Retry-After": new Date(Date.now() + 60_000).toUTCString() };
+    fetchMock.mockResolvedValue(res(429, "{}", headers));
+    const r = await run(REFRESH_URL, { method: "POST" });
+    expect(r.status).toBe(503);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
 });

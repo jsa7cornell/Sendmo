@@ -70,9 +70,14 @@ export default async function globalSetup(): Promise<void> {
       const entry = (state.origins ?? [])
         .flatMap((o) => o.localStorage ?? [])
         .find((e) => e.name === SUPABASE_STORAGE_KEY);
-      const cached = entry ? (JSON.parse(entry.value) as { expires_at?: number }) : null;
+      const cached = entry
+        ? (JSON.parse(entry.value) as { expires_at?: number; user?: { email?: string } })
+        : null;
       const secondsLeft = cached?.expires_at ? cached.expires_at - Date.now() / 1000 : 0;
-      if (secondsLeft >= 30 * 60) {
+      // Same-user check: a cache minted for a previous E2E_TEST_USER_EMAIL
+      // would silently run the authed suite as the wrong account.
+      const sameUser = cached?.user?.email?.toLowerCase() === email.toLowerCase();
+      if (sameUser && secondsLeft >= 30 * 60) {
         console.log(
           `[e2e global-setup] reusing cached session (${Math.round(secondsLeft / 60)} min left) — skipping password grant.`,
         );

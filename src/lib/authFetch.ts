@@ -19,9 +19,17 @@ import { recordRefreshFailure } from "./authBreadcrumbs";
 
 const MAX_ATTEMPTS = 3;
 const BASE_DELAY_MS = 500;
-// A Retry-After beyond this would hang app boot — bail to the synthetic 503
-// instead and let auth-js's own retry cadence pick it up later.
+// A single Retry-After beyond this would hang app boot — bail to the synthetic
+// 503 instead and let auth-js's own retry cadence pick it up later.
 const MAX_DELAY_MS = 8_000;
+// Hard ceiling on the whole retry window, measured from the first attempt.
+// Refresh-token rotation runs with a 10s reuse interval (SPEC §17): if attempt
+// 1 reached GoTrue and rotation committed but the response was lost as a 500,
+// re-sending the now-consumed token OUTSIDE that interval reads as replay and
+// revokes the whole session family — the exact logout this wrapper prevents.
+// Staying under 9s keeps every retry inside the grace window, and also bounds
+// how long a rate-limited wake can hold the boot spinner.
+const MAX_TOTAL_MS = 9_000;
 
 function isSessionKillingStatus(status: number): boolean {
   return status === 429 || status === 500;
@@ -29,11 +37,20 @@ function isSessionKillingStatus(status: number): boolean {
 
 function retryDelayMs(attempt: number, retryAfter: string | null): number | null {
   if (retryAfter) {
+    // Delta-seconds form ("120") or HTTP-date form ("Wed, 21 Oct 2026 …") —
+    // both are valid per RFC 9110.
     const seconds = Number(retryAfter);
+    let ms: number | null = null;
     if (Number.isFinite(seconds)) {
-      const ms = seconds * 1000;
-      return ms > MAX_DELAY_MS ? null : ms; // null = don't wait, bail now
+      ms = seconds * 1000;
+    } else {
+      const dateMs = Date.parse(retryAfter);
+      if (!Number.isNaN(dateMs)) ms = dateMs - Date.now();
     }
+    if (ms !== null) {
+      return ms > MAX_DELAY_MS ? null : Math.max(ms, 0); // null = don't wait, bail now
+    }
+    // Unparseable header — fall through to backoff.
   }
   return BASE_DELAY_MS * 2 ** (attempt - 1);
 }
@@ -50,9 +67,8 @@ async function bodySnippet(res: Response): Promise<string> {
   }
 }
 
-async function syntheticRetryable(last: Response): Promise<Response> {
-  const body = await bodySnippet(last);
-  return new Response(body || JSON.stringify({ error: "refresh_retry_exhausted" }), {
+function syntheticRetryable(last: Response, snippet: string): Response {
+  return new Response(snippet || JSON.stringify({ error: "refresh_retry_exhausted" }), {
     status: 503,
     statusText: "Service Unavailable (SendMo refresh-retry wrapper)",
     headers: { "Content-Type": last.headers.get("Content-Type") ?? "application/json" },
@@ -75,22 +91,27 @@ export async function fetchWithRefreshRetry(
       : false;
   if (!retryable) return fetch(input, init);
 
-  let last: Response | null = null;
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+  const startedAt = Date.now();
+  for (let attempt = 1; ; attempt++) {
     const res = await fetch(input, init);
     if (!isSessionKillingStatus(res.status)) return res;
-    last = res;
 
-    const delay = attempt < MAX_ATTEMPTS ? retryDelayMs(attempt, res.headers.get("Retry-After")) : 0;
+    // One sentinel: delay === null means no more waiting — attempts spent,
+    // Retry-After too long, or the next attempt would land outside the
+    // rotation reuse window (MAX_TOTAL_MS).
+    let delay =
+      attempt < MAX_ATTEMPTS ? retryDelayMs(attempt, res.headers.get("Retry-After")) : null;
+    if (delay !== null && Date.now() + delay - startedAt > MAX_TOTAL_MS) delay = null;
+
+    const snippet = await bodySnippet(res);
     recordRefreshFailure({
       endpoint: url,
       status: res.status,
       attempt,
-      final: attempt === MAX_ATTEMPTS || delay === null,
-      bodySnippet: await bodySnippet(res),
+      final: delay === null,
+      bodySnippet: snippet,
     });
-    if (delay === null) break;
-    if (attempt < MAX_ATTEMPTS) await sleep(delay);
+    if (delay === null) return syntheticRetryable(res, snippet);
+    await sleep(delay);
   }
-  return syntheticRetryable(last as Response);
 }

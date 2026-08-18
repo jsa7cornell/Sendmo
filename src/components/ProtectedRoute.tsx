@@ -1,4 +1,4 @@
-import { Navigate } from "react-router-dom";
+import { Link, Navigate } from "react-router-dom";
 import { Loader2, WifiOff } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useOnline } from "@/hooks/useOnline";
@@ -26,6 +26,14 @@ export default function ProtectedRoute({ children }: { children: React.ReactNode
           <p className="text-sm text-muted-foreground">
             You&apos;re offline — we&apos;ll pick up where you left off once you reconnect.
           </p>
+          {/* Escape hatch: a deliberately signed-out user (or a browser
+              misreporting onLine=false) must never be trapped here. */}
+          <Link
+            to="/login"
+            className="text-sm text-primary underline underline-offset-4"
+          >
+            Go to sign-in
+          </Link>
         </div>
       </div>
     );
