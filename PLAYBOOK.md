@@ -541,6 +541,8 @@ Use **Supabase SQL Editor** (service role) to query this table for debugging.
 | `refund.admin_initiated_failed` | refunds fn | Admin refund Stripe call failed (H3 — error severity) |
 | `refund.failed` | stripe-webhook | Stripe `charge.refund.updated` with `status='failed'` — card couldn't accept refund (H3 D1 — error severity) |
 | `refund.failed_alert_email_error` | stripe-webhook | The admin alert email for a failed refund itself failed to send (H3 — error severity) |
+| `auth.breadcrumb` | frontend (via ingest) | Auth state change (SIGNED_IN/SIGNED_OUT/USER_UPDATED) or once-daily INITIAL_SESSION heartbeat — session-durability Phase 0 diagnosis. `session_id` is a per-browser diag id; `properties.origin` distinguishes prod from localhost/e2e traffic |
+| `auth.refresh_failed` | frontend (via ingest) | A token-refresh attempt returned 429/500 — `properties` carry endpoint, status, attempt, and body snippet. `severity: error` = retries exhausted (the session survived only because of the retry wrapper) |
 
 ### How to Instrument a New Edge Function
 

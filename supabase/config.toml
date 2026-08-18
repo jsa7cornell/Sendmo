@@ -4,6 +4,7 @@ site_url = "https://sendmo.co"
 additional_redirect_urls = [
   "https://sendmo.co/dashboard",
   "https://sendmo.co/**",
+  "https://www.sendmo.co/**",
   "http://localhost:5173/dashboard",
   "http://localhost:5173/**",
 ]

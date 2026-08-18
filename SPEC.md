@@ -1040,7 +1040,12 @@ Endpoint: `POST /api/webhooks/stripe`
 - **Account creation**: Automatic during onboarding (after email verify + payment)
 - **Returning users**: Email -> magic link -> `/dashboard`
 - **Session**: JWT access + refresh tokens, auto-refresh via Supabase client
-- **Protected routes**: `/dashboard` requires auth, redirects to `/` if unauthenticated
+- **Session durability** (2026-08-18, [decided proposal](proposals/2026-08-18_session-durability-and-auth-architecture_reviewed-2026-08-18_decided-2026-08-18.md)):
+  - Refresh calls that return **429 or 500** are retried with backoff and, if persistent, rewritten to a synthetic 503 (`src/lib/authFetch.ts`) — auth-js otherwise treats them as non-retryable and **destroys the stored session** (only network failures + 502/503/504 are retryable in `auth-js@2.97`).
+  - Every auth event is breadcrumbed on three channels (`src/lib/authBreadcrumbs.ts`): localStorage ring buffer, `sm_bc` marker cookie, and `event_logs` via `ingest` (`auth.breadcrumb` / `auth.refresh_failed`). This is the Phase 0 diagnosis instrumentation; keep it until the daily-logout cause is confirmed and fixed.
+  - Hosted Pro session knobs (dashboard-set, John): time-box **off**, inactivity timeout **off**, refresh-token rotation **on** with a **10s reuse interval**, JWT expiry **1h**. Server sessions are deliberately unbounded until Phase 2 (Token-Mediating Backend) lands; see the proposal for the 30-day-inactivity/90-day-absolute target design.
+  - `www.sendmo.co` 308-redirects to the apex (vercel.json) — a second origin means a second, empty `localStorage` and a permanently signed-out UX.
+- **Protected routes**: `/dashboard` requires auth, redirects to `/` if unauthenticated. While the browser is **offline**, a missing session holds on a waiting screen instead of bouncing to `/login` (`ProtectedRoute` + `useOnline`).
 - **Senders**: No account needed. Optional email for tracking stored in `shipments.sender_email`. "Save my info" stores in `localStorage`.
 
 ---
