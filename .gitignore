@@ -44,3 +44,4 @@ supabase/.temp/
 *.docx
 *.xlsx
 *.pptx
+.vercel

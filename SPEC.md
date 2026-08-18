@@ -241,9 +241,20 @@ Asks **"Who's sending the package?"** — not which product the user wants. It's
 - The answer is stored as `sender: 'self' | 'other'` in flow state. **It decides which party owns which address slot, so every saved-address prefill must branch on it** via `prefillSlotFor()` in [`src/lib/recipientFlowStorage.ts`](src/lib/recipientFlowStorage.ts). Filling the destination unconditionally pre-fills the account holder's own address as "where it's going" on the 'self' branch — pre-verified and green, so a user who doesn't overwrite it ships to themselves.
 - A launch-gated link-out (`VITE_ENABLE_SELLER_LINK`) points sellers at `/sell`; the Dashboard carries the same gated CTA. Signed-in users are redirected past the marketing homepage, so those two are the only seller doors that audience ever sees.
 
-### Step 10 escape: "I don't have their address"
+### Step 10 fork: who supplies the sender's address
 
-On the `sender: 'other'` branch, step 10's origin block carries an escape. Taking it navigates to `/onboarding/flexible/preferences` — the flow becomes a **Shipping link** (`link_type = 'flexible'`) and the other party fills in the origin later. An undo bar on step 20 returns to step 10 with the typed origin intact (it is never cleared).
+On the `sender: 'other'` branch, step 10 opens with **"Where's it shipping from?"** and two equally-weighted answers:
+
+| Answer | Result |
+|---|---|
+| **I have their address** *(pre-selected)* | Origin form + package + rates. Stays `link_type = 'full_label'`. |
+| **The sender will fill this in** | Navigates to `/onboarding/flexible/preferences`. Becomes `link_type = 'flexible'`; the other party supplies the origin later. |
+
+**The product type is derived, never chosen.** The user answers a question they can actually answer; they are never asked to classify themselves as "full label" vs "flexible link". This replaced (2026-08-18) a muted help-text escape named after the user's problem, which left the link — the product the homepage sells — with no door at all.
+
+"I have their address" is pre-selected deliberately: the label path has produced every shipment to date and must not gain a click to advertise the link path. First-class means named, weighted and visible before the user can fail — not unavoidable.
+
+An undo bar on step 20 returns to step 10 with the typed origin intact (it is never cleared). Deferring the *package* independently is **not** offered: a flexible link has the sender supply everything, so an entered origin would be discarded — see the proposal's §2.
 
 This is why there is no "flexible" door at step 0: the fork is a *fact about what the user can answer*, not a preference, and it's surfaced at the moment they discover it.
 

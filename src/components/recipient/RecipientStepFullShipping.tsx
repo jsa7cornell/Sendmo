@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { AlertCircle, Sparkles, MapPin, HelpCircle } from "lucide-react";
+import { AlertCircle, Sparkles, MapPin } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import SmartAddressInput from "@/components/ui/SmartAddressInput";
@@ -203,10 +203,75 @@ export default function RecipientStepFullShipping({
 
       {/* Origin Address */}
       <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
+        {/* Who supplies the sender's address — the ONE question that decides
+            whether this is a finished label or a shipping link. Framed as two
+            answers to a question the user can actually answer, rather than a
+            choice between product names they have no context for.
+
+            "I have their address" is pre-selected on purpose: the label path
+            has produced every shipment to date, so it must not gain a click to
+            advertise the link path. First-class means named, weighted and
+            visible before the user can fail — not unavoidable. */}
+        {!isSelfSender && (
+          <fieldset className="mb-4">
+            <legend className="text-sm font-semibold text-foreground mb-3">
+              Where's it shipping from?
+            </legend>
+            <div className="space-y-2">
+              <button
+                type="button"
+                onClick={() => { /* already the current answer */ }}
+                className={cn(
+                  "w-full flex items-start gap-3 rounded-xl border p-3.5 text-left transition-all",
+                  "border-primary bg-primary/5",
+                )}
+              >
+                <span className={cn(
+                  "w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 mt-0.5",
+                  "border-primary",
+                )}>
+                  <span className="w-2 h-2 rounded-full bg-primary" />
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-sm font-medium text-foreground">I have their address</span>
+                  <span className="block text-xs text-muted-foreground mt-0.5">You enter it and get an exact price now</span>
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={onNoAddress}
+                className={cn(
+                  "w-full flex items-start gap-3 rounded-xl border p-3.5 text-left transition-all",
+                  "border-border hover:border-muted-foreground/30",
+                )}
+              >
+                <span className={cn(
+                  "w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 mt-0.5",
+                  "border-muted-foreground/40",
+                )}>
+
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-sm font-medium text-foreground">The sender will fill this in</span>
+                  <span className="block text-xs text-muted-foreground mt-0.5">
+                    We'll send them a shipping link — they add their address and print the label
+                  </span>
+                </span>
+              </button>
+            </div>
+          </fieldset>
+        )}
+
         <div className="flex items-center justify-between mb-3">
-          <h3 className="text-sm font-semibold text-foreground">
-            {isSelfSender ? "Shipping from" : "Origin address"}
-          </h3>
+          {/* Only the 'self' branch needs a heading here: the 'other' branch is
+              already headed by the fieldset legend above, and rendering an
+              empty <h3> for it left a bare landmark in the a11y tree. */}
+          {isSelfSender ? (
+            <h3 className="text-sm font-semibold text-foreground">Shipping from</h3>
+          ) : (
+            <span />
+          )}
           {originConfirmable && (
             <button
               type="button"
@@ -272,20 +337,6 @@ export default function RecipientStepFullShipping({
           </div>
         )}
 
-        {/* The escape. This is the whole reason the shipping-link product
-            exists, surfaced at the exact moment the user discovers they can't
-            answer — not as a product choice made before they knew the
-            question. Typed input is preserved if they come back. */}
-        {!isSelfSender && (
-          <button
-            type="button"
-            onClick={onNoAddress}
-            className="mt-4 inline-flex items-center gap-1.5 text-sm text-muted-foreground rounded-xl px-2 py-1.5 -ml-2 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-          >
-            <HelpCircle className="w-3.5 h-3.5" aria-hidden="true" />
-            I don't have their address
-          </button>
-        )}
       </div>
 
       {/* Magic Guestimator — primary input */}

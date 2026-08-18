@@ -12,6 +12,31 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-18] The shipping link becomes an answer, not an escape
+
+**Category:** ship | Onboarding
+**Deploy:** see verification below.
+**Cross-link:** [proposals/2026-08-18_link-first-shipment-step.md](proposals/2026-08-18_link-first-shipment-step.md) | corrects drift from [2026-08-17_onboarding-who-is-sending](proposals/2026-08-17_onboarding-who-is-sending_reviewed-2026-08-17_decided-2026-08-17.md) | handoff: [2026-08-18_link-first-onboarding-handoff.md](proposals/2026-08-18_link-first-onboarding-handoff.md)
+
+**What & why.** The homepage sells a shareable link; the funnel made that link reachable only by failing to complete a label form, where it appeared as muted help-text named after the user's *problem* ("I don't have their address") below a form they couldn't fill. The word "link" appeared nowhere in the flow. **This was drift I introduced** on 2026-08-17 when the two-door picker was removed — the reasoning (don't make users self-classify into product jargon) was right; leaving the link with *no* door was not.
+
+Per John's direction, the fix makes **"The sender will fill this in"** a first-class *answer* to the question being asked, rather than an escape from it. Step 10 now leads with "Where's it shipping from?" and two equally-weighted choices; picking the second calls the existing `switchToShippingLink()`. **Routing is unchanged** — same slugs, same deep links, same Sentry route names, and `completedSteps` still doesn't change across the fork, so the `flushSync` reasoning in `RecipientFlowContext` stays true.
+
+**Data that shaped it** (prod, 2026-08-18): `full_label` 38 links → **37 shipments** (9 live). `flexible` 19 links (7 live) → **0 shipments, ever**. The link path's second half — sender opens link, ships — has never completed in production. Caveat: this is almost entirely dogfooding, so it measures what has been *exercised*, not what the market wants.
+
+**Review caught the important one.** The first cut hid the origin form until the user picked a choice — taxing the path responsible for **100% of shipments** with an extra click, to advertise a path with zero. Fixed by pre-selecting "I have their address" so the form renders immediately with the alternative named and visible above it. **First-class means named, weighted and visible before the user can fail — not unavoidable.** Also folded in: the banner now states the recurring charge ("you'll be charged each time someone uses it"), matching what `FlexPaymentStep` tells them later, instead of a bare "You pay".
+
+**⚠️ Open item with no owner yet — the link path is reachable but unproven.** This routes materially more people onto a flow that has completed **zero** times in production. Someone must walk it end-to-end for real: create a link → a *different person* opens it → ships → the creator's saved card is charged off-session. A failure there is a **launch blocker, not a bug**. Do this before launch, not after.
+
+**Tests:** 681 unit / 63 files. **e2e 77 passed / 5 skipped / 0 failed** — the first fully green run since [#64](https://github.com/jsa7cornell/Sendmo/pull/64) made e2e blocking and cleared the 16 admin failures. `tsc -b --noEmit` clean. ESLint 27 vs 27 baseline. The new naming test was confirmed to **fail** when the control is renamed back to "I don't have their address".
+
+**Browser-verified:**
+- spec: [tests/e2e/onboarding.spec.ts](tests/e2e/onboarding.spec.ts) — both answers present and named; the origin form is open by default so the label path gains no clicks; the fork reaches `/onboarding/flexible/preferences` with the step actually swapping (asserts the destination heading is visible, not just the URL); undo restores the typed address.
+- mcp-session: Claude Browser pane, 2026-08-18, worktree on :5205 — step-10 layout with the choice pre-selected and form open; flexible step's banner copy loaded directly (the pane cannot render step *transitions* — `AnimatePresence mode="wait"` never completes its exit there, LOG 2026-08-17).
+- variants-covered: [sender=other step 10 with both choices; label branch with form open; link branch banner + undo; sender=self shows no choice]
+- **Not covered:** the end-to-end link journey above — that is the open item, not a test gap this PR can close.
+
+
 ### [2026-08-18] E2E de-rot — CI's e2e signal was meaningless, not just unreported
 
 **Category:** fix | Testing / CI
