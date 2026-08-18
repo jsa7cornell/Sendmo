@@ -15,7 +15,7 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 ### [2026-08-18] PR #68 code-review fixes — migration 041 applied to prod, parcel prefill wired, mid-deploy drafts recovered
 
 **Category:** fix | Onboarding + SenderFlow
-**Deploy:** Committed to the PR #68 branch (`feat/split-address-package`), NOT merged, NOT deployed. **Migration 041 IS now applied to production** — the merge-order blocker is cleared.
+**Deploy:** **DEPLOYED.** Merged via [PR #68](https://github.com/jsa7cornell/Sendmo/pull/68) (merge commit `a13d5f2`), 2026-08-18, after CI run 32195184825 went green. Verified live: bundle `/assets/index-DUmCpHQ3.js` on sendmo.co contains the step-split copy. Migration 041 was applied to production BEFORE the merge (via Supabase MCP; verified live both before and after). Also fixed en route: `tests/unit/recipientFlowContext.test.tsx`'s beforeEach cleared only sessionStorage — a CI-only inter-test storage leak (local jsdom localStorage is method-less, so persist() no-ops locally) that had failed the unit step on every CI run of this PR; it now clears both stores.
 **Cross-link:** review handoff [2026-08-18_pr68-code-review-handoff.md](proposals/2026-08-18_pr68-code-review-handoff.md)
 **Browser-verified:** spec: tests/e2e/sender-origin-prefill.spec.ts · variants-covered: parcel prefill present / link carries no parcel / malformed prefill (no weight) ignored
 
@@ -31,7 +31,7 @@ An independent review of PR #68 confirmed five findings; all five are fixed in t
 
 
 **Category:** ship | Onboarding
-**Deploy:** NOT merged, NOT deployed — PR only, awaiting an independent code review. **Merging requires migration 041 to be applied** (see below).
+**Deploy:** **DEPLOYED.** Merged via [PR #68](https://github.com/jsa7cornell/Sendmo/pull/68) (merge commit `a13d5f2`), 2026-08-18, together with the code-review fixes entry above. Migration 041 was applied to production before the merge.
 **Cross-link:** follows [PR #67](https://github.com/jsa7cornell/Sendmo/pull/67) | handoff [2026-08-18_link-first-onboarding-handoff.md](proposals/2026-08-18_link-first-onboarding-handoff.md)
 
 **The bug (John, 2026-08-18):** choosing "The sender will fill this in" on the ship-from address jumped straight to shipping preferences — the package question was never asked. Deferring one thing silently deferred everything.
