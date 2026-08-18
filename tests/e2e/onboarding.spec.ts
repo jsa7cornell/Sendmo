@@ -256,21 +256,25 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
     await mockAllEdgeFunctions(page);
   });
 
-  test("Step 0: asks who's sending and offers both answers", async ({ page }) => {
+  test("Step 0: receiving is the primary card, mailing out is a secondary link", async ({ page }) => {
     await page.goto("/onboarding");
 
     await expect(
       page.getByRole("heading", { name: /Who's sending the package/i })
     ).toBeVisible();
-    await expect(page.getByRole("button", { name: /I am/ })).toBeVisible();
+    // Both answers reachable, but deliberately not equal weight (John,
+    // 2026-08-18): receiving is the card, mailing out is a text link.
     await expect(page.getByRole("button", { name: /Someone else/ })).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: /mailing something out myself/i })
+    ).toBeVisible();
     // Who-pays is stated once, not badged on each option.
     await expect(page.getByText(/you're the one paying for shipping/i)).toBeVisible();
   });
 
-  test("Step 0: 'I am' starts an outbound label — the case that had no door", async ({ page }) => {
+  test("Step 0: the secondary link starts an outbound label — the case that had no door", async ({ page }) => {
     await page.goto("/onboarding");
-    await page.getByRole("button", { name: /I am/ }).click();
+    await page.getByRole("button", { name: /mailing something out myself/i }).click();
 
     // Same link_type and same first step as every other full-label flow; only
     // which party owns which address differs.
@@ -278,7 +282,7 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
     await expect(page.getByRole("heading", { name: /Where's it going/i })).toBeVisible();
   });
 
-  test("'I am' survives a sessionStorage write failure", async ({ page }) => {
+  test("the outbound branch survives a sessionStorage write failure", async ({ page }) => {
     // Regression: startFlowAs writes sessionStorage, and persist() swallows
     // write errors by design. When storage is unavailable the answer used to be
     // lost, sender fell back to 'other', and the user's OWN saved address would
@@ -300,7 +304,7 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
     });
 
     await page.goto("/onboarding");
-    await page.getByRole("button", { name: /I am/ }).click();
+    await page.getByRole("button", { name: /mailing something out myself/i }).click();
 
     // The 'self' branch must still be in force: step 1 collects the OTHER
     // party's address, so it asks "Where's it going?", not "delivered to you".

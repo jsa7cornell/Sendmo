@@ -4,7 +4,7 @@ import SendMoLogo from "@/components/SendMoLogo";
 import { Button } from "@/components/ui/button";
 import AppHeader from "@/components/AppHeader";
 import { useAuth } from "@/contexts/AuthContext";
-import { SELLER_LINK_ENABLED } from "@/lib/featureFlags";
+import { SELLER_LINK_VISIBLE, SELLER_LINK_LIVE } from "@/lib/featureFlags";
 
 export default function Index() {
   // T3-3: signed-in users land on their dashboard, not the marketing homepage.
@@ -54,15 +54,22 @@ export default function Index() {
             <span className="text-xs text-muted-foreground">You pay for shipping</span>
           </div>
 
-          {SELLER_LINK_ENABLED && (
+          {SELLER_LINK_VISIBLE && (
             <div className="flex flex-col items-center gap-2 w-full sm:w-auto sm:max-w-xs">
               <Button
                 variant="outline"
+                disabled={!SELLER_LINK_LIVE}
                 className="rounded-xl text-lg py-6 px-8 gap-2 w-full"
-                onClick={() => window.location.href = "/sell"}
+                onClick={SELLER_LINK_LIVE ? () => { window.location.href = "/sell"; } : undefined}
               >
                 SendMo for Sellers
-                <ArrowRight className="w-5 h-5" />
+                {SELLER_LINK_LIVE ? (
+                  <ArrowRight className="w-5 h-5" />
+                ) : (
+                  <span className="text-[10px] font-bold uppercase tracking-wide bg-muted border border-border rounded-full px-2 py-0.5">
+                    Soon
+                  </span>
+                )}
               </Button>
               <span className="text-xs text-muted-foreground text-center text-balance">
                 Create a buyer shipping experience for Marketplaces, eBay, and more

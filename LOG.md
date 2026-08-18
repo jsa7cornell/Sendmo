@@ -12,6 +12,30 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-18] Step 0 rebalanced + seller entry points shipped as "Coming soon"
+
+**Category:** ship | Onboarding | Growth
+**Deploy:** Merged to `main`; Vercel prod deploy — see verification below.
+**Cross-link:** [proposals/2026-08-17_onboarding-who-is-sending_reviewed-2026-08-17_decided-2026-08-17.md](proposals/2026-08-17_onboarding-who-is-sending_reviewed-2026-08-17_decided-2026-08-17.md) | follows [PR #63](https://github.com/jsa7cornell/Sendmo/pull/63)
+
+**What & why (John, 2026-08-18):** two changes to what shipped in #63.
+
+1. **Step 0 is no longer symmetric.** Both answers still start the same flow and still differ only in which party owns which address, but they are not equally common — someone shipping *to* the account holder is the core case. So "Someone else" is the single full card and "I'm mailing something out myself" is a text link beneath it: present and reachable, not competing for attention. This also settles the proposal's OQ3 in the same direction — the outbound case stays discoverable in-product without the homepage leading on it, so the hero is unchanged.
+
+2. **The seller entry points ship visible but inert.** `VITE_ENABLE_SELLER_LINK` was never meant to be off (John), but the buyer checkout is still test-mode, so a real buyer's card is rejected. Turning it fully on would have put a product in front of users that cannot complete a sale. Instead the flag became a **three-state mode** — `off` / `coming-soon` / `live` — driven by the same env var so nothing documented breaks (`"true"` still means live). In `coming-soon` all three entry points (homepage door, step-0 line, Dashboard CTA) render with a badge and are **not interactive**; `/sell` stays reachable by direct URL for testing, as it always has been.
+
+**Gotcha — local e2e silently tests whatever is on :5173, including another checkout.** 17 of 28 specs "failed" against correct code because `playwright.config.ts` sets `reuseExistingServer: !CI`, and a stale `vite` from an earlier run in the **main checkout** was still holding the port while the specs under test lived in a worktree. Playwright happily tested the other application. Every mismatch looked like an ordinary `toBeVisible` timeout. Since the project's concurrent-session rule tells agents to work in worktrees, two checkouts on one machine is normal, not exotic. Diagnose with `for pid in $(lsof -ti:5173); do lsof -a -p $pid -d cwd -Fn | grep '^n'; done` — if the cwd is not what you are testing, **every result from that run is meaningless, passes included.** Recorded as finding A4c in the infra handoff.
+
+**Not touched:** the in-progress admin-test repair sitting uncommitted in the main checkout (new `tests/e2e/mock-admin-auth.ts`, both admin specs, `global-setup.ts`, `test.yml`, and a real `Admin.tsx` fix where the refund dialog closed before showing confirmation). Verified it takes the admin failures from 16 down to 1 — the remaining `label-flow` failure is unrelated, exactly as diagnosed. Left alone to avoid duplicating a near-complete job; it is still uncommitted and worth committing.
+
+**Tests:** 681 unit / 63 files. 28/28 on every spec touching these surfaces, re-run against the correct server after the :5173 discovery. `tsc -b --noEmit` clean.
+
+**Browser-verified:**
+- mcp-session: Claude Browser pane, 2026-08-18, worktree on :5205 with `VITE_ENABLE_SELLER_LINK=coming-soon`
+- variants-covered: [step 0 — one primary card + secondary text link, both reachable; step-0 seller line renders as a non-interactive `<p>` with a "Coming soon" badge (asserted, not eyeballed); homepage — "SendMo for Sellers" renders disabled with a "Soon" badge beside the live you-pay door]
+- **Not covered:** `coming-soon` → `live` transition on the real Vercel env, and the Dashboard CTA (needs a signed-in session).
+
+
 ### [2026-08-17] Infra-audit handoff reviewed — A0 root-caused, two new findings, #62 unblocked
 
 **Category:** review | Infrastructure

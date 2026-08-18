@@ -11,7 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { cn, carrierDisplayName } from "@/lib/utils";
 import SendMoLogo from "@/components/SendMoLogo";
 import { useAuth } from "@/contexts/AuthContext";
-import { SELLER_LINK_ENABLED } from "@/lib/featureFlags";
+import { SELLER_LINK_VISIBLE, SELLER_LINK_LIVE } from "@/lib/featureFlags";
 import { supabase } from "@/lib/supabase";
 import LinksTab from "@/components/dashboard/LinksTab";
 import AddCardModal from "@/components/dashboard/AddCardModal";
@@ -475,14 +475,21 @@ export default function Dashboard() {
                 seller can reach the buyer-pays flow. Without it the seller door
                 exists only on a page this audience can't get to — and repeat
                 sellers are exactly who that product was built for. */}
-            {SELLER_LINK_ENABLED && (
+            {SELLER_LINK_VISIBLE && (
               <Button
                 variant="outline"
+                disabled={!SELLER_LINK_LIVE}
                 className="rounded-xl gap-2 text-sm"
-                onClick={() => navigate("/sell")}
+                onClick={SELLER_LINK_LIVE ? () => navigate("/sell") : undefined}
+                title={SELLER_LINK_LIVE ? undefined : "Coming soon"}
               >
                 <Tag className="w-4 h-4" />
                 Sell an item
+                {!SELLER_LINK_LIVE && (
+                  <span className="text-[10px] font-bold uppercase tracking-wide bg-muted border border-border rounded-full px-1.5 py-0.5">
+                    Soon
+                  </span>
+                )}
               </Button>
             )}
             <Button className="rounded-xl gap-2 text-sm" onClick={() => navigate("/onboarding")}>
