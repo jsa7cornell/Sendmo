@@ -2,12 +2,12 @@
 title: Session durability — why SendMo logs John out, and the auth architecture to fix it
 slug: session-durability-and-auth-architecture
 project: sendmo
-status: revised
+status: decided
 blocked_on: null
 created: 2026-08-18
-last_updated: 2026-08-18 16:40
+last_updated: 2026-08-18 16:55
 reviewed: 2026-08-18
-decided: null
+decided: 2026-08-18
 executed: null
 pr: null
 author: Claude Opus 5 — from a John session opening "sendmo logs me out nearly every day; we've tried to fix this before and it didn't work." Researched prior LOG attempts, then measured production directly (auth.sessions, auth.refresh_tokens, auth service logs), read the auth-js 2.97 source, probed the live Vercel routing, and compared against the Inlet codebase at John's direction. Market research covers the IETF browser-apps draft, WebKit ITP, and Clerk/Auth0/CIAM session-lifetime norms.
@@ -481,3 +481,9 @@ The email-bucket/token-bucket distinction is correct and it materially weakens #
 
 1. **Proceed with Phase 0 + Phase 1 now?** (The proposal marked them unconditional; both are diagnosis + fixes-correct-under-every-diagnosis. ~2 days.)
 2. **Phase 2 stance:** wait for Phase 0 evidence (default), or pre-commit to the Option A migration on §2.1 pre-launch grounds regardless of what Phase 0 finds.
+
+---
+
+## Decision
+
+**DECIDED 2026-08-18 (John):** (1) Phase 0 + Phase 1 approved — proceed now, executed in the same session that wrote the review/response (Fable). (2) Phase 2: **wait for evidence** — no migration until Phase 0's breadcrumbs identify the actual cause, or a separate explicit pre-launch call revisits it. Before any Phase 2 implementation, this file needs the file-by-file + test-plan addendum (B2 locking design, B4 e2e migration) and a focused re-review of that addendum.
