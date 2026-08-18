@@ -17,6 +17,13 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 **Category:** review | Infrastructure
 **Cross-link:** [proposals/2026-08-17_platform-infra-audit-handoff.md](proposals/2026-08-17_platform-infra-audit-handoff.md) (on `feat/onboarding-who-is-sending`, PR #63) | [test.yml](.github/workflows/test.yml) | [AuthContext.tsx](src/contexts/AuthContext.tsx) | [Admin.tsx](src/pages/Admin.tsx)
 
+**Code review (3 findings, all fixed before merge):**
+- **Wrong-party prefill could return via a silent storage failure.** `startFlowAs` writes sessionStorage and `persist` swallows write errors, so a user who answered "I am" in a context where storage is unavailable arrived with `sender=null`, was treated as 'other', and got their OWN address prefilled into the destination. Compounding it, the effect's "wait for step 0" guard (`!data.sender && !urlPath`) could never be true inside the provider — `urlPath` is always set for a matched route — so it never waited. Fix: `App.tsx` also carries the answer in router state and the provider seeds from whichever arrives; the dead guard is removed and the `null → destination` deep-link fallback documented as intentional.
+- **Origin form collapsed under the user mid-typing.** `originConfirmable` was derived every render, so for a 'self' user whose saved address lacked a phone (anything predating the 2026-05-19 phone requirement) the entire `SmartAddressInput` — including the focused phone field — unmounted on the keystroke that completed the 10th digit. Fix: latch confirmability at mount; it re-latches on the next visit to step 10.
+- **Escape offered without an undo.** The escape renders when `sender !== 'self'` but the undo bar was gated on `sender === 'other'`, so null-sender users (existing deep links, sessions persisted before this shipped) could convert to a shipping link with no rendered way back. Fix: undo now mirrors the escape's predicate.
+
+Both new e2e regressions were confirmed to **fail without their fix** before being accepted — the discipline the "passing e2e that proved nothing" gotcha above exists to enforce.
+
 **Browser-verified:** n/a-category: `docs-only` — n/a-reason: review + LOG/handoff text; no product surface touched.
 
 **Verdict: accept.** Every claim re-tested at `main` `f11c009` holds — A1 (double-suppressed gates), A2 (report overwritten before upload), A0 (16 failed), A5 (key is anon, no Rule 0 issue), B3 (dead `api/s/` still present).
@@ -68,7 +75,7 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 **Browser-verified:**
 - spec: [tests/e2e/onboarding.spec.ts](tests/e2e/onboarding.spec.ts) — step 0 renders both answers; "I am" reaches `/full-label/destination` with the "Where's it going?" heading; the escape swaps step 10 → step 20 and undo restores the typed origin. Plus [tests/e2e/home.spec.ts](tests/e2e/home.spec.ts) (two doors), [tests/e2e/url-step-routing.spec.ts](tests/e2e/url-step-routing.spec.ts) + [tests/e2e/phone-gate.spec.ts](tests/e2e/phone-gate.spec.ts) (entry repointed).
 - mcp-session: Claude Browser pane, 2026-08-17, `who-sending-wt` on :5205 — step-0 layout measured (grid columns, heading centering, row deltas, word count, mobile fold), keyboard focus ring confirmed as `hsl(214 89% 52%)`, and both branches' step-1 copy checked live (this is where the `AddressForm` "(probably your name!)" defect was caught).
-- variants-covered: [step-0 desktop 1280×800, step-0 mobile 375×812, step-0 keyboard focus, sender=self step 1, sender=other step 1, sender=other step 10 + escape + undo, seller flag OFF (default) on all three surfaces]
+- variants-covered: [step-0 desktop 1280×800, step-0 mobile 375×812, step-0 keyboard focus, sender=self step 1, sender=other step 1, sender=other step 10 + escape + undo, seller flag OFF (default) on all three surfaces, seller flag ON (both homepage doors), sender=self step 10 with a COMPLETE saved address → confirm row + Change, sender=self step 10 with an INCOMPLETE saved address → form stays mounted and focused through the 10th phone digit, then re-latches to the confirm row on the next visit]
 - **Not covered:** the seller doors with `VITE_ENABLE_SELLER_LINK=true` (flag is off in every environment; the three call sites are a single shared constant), and payment/label steps (untouched by this change).
 
 

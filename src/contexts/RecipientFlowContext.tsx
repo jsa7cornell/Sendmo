@@ -1,7 +1,7 @@
 import { createContext, useContext, useCallback, useEffect, useState, useRef } from "react";
 import { flushSync } from "react-dom";
-import { useNavigate, useParams } from "react-router-dom";
-import type { RecipientPath } from "@/lib/types";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
+import type { RecipientPath, SenderKind } from "@/lib/types";
 import {
   INITIAL_DATA,
   loadPersisted,
@@ -49,7 +49,19 @@ const RecipientFlowContext = createContext<RecipientFlowContextValue | null>(nul
 // ─── Provider ───────────────────────────────────────────────
 
 export function RecipientFlowProvider({ children }: { children: React.ReactNode }) {
-  const [data, setData] = useState<RecipientFlowData>(() => loadPersisted() ?? INITIAL_DATA);
+  const location = useLocation();
+  // Step 0's answer travels two ways: sessionStorage (survives the OAuth
+  // roundtrip and refreshes) and React Router state (survives a sessionStorage
+  // write that silently failed — private-mode, disabled storage, quota).
+  // `persist` swallows write errors by design, so without this backstop a user
+  // who answered "I am" could arrive with sender=null, be treated as 'other',
+  // and get their OWN address prefilled into the destination slot — the exact
+  // wrong-party bug the sender split exists to prevent.
+  const navSender = (location.state as { sender?: SenderKind } | null)?.sender ?? null;
+  const [data, setData] = useState<RecipientFlowData>(() => {
+    const base = loadPersisted() ?? INITIAL_DATA;
+    return base.sender ? base : { ...base, sender: navSender };
+  });
   const navigate = useNavigate();
   const params = useParams<{ pathSlug?: string; stepSlug?: string }>();
   const directionRef = useRef<NavDirection>("forward");
@@ -110,9 +122,11 @@ export function RecipientFlowProvider({ children }: { children: React.ReactNode 
   useEffect(() => {
     if (prefillRan.current) return;
     if (!user) return;
-    // Wait for step 0 before prefilling anything — running early would fill the
-    // wrong slot and latch prefillRan so the correct one never happens.
-    if (!data.sender && !urlPath) return;
+    // No "wait for step 0" guard here on purpose: `sender` is seeded
+    // synchronously at mount from sessionStorage or router state, so by the time
+    // this runs it is either known or genuinely absent. Absent means a deep link
+    // that never passed step 0, and prefillSlotFor's documented fallback for
+    // that case ('destination') is the correct, pre-existing shape.
     const fillsOrigin = prefillSlotFor(data.sender) === "origin";
     const targetTouched = fillsOrigin
       ? data.originAddress.street
@@ -165,7 +179,7 @@ export function RecipientFlowProvider({ children }: { children: React.ReactNode 
       });
     })();
     return () => { cancelled = true; };
-  }, [user, data.sender, urlPath, data.destinationAddress.street, data.originAddress.street, data.email]);
+  }, [user, data.sender, data.destinationAddress.street, data.originAddress.street, data.email]);
 
   // Backward-compat state object (step components still expect currentStep on it)
   const state: RecipientFlowState = { ...data, currentStep };

@@ -54,7 +54,10 @@ function OnboardingWhoSending() {
         <RecipientStepWhoSending
           onSelect={(sender) => {
             startFlowAs(sender);
-            navigate("/onboarding/full-label/destination");
+            // Also carried in router state: `startFlowAs` writes sessionStorage,
+            // which is best-effort and silently no-ops when storage is
+            // unavailable. The provider seeds from whichever arrives.
+            navigate("/onboarding/full-label/destination", { state: { sender } });
           }}
           onSellInstead={() => navigate("/sell")}
         />

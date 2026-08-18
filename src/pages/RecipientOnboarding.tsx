@@ -139,7 +139,12 @@ export default function RecipientOnboarding() {
         {/* Undo for the address escape. Flow-level affordance: it reverses the
             branch decision itself, and the typed origin address is still in
             flow state, so coming back restores it. */}
-        {currentStep === 20 && data.sender === "other" && (
+        {/* Mirrors the escape's own condition (`!isSelfSender` in
+            RecipientStepFullShipping). Gating this on === "other" while the
+            escape is offered to null-sender users too — existing deep links,
+            and sessions persisted before this shipped — let those users convert
+            to a shipping link with no rendered way back. */}
+        {currentStep === 20 && data.sender !== "self" && (
           <div className="mb-5 flex items-center justify-between gap-3 rounded-xl bg-muted px-4 py-3">
             <p className="text-sm text-muted-foreground">
               We'll send a link for them to fill in their address.

@@ -278,6 +278,56 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
     await expect(page.getByRole("heading", { name: /Where's it going/i })).toBeVisible();
   });
 
+  test("'I am' survives a sessionStorage write failure", async ({ page }) => {
+    // Regression: startFlowAs writes sessionStorage, and persist() swallows
+    // write errors by design. When storage is unavailable the answer used to be
+    // lost, sender fell back to 'other', and the user's OWN saved address would
+    // be prefilled into the DESTINATION slot — the wrong-party bug the sender
+    // split exists to prevent. App.tsx now also carries it in router state.
+    await page.addInitScript(() => {
+      const store = new Map<string, string>();
+      Object.defineProperty(window, "sessionStorage", {
+        configurable: true,
+        value: {
+          getItem: (k: string) => (store.has(k) ? store.get(k)! : null),
+          setItem: () => { throw new DOMException("QuotaExceededError"); },
+          removeItem: (k: string) => { store.delete(k); },
+          clear: () => { store.clear(); },
+          key: () => null,
+          get length() { return store.size; },
+        },
+      });
+    });
+
+    await page.goto("/onboarding");
+    await page.getByRole("button", { name: /I am/ }).click();
+
+    // The 'self' branch must still be in force: step 1 collects the OTHER
+    // party's address, so it asks "Where's it going?", not "delivered to you".
+    await expect(page).toHaveURL(/\/onboarding\/full-label\/destination/);
+    await expect(page.getByRole("heading", { name: /Where's it going/i })).toBeVisible();
+  });
+
+  test("a deep-linked flow (no step 0) can still undo the address escape", async ({ page }) => {
+    // Regression: the escape is offered whenever sender !== 'self', but the undo
+    // was gated on sender === 'other'. A user entering via a pre-existing deep
+    // link — or a session persisted before the sender split shipped — has
+    // sender=null, so they could convert to a shipping link with no way back.
+    await page.goto("/onboarding/full-label/destination");
+    await page.locator("#destination-name").fill("Jane Doe");
+    await fillSmartAddress(page, "destination");
+    await page.locator("#recipient-email").fill("test@example.com");
+    await page.getByRole("button", { name: /Continue to shipment details/i }).click();
+    await expect(page.locator("#origin-name")).toBeVisible({ timeout: 5000 });
+
+    await page.getByRole("button", { name: /I don't have their address/i }).click();
+    await expect(page).toHaveURL(/\/onboarding\/flexible\/preferences/);
+
+    // The way back must be rendered for this user too.
+    await page.getByRole("button", { name: /I do have it/i }).click();
+    await expect(page).toHaveURL(/\/onboarding\/full-label\/shipping/);
+  });
+
   test("the address escape converts to a shipping link, and undo restores what was typed", async ({
     page,
   }) => {

@@ -67,8 +67,18 @@ export default function RecipientStepFullShipping({
   // 'other' → it belongs to the person shipping to them, and is the one thing
   // they may not know — hence the escape.
   const isSelfSender = sender === "self";
+  // LATCHED at mount, never re-derived. If the saved address was already
+  // complete when this step opened, collapse it to the confirm row; if it
+  // wasn't, the user is filling the form in and it must stay a form for this
+  // visit. Deriving this live meant the whole SmartAddressInput — including the
+  // phone field being typed into — unmounted on the keystroke that completed
+  // the last missing field, destroying focus mid-entry. Common trigger: a saved
+  // address with no phone (anything predating the 2026-05-19 phone requirement).
+  // Re-latches on the next visit to step 10, so a completed address does
+  // collapse once the user moves on and comes back.
+  const [originWasCompleteOnOpen] = useState(() => isSelfSender && isOriginComplete(state.originAddress));
   const [editingOrigin, setEditingOrigin] = useState(false);
-  const originConfirmable = isSelfSender && isOriginComplete(state.originAddress) && !editingOrigin;
+  const originConfirmable = originWasCompleteOnOpen && !editingOrigin;
   const [ratesLoading, setRatesLoading] = useState(false);
   const [ratesError, setRatesError] = useState<string | null>(null);
   const [usedGuestimator, setUsedGuestimator] = useState(false);
