@@ -37,7 +37,15 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 **A2/A3b.** Each Playwright invocation gets its own report dir and artifact (the authed run used to overwrite the main suite before upload — the artifact preserved 1 test of 80). `test.yml` gained a concurrency group; superseded runs cancel on non-`main` refs.
 
-**Measured.** Local: 57 passed / 5 skipped / 16 failed → **75 / 5 / 0** (43s). Under CI's env: 45 passed / 30 failed (4.2m) → **74 passed / 6 skipped / 0 failed** (1.6m). Real CI wall-clock **35–37 min → 14m40s**; PLAYBOOK Rule 21 corrected from "~12 min" to ~15.
+**Measured — confirmed in the real runner, not simulated.** The `playwright-report-main` artifact, which A2 made recoverable:
+
+| | Before (`f9108b1`) | After (`a856acf`) |
+|---|---|---|
+| total / passed / **failed** / skipped | 80 / 43 / **28** / 9 | 81 / 75 / **0** / 6 |
+| `ok` | `false` | `true` |
+| CI wall-clock | 14m40s | **3m31s** |
+
+CI's 75 passing now matches local's 75 exactly — the two environments agree, which is the actual point of the N1 fix. Before the A0 work the same workflow took 35–37 min. PLAYBOOK Rule 21 corrected from "~12 min" to **~4 min** (measured), not the ~15 an intermediate run suggested.
 
 **Still open (John's calls):** A1 — whether e2e becomes blocking, now that a green run means something. N2 — the Vercel dashboard Build Command is `mkdir -p dist && cp index.html dist/`; `vercel.json` wins today (prod verified serving a real Vite build) but deleting that one line would ship an assetless `index.html` with a green deploy. Vercel plan — tabled; note Hobby forbids commercial use and SendMo processes payments.
 
