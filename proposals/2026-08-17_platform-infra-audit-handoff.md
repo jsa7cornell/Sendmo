@@ -383,3 +383,24 @@ The handoff argued the dead `api/s/[shortCode].ts` should be deleted or annotate
 ### One process note for the next reader
 
 The handoff's reporting-trap warning is real and I nearly repeated it. I anchored my grep as `^\s+[0-9]+ (failed|passed)` — stricter than the pattern the handoff recommends — and read a 30-failure run as clean. **Use the handoff's pattern verbatim: `grep -E '[0-9]+ (failed|passed|skipped)'`.**
+
+### A6 (found while working this handoff) — a conflicting PR gets no CI run, silently
+
+Same failure class as A1/A2/N1, and it caught me mid-audit. For `pull_request` events GitHub builds against the merge ref; a conflicting PR has no computable merge ref, so **no workflow run and no check-suite are created at all**. Not a failure — an absence. `gh pr checks` shows only Vercel passing, which reads as "checks are fine."
+
+Three commits on PR #64 sat with zero test coverage while I reported waiting on CI. The tell: a newly-pushed commit failed to cancel the previous run through the new concurrency group, because no run existed to do the cancelling.
+
+Check before trusting a PR's checks:
+
+```bash
+gh pr view <n> --json mergeable,mergeStateStatus
+gh api repos/jsa7cornell/Sendmo/commits/<sha>/check-suites --jq '.check_suites[].app.slug'
+```
+
+`github-actions` absent from that list means no tests ran on that commit. Recorded in PLAYBOOK Rule 21.
+
+### Final state — A1 live and verified
+
+`32103312247` (`a770d97`), with the mocked suite **blocking**: **81 total / 75 passed / 0 failed / 6 skipped, `ok: true`, 3m33s.** Read from the artifact, not the step colour.
+
+Full arc for the workflow: **35–37 min and 28 silent failures → 3m33s and a suite that can stop a merge.**

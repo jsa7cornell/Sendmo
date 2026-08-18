@@ -344,6 +344,15 @@ No production-path stubs remain. (Minor non-production leftovers: `src/pages/Sen
 
     **Reference incident:** 2026-05-21 — a `tsc -b` error sat red on Vercel + CI for ~18h across 5 pushes because no agent verified the deploy after pushing.
 
+    **A PR with merge conflicts gets NO Actions run at all — silently.** For `pull_request` events GitHub builds against the merge ref, and a conflicting PR has no computable merge ref, so no workflow run and no check-suite are created. There is no failed run, no red X, nothing: `gh pr checks` shows only Vercel passing, which reads exactly like "checks are fine." **Absence of a run is not a pass.** Before trusting a PR's checks:
+
+    ```bash
+    gh pr view <n> --json mergeable,mergeStateStatus   # CONFLICTING/DIRTY = no CI ran
+    gh api repos/jsa7cornell/Sendmo/commits/<sha>/check-suites --jq '.check_suites[].app.slug'
+    ```
+
+    If `github-actions` is absent from that list, no tests ran on that commit. Resolve the conflict (merge `main` in — rebasing a pushed branch needs a force-push, which is gated) and confirm a run is created. **Reference incident:** 2026-08-18 — three commits on PR #64 sat with zero test coverage while the session reported "waiting on CI." The tell was that a newly-pushed commit failed to cancel the previous run via the concurrency group: no run existed to cancel.
+
     **A green "Provide Tests" run does not mean the e2e suite passed.** The ESLint and both Playwright steps run `|| true` *and* `continue-on-error: true`, so they report `success` no matter what. The `|| true` is the load-bearing half: it makes the shell exit 0, so `continue-on-error` never engages and GitHub records a clean green rather than a yellow warning. To actually check e2e, download the report and read its stats:
 
     ```bash
