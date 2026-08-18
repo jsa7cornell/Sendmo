@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
-import { existsSync } from "node:fs";
+import { SUPABASE_URL } from "./supabase-env";
+import { seedAdminSession } from "./mock-admin-auth";
 
 // ─── E2E: /admin Account-Budget setter ──────────────────────────────────────
 //
@@ -24,9 +25,6 @@ import { existsSync } from "node:fs";
 // This is the same mock-the-DB pattern admin.spec.ts noted as the coverage
 // path forward.
 
-const SUPABASE_URL = "https://fkxykvzsqdjzhurntgah.supabase.co";
-const AUTH_FILE = "playwright/.auth/user.json";
-const hasAuthState = existsSync(AUTH_FILE);
 
 const TARGET_UUID = "22222222-2222-2222-2222-222222222222";
 
@@ -49,6 +47,8 @@ function profilesMockBody(req: { headers(): Record<string, string> }) {
 }
 
 async function mockAdminContext(page: Page) {
+    await seedAdminSession(page);
+
     // The profile fetch — make the seeded test user look like an admin so
     // AuthContext.isAdmin = true and the page renders past the gate.
     await page.route(`${SUPABASE_URL}/rest/v1/profiles*`, (route) =>
@@ -72,10 +72,12 @@ async function mockAdminContext(page: Page) {
     );
 }
 
-const describeOrSkip = hasAuthState ? test.describe : test.describe.skip;
-
-describeOrSkip("admin — Set Account Budget UI", () => {
-    test.use({ storageState: AUTH_FILE });
+// Previously gated on playwright/.auth/user.json, which only exists when
+// E2E_TEST_USER_* are set — so this spec silently self-skipped in CI and the
+// account-budget money path had no coverage there at all. The session is
+// synthetic now (mock-admin-auth seeds it), and every backend call the page
+// makes is already mocked below, so it runs everywhere.
+test.describe("admin — Set Account Budget UI", () => {
 
     test("expands the panel + submits a valid budget → success message", async ({ page }) => {
         await mockAdminContext(page);

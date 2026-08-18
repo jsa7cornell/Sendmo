@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { SUPABASE_URL } from "./supabase-env";
 
 // E2E: the /label-test internal tool's happy path — addresses → package →
 // rates → rate selection → Payment step.
@@ -19,7 +20,6 @@ import { test, expect, type Page } from "@playwright/test";
 // This spec previously asserted "Label Ready!" directly after rate selection
 // and had been red since the Payment step landed.
 
-const SUPABASE_URL = "https://fkxykvzsqdjzhurntgah.supabase.co";
 
 async function mockEdgeFunctions(page: Page) {
   // Address verification — distinct from/to so the "same address" guard passes.
@@ -138,9 +138,13 @@ test.describe("Label Test Flow", () => {
     await selectButtons.first().click();
 
     // ── Step 4: Payment ────────────────────────────────────────
-    // The rate carries through to the charge — the button quotes the selected
-    // rate, so this asserts the hand-off, not just that a step rendered.
+    // The selected rate ($9.20 Ground Advantage) carries into the payment step,
+    // so this asserts the hand-off rather than just that a step rendered. The
+    // summary line lives outside StripePaymentForm, so it renders with or
+    // without a Stripe publishable key — the "Pay $X & generate label" button
+    // does not, and asserting it would make this spec red in CI, which sets no
+    // Stripe key.
     await expect(page.getByRole("heading", { name: "Payment", level: 2 })).toBeVisible({ timeout: 8000 });
-    await expect(page.getByRole("button", { name: /^Pay \$\d+\.\d{2} & generate label$/ })).toBeVisible();
+    await expect(page.getByText(/USPS.*\$9\.20/s)).toBeVisible();
   });
 });

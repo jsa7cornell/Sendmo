@@ -18,19 +18,7 @@
 // had it right — including the PostgREST Accept-header nuance.
 
 import type { Page } from "@playwright/test";
-import dotenv from "dotenv";
-
-dotenv.config({ path: ".env.local" });
-
-// Must match what the app's supabase client was built with: Vite inlines
-// VITE_SUPABASE_URL from the same .env.local (locally) or the workflow step env
-// (CI, where it is http://localhost:54321 → ref "localhost"). Deriving it the
-// same way global-setup.ts does keeps the storage key correct in both.
-export const SUPABASE_URL =
-  process.env.VITE_SUPABASE_URL ?? "https://fkxykvzsqdjzhurntgah.supabase.co";
-
-const PROJECT_REF = new URL(SUPABASE_URL).hostname.split(".")[0];
-const STORAGE_KEY = `sb-${PROJECT_REF}-auth-token`;
+import { SUPABASE_STORAGE_KEY as STORAGE_KEY } from "./supabase-env";
 
 export const ADMIN_USER_ID = "00000000-0000-0000-0000-000000000000";
 export const ADMIN_EMAIL = "e2e-admin@example.com";

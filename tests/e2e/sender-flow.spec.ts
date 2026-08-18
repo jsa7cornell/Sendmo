@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { SUPABASE_URL } from "./supabase-env";
 
 // E2E tests for the sender flow at /s/:shortCode
 //
@@ -10,7 +11,6 @@ import { test, expect, type Page } from "@playwright/test";
 // with a complete address in the DB. Set it in .env.local or CI secrets.
 // If unset, the "valid link loads" tests are skipped.
 
-const SUPABASE_URL = "https://fkxykvzsqdjzhurntgah.supabase.co";
 const TEST_CODE = process.env.SENDMO_TEST_LINK_CODE ?? "";
 
 // ─── Any link code — error handling ─────────────────────────

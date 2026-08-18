@@ -1,7 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
+import { SUPABASE_URL, SUPABASE_STORAGE_KEY } from "./supabase-env";
 
-const SUPABASE_URL = "https://fkxykvzsqdjzhurntgah.supabase.co";
-const SUPABASE_STORAGE_KEY = "sb-fkxykvzsqdjzhurntgah-auth-token";
 
 // Reuse mock data from onboarding.spec.ts
 const MOCK_AUTOCOMPLETE_DEST = {

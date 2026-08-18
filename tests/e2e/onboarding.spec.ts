@@ -1,6 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
+import { SUPABASE_URL } from "./supabase-env";
 
-const SUPABASE_URL = "https://fkxykvzsqdjzhurntgah.supabase.co";
 
 // Mock responses for Supabase Edge Functions
 const MOCK_AUTOCOMPLETE = {

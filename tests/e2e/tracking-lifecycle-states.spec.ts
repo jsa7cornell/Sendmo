@@ -24,8 +24,8 @@
  */
 
 import { test, expect, type Page } from "@playwright/test";
+import { SUPABASE_URL } from "./supabase-env";
 
-const SUPABASE_URL = "https://fkxykvzsqdjzhurntgah.supabase.co";
 
 // ── Shared fixture fields ──────────────────────────────────────────────────
 

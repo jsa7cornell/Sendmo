@@ -56,11 +56,11 @@
  */
 
 import { test, expect } from "@playwright/test";
+import { SUPABASE_URL } from "./supabase-env";
 
 // The tracking Edge Function URL is derived from the Supabase project URL.
 // We hardcode the project URL here (same as other specs in this suite) since
 // VITE_SUPABASE_URL is not available in the Playwright process environment.
-const SUPABASE_URL = "https://fkxykvzsqdjzhurntgah.supabase.co";
 const TRACKING_ENDPOINT = `${SUPABASE_URL}/functions/v1/tracking`;
 
 const TEST_PUBLIC_CODE = process.env.SENDMO_TEST_PUBLIC_CODE ?? "";
