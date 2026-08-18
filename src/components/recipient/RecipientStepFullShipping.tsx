@@ -48,6 +48,14 @@ function GuestimatorTitle({ children }: { children: React.ReactNode }) {
 
 interface Props {
   state: RecipientFlowState;
+  /**
+   * Which half of the old combined step this render is. Split 2026-08-18 into
+   * two discrete, independently skippable steps — deferring the ship-from
+   * address must not also skip the package question (it did, and that was the
+   * bug). One component rather than an extraction: the rate fetch needs both
+   * halves' values and lives here either way.
+   */
+  mode: "address" | "package";
   sender: SenderKind | null;
   errors: string[];
   tried: boolean;
@@ -60,8 +68,9 @@ interface Props {
 }
 
 export default function RecipientStepFullShipping({
-  state, sender, errors, tried, onUpdate, onContinue, onBack, onNoAddress, liveMode = false,
+  state, mode, sender, errors, tried, onUpdate, onContinue, onBack, onNoAddress, liveMode = false,
 }: Props) {
+  const isAddressStep = mode === "address";
   // 'self' → this address is the account holder's own; it was prefilled from
   // their saved address, so it collapses to a confirmable row.
   // 'other' → it belongs to the person shipping to them, and is the one thing
@@ -201,7 +210,8 @@ export default function RecipientStepFullShipping({
         estimatedDays={state.selectedRate?.estimated_days ?? null}
       />
 
-      {/* Origin Address */}
+      {/* Origin Address — step 10 only */}
+      {isAddressStep && (
       <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
         {/* Who supplies the sender's address — the ONE question that decides
             whether this is a finished label or a shipping link. Framed as two
@@ -339,6 +349,10 @@ export default function RecipientStepFullShipping({
 
       </div>
 
+      )}
+
+      {/* ── Package details + carrier — step 14 only ── */}
+      {!isAddressStep && (<>
       {/* Magic Guestimator — primary input */}
       <MagicGuestimator onResult={handleGuestimation} />
 
@@ -520,6 +534,26 @@ export default function RecipientStepFullShipping({
       </div>
       */}
 
+      </>)}
+
+      {/* The same answer, for the parcel. Present on its own step so deferring
+          the address no longer skips this question — that was the bug. */}
+      {!isAddressStep && !isSelfSender && (
+        <button
+          type="button"
+          onClick={onNoAddress}
+          className="w-full flex items-start gap-3 rounded-xl border border-border bg-card p-3.5 text-left transition-all hover:border-muted-foreground/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+        >
+          <span className="w-4 h-4 rounded-full border-2 border-muted-foreground/40 shrink-0 mt-0.5" />
+          <span className="min-w-0">
+            <span className="block text-sm font-medium text-foreground">The sender will fill this in</span>
+            <span className="block text-xs text-muted-foreground mt-0.5">
+              They describe the package when they use your link — you'll set a spending cap instead
+            </span>
+          </span>
+        </button>
+      )}
+
       {/* Validation summary */}
       <AnimatePresence>
         {showErrors && (
@@ -585,7 +619,7 @@ export default function RecipientStepFullShipping({
           Back
         </Button>
         <Button onClick={onContinue} className="flex-1 rounded-xl shadow-sm">
-          Continue to payment
+          {isAddressStep ? "Continue to package details" : "Continue to payment"}
         </Button>
       </div>
 

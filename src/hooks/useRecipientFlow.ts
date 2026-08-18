@@ -157,12 +157,17 @@ export function getValidationErrors(state: RecipientFlowState, step: number): st
     if (!state.email_verified) errors.push("Verify your email to continue");
   }
 
+  // Step 10 is the ship-from address only; step 14 is the parcel + carrier.
+  // Split 2026-08-18 so each can be skipped independently — deferring the
+  // address must not also skip the package question.
   if (step === 10) {
     if (!state.originAddress.name) errors.push("Sender name is required");
     if (!state.originAddress.verified) errors.push("Origin address is required");
     else if (!state.originAddress.street) errors.push("Origin address is missing a street — please re-select it from the dropdown");
     if (!isUsablePhone(state.originAddress.phone)) errors.push("Add a phone number — the shipping carriers require it");
+  }
 
+  if (step === 14) {
     const l = parseFloat(state.dimensions.length);
     const w = parseFloat(state.dimensions.width);
     const h = parseFloat(state.dimensions.height);

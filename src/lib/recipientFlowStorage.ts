@@ -26,6 +26,16 @@ export interface RecipientFlowData {
   destinationAddress: AddressInput;
   email: string;
 
+  /**
+   * Which questions the payer handed to the sender. Set by the "The sender
+   * will fill this in" answer on steps 10 and 14. Skipping is *answering* —
+   * the step is marked complete either way — and the pair decides the product:
+   * neither deferred = an ordinary prepaid label; either deferred = a shipping
+   * link the sender completes.
+   */
+  deferredOrigin: boolean;
+  deferredPackage: boolean;
+
   // Step 10
   originAddress: AddressInput;
   senderEmail: string;
@@ -66,6 +76,9 @@ export const INITIAL_DATA: RecipientFlowData = {
 
   destinationAddress: emptyAddress(),
   email: "",
+
+  deferredOrigin: false,
+  deferredPackage: false,
 
   originAddress: emptyAddress(),
   senderEmail: "",

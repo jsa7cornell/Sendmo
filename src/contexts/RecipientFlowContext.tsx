@@ -38,6 +38,7 @@ interface RecipientFlowContextValue {
   goToStep: (step: number) => void;
   selectPath: (path: RecipientPath) => void;
   switchToShippingLink: () => void;
+  deferToSender: (field: "origin" | "package") => void;
   undoShippingLinkSwitch: () => void;
   markStepComplete: (step: number) => void;
   getErrors: (step: number) => string[];
@@ -297,6 +298,34 @@ export function RecipientFlowProvider({ children }: { children: React.ReactNode 
   // here as well would only add a redundant write plus one render where
   // data.path and the URL disagree. Let the URL stay the single source of truth
   // for path, exactly as it is for every other entry into a path.
+  // "The sender will fill this in" — an ANSWER, not an escape. Skipping marks
+  // the step complete (the question was answered) and advances normally, so
+  // deferring the ship-from address no longer leaps past the package question.
+  // The product is decided when leaving step 14, not here.
+  const deferToSender = useCallback((field: "origin" | "package") => {
+    const step = field === "origin" ? 10 : 14;
+    let next: number | null = null;
+    flushSync(() => {
+      setData((prev) => {
+        const updated = {
+          ...prev,
+          ...(field === "origin" ? { deferredOrigin: true } : { deferredPackage: true }),
+          completedSteps: prev.completedSteps.includes(step)
+            ? prev.completedSteps
+            : [...prev.completedSteps, step],
+        };
+        // Anything deferred means the price isn't knowable, so the flow becomes
+        // a shipping link once both questions have been put.
+        const anyDeferred = updated.deferredOrigin || updated.deferredPackage;
+        next = step === 10 ? 14 : (anyDeferred ? 20 : nextStep(14, "full_label"));
+        return updated;
+      });
+    });
+    directionRef.current = "forward";
+    if (next === 20) navigate(stepUrl("flexible", 20));
+    else if (next !== null) navigate(stepUrl("full_label", next));
+  }, [navigate]);
+
   const switchToShippingLink = useCallback(() => {
     directionRef.current = "forward";
     navigate(stepUrl("flexible", 20));
@@ -330,6 +359,7 @@ export function RecipientFlowProvider({ children }: { children: React.ReactNode 
         goToStep,
         selectPath,
         switchToShippingLink,
+        deferToSender,
         undoShippingLinkSwitch,
         markStepComplete,
         getErrors,
