@@ -135,9 +135,9 @@ export default function FlexPaymentStep({
   // Stripe's error text and had no way forward, so one account resubmitted the
   // identical failing form four times in fourteen minutes before giving up.
   //
-  // `retryN` buys a genuinely fresh SetupIntent — /payment-methods suffixes its
-  // idempotency key with :retry-N, so without incrementing, Stripe replays the
-  // same intent. `bypassLink` re-mounts the form with the Link wallet off.
+  // `retryN` drives the Elements remount on a recovery click. It is NOT the
+  // idempotency value — see idempotencyNonceRef below for why that distinction
+  // matters. `bypassLink` re-mounts the form with the Link wallet off.
   //
   // Suppressing Link is the substantive half, not just a reset. Link autofill
   // can attach a stale name from the user's wallet to their card; a name the
@@ -146,6 +146,19 @@ export default function FlexPaymentStep({
   // Typing the card in manually sidesteps the bad autofill entirely.
   const [retryN, setRetryN] = useState(0);
   const [bypassLink, setBypassLink] = useState(false);
+  // The SetupIntent idempotency nonce, regenerated per fetch.
+  //
+  // It must NOT be a counter seeded at mount. The server key is
+  // `seti_create:<user>:<mode>:retry-<n>` (payment-methods/index.ts) with no
+  // time component, so `retry-0` is the same key forever for a given user and
+  // mode — a counter that restarts at 0 on every mount makes Stripe replay
+  // whatever SetupIntent that key already created, including a `succeeded`
+  // one, which then 400s Elements and leaves the user unable to add a card.
+  //
+  // That is the 2026-05-14 BUG A, and AddCardModal already fixed it exactly
+  // this way; this component kept the counter until 2026-08-18. A counter is
+  // still correct *within* one mount, but only a nonce survives remounts.
+  const idempotencyNonceRef = useRef<number>(0);
 
   function restartCardCollection() {
     setBypassLink(true);
@@ -292,9 +305,11 @@ export default function FlexPaymentStep({
     if (!session?.access_token) return;
     if (!useNewCard) return;
     let cancelled = false;
+    idempotencyNonceRef.current = Date.now();
+    const nonce = idempotencyNonceRef.current;
     (async () => {
       try {
-        const result = await createSetupIntent(session.access_token, retryN);
+        const result = await createSetupIntent(session.access_token, nonce);
         if (cancelled) return;
         setClientSecret(result.client_secret);
         setSetupIntentId(result.setup_intent_id);
