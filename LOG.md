@@ -12,7 +12,23 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
-### [2026-08-18] Address and package become two discrete, independently skippable steps
+### [2026-08-18] PR #68 code-review fixes — migration 041 applied to prod, parcel prefill wired, mid-deploy drafts recovered
+
+**Category:** fix | Onboarding + SenderFlow
+**Deploy:** Committed to the PR #68 branch (`feat/split-address-package`), NOT merged, NOT deployed. **Migration 041 IS now applied to production** — the merge-order blocker is cleared.
+**Cross-link:** review handoff [2026-08-18_pr68-code-review-handoff.md](proposals/2026-08-18_pr68-code-review-handoff.md)
+**Browser-verified:** spec: tests/e2e/sender-origin-prefill.spec.ts · variants-covered: parcel prefill present / link carries no parcel / malformed prefill (no weight) ignored
+
+An independent review of PR #68 confirmed five findings; all five are fixed in this commit:
+
+1. **Migration 041 applied to production** (project `fkxykvzsqdjzhurntgah`, via Supabase MCP `apply_migration`). Verified live before (constraint still had `AND origin_address_id IS NULL` — the review checked, it was NOT applied) and after (clause gone, seller invariants intact). Exact SQL = the file in `supabase/migrations/041_flexible_link_may_carry_origin.sql`. Strictly relaxing; no rows touched.
+2. **`package_prefill` was produced but never consumed.** The edge function returned the creator's parcel spec and `api.ts` typed it, but no client code read it — the sender still retyped dims the creator entered. `SenderFlow` now seeds the parcel from it before the intro step renders (SenderStepPackage reads `initialParcel` in useState initializers, so it must be set pre-mount). Weightless prefills are skipped: the creator-side gate requires weight, so one can only come from API misuse.
+3. **Mid-deploy drafts were unrecoverable — and the bug was deeper than the review first stated.** The pre-2026-08-18 code wrote a bare payload to **sessionStorage**; the new code read only the localStorage envelope, so the compat shim in `loadPersisted` could literally never fire, and `loadResumable`'s savedAt check excluded bare shapes anyway. Now a shared `readStored()` reads localStorage first, falls back to sessionStorage, and treats envelope-less payloads as saved *now* (their true age is unknowable; they predate the deploy by at most one session). `clearFlow` clears both stores — otherwise "Start over" resurrected the sessionStorage copy.
+4. **Stale duplicate step maps deleted.** `useRecipientFlow.ts` kept a private `FULL_LABEL_STEPS`/`nextStep`/`stepToProgressIndex` (and the unused hook itself) from before the provider existed — exporting the same names as `stepRouting.ts` but WITHOUT step 14. Nothing imported them, but the wrong import would have compiled cleanly and skipped step 14. The module now holds only the state shape + pure validation helpers. The hook's tests went with it; the `canFetchRates` phone-gate pins stay.
+5. **`deferToSender` cleaned up** — the unreachable `nextStep(14, "full_label")` branch (anyDeferred is always true after setting a flag) and the impure `next`-assignment inside the setState updater are gone; the navigation target is now computed outside.
+
+**Tests:** 685 unit (8 dead-hook tests removed, 5 storage-compat tests added), 82 passed / 6 skipped / 0 failed e2e (3 new parcel-prefill tests), tsc clean, eslint 27 — all unchanged from main or better.
+
 
 **Category:** ship | Onboarding
 **Deploy:** NOT merged, NOT deployed — PR only, awaiting an independent code review. **Merging requires migration 041 to be applied** (see below).

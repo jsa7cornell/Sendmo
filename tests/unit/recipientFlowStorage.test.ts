@@ -173,6 +173,46 @@ describe("resuming an unfinished flow", () => {
     expect(loadPersisted()).toBeNull();
   });
 
+  // ── Mid-deploy compat: drafts written by the pre-2026-08-18 code ──
+  // The old code wrote a BARE payload (no savedAt envelope) to SESSIONstorage.
+  // A user mid-flow when the deploy lands has their draft there, in that
+  // shape, and nowhere else. The original loadResumable only read the
+  // localStorage envelope, so exactly these drafts were never offered.
+
+  const LEGACY_KEY = "sendmo:recipient_flow:v1";
+
+  it("offers a pre-deploy draft: bare shape, sessionStorage", () => {
+    window.sessionStorage.setItem(LEGACY_KEY, JSON.stringify(started()));
+    expect(loadResumable()?.destinationAddress.street).toBe("231 Canyon Drive");
+  });
+
+  it("offers a bare-shape draft found under the localStorage key", () => {
+    window.localStorage.setItem(LEGACY_KEY, JSON.stringify(started()));
+    expect(loadResumable()).not.toBeNull();
+  });
+
+  it("prefers the localStorage draft when both stores hold one", () => {
+    window.sessionStorage.setItem(
+      LEGACY_KEY,
+      JSON.stringify({ ...started(), email: "old@session.com" }),
+    );
+    persist({ ...started(), email: "new@local.com" });
+    expect(loadResumable()?.email).toBe("new@local.com");
+  });
+
+  it("clearFlow kills the sessionStorage copy too — Start over must not resurrect", () => {
+    window.sessionStorage.setItem(LEGACY_KEY, JSON.stringify(started()));
+    persist(started());
+    clearFlow();
+    expect(loadResumable()).toBeNull();
+  });
+
+  it("tolerates junk in one store without hiding the draft in the other", () => {
+    window.localStorage.setItem(LEGACY_KEY, "not json{");
+    window.sessionStorage.setItem(LEGACY_KEY, JSON.stringify(started()));
+    expect(loadResumable()).not.toBeNull();
+  });
+
   it("startFlowAs still wipes a draft — a new door pick is never contaminated", () => {
     persist(started());
     startFlowAs("self");

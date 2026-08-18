@@ -304,26 +304,21 @@ export function RecipientFlowProvider({ children }: { children: React.ReactNode 
   // The product is decided when leaving step 14, not here.
   const deferToSender = useCallback((field: "origin" | "package") => {
     const step = field === "origin" ? 10 : 14;
-    let next: number | null = null;
     flushSync(() => {
-      setData((prev) => {
-        const updated = {
-          ...prev,
-          ...(field === "origin" ? { deferredOrigin: true } : { deferredPackage: true }),
-          completedSteps: prev.completedSteps.includes(step)
-            ? prev.completedSteps
-            : [...prev.completedSteps, step],
-        };
-        // Anything deferred means the price isn't knowable, so the flow becomes
-        // a shipping link once both questions have been put.
-        const anyDeferred = updated.deferredOrigin || updated.deferredPackage;
-        next = step === 10 ? 14 : (anyDeferred ? 20 : nextStep(14, "full_label"));
-        return updated;
-      });
+      setData((prev) => ({
+        ...prev,
+        ...(field === "origin" ? { deferredOrigin: true } : { deferredPackage: true }),
+        completedSteps: prev.completedSteps.includes(step)
+          ? prev.completedSteps
+          : [...prev.completedSteps, step],
+      }));
     });
     directionRef.current = "forward";
-    if (next === 20) navigate(stepUrl("flexible", 20));
-    else if (next !== null) navigate(stepUrl("full_label", next));
+    // Deferring the origin still owes the user the package question (step 14).
+    // Deferring the package is the last question, and anything deferred means
+    // the price isn't knowable — the flow becomes a shipping link.
+    if (step === 10) navigate(stepUrl("full_label", 14));
+    else navigate(stepUrl("flexible", 20));
   }, [navigate]);
 
   const switchToShippingLink = useCallback(() => {

@@ -1,4 +1,3 @@
-import { useCallback, useState } from "react";
 import type {
   AddressInput,
   DistanceTier,
@@ -8,7 +7,6 @@ import type {
   SpeedTier,
   LabelResult,
 } from "@/lib/types";
-import { emptyAddress } from "@/lib/utils";
 import { isUsablePhone } from "@/lib/phone";
 
 // ─── State Shape ────────────────────────────────────────────
@@ -66,79 +64,13 @@ export interface RecipientFlowState {
   tried: Record<number, boolean>;
 }
 
-const INITIAL_STATE: RecipientFlowState = {
-  currentStep: 0,
-  path: null,
-  completedSteps: [],
-
-  destinationAddress: emptyAddress(),
-  email: "",
-
-  deferredOrigin: false,
-  deferredPackage: false,
-
-  originAddress: emptyAddress(),
-  senderEmail: "",
-  itemDescription: "",
-  packagingType: "box",
-  dimensions: { length: "", width: "", height: "" },
-  weight: { lbs: "", oz: "" },
-  selectedRate: null,
-  availableRates: [],
-  easypostShipmentId: "",
-  insurance: false,
-  recommendedSpeedHint: null,
-
-  paymentStatus: "idle",
-  labelResult: null,
-
-  distance_hint: "regional",
-  size_hint: null,
-  speed_preference: "standard",
-  preferred_carrier: "any",
-  price_cap: 100,
-  verification_email: "",
-  email_verified: false,
-  short_code: "",
-  linkId: "",
-
-  tried: {},
-};
-
-// ─── Step Navigation Maps ───────────────────────────────────
-
-const FULL_LABEL_STEPS = [0, 1, 10, 11, 12, 13];
-const FLEX_LINK_STEPS = [0, 1, 20, 21, 22, 23];
-
-function stepsForPath(path: RecipientPath | null): number[] {
-  return path === "flexible" ? FLEX_LINK_STEPS : FULL_LABEL_STEPS;
-}
-
-function nextStep(current: number, path: RecipientPath | null): number | null {
-  const steps = stepsForPath(path);
-  const idx = steps.indexOf(current);
-  return idx >= 0 && idx < steps.length - 1 ? steps[idx + 1] : null;
-}
-
-function prevStep(current: number, path: RecipientPath | null): number | null {
-  const steps = stepsForPath(path);
-  const idx = steps.indexOf(current);
-  return idx > 0 ? steps[idx - 1] : null;
-}
-
-// ─── Progress Bar Mapping ───────────────────────────────────
-
-export function stepToProgressIndex(step: number): number {
-  if (step === 0 || step === 1) return 0;
-  if (step === 10) return 1;
-  if (step === 11 || step === 12) return 2; // verify + payment share segment
-  if (step === 13) return 3;
-  // Flexible link mapping
-  if (step === 20) return 1;
-  if (step === 21 || step === 22) return 2;
-  if (step === 23) return 3;
-  return 0;
-}
+// Step navigation (stepsForPath/nextStep/prevStep), progress-bar mapping, and
+// the useRecipientFlow hook that owned local step state all lived here until
+// 2026-08-18. They were superseded by src/lib/stepRouting.ts + the
+// RecipientFlowProvider context, but the stale copies stayed behind — without
+// step 14, exporting the same names as stepRouting. Deleted so the wrong
+// import can't compile. This module now holds only the flow-state shape and
+// its pure validation/computed helpers.
 
 // ─── Validation ─────────────────────────────────────────────
 
@@ -227,83 +159,4 @@ export function canFetchRates(state: RecipientFlowState): boolean {
   if (!l || l <= 0 || !w || w <= 0 || wt <= 0) return false;
   if (state.packagingType !== "envelope" && (!h || h <= 0)) return false;
   return true;
-}
-
-// ─── Hook ───────────────────────────────────────────────────
-
-export function useRecipientFlow() {
-  const [state, setState] = useState<RecipientFlowState>(INITIAL_STATE);
-
-  const updateState = useCallback((partial: Partial<RecipientFlowState>) => {
-    setState((prev) => ({ ...prev, ...partial }));
-  }, []);
-
-  const goToStep = useCallback((step: number) => {
-    setState((prev) => {
-      // Only allow going to completed steps or the current next step
-      if (prev.completedSteps.includes(step) || step === prev.currentStep) {
-        return { ...prev, currentStep: step };
-      }
-      return prev;
-    });
-  }, []);
-
-  const goBack = useCallback(() => {
-    setState((prev) => {
-      const prev_step = prevStep(prev.currentStep, prev.path);
-      return prev_step !== null ? { ...prev, currentStep: prev_step } : prev;
-    });
-  }, []);
-
-  const tryAdvance = useCallback((step: number): boolean => {
-    const errors = getValidationErrors(state, step);
-    if (errors.length > 0) {
-      setState((prev) => ({
-        ...prev,
-        tried: { ...prev.tried, [step]: true },
-      }));
-      return false;
-    }
-
-    const next = nextStep(step, state.path);
-    if (next !== null) {
-      setState((prev) => ({
-        ...prev,
-        currentStep: next,
-        completedSteps: prev.completedSteps.includes(step)
-          ? prev.completedSteps
-          : [...prev.completedSteps, step],
-      }));
-    }
-    return true;
-  }, [state]);
-
-  const selectPath = useCallback((path: RecipientPath) => {
-    setState((prev) => ({
-      ...prev,
-      path,
-      currentStep: 1,
-      completedSteps: prev.completedSteps.includes(0) ? prev.completedSteps : [...prev.completedSteps, 0],
-    }));
-  }, []);
-
-  const markStepComplete = useCallback((step: number) => {
-    setState((prev) => ({
-      ...prev,
-      completedSteps: prev.completedSteps.includes(step)
-        ? prev.completedSteps
-        : [...prev.completedSteps, step],
-    }));
-  }, []);
-
-  return {
-    state,
-    updateState,
-    goToStep,
-    goBack,
-    tryAdvance,
-    selectPath,
-    markStepComplete,
-    getErrors: (step: number) => getValidationErrors(state, step),
-  };
 }

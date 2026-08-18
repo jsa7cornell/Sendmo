@@ -56,3 +56,35 @@ test.describe("sender ship-from prefill", () => {
     await expect(page.getByText(/388 Townsend St/)).toHaveCount(0);
   });
 });
+
+test.describe("sender parcel prefill", () => {
+  const PARCEL = { length_in: 12, width_in: 9, height_in: 4, weight_oz: 32 };
+
+  test("uses the parcel the link creator already specced", async ({ page }) => {
+    await mockLink(page, { ...LINK, origin_prefill: null, package_prefill: PARCEL });
+    await openPackageStep(page);
+    await expect(page.getByPlaceholder("Length")).toHaveValue("12");
+    await expect(page.getByPlaceholder("Width")).toHaveValue("9");
+    await expect(page.getByPlaceholder("Height")).toHaveValue("4");
+    // Stored in oz, entered in lbs: 32 oz = 2 lbs.
+    await expect(page.getByPlaceholder("e.g. 5")).toHaveValue("2");
+  });
+
+  test("leaves the dims blank when the link carries no parcel", async ({ page }) => {
+    await mockLink(page, { ...LINK, origin_prefill: null, package_prefill: null });
+    await openPackageStep(page);
+    await expect(page.getByPlaceholder("Length")).toHaveValue("");
+    await expect(page.getByPlaceholder("e.g. 5")).toHaveValue("");
+  });
+
+  test("ignores a malformed prefill with no weight", async ({ page }) => {
+    // The creator-side gate requires weight, so a weightless prefill can only
+    // come from API misuse — seeding a 0-weight parcel would fail rate fetch.
+    await mockLink(page, {
+      ...LINK, origin_prefill: null,
+      package_prefill: { ...PARCEL, weight_oz: null },
+    });
+    await openPackageStep(page);
+    await expect(page.getByPlaceholder("Length")).toHaveValue("");
+  });
+});

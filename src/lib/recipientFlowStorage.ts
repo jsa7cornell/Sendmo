@@ -142,21 +142,41 @@ interface StoredFlow {
   savedAt: number;
 }
 
-export function loadPersisted(): RecipientFlowData | null {
+/**
+ * Raw read shared by loadPersisted and loadResumable, so the two can't
+ * disagree about what exists (they did: the envelope-only savedAt check in
+ * loadResumable silently excluded every draft the compat path below accepts).
+ *
+ * Two compat cases for flows mid-air across the 2026-08-18 deploy, both
+ * treated as saved *now* — their true age is unknowable (the old shape carried
+ * no timestamp) and both predate the deploy by at most one session:
+ *   1. The pre-deploy code wrote to sessionStorage, so in the same tab the
+ *      draft is THERE, not in localStorage. Fall back to it.
+ *   2. A bare payload (no envelope) under either key.
+ */
+function readStored(now: number): StoredFlow | null {
   if (typeof window === "undefined") return null;
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as StoredFlow | Partial<RecipientFlowData>;
-    // Tolerate the pre-2026-08-18 shape (bare data, no envelope) so a flow that
-    // was mid-air across the deploy isn't thrown away.
-    const data = "savedAt" in (parsed as StoredFlow)
-      ? (parsed as StoredFlow).data
-      : (parsed as Partial<RecipientFlowData>);
-    return { ...INITIAL_DATA, ...data };
-  } catch {
-    return null;
+  for (const storage of [window.localStorage, window.sessionStorage]) {
+    try {
+      const raw = storage.getItem(STORAGE_KEY);
+      if (!raw) continue;
+      const parsed = JSON.parse(raw) as StoredFlow | Partial<RecipientFlowData> | null;
+      if (!parsed || typeof parsed !== "object") continue;
+      if ("savedAt" in parsed && typeof parsed.savedAt === "number") {
+        return parsed as StoredFlow;
+      }
+      return { data: parsed as Partial<RecipientFlowData>, savedAt: now };
+    } catch {
+      continue;
+    }
   }
+  return null;
+}
+
+export function loadPersisted(): RecipientFlowData | null {
+  const stored = readStored(Date.now());
+  if (!stored) return null;
+  return { ...INITIAL_DATA, ...stored.data };
 }
 
 export function persist(data: RecipientFlowData): void {
@@ -171,10 +191,14 @@ export function persist(data: RecipientFlowData): void {
 
 export function clearFlow(): void {
   if (typeof window === "undefined") return;
-  try {
-    window.localStorage.removeItem(STORAGE_KEY);
-  } catch {
-    /* ignore */
+  // Both stores: a legacy sessionStorage draft (readStored's fallback) would
+  // otherwise resurrect the moment the localStorage copy is cleared.
+  for (const storage of [window.localStorage, window.sessionStorage]) {
+    try {
+      storage.removeItem(STORAGE_KEY);
+    } catch {
+      /* ignore */
+    }
   }
 }
 
@@ -187,20 +211,11 @@ export function clearFlow(): void {
  * learns to dismiss is worse than none.
  */
 export function loadResumable(now: number = Date.now()): RecipientFlowData | null {
-  if (typeof window === "undefined") return null;
-  let savedAt = 0;
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as StoredFlow;
-    savedAt = typeof parsed?.savedAt === "number" ? parsed.savedAt : 0;
-  } catch {
-    return null;
-  }
-  if (!savedAt || now - savedAt > DRAFT_TTL_MS) return null;
+  const stored = readStored(now);
+  if (!stored) return null;
+  if (now - stored.savedAt > DRAFT_TTL_MS) return null;
 
-  const data = loadPersisted();
-  if (!data) return null;
+  const data: RecipientFlowData = { ...INITIAL_DATA, ...stored.data };
   // Finished flows are not drafts.
   if (data.labelResult || data.short_code) return null;
   // "Progress" is any typed field, not just a completed step. Someone who

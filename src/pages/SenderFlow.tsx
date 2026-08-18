@@ -129,6 +129,23 @@ export default function SenderFlow() {
           setStep("error");
           return;
         }
+        // Seed the parcel from the link when its creator already knew it
+        // (package_prefill, flexible only — the other half of origin_prefill
+        // above). Set before "intro" renders, so SenderStepPackage's
+        // initialParcel-based useState initializers see it on first mount.
+        // The sender can still edit every field. Weight is required by the
+        // creator-side gate, so a prefill without it is malformed — skip it.
+        const pp = data.package_prefill;
+        if (pp && pp.length_in > 0 && pp.width_in > 0 && pp.weight_oz && pp.weight_oz > 0) {
+          setParcel({
+            length: pp.length_in,
+            width: pp.width_in,
+            height: pp.height_in ?? 1,
+            weightOz: pp.weight_oz,
+            description: "",
+            packaging: "box",
+          });
+        }
         setLinkData(data);
         setStep("intro");
       })
