@@ -22,6 +22,14 @@ export interface RecipientFlowState {
   destinationAddress: AddressInput;
   email: string;
 
+  /**
+   * Which questions the payer handed to the sender (steps 10 and 14). Mirrors
+   * RecipientFlowData — the flow state is that object plus currentStep, and
+   * these decide both the product type and what gets carried onto the link.
+   */
+  deferredOrigin: boolean;
+  deferredPackage: boolean;
+
   // Step 10
   originAddress: AddressInput;
   senderEmail: string;
@@ -65,6 +73,9 @@ const INITIAL_STATE: RecipientFlowState = {
 
   destinationAddress: emptyAddress(),
   email: "",
+
+  deferredOrigin: false,
+  deferredPackage: false,
 
   originAddress: emptyAddress(),
   senderEmail: "",

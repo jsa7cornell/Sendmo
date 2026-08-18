@@ -15,7 +15,7 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 ### [2026-08-18] Address and package become two discrete, independently skippable steps
 
 **Category:** ship | Onboarding
-**Deploy:** NOT merged, NOT deployed — PR only. This is the **first half** of the change John asked for; see the open item below.
+**Deploy:** NOT merged, NOT deployed — PR only, awaiting an independent code review. **Merging requires migration 041 to be applied** (see below).
 **Cross-link:** follows [PR #67](https://github.com/jsa7cornell/Sendmo/pull/67) | handoff [2026-08-18_link-first-onboarding-handoff.md](proposals/2026-08-18_link-first-onboarding-handoff.md)
 
 **The bug (John, 2026-08-18):** choosing "The sender will fill this in" on the ship-from address jumped straight to shipping preferences — the package question was never asked. Deferring one thing silently deferred everything.
@@ -44,11 +44,23 @@ Now **localStorage with a 7-day TTL**, plus an explicit resume offer on step 0 (
 
 **Two things this turned up.** jsdom in this project exposes `window.localStorage` as an object with **no methods** — `setItem` undefined — and `persist` swallows storage errors by design, so the unit tests would have asserted against a silent no-op; they now install an in-memory Storage. And my first `loadResumable` predicate required a completed step or a verified street, which classified "typed name + phone + email, hadn't hit Continue" as no progress — exactly the work people would be angriest to lose. Broadened, with a test naming that case.
 
-**⚠️ Open — the other half is not done.** John chose the "real fix" for the case where the payer gives the address and *then* defers the package: today a flexible link stores only size/weight hints, not an origin, and the sender flow doesn't prefill from it — so that address is discarded. Carrying it needs the `links` function to accept an origin for `flexible`, the GET-by-code to return it, and `SenderFlow` to prefill. Until then, "address given + package deferred" still wastes the payer's input. **This is the reason this PR is not merged.**
+**The other half — carrying the origin — is now done.** A flexible link may optionally store the ship-from address and parcel its creator already knew, and the sender flow prefills from it. So "address given, package deferred" no longer discards the payer's typing.
+
+- `links` POST: accepts optional `origin_address` + dims on the **flexible** create. Validated only when supplied — an incomplete one 400s rather than being silently dropped, since silent dropping is the bug being fixed. Parcel dims are all-or-nothing (a partial parcel produces junk rates).
+- `links` GET: returns `origin_prefill` / `package_prefill` **for flexible links only**.
+- `SenderFlow`: fills a blank ship-from form from `origin_prefill`. Anything already typed, or a resumed draft, wins — it never overwrites.
+
+**🚩 Requires migration 041 — this will 500 in production without it.** Migration 040's per-type CHECK is `ELSE recipient_address_id IS NOT NULL AND origin_address_id IS NULL`, which **forbids an origin on a non-seller link**. Setting one throws `sendmo_links_addr_by_type_check`. Unit tests never touch the DB, so nothing local catches it — same class as the seller-link review's B1 (`status='used'`). [`041_flexible_link_may_carry_origin.sql`](supabase/migrations/041_flexible_link_may_carry_origin.sql) drops only the `AND origin_address_id IS NULL` clause; a seller link must still have an origin and no recipient, and every non-seller link must still have a recipient. Strictly relaxing, so no existing row can be invalidated.
+
+**🚩 Privacy call for the reviewer, stated not buried.** `origin_prefill` means **anyone holding a flexible link's URL can see the street the creator entered**. Scoped to `flexible` on purpose — seller links keep city/state, because there the origin is the seller's and the reader is a stranger buyer. The flex payload already exposes recipient name + city/state/zip to link-holders, so this extends an existing stance rather than inventing one, but it *is* an extension and worth a second opinion. Note PLAYBOOK Rule 7 is about the *recipient's* address in the sender UI; here the sender is being shown their own, which is a different party.
+
+**Test-scaffolding trap worth knowing.** Playwright checks `page.route` handlers **most-recent-first**. With a `functions/v1/**` catch-all registered after the specific `links**` mock, the catch-all wins, `linkData` is `{}`, and a prefill assertion passes *vacuously* against an empty form. Register the specific route last. Second trap in the same spec: a carried address arrives already verified, so `SmartAddressInput` renders it as a confirmed row rather than an editable field — asserting `toHaveValue` on the input fails for exactly the case that matters.
+
+**⚠️ Open — what is still not done.** John chose the "real fix" for the case where the payer gives the address and *then* defers the package: today a flexible link stores only size/weight hints, not an origin, and the sender flow doesn't prefill from it — so that address is discarded. Carrying it needs the `links` function to accept an origin for `flexible`, the GET-by-code to return it, and `SenderFlow` to prefill. Until then, "address given + package deferred" still wastes the payer's input. **This is the reason this PR is not merged.**
 
 **Also staged, not built:** collapsing `full_label`/`flexible` into one flow with `link_type` derived (John's idea 1), and a skippable *recipient* address (idea 2 — note it is the seller link's shape with the opposite payer, so it must never be described as the seller flow). Both need their own proposals.
 
-**Tests:** 688 unit / **78 e2e passed, 0 failed** / `tsc` clean / ESLint 27 vs 27 baseline.
+**Tests:** 688 unit / **80 e2e passed, 0 failed** / `tsc` clean / ESLint 27 vs 27 baseline.
 
 **Browser-verified:**
 - spec: [tests/e2e/onboarding.spec.ts](tests/e2e/onboarding.spec.ts) — deferring the address lands on `/full-label/package` (not preferences); deferring both reaches the link path; parcel validation belongs to 14 and no longer fires on 10.
