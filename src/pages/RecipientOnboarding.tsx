@@ -147,7 +147,9 @@ export default function RecipientOnboarding() {
         {currentStep === 20 && data.sender !== "self" && (
           <div className="mb-5 flex items-center justify-between gap-3 rounded-xl bg-muted px-4 py-3">
             <p className="text-sm text-muted-foreground">
-              We'll send a link for them to fill in their address.
+              <span className="font-medium text-foreground">This is a shipping link.</span>{" "}
+              They fill in their address and print the label — you'll be charged each time
+              someone uses it.
             </p>
             <button
               type="button"

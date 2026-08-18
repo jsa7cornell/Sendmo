@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Link-first — "the sender will fill this in"</title>
+<style>
+  :root{--bg:#f5f5f5;--card:#fff;--fg:#22262a;--muted:#6b7280;--border:#e1e5ea;--primary:#1876f2;--primary-soft:#e8f1fe}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 Inter,-apple-system,system-ui,sans-serif;padding:32px}
+  h1{font-size:20px;margin:0 0 4px} h2{font-size:15px;margin:0 0 14px;color:var(--muted);font-weight:500}
+  .row{display:flex;gap:28px;align-items:flex-start;flex-wrap:wrap}
+  .col{flex:1;min-width:380px;max-width:520px}
+  .tag{display:inline-block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;padding:3px 9px;border-radius:999px;margin-bottom:10px}
+  .now{background:#fde8e8;color:#a33} .new{background:#e6f6ec;color:#1a7f42}
+  .screen{background:var(--bg);border:1px solid var(--border);border-radius:18px;padding:18px}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:18px;margin-bottom:14px}
+  .lbl{font-size:13px;font-weight:600;margin-bottom:12px}
+  .inp{border:1px solid var(--border);border-radius:11px;padding:10px 12px;color:#9aa1a9;font-size:13px;background:#fafbfc;margin-bottom:9px}
+  .choice{display:flex;gap:11px;align-items:flex-start;border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:9px;background:#fff}
+  .choice.sel{border-color:var(--primary);background:var(--primary-soft)}
+  .dot{width:16px;height:16px;border-radius:50%;border:2px solid #c3c9d0;flex:0 0 auto;margin-top:2px}
+  .choice.sel .dot{border-color:var(--primary);box-shadow:inset 0 0 0 3px #fff;background:var(--primary)}
+  .ct{font-size:13.5px;font-weight:600}.cs{font-size:12.5px;color:var(--muted);margin-top:2px}
+  .banner{background:var(--primary-soft);border:1px solid #bcd9fb;border-radius:12px;padding:11px 14px;font-size:13px;margin-bottom:14px}
+  .banner b{color:var(--primary)}
+  .btn{background:var(--primary);color:#fff;border-radius:11px;padding:11px;text-align:center;font-size:13.5px;font-weight:600}
+  .muted-link{color:var(--muted);font-size:12.5px;text-align:center;margin-top:10px}
+  .note{font-size:12.5px;color:var(--muted);margin-top:10px}
+  .flow{font:12.5px/1.7 ui-monospace,SFMono-Regular,Menlo,monospace;background:#fff;border:1px solid var(--border);border-radius:12px;padding:14px;margin-top:10px;white-space:pre}
+</style></head><body>
+
+<h1>Shipment step — "the sender will fill this in" as a real answer</h1>
+<h2>Same screen, two states. Choosing a defer on <em>any</em> block makes it a shipping link.</h2>
+
+<div class="row">
+  <div class="col">
+    <span class="tag now">Today — the link is an escape</span>
+    <div class="screen">
+      <div class="card">
+        <div class="lbl">Origin address</div>
+        <div class="inp">Sender's name</div>
+        <div class="inp">📍 Start typing the origin address…</div>
+        <div class="inp">(•••) •••-••••</div>
+      </div>
+      <div class="card">
+        <div class="lbl">✦ Magic Guestimator</div>
+        <div class="inp">e.g., a hardcover cookbook, no rush</div>
+      </div>
+      <div class="muted-link">⌾ I don't have their address</div>
+      <div class="note">The link is muted help-text, named after the user's problem, and only
+      appears <em>below</em> a form they can't complete. It's never called a link.</div>
+    </div>
+  </div>
+
+  <div class="col">
+    <span class="tag new">Proposed — the link is an answer</span>
+    <div class="screen">
+      <div class="banner">This will be a <b>shipping link</b> — Sarah fills in the rest and prints the label. You pay.</div>
+
+      <div class="card">
+        <div class="lbl">Where's it shipping from?</div>
+        <div class="choice"><div class="dot"></div><div><div class="ct">I have their address</div><div class="cs">You enter it and get an exact price now</div></div></div>
+        <div class="choice sel"><div class="dot"></div><div><div class="ct">The sender will fill this in</div><div class="cs">We send them a link — they add their address</div></div></div>
+      </div>
+
+      <div class="card">
+        <div class="lbl">What's in the package?</div>
+        <div class="choice"><div class="dot"></div><div><div class="ct">I know the size and weight</div><div class="cs">Describe it and we'll estimate the rest</div></div></div>
+        <div class="choice sel"><div class="dot"></div><div><div class="ct">The sender will fill this in</div><div class="cs">They enter it when they use your link</div></div></div>
+      </div>
+
+      <div class="btn">Continue</div>
+      <div class="note">Each unknown is a first-class choice at the moment it's asked. Defer
+      <em>anything</em> → shipping link. Defer <em>nothing</em> → exact label. Same screen either way.</div>
+    </div>
+  </div>
+</div>
+
+<div class="col" style="max-width:100%;margin-top:26px">
+  <div class="lbl" style="font-size:14px">Resulting routes — unchanged URLs, unchanged deep links</div>
+  <div class="flow">defer nothing  →  /onboarding/full-label/shipping → verify → payment → label   (link_type = full_label)
+defer anything →  /onboarding/flexible/preferences → verify → save card → link  (link_type = flexible)
+
+step 0 is untouched · "I'm mailing something out myself" is untouched (you know your own address)</div>
+</div>
+
+</body></html>

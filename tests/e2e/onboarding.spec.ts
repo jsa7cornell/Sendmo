@@ -312,6 +312,21 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
     await expect(page.getByRole("heading", { name: /Where's it going/i })).toBeVisible();
   });
 
+  test("the shipping link is a named, visible choice — not an escape from a failed form", async ({ page }) => {
+    await gotoStep10(page);
+
+    // Both answers are present, weighted the same, and named as products —
+    // the regression this fixes was the link existing only as muted help-text
+    // called "I don't have their address", below a form the user can't complete.
+    await expect(page.getByRole("button", { name: /I have their address/i })).toBeVisible();
+    await expect(page.getByRole("button", { name: /The sender will fill this in/i })).toBeVisible();
+    await expect(page.getByText(/shipping link/i).first()).toBeVisible();
+
+    // And the label path is NOT taxed for it: the origin form is open by
+    // default, so the path that has produced every shipment gains no clicks.
+    await expect(page.locator("#origin-name")).toBeVisible();
+  });
+
   test("a deep-linked flow (no step 0) can still undo the address escape", async ({ page }) => {
     // Regression: the escape is offered whenever sender !== 'self', but the undo
     // was gated on sender === 'other'. A user entering via a pre-existing deep
@@ -324,7 +339,7 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
     await page.getByRole("button", { name: /Continue to shipment details/i }).click();
     await expect(page.locator("#origin-name")).toBeVisible({ timeout: 5000 });
 
-    await page.getByRole("button", { name: /I don't have their address/i }).click();
+    await page.getByRole("button", { name: /The sender will fill this in/i }).click();
     await expect(page).toHaveURL(/\/onboarding\/flexible\/preferences/);
 
     // The way back must be rendered for this user too.
@@ -340,7 +355,7 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
     // The user starts filling in the other party's address, then realises they
     // don't have it — the exact moment the link product becomes the answer.
     await page.locator("#origin-name").fill("Sarah Smith");
-    await page.getByRole("button", { name: /I don't have their address/i }).click();
+    await page.getByRole("button", { name: /The sender will fill this in/i }).click();
 
     // Moves to the shipping-link path. Guard must admit step 20 off the shared
     // steps 0+1 — if it doesn't, the user gets bounced to firstIncompleteUrl
