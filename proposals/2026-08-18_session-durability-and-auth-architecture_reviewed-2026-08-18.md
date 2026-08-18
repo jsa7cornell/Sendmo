@@ -2,10 +2,10 @@
 title: Session durability — why SendMo logs John out, and the auth architecture to fix it
 slug: session-durability-and-auth-architecture
 project: sendmo
-status: reviewed
+status: revised
 blocked_on: null
 created: 2026-08-18
-last_updated: 2026-08-18 16:05
+last_updated: 2026-08-18 16:40
 reviewed: 2026-08-18
 decided: null
 executed: null
@@ -441,3 +441,43 @@ The diagnosis work is the best part of this proposal: it measured production bef
 - **Honest anti-evidence.** §4.2 (zero Safari) prominently reported *against* the proposal's own urgency, and §7 explicitly legitimizes the "Phase 0+1 now, Phase 2 at launch" position. Rare and valuable.
 - **Withdrawing the Inlet sensitivity argument** while keeping the narrower, correct criticism (token design vs architecture) — and the `app_sessions` design genuinely fixes the thing it criticizes.
 - **The PR #68 adjacency check** (§8) — concrete, file-level, and it un-blocks John's other work-stream instead of defensively pausing it.
+
+---
+
+## Author response
+
+> **Provenance, stated plainly:** this response is written by the *reviewing* session, at John's direction — the original Opus author session is closed. That deviates from the protocol's author-responds shape, so weigh it accordingly: the risk of a self-response is rubber-stamping, and the mitigation here is that every accepted point below comes with the concrete design change it forces, not just a checkmark. All four blockers were verified against sources during the review, so there is no factual dispute to relitigate — the work of this response is folding them into the design honestly.
+
+**B1 — 429 bucket mismatch + retryable set** — ✅ **accept.**
+The email-bucket/token-bucket distinction is correct and it materially weakens #2's "prime suspect" rank. Revisions: (a) §1.4 re-ranks #2 and #3 as **co-equal prime suspects** — #2 keeps the timing correlation (first load after overnight sleep is exactly when the expired-JWT path runs), #3 gains the frequency argument (a clear-on-exit setting or extension produces a *daily* rhythm; a transient refresh failure does not). (b) §1.3's retryable set corrected to "network failures + **502/503/504** only — a plain 500 or a 429 destroys the session." (c) Phase 0 captures the failed refresh's **endpoint + status + response body** (resolving §9-OQ1: yes, capture the body). The LOG entry was already corrected by the reviewer's addendum; the README summary is updated alongside this response.
+
+**B2 — server-side concurrent-refresh race** — ✅ **accept.** This is the review's best catch — it is precisely the 2026-05-15 failure class relocated to where the retry wrapper can't reach it. Design folded into Option A, now normative:
+1. `/api/session/token` takes a **per-session Postgres advisory lock** (`pg_advisory_xact_lock(hashtext(session_key))`) before touching GoTrue.
+2. `app_sessions` gains `access_token text` + `access_token_expires_at timestamptz`. Any request arriving while the cached token has **> 5 minutes of life** is served from the row without contacting GoTrue — so N concurrent tabs on a cold morning produce **one** refresh, not N.
+3. The rotated refresh token is written **in the same transaction** that releases the lock.
+4. Degraded mode: if GoTrue is unreachable (network / 5xx) and the cached token is still unexpired, serve it with a `stale: true` flag. This shrinks §9-risk-2's SPOF to "GoTrue down at the exact moment the JWT expires" — which is no worse than today, where a down GoTrue eventually fails the client-side refresh too. The full grace-window question (what to do when GoTrue is down *and* the token is expired) stays open for the Phase 2 file-by-file plan; honest answer today: the user waits, signed in, with failing data calls — not signed out.
+
+**B3 — Phase 0 has no server** — ✅ **accept, with a design upgrade that supersedes the options offered.** The review's option (c) (JS-set cookie) is adopted for the origin-wipe discriminator, but the *primary* Phase 0 channel becomes something better than any cookie: **server-side breadcrumbs through the existing `ingest` Edge Function into `event_logs`** (Rule 6 — extend the construct that exists; PLAYBOOK already documents the taxonomy and query patterns). New event types `auth.breadcrumb` (throttled — on `SIGNED_OUT`, `SIGNED_IN`, and at most one heartbeat per session per day, not every event) and `auth.refresh_failed` (endpoint + status + body). Edge Functions live on the Supabase domain, so the CDN-swallow problem never applies. This also resolves the review's pitfall 5 directly: a server-side receipt row makes "breadcrumbs destroyed" distinguishable from "breadcrumbs never written." Final Phase 0 shape: localStorage ring buffer (client view) + JS cookie (origin-wipe discriminator, adequate on Chrome per §4.2) + `event_logs` (durable, queryable, survives anything the browser does). No new endpoint, no rewrite dependency, still ~1 day.
+
+**B4 — e2e harness break** — ✅ **accept.** Unbudgeted real work; §5's sizing was blind to it because the author session never read `TESTING.md` — the review is right that a Test plan section would have caught it. Phase 2 now includes: authed specs mint sessions by (a) `context.addCookies` for `sm_session` and (b) a `page.route` mock of `/api/session/token` returning a synthetic JWT, with `tests/e2e/supabase-env.ts` remaining the single derivation point for hosts and keys. Phase 2 estimate revised **4–5 days → 5–7 days**. Per Rule 12, the harness migration lands in the same PR as the client change, never after.
+
+**N1 — middleware variant** — ✅ **accept (documented; serverless stays primary).** Reasons to prefer `/api/*` serverless functions as the session host: Node runtime for AES-GCM + the Supabase admin SDK without edge-runtime constraints; `vercel dev` parity locally; and a global middleware matcher would put a function invocation ahead of every static-asset request — latency and invocation cost for no gain. Middleware remains the named fallback if the §4.1 rewrite misbehaves on preview, and it is proven viable here (`middleware.ts` already runs ahead of the CDN for `/s/*`).
+
+**N2 — retry wrapper scoping** — ✅ **accept, with the stacking question decided:** the wrapper applies **only** to `POST /auth/v1/token`, performs its own bounded retry (max 3 attempts, exponential backoff, honoring `Retry-After`), and on final failure returns a **synthetic 503** so auth-js classifies the error retryable and preserves the session. Yes, auth-js will then run its own internal retry against that 503 — that stacking is bounded (auth-js caps attempts within its expiry margin) and is the point: the session survives to the next natural refresh instead of being deleted.
+
+**N3 — hash the session key at rest** — ✅ **accept.** Cookie carries a random 256-bit value; `app_sessions` stores only `sha256(value)` as the lookup key (the API-key pattern). One line, closes the "read-only DB leak forges cookies" hole.
+
+**N4 — SameSite** — ✅ **accept; decided `Lax`** on the review's reasoning (Strict drops the cookie on every top-level cross-site arrival — OAuth return, `/s/` from iMessage, `/t/` from email — which is a signed-out flash on exactly the entry points that matter). §9-risk-4 is closed, not deferred.
+
+**N5 — missing Test plan / Verification sections** — ✅ **accept.** The Phase 2 file-by-file plan and test plan (mapped to TESTING.md's four layers) must be appended to this proposal and pass a focused re-review **before Phase 2 implementation starts**. Phase 0/1 test plan, stated now: unit tests for the retry wrapper (429 → retries → synthetic 503; 502/503/504 passthrough; non-token URLs untouched); the www redirect verified by probe on the preview deploy; breadcrumb writes asserted in an e2e spec against `event_logs` mock; Rule 19 `Browser-verified:` blocks on every LOG entry.
+
+**Nits** — ✅ all accepted; the §1.3 wording, the "John's project"/"John's IP" mismatch, and the rotation-knob clause (refresh-token **reuse interval**, the window in which a just-rotated token is still accepted) are folded into the body revisions that accompany Phase 0/1 execution.
+
+**Predicted pitfalls** — acknowledged; 1 and 2 are B2/B4 (addressed above); 3 adds a required item to the §4.1 re-probe checklist: **re-verify the `/s/:shortCode` OG-middleware path after any rewrite change**, since the middleware fetches `index.html` from its own origin; 4 noted — Phase 2 iteration should lean on `vercel dev` locally and batch preview deploys (Hobby cap is account-wide); 5 is resolved by the B3 server-receipt design.
+
+**Net effect on the recommendation:** unchanged in destination, sharper in sequence. Phase 0 is now strictly better instrumented and has no infrastructure dependency; Phase 1 is unchanged; Phase 2 grows to 5–7 days, requires the B2 locking design and B4 test-plan addendum in this file first, and stays gated on Phase 0 evidence or an explicit pre-launch architecture decision by John.
+
+### Open for John's decision
+
+1. **Proceed with Phase 0 + Phase 1 now?** (The proposal marked them unconditional; both are diagnosis + fixes-correct-under-every-diagnosis. ~2 days.)
+2. **Phase 2 stance:** wait for Phase 0 evidence (default), or pre-commit to the Option A migration on §2.1 pre-launch grounds regardless of what Phase 0 finds.
