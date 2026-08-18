@@ -6,10 +6,10 @@ status: draft
 blocked_on: null
 created: 2026-08-17
 last_updated: 2026-08-17
-reviewed: null
+reviewed: 2026-08-17
 decided: null
 author: Claude Fable 5 — surfaced while implementing the who-is-sending onboarding change (PR #63). Every finding below was verified against the live workflow files, the actual CI run for PR #63, and its uploaded artifact — not inferred.
-reviewer: null
+reviewer: Claude Opus 5 — accept. Re-verified every claim at main f11c009; A0 root-caused (15/16 = one auth-mock bug, not text rot), A4 answered, B1 already unblocked, plus two new findings (CI has no Supabase; Vercel dashboard holds a no-op build command).
 outcome: null
 ---
 
@@ -195,3 +195,100 @@ Roughly cheapest-and-highest-signal first:
 - **Verification-tooling gap worth knowing before you audit anything UI-shaped:** the browser preview pane cannot verify step transitions in this app — Framer Motion's `AnimatePresence mode="wait"` never completes its exit there, so the outgoing step stays mounted under the new URL and reads exactly like a routing bug. Confirmed not-new by a control run on `main`'s own step 1 → step 10. Use Playwright for transitions. (LOG 2026-08-17.)
 - **Test-quality pattern worth grepping for:** PR #63's first escape spec asserted the URL, then asserted on an element belonging to the step being *left* — so it passed against a UI that never swapped steps. Any transition test that only asserts URL + prior-step state has this bug. (LOG 2026-08-17.)
 - LOG 2026-08-16 (Vercel Hobby rate limit, #62 held), LOG 2026-08-10 (middleware/OG, dead `api/s/`), LOG 2026-05-22 (SPA rewrite bypass).
+
+---
+
+## Review — 2026-08-17 (Claude Opus 5, fresh session)
+
+**Verdict: accept, and start work. Every factual claim I re-tested holds.** This is an unusually well-evidenced handoff — the A2 artifact decode and the reporting-trap warning in A0 are the kind of thing that saves the next session an hour each. Three items are now *sharper* than the handoff could state them, and I found two things it missed. Nothing here contradicts it.
+
+Re-verified at `main` HEAD `f11c009` (unchanged since the handoff was written).
+
+### Confirmed as written
+
+- **A1** — `test.yml` double-suppresses lint, e2e, and authed-e2e (`|| true` **and** `continue-on-error: true`). The reasoning about `|| true` masking `continue-on-error` is correct.
+- **A2** — both Playwright steps write to the default `playwright-report/`; the authed step runs second; one upload step. Confirmed.
+- **A0** — re-ran the three specs: **16 failed.** Note the sharper framing: those three files contain **exactly 16 tests**, so this is *100% of all three files*, not 16 scattered failures.
+- **A5** — the hardcoded key is the anon key (`"role":"anon"` in the JWT payload). No Rule 0 issue. Leave it.
+- **B3** — `api/s/[shortCode].ts` still exists.
+
+### Sharper than the handoff could state
+
+**A0 is diagnosed, not open. 15 of the 16 failures are one bug, and it is not text rot.**
+
+The admin specs mock `**/auth/v1/**` HTTP responses. But supabase-js reads its session from **localStorage** on cold load — it never issues an `/auth/v1/` request for the client to intercept. So `user` is null and [`Admin.tsx:245`](../src/pages/Admin.tsx) redirects before any gate or tab renders.
+
+Probed directly with the specs' own mock:
+
+```
+PROBE_URL:  http://localhost:5173/login?redirectTo=/admin
+PROBE_TEXT: SendMo · Prepaid shipping made easy · Sign in · Continue with Google …
+```
+
+All 15 admin assertions are waiting for admin UI **on the login page**. These specs are **structurally broken, not drifted** — this mock can never have worked against the current `AuthContext`. The fix is one shared change, not fifteen: seed the session into localStorage (the same `sb-<ref>-auth-token` key [`global-setup.ts`](../tests/e2e/global-setup.ts) already writes) and mock `/rest/v1/profiles` to return `role: 'admin'`.
+
+`label-flow.spec.ts`'s single failure is **unrelated** — it reaches the flow and never gets `Label Ready!`. Triage separately.
+
+**A4 is answered, not an audit item.** Repo secrets are exactly: `ANTHROPIC_API_KEY`, `E2E_TEST_USER_EMAIL`, `E2E_TEST_USER_PASSWORD`, `SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROJECT_REF`. `TEST_CODE`, `TEST_PUBLIC_CODE`, and `TEST_PAYER_JWT` appear in **neither** the secret store nor `.github/`. So:
+
+| Spec | Runs in CI? |
+|---|---|
+| `sender-flow` | **No** — `TEST_CODE` unset |
+| `tracking-anonymous-payment-gating` | **No** — both vars unset |
+| `account-budget-admin` | **No** — auth state only exists in the authed step, which is scoped `-g "authed"` to `phone-gate` |
+| `phone-gate` (authed) | Yes |
+
+Four of five never run. Two cover money paths. The handoff's suspicion was right; this is the confirmation.
+
+**A3 is worse than stated, and it isn't drift — it's the current normal.** Four consecutive runs: **36m43s, 35m54s, 35m00s, 36m10s**, all reporting `success`. One of them (`32049689190`) was the **docs-only** commit `f11c009` — 36 minutes of CI for a Markdown change. PLAYBOOK Rule 21's "~12 min" is off by 3×.
+
+**A4b already has a home.** `playwright.config.ts:16` wires `globalSetup: './tests/e2e/global-setup.ts'`, which already exists and already `dotenv.config`s `.env.local`. Add the assertion there — per global Rule 6, extend it rather than introducing a new construct.
+
+**B1 has already cleared itself.** Vercel previews built successfully 2h, 6h, and 9h ago; production deployed 10h ago. The 24h limit reset. **#62 is unblocked right now** — this is the one time-sensitive item in the document, and it inverts the handoff's ordering.
+
+### Two things the handoff missed
+
+**N1 — CI runs the e2e suite against a Supabase that does not exist. This blocks A1.**
+
+The main e2e step sets `VITE_SUPABASE_URL: "http://localhost:54321"`, and `test.yml` starts **no** local Supabase — no `supabase start`, no `services:` block, no container. Nothing listens on that port in the runner.
+
+The three red specs do use `page.route`, so they aren't automatically fatal — but any request that misses a route pattern hits a dead host. **A1's decision ("should e2e become blocking?") cannot be made until CI's Supabase story is settled**, because today a green e2e step and a red one both mean "ran against nothing." The handoff models A1 as a policy call; it's a policy call *plus* a prerequisite.
+
+**N2 — the Vercel dashboard holds a no-op build command, one line away from a silent prod outage.**
+
+```
+vercel.json      buildCommand:  npm run build
+Vercel dashboard Build Command: mkdir -p dist && cp index.html dist/
+```
+
+`vercel.json` wins today — verified prod serves a real Vite build (`/assets/index-B3ROMyss.js`, `/assets/index-DT82jJGb.css`). **Not currently broken.**
+
+But delete that one line from `vercel.json` as cleanup — a plausible edit, since "the dashboard handles it" — and prod immediately ships an `index.html` referencing assets that were never built. Blank site, **green deploy**, no error anywhere.
+
+This is B2's exact failure class, but live rather than theoretical, and worse than the env-var version: an env-var mistake breaks a feature, this one breaks the whole site while reporting success. Fix by clearing the dashboard override so `vercel.json` is the only source of truth. **John's action** — it's an account setting.
+
+### Revised order of work
+
+Changes from the handoff's order: B1 moves to first (the window is open now), A0 stops being a diagnosis job, and N1 becomes a hard prerequisite for A1.
+
+| # | Item | Who | Why here |
+|---|---|---|---|
+| 1 | **B1** — merge + deploy [#62](https://github.com/jsa7cornell/Sendmo/pull/62) | John | Limit reset. A user-facing card-save fix has been held a day; do it before the quota goes again. |
+| 2 | **A0** — fix the shared admin auth mock (15 specs), then triage `label-flow` (1) | agent | Root cause known. One change, two money-surface files recovered. |
+| 3 | **A2** — split the two report dirs, upload both | agent | Small; restores any ability to answer "is e2e green?" from CI. |
+| 4 | **N2** — clear the Vercel dashboard build-command override | John | Two minutes; removes a silent-total-outage trap. |
+| 5 | **A4b** — env assertion inside the existing `global-setup.ts` | agent | Cheap; kills the fake-failure class that wasted a session already. |
+| 6 | **N1** — decide CI's Supabase story | John + agent | Gates #7. |
+| 7 | **A1** — decide whether e2e blocks, with real numbers | John | Only meaningful after 2, 3, and 6. |
+| 8 | **A3 / A4 / B2 / B3** — correct Rule 21; decide whether the 4 non-running specs are coverage John believes he has; env assertion; delete or annotate `api/s/` | agent | Cleanup once the signal path works. |
+
+### John's calls
+
+1. **Merge #62 now?** (Recommend yes — the window is open and it may not stay open.)
+2. **Clear the Vercel dashboard build command?** (Recommend yes.)
+3. **Vercel Pro for SendMo?** Unchanged from the handoff — a spend decision. Worth noting the throttle already cost a day on a payments bugfix.
+4. **Do `sender-flow` and `tracking-anonymous-payment-gating` need to run before launch?** Both cover money paths and neither has run in CI.
+
+### One process note
+
+This handoff lives on `feat/onboarding-who-is-sending`, so it reaches `main` only when [#63](https://github.com/jsa7cornell/Sendmo/pull/63) merges. Worth not stranding — most of its value is to a session that hasn't started yet.

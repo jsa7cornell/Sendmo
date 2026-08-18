@@ -12,6 +12,29 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-17] Infra-audit handoff reviewed — A0 root-caused, two new findings, #62 unblocked
+
+**Category:** review | Infrastructure
+**Cross-link:** [proposals/2026-08-17_platform-infra-audit-handoff.md](proposals/2026-08-17_platform-infra-audit-handoff.md) (on `feat/onboarding-who-is-sending`, PR #63) | [test.yml](.github/workflows/test.yml) | [AuthContext.tsx](src/contexts/AuthContext.tsx) | [Admin.tsx](src/pages/Admin.tsx)
+
+**Browser-verified:** n/a-category: `docs-only` — n/a-reason: review + LOG/handoff text; no product surface touched.
+
+**Verdict: accept.** Every claim re-tested at `main` `f11c009` holds — A1 (double-suppressed gates), A2 (report overwritten before upload), A0 (16 failed), A5 (key is anon, no Rule 0 issue), B3 (dead `api/s/` still present).
+
+**A0 root cause found — 15 of the 16 failures are one bug, and it is not text rot.** `admin-reconciliation` + `admin-refund-flow` mock `**/auth/v1/**` HTTP responses, but supabase-js reads its session from **localStorage** on cold load and never issues that request. `user` stays null and `Admin.tsx:245` redirects. Probed with the specs' own mock: `/admin?tab=reconciliation` lands on `/login?redirectTo=/admin`. All 15 assertions wait for admin UI **on the login page**. These specs are structurally broken, not drifted — the mock cannot have worked against the current AuthContext. Fix once: seed `sb-<ref>-auth-token` into localStorage (same key `global-setup.ts` writes) + mock `/rest/v1/profiles` with `role: 'admin'`. `label-flow`'s 1 failure is unrelated.
+
+**A4 answered.** `TEST_CODE` / `TEST_PUBLIC_CODE` / `TEST_PAYER_JWT` are in neither the repo secret store nor `.github/`. `sender-flow`, `tracking-anonymous-payment-gating`, and `account-budget-admin` **never run in CI**; only `phone-gate` (authed) does. Four of five env-gated specs are dormant, two covering money paths.
+
+**A3 worse than documented.** Four consecutive runs: 36m43s / 35m54s / 35m00s / 36m10s, all `success` — including run `32049689190` on the **docs-only** commit `f11c009`. PLAYBOOK Rule 21's "~12 min" is off by 3×.
+
+**NEW N1 — CI runs e2e against a Supabase that does not exist.** `test.yml` sets `VITE_SUPABASE_URL: http://localhost:54321` and starts no local Supabase (no `supabase start`, no `services:`, no container). A green e2e step and a red one currently mean the same thing. **This gates the A1 "make e2e blocking" decision** — it is a prerequisite, not just a policy call.
+
+**NEW N2 — the Vercel dashboard holds a no-op build command.** Dashboard Build Command is `mkdir -p dist && cp index.html dist/`; `vercel.json` says `npm run build`. `vercel.json` wins today — prod verified serving a real Vite build (`/assets/index-B3ROMyss.js`). **Not broken now.** But deleting that one `vercel.json` line as cleanup ships an assetless `index.html` to prod with a **green deploy** and no error anywhere. B2's failure class, live rather than theoretical, and worse: an env-var mistake breaks a feature; this breaks the whole site while reporting success.
+
+**B1 cleared itself.** Vercel previews built 2h/6h/9h ago; prod deployed 10h ago — the 24h Hobby limit reset. **#62 is unblocked now** and should merge + deploy before the quota goes again.
+
+**Next:** John's calls — merge #62; clear the Vercel dashboard build-command override; Vercel Pro (spend); whether the four dormant money-path specs must run before launch.
+
 ### [2026-08-17] Onboarding — path picker replaced by "Who's sending the package?"
 
 **Category:** ship | Onboarding | Growth
