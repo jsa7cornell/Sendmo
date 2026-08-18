@@ -12,6 +12,38 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-18] Session durability Phase 0+1 — breadcrumbs, refresh-retry wrapper, www redirect, offline hold
+
+**Category:** fix | Auth | Session
+**Cross-link:** [proposals/2026-08-18_session-durability-and-auth-architecture_reviewed-2026-08-18_decided-2026-08-18.md](proposals/2026-08-18_session-durability-and-auth-architecture_reviewed-2026-08-18_decided-2026-08-18.md) (decided: Phase 0+1 go, Phase 2 waits for evidence) | the proposal + review + LOG diagnosis entry live on `fix/e2e-infra-audit` until that branch merges
+
+**Browser-verified:**
+  spec: tests/e2e/auth-breadcrumbs.spec.ts (+ tests/unit/authFetch.test.ts, authBreadcrumbs.test.ts, protectedRouteOffline.test.tsx)
+  variants-covered: [signed-out app load emits ingest heartbeat + local ring buffer + marker cookie, refresh 429/500 retried then rewritten to synthetic 503, refresh 502/504 + password-grant 429 pass through untouched, Retry-After beyond cap bails immediately, signed-out+offline holds instead of redirecting, signed-out+online still redirects to /login]
+
+**What shipped (Phase 0 — diagnosis instrumentation):**
+- [src/lib/authBreadcrumbs.ts](src/lib/authBreadcrumbs.ts) — every `onAuthStateChange` event recorded on three channels that fail differently: localStorage ring buffer (50 entries), a 400-day `sm_bc` first-write marker cookie, and `event_logs` rows via the existing `ingest` Edge Function (`auth.breadcrumb` info / `auth.refresh_failed` warn→error). Server sends are throttled: SIGNED_IN/SIGNED_OUT/USER_UPDATED always, INITIAL_SESSION once per day, TOKEN_REFRESHED never. On the next logout the combination discriminates the three candidate causes (see the module header for the table).
+- **Note:** `ingest` was previously called only by Edge Functions with the service-role key, but its platform gate (`verify_jwt` default) already accepted any valid JWT including the public anon key — frontend use exposes nothing new, and the sanitizer already whitelisted `source: "frontend"`.
+- **Server sends are prod-origin-gated** (code-review fix): `sendToServer` fires only when `window.location.origin === "https://sendmo.co"`, or when the `sendmo-diag-send` localStorage key is `"1"` (the test escape hatch — `auth-breadcrumbs.spec.ts` sets it via `addInitScript` and mocks ingest). Dev servers and e2e contexts can no longer write rows into prod `event_logs`, so diagnosis queries need no origin filter.
+
+**What shipped (Phase 1 — fixes correct under every diagnosis):**
+- [src/lib/authFetch.ts](src/lib/authFetch.ts) — `createClient` global fetch wrapper, scoped to `/auth/v1/token` + `grant_type=refresh_token` only. 429/500 (the session-killing statuses: auth-js retries only network errors + 502/503/504, then `_removeSession()`s) get ≤3 attempts with backoff honoring `Retry-After` (capped 8s — beyond that it bails rather than hang app boot), then rewrite to a synthetic 503 so auth-js keeps the session and retries on its own schedule. Sign-in grants deliberately untouched — a 429 there must surface to the user.
+- `www.sendmo.co/*` → 308 → apex, in **two** places because they run at different layers: [vercel.json](vercel.json) host-conditioned redirect for ordinary paths, AND [middleware.ts](middleware.ts) for `/s/:shortCode` — Edge Middleware runs *before* vercel.json redirects, so without its own hostname check the OG middleware would serve www share links as 200 SPA HTML on the www origin (code-review catch — share links are the most-circulated URL class). `config.toml` allowlists `https://www.sendmo.co/**`.
+- [ProtectedRoute.tsx](src/components/ProtectedRoute.tsx) + [useOnline](src/hooks/useOnline.ts) — signed-out + offline now holds on a "you're offline" screen instead of bouncing to `/login`.
+- [global-setup.ts](tests/e2e/global-setup.ts) reuses the cached e2e session while its access token has ≥30 min left — every password grant was minting a fresh prod `auth.sessions` row (272 harness rows). The 30-min margin also prevents the suite consuming the on-disk refresh token, which would trip replay detection next run.
+
+**Gotcha — the exact retryable set:** `auth-js@2.97` `handleError` treats only `[502, 503, 504]` + true network failures as retryable. A plain **500** kills the session, same as 429. The synthetic response is 503 specifically because it's in that list.
+
+**Code review (high effort, 8 finder angles) found 8 defects in the first cut — all fixed before merge:** (1) the www redirect never fired on `/s/*` because Edge Middleware outruns vercel.json redirects → middleware now redirects first; (2) `SIGNED_IN` fires on **every hidden→visible tab transition** in auth-js 2.97 (`_onVisibilityChanged` → `_recoverAndRefresh` → notify), so sending it unconditionally would have posted to ingest per tab focus per tab → now sent only on a genuine re-auth transition (previous crumb `SIGNED_OUT`, or empty ring buffer = post-wipe sign-in); (3) the retry window could straddle the 10s refresh-token reuse interval (two 8s `Retry-After` sleeps) and trip replay revocation — the wrapper would have *caused* the logout class it prevents → total retry window now hard-capped at 9s (`MAX_TOTAL_MS`), which also bounds the boot-spinner stall; (4) the daily heartbeat marker was set before the send succeeded, so an offline 7am load burned the day's slot and read as "browser never opened" → marker now cleared when the send fails; (5) the offline hold could trap a deliberately signed-out user with no way out → "Go to sign-in" escape link added; (6) HTTP-date `Retry-After` (RFC 9110) parsed as NaN and fell through to fast retries into the rate-limit window → both forms parsed; (7) every e2e spec leaked a real ingest POST into prod `event_logs` (PLAYBOOK "mock every Edge Function") → prod-origin send gate; (8) e2e session reuse never checked *whose* session was cached → user-email match required. Each fix carries a regression test; findings 2 and 3 were invisible to the original green suite because they live in vendored-library behavior and timing windows.
+
+**👤 John-steps (dashboard, not in repo):**
+1. Supabase → Authentication → Sessions: time-box **off**, inactivity timeout **off**; Refresh tokens: rotation **on**, reuse interval **10s** (these are the documented-in-SPEC §17 values; org is on Pro so the knobs exist).
+2. Supabase → Authentication → URL Configuration: add `https://www.sendmo.co/**` to the redirect allowlist (config.toml is updated for config-as-code, but the hosted value is dashboard-managed).
+
+**Verification:** 699/699 unit, `tsc -b` clean, e2e 77 passed + 6 env-gated skips + 0 failed (baseline was 75 passed — the 2 new are this change's specs). Post-deploy: probe `curl -sI https://www.sendmo.co/dashboard` → expect 308 + `location: https://sendmo.co/dashboard`, and confirm `auth.breadcrumb` rows appear in `event_logs` from the prod origin.
+
+---
+
 ### [2026-08-18] The shipping link becomes an answer, not an escape
 
 **Category:** ship | Onboarding
