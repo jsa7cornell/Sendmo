@@ -2,8 +2,8 @@
 title: Unified onboarding — one flow, every question skippable, the product is the result
 slug: unified-onboarding-every-question-skippable
 project: sendmo
-status: draft
-blocked_on: John's decision on the three decision points (§5)
+status: decided (B, C) / draft (A, D)
+blocked_on: null — B and C decided by John 2026-08-18; A and D follow the recommendations unless he objects
 created: 2026-08-18
 last_updated: 2026-08-18
 author: Claude Fable 5 — written from John's direction of 2026-08-18 ("progress bars don't represent the flow; who's-sending is now unnecessary; every step should be skippable, including recipient address"). This continues the two ideas PR #68's handoff explicitly deferred.
@@ -58,8 +58,8 @@ Skipping the destination produces a link whose *user* enters where it ships. Rea
 ## 5. Decision points (John)
 
 - **A. Payment when anything is skipped** — proposal: unchanged from today's flex path (save card + price cap). No new payment surface. *Recommended; anything else touches PAYMENTS.md scope.*
-- **B. Can the destination AND origin both be skipped?** Then the link user enters both addresses and the creator has bought "a label for anything, capped at $X." Maximum flexibility, maximum abuse surface (creator's card, stranger's shipment). *Recommendation: allow it only when the package is specified (so the cap is meaningful), refuse the all-three-skipped empty link.* This is the §4.1 "at least one address" constraint question in product terms.
-- **C. Progress bar ships first, alone?** *Recommendation: yes — it's a one-day fix for John's most visible complaint and is invariant under the rest.*
+- **B. Can the destination AND origin both be skipped?** **DECIDED (John, 2026-08-18): any combination** — including all three questions skipped. The link user can be left to enter everything; the price cap is the only bound. Migration 042 therefore drops the address requirement for `flexible` entirely (constraint keeps `seller_link` and `full_label` invariants only). The abuse surface is accepted and bounded by the cap; revisit if real links show misuse.
+- **C. Progress bar ships first, alone?** **DECIDED (John, 2026-08-18): yes** — shipping immediately as its own PR.
 - **D. Naming the new shape.** It must never read as the seller flow. Working copy: same "shipping link" name everywhere, with the banner clarifying who fills what. A distinct name ("open link"?) only if testing shows confusion. *Recommendation: one name, vary the sentence.*
 
 ## 6. Staging
