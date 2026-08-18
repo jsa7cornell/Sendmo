@@ -108,25 +108,52 @@ export const INITIAL_DATA: RecipientFlowData = {
   tried: {},
 };
 
-// ─── SessionStorage seam ────────────────────────────────────
+// ─── Storage seam ───────────────────────────────────────────
 //
-// SessionStorage-backed flow data so the Google OAuth roundtrip in
+// Holds flow data so the Google OAuth roundtrip in
 // RecipientStepEmailVerifySupabase preserves user-entered destination, email,
 // shipping selection, etc. across the redirect to accounts.google.com and back.
 // It is also how step 0's answer reaches the provider: `/onboarding` renders
 // OUTSIDE RecipientFlowProvider (the provider sits at `/onboarding/:pathSlug`
 // so its useParams can read the slugs), so the who-sending step writes here and
 // the provider hydrates from it on the next route.
+//
+// **localStorage, not sessionStorage** (2026-08-18). sessionStorage dies with
+// the tab, so closing it — or a phone evicting it — lost every field the user
+// had typed, with nothing written server-side until the card step. Measured:
+// a fresh tab on /full-label/package bounced to /destination, blank.
+//
+// The risk that buys is a stale flow silently resurrecting, which is precisely
+// how the wrong party's address ends up on a label. Three guards, all required:
+//   1. `startFlowAs` still RESETS on every new door pick — a fresh start is
+//      never contaminated by an old draft.
+//   2. Resuming is OFFERED, never automatic (see `loadResumable`): step 0 shows
+//      a banner the user must accept.
+//   3. Drafts expire. An address typed weeks ago is more likely wrong than
+//      useful, and this is shared-computer data.
 
 const STORAGE_KEY = "sendmo:recipient_flow:v1";
+
+/** How long an unfinished flow stays offerable. */
+export const DRAFT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+interface StoredFlow {
+  data: Partial<RecipientFlowData>;
+  savedAt: number;
+}
 
 export function loadPersisted(): RecipientFlowData | null {
   if (typeof window === "undefined") return null;
   try {
-    const raw = window.sessionStorage.getItem(STORAGE_KEY);
+    const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<RecipientFlowData>;
-    return { ...INITIAL_DATA, ...parsed };
+    const parsed = JSON.parse(raw) as StoredFlow | Partial<RecipientFlowData>;
+    // Tolerate the pre-2026-08-18 shape (bare data, no envelope) so a flow that
+    // was mid-air across the deploy isn't thrown away.
+    const data = "savedAt" in (parsed as StoredFlow)
+      ? (parsed as StoredFlow).data
+      : (parsed as Partial<RecipientFlowData>);
+    return { ...INITIAL_DATA, ...data };
   } catch {
     return null;
   }
@@ -135,10 +162,60 @@ export function loadPersisted(): RecipientFlowData | null {
 export function persist(data: RecipientFlowData): void {
   if (typeof window === "undefined") return;
   try {
-    window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    const envelope: StoredFlow = { data, savedAt: Date.now() };
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(envelope));
   } catch {
-    /* sessionStorage full / disabled — best-effort, tolerate */
+    /* storage full / disabled — best-effort, tolerate */
   }
+}
+
+export function clearFlow(): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(STORAGE_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * An unfinished flow worth offering to resume, or null.
+ *
+ * Deliberately narrow. It must have got past the door (so there is something to
+ * come back to), must not already be finished, and must be recent. Anything
+ * else is noise that would make the offer untrustworthy — and an offer the user
+ * learns to dismiss is worse than none.
+ */
+export function loadResumable(now: number = Date.now()): RecipientFlowData | null {
+  if (typeof window === "undefined") return null;
+  let savedAt = 0;
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as StoredFlow;
+    savedAt = typeof parsed?.savedAt === "number" ? parsed.savedAt : 0;
+  } catch {
+    return null;
+  }
+  if (!savedAt || now - savedAt > DRAFT_TTL_MS) return null;
+
+  const data = loadPersisted();
+  if (!data) return null;
+  // Finished flows are not drafts.
+  if (data.labelResult || data.short_code) return null;
+  // "Progress" is any typed field, not just a completed step. Someone who
+  // entered a name, phone and email but hadn't verified an address yet has done
+  // real work — and losing exactly that is the complaint this fixes. Picking a
+  // door alone never qualifies: startFlowAs resets everything but `sender`.
+  const progressed =
+    data.completedSteps.some((n) => n >= 1) ||
+    !!data.destinationAddress.street ||
+    !!data.destinationAddress.name ||
+    !!data.destinationAddress.phone ||
+    !!data.email ||
+    !!data.originAddress.street ||
+    !!data.originAddress.name;
+  return progressed ? data : null;
 }
 
 /**

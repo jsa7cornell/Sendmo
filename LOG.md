@@ -28,11 +28,27 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 **Gotcha — the stale-DOM click, again.** A spec clicked "The sender will fill this in" twice in a row; the second click landed on the *outgoing* step's button because the URL flips before the old step unmounts, silently re-running the same defer. Same class as 2026-08-17. **Between two clicks that span a step transition, wait for the new step to mount** (`await expect(page.locator("#origin-name")).toHaveCount(0)`), never on the URL alone.
 
+**Resume after closing the tab (John, 2026-08-18): fixed here too.** He asked whether someone who stalls can come back and finish. Measured, not assumed — five scenarios in a real browser:
+
+| Scenario | Before |
+|---|---|
+| Back button across the new split | ✅ lands on the address step, typed origin intact |
+| Browser back/forward | ✅ both directions |
+| Refresh mid-flow | ✅ same step, fields intact |
+| Skip ahead by URL | ✅ bounced to the first unfinished step |
+| **New tab / closed tab** | ❌ **everything lost** — `/full-label/package` bounced to `/destination`, blank |
+
+Navigation was never the fragile part; the guard is strict rather than brittle. The gap was storage: flow data lived in **sessionStorage**, which dies with the tab, and nothing is written server-side until the card step — so destination, sender address and package were all tab-local. Pre-existing, but this change made the exposure worse by adding a step to stall on.
+
+Now **localStorage with a 7-day TTL**, plus an explicit resume offer on step 0 ("You have a shipment in progress" → Continue / Start over). Three guards keep a stale draft from silently resurrecting — the class of bug that put the wrong party's address on a label twice this week: `startFlowAs` still resets on every door pick, resuming is offered and never automatic, and drafts expire (an address typed weeks ago is likelier wrong than useful, and this is shared-computer data). Verified in a real browser: tab closed entirely, new context, banner offered, Continue restored name and email.
+
+**Two things this turned up.** jsdom in this project exposes `window.localStorage` as an object with **no methods** — `setItem` undefined — and `persist` swallows storage errors by design, so the unit tests would have asserted against a silent no-op; they now install an in-memory Storage. And my first `loadResumable` predicate required a completed step or a verified street, which classified "typed name + phone + email, hadn't hit Continue" as no progress — exactly the work people would be angriest to lose. Broadened, with a test naming that case.
+
 **⚠️ Open — the other half is not done.** John chose the "real fix" for the case where the payer gives the address and *then* defers the package: today a flexible link stores only size/weight hints, not an origin, and the sender flow doesn't prefill from it — so that address is discarded. Carrying it needs the `links` function to accept an origin for `flexible`, the GET-by-code to return it, and `SenderFlow` to prefill. Until then, "address given + package deferred" still wastes the payer's input. **This is the reason this PR is not merged.**
 
 **Also staged, not built:** collapsing `full_label`/`flexible` into one flow with `link_type` derived (John's idea 1), and a skippable *recipient* address (idea 2 — note it is the seller link's shape with the opposite payer, so it must never be described as the seller flow). Both need their own proposals.
 
-**Tests:** 681 unit / **78 e2e passed, 0 failed** / `tsc` clean.
+**Tests:** 688 unit / **78 e2e passed, 0 failed** / `tsc` clean / ESLint 27 vs 27 baseline.
 
 **Browser-verified:**
 - spec: [tests/e2e/onboarding.spec.ts](tests/e2e/onboarding.spec.ts) — deferring the address lands on `/full-label/package` (not preferences); deferring both reaches the link path; parcel validation belongs to 14 and no longer fires on 10.

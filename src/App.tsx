@@ -2,7 +2,9 @@ import { BrowserRouter, Routes, Route, Outlet, Navigate, useNavigate } from "rea
 import * as Sentry from "@sentry/react";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { RecipientFlowProvider } from "@/contexts/RecipientFlowContext";
-import { startFlowAs } from "@/lib/recipientFlowStorage";
+import { startFlowAs, loadResumable, clearFlow } from "@/lib/recipientFlowStorage";
+import { firstIncompleteUrl } from "@/lib/stepRouting";
+import { useState } from "react";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import Index from "@/pages/Index";
 import RecipientOnboarding from "@/pages/RecipientOnboarding";
@@ -47,10 +49,41 @@ const SentryRoutes = Sentry.withSentryReactRouterV7Routing(Routes);
 // parameterized route names intact, and keeps every existing deep link valid.
 function OnboardingWhoSending() {
   const navigate = useNavigate();
+  // Read once on mount. An unfinished flow is OFFERED here and never applied
+  // automatically — silently rehydrating someone's old draft is how the wrong
+  // party's address ends up on a label (see recipientFlowStorage).
+  const [draft, setDraft] = useState(() => loadResumable());
   return (
     <div className="min-h-screen bg-gradient-to-b from-background to-muted/50">
       <AppHeader />
       <div className="max-w-3xl mx-auto px-4 py-8">
+        {draft && (
+          <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-card px-5 py-4 shadow-sm">
+            <p className="text-sm text-foreground">
+              <span className="font-medium">You have a shipment in progress.</span>{" "}
+              <span className="text-muted-foreground">
+                Pick up where you left off, or start a new one.
+              </span>
+            </p>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => { clearFlow(); setDraft(null); }}
+                className="text-sm text-muted-foreground rounded-xl px-3 py-2 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              >
+                Start over
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate(firstIncompleteUrl(draft.completedSteps, draft.path ?? "full_label"))}
+                className="text-sm font-medium text-primary-foreground bg-primary rounded-xl px-4 py-2 shadow-sm transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              >
+                Continue
+              </button>
+            </div>
+          </div>
+        )}
+
         <RecipientStepWhoSending
           onSelect={(sender) => {
             startFlowAs(sender);

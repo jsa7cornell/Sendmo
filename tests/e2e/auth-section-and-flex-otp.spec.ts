@@ -73,7 +73,15 @@ async function injectSession(page: Page, session = buildMockSession()) {
   );
 }
 
-/** Pre-populate recipient flow state in sessionStorage before page load. */
+/**
+ * Pre-populate recipient flow state before page load.
+ *
+ * localStorage since 2026-08-18 — the flow moved off sessionStorage so closing
+ * the tab no longer destroys everything typed. The stored shape is an envelope
+ * ({ data, savedAt }) so drafts can expire; `loadPersisted` still tolerates the
+ * old bare shape, but seeding the envelope keeps these specs honest about what
+ * the app actually writes.
+ */
 async function injectFlowState(page: Page, overrides: Record<string, unknown> = {}) {
   const base = {
     path: null,
@@ -86,7 +94,8 @@ async function injectFlowState(page: Page, overrides: Record<string, unknown> = 
     tried: {},
   };
   await page.addInitScript(
-    ({ key, value }) => sessionStorage.setItem(key, JSON.stringify(value)),
+    ({ key, value }) =>
+      localStorage.setItem(key, JSON.stringify({ data: value, savedAt: Date.now() })),
     { key: FLOW_STORAGE_KEY, value: { ...base, ...overrides } }
   );
 }
