@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, useCallback } from "react";
 import type { User, Session } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
+import { recordAuthEvent } from "@/lib/authBreadcrumbs";
 import { deriveClientLiveMode, type AdminMode } from "@/lib/mode";
 
 export type { AdminMode };
@@ -110,6 +111,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, s) => {
+      // Phase 0 diagnosis instrumentation (session-durability proposal).
+      // Safe here: plain localStorage + raw fetch, never the supabase client.
+      recordAuthEvent(event, s?.user?.id ?? null);
       setSession(s);
       setUser((prev) => {
         const next = s?.user ?? null;

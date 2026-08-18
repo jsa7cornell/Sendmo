@@ -1,6 +1,7 @@
-import { writeFileSync, mkdirSync } from "node:fs";
+import { writeFileSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import dotenv from "dotenv";
+import { hasAuthStateForCurrentProject, SUPABASE_STORAGE_KEY } from "./supabase-env";
 
 // ─── Playwright global setup: authenticated e2e session ─────────────────────
 //
@@ -53,6 +54,38 @@ export default async function globalSetup(): Promise<void> {
   }
   if (!ANON_KEY) {
     throw new Error("[e2e global-setup] VITE_SUPABASE_ANON_KEY missing — cannot authenticate.");
+  }
+
+  // Reuse the cached session when its access token still has ≥30 min of life.
+  // Every password grant mints a NEW auth.sessions row on the target project —
+  // the prod table had 272 harness rows from re-minting on every run. The
+  // 30-min margin also guarantees the app won't refresh the cached (and by
+  // then stale-on-disk) refresh token mid-suite, which would look like a
+  // replay attack to GoTrue on the following run.
+  if (hasAuthStateForCurrentProject()) {
+    try {
+      const state = JSON.parse(readFileSync(AUTH_FILE, "utf-8")) as {
+        origins?: { localStorage?: { name: string; value: string }[] }[];
+      };
+      const entry = (state.origins ?? [])
+        .flatMap((o) => o.localStorage ?? [])
+        .find((e) => e.name === SUPABASE_STORAGE_KEY);
+      const cached = entry
+        ? (JSON.parse(entry.value) as { expires_at?: number; user?: { email?: string } })
+        : null;
+      const secondsLeft = cached?.expires_at ? cached.expires_at - Date.now() / 1000 : 0;
+      // Same-user check: a cache minted for a previous E2E_TEST_USER_EMAIL
+      // would silently run the authed suite as the wrong account.
+      const sameUser = cached?.user?.email?.toLowerCase() === email.toLowerCase();
+      if (sameUser && secondsLeft >= 30 * 60) {
+        console.log(
+          `[e2e global-setup] reusing cached session (${Math.round(secondsLeft / 60)} min left) — skipping password grant.`,
+        );
+        return;
+      }
+    } catch {
+      // Unreadable cache — fall through and mint fresh.
+    }
   }
 
   // Password grant against GoTrue. The dedicated test user has a password set
