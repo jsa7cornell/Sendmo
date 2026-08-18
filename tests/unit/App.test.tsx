@@ -41,8 +41,10 @@ describe("App Routing", () => {
     it("renders the Onboarding on /onboarding", async () => {
         window.history.pushState({}, "Test page", "/onboarding");
         render(<App />);
+        // Role + accessible name, not an incidental copy match — step 0's
+        // wording is expected to keep moving.
         await waitFor(() => {
-            expect(screen.getByText("How do you want to ship?")).toBeInTheDocument();
+            expect(screen.getByRole("heading", { name: /who's sending/i })).toBeInTheDocument();
         });
     });
 

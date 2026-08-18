@@ -1,6 +1,6 @@
 import { useLocation, useParams, Navigate } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import { Package, Link2 } from "lucide-react";
+import { Package, Link2, Undo2 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useRecipientFlowContext } from "@/contexts/RecipientFlowContext";
 import AppHeader from "@/components/AppHeader";
@@ -53,6 +53,8 @@ export default function RecipientOnboarding() {
     goBack,
     tryAdvance,
     getErrors,
+    switchToShippingLink,
+    undoShippingLinkSwitch,
   } = useRecipientFlowContext();
 
   // ── Step guard ─────────────────────────────────────────────
@@ -114,10 +116,12 @@ export default function RecipientOnboarding() {
         {data.path && currentStep !== 0 && (
           <div className="flex justify-center mb-5">
             <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 text-primary border border-primary/20 px-3 py-1 text-xs font-medium">
+              {/* Names describe what was made, not a product the user had to
+                  pick: a finished artifact vs a promise filled in later. */}
               {data.path === "full_label" ? (
-                <><Package className="w-3 h-3" /> Full Prepaid Label</>
+                <><Package className="w-3 h-3" /> Prepaid label</>
               ) : (
-                <><Link2 className="w-3 h-3" /> Flexible Shipping Link</>
+                <><Link2 className="w-3 h-3" /> Shipping link</>
               )}
             </span>
           </div>
@@ -130,6 +134,30 @@ export default function RecipientOnboarding() {
             completedIndexes={completedProgressIndexes}
             onClickIndex={handleProgressClick}
           />
+        )}
+
+        {/* Undo for the address escape. Flow-level affordance: it reverses the
+            branch decision itself, and the typed origin address is still in
+            flow state, so coming back restores it. */}
+        {/* Mirrors the escape's own condition (`!isSelfSender` in
+            RecipientStepFullShipping). Gating this on === "other" while the
+            escape is offered to null-sender users too — existing deep links,
+            and sessions persisted before this shipped — let those users convert
+            to a shipping link with no rendered way back. */}
+        {currentStep === 20 && data.sender !== "self" && (
+          <div className="mb-5 flex items-center justify-between gap-3 rounded-xl bg-muted px-4 py-3">
+            <p className="text-sm text-muted-foreground">
+              We'll send a link for them to fill in their address.
+            </p>
+            <button
+              type="button"
+              onClick={undoShippingLinkSwitch}
+              className="shrink-0 inline-flex items-center gap-1.5 text-sm font-medium text-primary rounded-lg px-2 py-1 transition-colors hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            >
+              <Undo2 className="w-3.5 h-3.5" aria-hidden="true" />
+              I do have it
+            </button>
+          </div>
         )}
 
         {/* Step content with animation */}
@@ -148,6 +176,7 @@ export default function RecipientOnboarding() {
                 address={state.destinationAddress}
                 email={state.email}
                 path={state.path}
+                sender={data.sender}
                 errors={getErrors(1)}
                 tried={!!state.tried[1]}
                 onAddressChange={(addr) => updateData({ destinationAddress: addr })}
@@ -161,11 +190,13 @@ export default function RecipientOnboarding() {
             {currentStep === 10 && (
               <RecipientStepFullShipping
                 state={state}
+                sender={data.sender}
                 errors={getErrors(10)}
                 tried={!!state.tried[10]}
                 onUpdate={updateData}
                 onContinue={() => tryAdvance(10)}
                 onBack={goBack}
+                onNoAddress={switchToShippingLink}
                 liveMode={liveMode}
               />
             )}

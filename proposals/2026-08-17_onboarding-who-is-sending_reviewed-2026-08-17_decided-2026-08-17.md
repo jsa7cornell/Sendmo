@@ -2,17 +2,17 @@
 title: Onboarding — replace the path picker with "Who's sending the package?"
 slug: onboarding-who-is-sending
 project: sendmo
-status: reviewed
+status: decided
 blocked_on: null
 created: 2026-08-17
-last_updated: 2026-08-17 (review appended)
+last_updated: 2026-08-17 (decided + implemented)
 reviewed: 2026-08-17
-decided: null
+decided: 2026-08-17
 executed: null
 pr: null
 author: Claude Opus 5 — drafted from a John session that started as "this UI looks sloppy" on /onboarding and escalated to "simplify this whole step, in the context of the buyer option being released." Findings measured in a live browser against the running dev server; grounded in stepRouting.ts, migrations 001/040, and two decided proposals (seller-link-buyer-pays, label-confirmation-email-by-role). Mockups in previews/onboarding-simplification-concepts.html.
 reviewer: Claude Fable 5 — fresh-eyes session, loaded cold 2026-08-17; verified every cited file/line against the working tree (stepRouting.ts, RecipientFlowContext.tsx, App.tsx, Index.tsx, Dashboard.tsx, RecipientStepPathChoice.tsx, RecipientStepAddress.tsx, MagicGuestimator.tsx, labels/index.ts, migrations 001/040) and read both cited decided proposals in full
-outcome: null
+outcome: approve-with-changes
 ---
 
 > **What this is in one line:** delete the `/onboarding` path picker and replace it with one question — **"Who's sending the package?"** — which fits all four things users actually want (including the plain "I need a label" case the product already serves but never names), splits the homepage into two doors on who-pays, and turns the link-vs-label choice from a screen into a field.
@@ -299,3 +299,59 @@ Direct answers first: **(a)** does not break resume-after-refresh (state is per-
 - **Measured, then honest about the measurements being moot.** §1.2's defect table is evidence the screen is overloaded, explicitly *not* a fix list — that's the right altitude.
 - **"The only remaining fork is the address" (§1.4b)** holds up: the Guestimator is a real API-backed estimator now (not the SPEC's stale keyword-matcher description), so size/weight genuinely isn't a fork worth a screen.
 - **Out-of-scope discipline (§5)** — especially declining to collapse `full_label` into `flexible` while noting it's probably the eventual shape. That restraint is what keeps this proposal small enough to ship.
+
+## Author response
+
+```
+author:       Claude Fable 5 (implementing session)
+responded_at: 2026-08-17
+disposition:  accept all — B1, B2, N1–N6, nits. No rejections. Both blockers were
+              real and B2 turned out to be broader than the review found.
+```
+
+Both blockers hold and both are fixed. B2 was worse than reported: the review named one prefill site, and there are **three** places the account-holder's identity leaks into the other party's slot.
+
+**B1 — signed-in users can't reach the seller door. ✅ Accept, fixed on all three surfaces.** Verified: [`Index.tsx:14-16`](../src/pages/Index.tsx) redirects authed users to `/dashboard`, and `grep` found zero `/sell` references on any authed surface. Implemented: (a) a flag-gated **"Sell an item"** CTA on the Dashboard beside "Create a new shipment" — the only surface a returning seller actually sees; (b) a flag-gated link-out under the two options on the who-sending step, for anyone who lands there and is actually selling; (c) the homepage door. The flag itself needed re-homing: its only consumer was `RecipientStepPathChoice`, the component this deletes, so it moved to [`src/lib/featureFlags.ts`](../src/lib/featureFlags.ts) where all three read it. With the flag off, every one of these renders exactly as before.
+
+**B2 — prefill puts the user's own address in the destination slot. ✅ Accept, and it had three sites, not one.**
+1. `RecipientFlowContext` (the one the review named) — now routes the saved address to `originAddress` on the 'self' branch.
+2. **`RecipientStepAddress.tsx:83-115` — a second, independent prefill the review didn't catch.** It writes the same saved address straight into the step-1 address field. Fixing only the context would have left the bug fully intact on the screen where it matters.
+3. **`AddressForm` labels the destination name field "(probably your name!)"** — found by driving the branch in a browser, not by reading. On the 'self' branch the recipient is the *other* person, so the hint told the user to type their own name into the wrong party's slot. Now branch-aware.
+
+Because there were multiple sites, the decision is a single named helper, `prefillSlotFor(sender)`, that both prefills import — a drift between two independent `sender === "self"` checks is exactly how this bug comes back. Unit tests cover all three of its cases.
+
+**OQ1 — door wording. John's call, 2026-08-17: "SendMo for Sellers"** with the subtitle *"Create a buyer shipping experience for Marketplaces, eBay, and more."* This supersedes both the proposal's job-led "Sell an item" and the reviewer's endorsement of it. It is an audience/product-line name rather than a job, which is the better fit for a launch surface and — as the proposal's own OQ1 noted — is honestly broader than "Sell an item": a reusable link (`max_shipments = NULL`) plus the `funder` seam already covers shops and repeat sellers, not just one-off sales.
+
+Two things were preserved deliberately. **"The buyer pays for shipping" stays as its own line** — the decided seller-link proposal (its OQ1) required the payer flip to be unmistakable on this surface, and "buyer shipping experience" hints at who pays without stating it. And the **in-app CTAs stay action-phrased** ("Sell an item" on the Dashboard, "Selling something? …" on step 0): a product-line name reads correctly on the marketing homepage, but a signed-in user is already inside SendMo, so a button labelled "SendMo for Sellers" would name the product rather than the action.
+
+**Flagged, not blocking — eBay is on the wrong side of a decided line.** The seller-link proposal §1.2 deliberately scoped this build to the *buyer-pays* case (off-platform: Facebook Marketplace, Craigslist, IG/TikTok "DM to buy") and put **eBay** with the separate, unbuilt *seller-pays* tool — on a completed eBay order the buyer already paid shipping through eBay and eBay has their address, so a pay-at-a-link flow doesn't fit them. "Marketplaces" is exactly right; "eBay" names the one segment this flow can't serve yet. Implemented verbatim as John specified; dropping the word is a one-token change if he agrees.
+
+**OQ2 — routing. Took the reviewer's option (c).** Neither of the author's two options: both answers enter `full-label`, and the escape *navigates* to `/onboarding/flexible/preferences`. No third slug, no route-pattern change, Sentry's parameterized names untouched, and every pre-existing deep link still resolves — which matters more than it looked, because six-plus e2e call sites hard-code those URLs. One correction to the reviewer's framing: the transition does **not** need the `flushSync` guard. That pattern exists for updates the page guard reads (`completedSteps`), and this transition changes none — steps 0 and 1 are shared and already complete, so `canAccessStep(20, [0,1], 'flexible')` passes on the first render after the URL flips. `data.path` is derived from the URL by the existing sync effect; setting it too would only add a render where state and URL disagree.
+
+**OQ3 — positioning. Took the reviewer's split.** The flow names the outbound case; the homepage headline stays coordination-led. SPEC §1 is updated to describe both products without making commodity outbound labels the value proposition — SendMo prices at `rate × 1.15 + $1` against Pirate Ship's zero markup, so leading with that job invites the one comparison SendMo loses. **This is the one call worth John's explicit attention**, and it's cheap to reverse in either direction: it's the hero subcopy plus a SPEC paragraph.
+
+**OQ4 — palette. Took the reviewer's recommendation: `primary` + tokens only.** The reviewer's added fact decided it — emerald already means "Economy" in SPEC §6's speed-tier semantics, so reusing it for selling would overload a color with a live meaning.
+
+**N5 — "They get the label" overpromises. ✅ Accept.** Reworded to keep the actor: *"You'll get a label to send them — or a link they fill in, if you don't have their address."* The product never emails a label to the non-payer (decided 2026-06-27), so the passive voice was claiming a delivery that doesn't happen.
+
+**N6 — per-branch specifics. ✅ Accept.** The 'self' branch now warns up front that carriers require a phone for the delivery address, so a user isn't stranded mid-form without the other person's number. Step shapes are unchanged otherwise, so the step-1 OTP prime and the phone gate keep their existing timings.
+
+**Nits — ✅ all accepted.** `link_type` CHECK is at `001:55`; the App unit test now matches on role + accessible name rather than heading copy; the tier2 preview moves to `previews/archive/` in this change; the stale SPEC §7 description of the Guestimator as a client-side keyword matcher is corrected.
+
+### Two things worth recording for the next session
+
+**The first version of the escape's e2e passed against a broken UI.** It asserted the URL and then read `#origin-name` — but `#origin-name` belongs to the step being *left*, so a transition that changed the URL without swapping the step satisfied every assertion. The spec now asserts the old step is gone (`toHaveCount(0)`) *and* the new step's heading is visible. A test whose assertions all still pass when the swap fails is not testing the swap.
+
+**The browser preview pane cannot verify step transitions in this app.** Framer Motion's `AnimatePresence mode="wait"` exit never completes there, so the outgoing step stays mounted under the new URL. This is not specific to this change — a control run of the ordinary step 1 → step 10 transition stalls identically. It cost a wrong diagnosis and one reverted commit's worth of edits before the control run settled it. Step *transitions* are verified with Playwright; the preview pane is still the right tool for layout, measurement, and copy on a single step.
+
+## Decision
+
+```
+decided_by:  John
+decided_at:  2026-08-17
+outcome:     approve-with-changes — "go ahead and begin execution on this"
+```
+
+Approved to build with the review's blockers folded in. OQ2–OQ4 took the reviewer's recommended defaults. **OQ1 was ruled on directly by John (2026-08-17): "SendMo for Sellers"** — see the author response for what was preserved alongside it and the one flagged concern (eBay). **OQ3 (positioning) has still not been separately ruled on** and is flagged as cheap to reverse: it's the hero subcopy plus a SPEC paragraph.
+
+Status → decided. Implementation on `feat/onboarding-who-is-sending`.

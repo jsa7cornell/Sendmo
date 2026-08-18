@@ -12,9 +12,12 @@ test.describe("Home page", () => {
     // Tagline pill (appears in hero pill and footer — use first)
     await expect(page.getByText("Prepaid shipping made easy").first()).toBeVisible();
 
-    // Primary CTA
-    const cta = page.getByRole("button", { name: /Get started/i });
-    await expect(cta).toBeVisible();
+    // Primary door. Named for the job, not the artifact — and it no longer
+    // excludes the plain "I'm mailing something out" case.
+    await expect(
+      page.getByRole("button", { name: /Send or receive a package/i })
+    ).toBeVisible();
+    await expect(page.getByText("You pay for shipping")).toBeVisible();
 
     // "How SendMo works" section
     await expect(
@@ -22,9 +25,9 @@ test.describe("Home page", () => {
     ).toBeVisible();
   });
 
-  test("CTA navigates to onboarding", async ({ page }) => {
+  test("the you-pay door navigates to onboarding", async ({ page }) => {
     await page.goto("/");
-    await page.getByRole("button", { name: /Get started/i }).click();
+    await page.getByRole("button", { name: /Send or receive a package/i }).click();
     await expect(page).toHaveURL(/\/onboarding/);
   });
 });

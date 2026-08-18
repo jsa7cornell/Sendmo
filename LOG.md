@@ -12,6 +12,73 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-17] Infra-audit handoff reviewed — A0 root-caused, two new findings, #62 unblocked
+
+**Category:** review | Infrastructure
+**Cross-link:** [proposals/2026-08-17_platform-infra-audit-handoff.md](proposals/2026-08-17_platform-infra-audit-handoff.md) (on `feat/onboarding-who-is-sending`, PR #63) | [test.yml](.github/workflows/test.yml) | [AuthContext.tsx](src/contexts/AuthContext.tsx) | [Admin.tsx](src/pages/Admin.tsx)
+
+**Code review (3 findings, all fixed before merge):**
+- **Wrong-party prefill could return via a silent storage failure.** `startFlowAs` writes sessionStorage and `persist` swallows write errors, so a user who answered "I am" in a context where storage is unavailable arrived with `sender=null`, was treated as 'other', and got their OWN address prefilled into the destination. Compounding it, the effect's "wait for step 0" guard (`!data.sender && !urlPath`) could never be true inside the provider — `urlPath` is always set for a matched route — so it never waited. Fix: `App.tsx` also carries the answer in router state and the provider seeds from whichever arrives; the dead guard is removed and the `null → destination` deep-link fallback documented as intentional.
+- **Origin form collapsed under the user mid-typing.** `originConfirmable` was derived every render, so for a 'self' user whose saved address lacked a phone (anything predating the 2026-05-19 phone requirement) the entire `SmartAddressInput` — including the focused phone field — unmounted on the keystroke that completed the 10th digit. Fix: latch confirmability at mount; it re-latches on the next visit to step 10.
+- **Escape offered without an undo.** The escape renders when `sender !== 'self'` but the undo bar was gated on `sender === 'other'`, so null-sender users (existing deep links, sessions persisted before this shipped) could convert to a shipping link with no rendered way back. Fix: undo now mirrors the escape's predicate.
+
+Both new e2e regressions were confirmed to **fail without their fix** before being accepted — the discipline the "passing e2e that proved nothing" gotcha above exists to enforce.
+
+**Browser-verified:** n/a-category: `docs-only` — n/a-reason: review + LOG/handoff text; no product surface touched.
+
+**Verdict: accept.** Every claim re-tested at `main` `f11c009` holds — A1 (double-suppressed gates), A2 (report overwritten before upload), A0 (16 failed), A5 (key is anon, no Rule 0 issue), B3 (dead `api/s/` still present).
+
+**A0 root cause found — 15 of the 16 failures are one bug, and it is not text rot.** `admin-reconciliation` + `admin-refund-flow` mock `**/auth/v1/**` HTTP responses, but supabase-js reads its session from **localStorage** on cold load and never issues that request. `user` stays null and `Admin.tsx:245` redirects. Probed with the specs' own mock: `/admin?tab=reconciliation` lands on `/login?redirectTo=/admin`. All 15 assertions wait for admin UI **on the login page**. These specs are structurally broken, not drifted — the mock cannot have worked against the current AuthContext. Fix once: seed `sb-<ref>-auth-token` into localStorage (same key `global-setup.ts` writes) + mock `/rest/v1/profiles` with `role: 'admin'`. `label-flow`'s 1 failure is unrelated.
+
+**A4 answered.** `TEST_CODE` / `TEST_PUBLIC_CODE` / `TEST_PAYER_JWT` are in neither the repo secret store nor `.github/`. `sender-flow`, `tracking-anonymous-payment-gating`, and `account-budget-admin` **never run in CI**; only `phone-gate` (authed) does. Four of five env-gated specs are dormant, two covering money paths.
+
+**A3 worse than documented.** Four consecutive runs: 36m43s / 35m54s / 35m00s / 36m10s, all `success` — including run `32049689190` on the **docs-only** commit `f11c009`. PLAYBOOK Rule 21's "~12 min" is off by 3×.
+
+**NEW N1 — CI runs e2e against a Supabase that does not exist.** `test.yml` sets `VITE_SUPABASE_URL: http://localhost:54321` and starts no local Supabase (no `supabase start`, no `services:`, no container). A green e2e step and a red one currently mean the same thing. **This gates the A1 "make e2e blocking" decision** — it is a prerequisite, not just a policy call.
+
+**NEW N2 — the Vercel dashboard holds a no-op build command.** Dashboard Build Command is `mkdir -p dist && cp index.html dist/`; `vercel.json` says `npm run build`. `vercel.json` wins today — prod verified serving a real Vite build (`/assets/index-B3ROMyss.js`). **Not broken now.** But deleting that one `vercel.json` line as cleanup ships an assetless `index.html` to prod with a **green deploy** and no error anywhere. B2's failure class, live rather than theoretical, and worse: an env-var mistake breaks a feature; this breaks the whole site while reporting success.
+
+**B1 cleared itself.** Vercel previews built 2h/6h/9h ago; prod deployed 10h ago — the 24h Hobby limit reset. **#62 is unblocked now** and should merge + deploy before the quota goes again.
+
+**Next:** John's calls — merge #62; clear the Vercel dashboard build-command override; Vercel Pro (spend); whether the four dormant money-path specs must run before launch.
+
+### [2026-08-17] Onboarding — path picker replaced by "Who's sending the package?"
+
+**Category:** ship | Onboarding | Growth
+**Deploy:** Not yet — on `feat/onboarding-who-is-sending`, not merged, not deployed.
+**Cross-link:** [proposals/2026-08-17_onboarding-who-is-sending_reviewed-2026-08-17_decided-2026-08-17.md](proposals/2026-08-17_onboarding-who-is-sending_reviewed-2026-08-17_decided-2026-08-17.md) | [SPEC §1 + §7 Step 0](SPEC.md) | diverges (knowingly) from [seller-link-buyer-pays OQ1](proposals/2026-07-17_seller-link-buyer-pays_reviewed-2026-07-17_decided-2026-07-17.md)
+
+**What & why:** `/onboarding` asked users to pick a product before they knew what the products were, and its copy ("You enter the sender's address") actively denied the plain "I'm mailing something out" case — which has always worked, since `full_label` is role-agnostic. Step 0 is now one question, **"Who's sending the package?"** → *I am* / *Someone else*. Both answers enter `full-label`; the link product appears only via a new escape at step 10 ("I don't have their address"), because that fork is a fact about what the user can answer, not a preference. `RecipientStepPathChoice.tsx` (237 lines) deleted. **No schema change** — user-facing strings only: "Prepaid label" / "Shipping link".
+
+**Measured against the old picker** (1280×800, same method as the proposal): dead third grid column gone (`360px 360px` for 2 cards, was `320px×3`); heading offset from the card block's center **168px → 0px**; per-row misalignment from `<button>` grid-stretch **19px → 0px**; **166 words → 62**; mobile 375×812 second option **67px visible → fully above the fold**; focus ring now the app's blue `--ring` token instead of the gray UA default.
+
+**The two review blockers, both real:**
+- **B1 — the seller door would have been unreachable by the people it's for.** `Index.tsx` (T3-3) redirects signed-in users to `/dashboard`, whose only CTA goes to `/onboarding`, and nothing on any authed surface linked `/sell`. A homepage-only seller door strands every repeat seller — and a seller answering "Who's sending?" with "I am" gets silently routed into the you-pay flow. Fixed on three surfaces (homepage door, who-sending link-out, Dashboard CTA), all gated on `VITE_ENABLE_SELLER_LINK`. **The flag needed re-homing**: its only consumer was the deleted picker, so it now lives in `src/lib/featureFlags.ts`.
+- **B2 — saved-address prefill put the account holder's own address in the *destination* slot.** On the "I am" branch that pre-fills your address as where the package is going, pre-verified and green → you mail it to yourself. Same class as the 2026-08-16 stale-autofill incident: data correct in its original role, landing in the inverted role. **There were three sites, not the one the review named** — `RecipientFlowContext`, a second independent prefill in `RecipientStepAddress.tsx`, and `AddressForm`'s "(probably your name!)" hint (found by driving the branch in a browser). All three now route through one named helper, `prefillSlotFor(sender)`, because two independent `sender === "self"` checks are how this comes back.
+
+**Gotcha — a passing e2e that proved nothing.** The escape's first spec asserted the URL, then read `#origin-name` to check data preservation. But `#origin-name` belongs to the step being *left*, so a transition that changed the URL without swapping the step satisfied every assertion. The spec now asserts the old step is **gone** (`toHaveCount(0)`) *and* the new step's heading is visible. If every assertion in a transition test still passes when the transition fails, it isn't testing the transition.
+
+**Gotcha — the browser preview pane cannot verify step transitions in this app.** Framer Motion's `AnimatePresence mode="wait"` exit never completes there, so the outgoing step stays mounted under the new URL and it reads exactly like a routing bug. It is not one, and it is not new: a control run of the ordinary step 1 → step 10 transition stalls identically on `main`'s own code path. This cost a wrong diagnosis and a reverted edit before the control settled it. **Verify step transitions with Playwright; use the preview pane for layout, measurement, and copy on a single step.**
+
+**Routing (proposal OQ2) — neither option in the proposal.** Both slugs stay; "Someone else" defaults optimistically to `full-label`; the escape *navigates* to `/onboarding/flexible/preferences`. No third slug, no route-pattern change, Sentry's parameterized route names intact, and every pre-existing deep link still resolves — which mattered more than expected, since six-plus e2e call sites hard-code those URLs. The transition needs **no** `flushSync`: that pattern guards updates the page guard reads (`completedSteps`), and this changes none — steps 0 and 1 are shared and already complete.
+
+**Door wording (OQ1) — John, 2026-08-17: "SendMo for Sellers"** / *"Create a buyer shipping experience for Marketplaces, eBay, and more"*, superseding the proposal's "Sell an item". An audience name rather than a job, and honestly broader — reusable links + the `funder` seam already cover shops. **"The buyer pays for shipping" was kept as its own line** (the decided seller-link OQ1 requires the payer flip to be unmistakable here), and **in-app CTAs stay action-phrased** — a signed-in user is already inside SendMo, so a "SendMo for Sellers" button would name the product instead of the action. **Flagged, not blocking:** seller-link §1.2 puts **eBay** with the unbuilt *seller-pays* tool, not this buyer-pays flow (an eBay buyer already paid shipping through eBay and eBay has their address), so the copy names one segment this build can't serve yet. Implemented as specified; one token to drop if John agrees.
+
+**Positioning (OQ3) — split deliberately.** The flow names the outbound case; the homepage does not lead with it. SendMo prices at `rate × 1.15 + $1` against Pirate Ship's zero markup, so headlining a commodity label invites the one comparison it loses. SPEC §1 records this as an explicit call, not an omission.
+
+**Tests:** 681 unit / 63 files (+10 new in `tests/unit/recipientFlowStorage.test.ts` — the three `prefillSlotFor` cases, the new-flow reset that prevents cross-branch address contamination, and the escape's guard/URL assumptions). `tsc -b --noEmit` clean. ESLint 27 problems vs 28 on `main` — no new debt.
+
+**E2E — read this number carefully: 57 passed / 5 skipped / 16 FAILED (78 total).** Every spec this change touches passes (home, onboarding, url-step-routing, phone-gate = 26/26). **The 16 failures are pre-existing on `main`** — verified by running the same three specs at `main` HEAD `f11c009` with no code changes and getting the identical 16: `admin-reconciliation` (8), `admin-refund-flow` (7), `label-flow` (1).
+
+**Correction worth recording, because it is a trap the next agent will hit too.** An earlier pass of this session reported "57 passed / 5 skipped / 0 failed" from `npx playwright test | tail -6`. That was wrong. Playwright's line reporter prints the failed-test LIST first and the `N failed` COUNT above the `skipped`/`passed` lines, so a short `tail` shows the failure list and the two green summary lines while cutting off the count — it reads exactly like a clean run. **Never conclude "0 failed" from the absence of a failed line in a truncated tail; grep for the count.** `npx playwright test --reporter=line 2>&1 | grep -E '[0-9]+ (failed|passed|skipped)'`
+
+**Browser-verified:**
+- spec: [tests/e2e/onboarding.spec.ts](tests/e2e/onboarding.spec.ts) — step 0 renders both answers; "I am" reaches `/full-label/destination` with the "Where's it going?" heading; the escape swaps step 10 → step 20 and undo restores the typed origin. Plus [tests/e2e/home.spec.ts](tests/e2e/home.spec.ts) (two doors), [tests/e2e/url-step-routing.spec.ts](tests/e2e/url-step-routing.spec.ts) + [tests/e2e/phone-gate.spec.ts](tests/e2e/phone-gate.spec.ts) (entry repointed).
+- mcp-session: Claude Browser pane, 2026-08-17, `who-sending-wt` on :5205 — step-0 layout measured (grid columns, heading centering, row deltas, word count, mobile fold), keyboard focus ring confirmed as `hsl(214 89% 52%)`, and both branches' step-1 copy checked live (this is where the `AddressForm` "(probably your name!)" defect was caught).
+- variants-covered: [step-0 desktop 1280×800, step-0 mobile 375×812, step-0 keyboard focus, sender=self step 1, sender=other step 1, sender=other step 10 + escape + undo, seller flag OFF (default) on all three surfaces, seller flag ON (both homepage doors), sender=self step 10 with a COMPLETE saved address → confirm row + Change, sender=self step 10 with an INCOMPLETE saved address → form stays mounted and focused through the 10th phone digit, then re-latches to the confirm row on the next visit]
+- **Not covered:** the seller doors with `VITE_ENABLE_SELLER_LINK=true` (flag is off in every environment; the three call sites are a single shared constant), and payment/label steps (untouched by this change).
+
+
 ### [2026-08-17] Onboarding "who's sending" proposal — REVIEWED (approve-with-changes)
 
 **Category:** review | Onboarding

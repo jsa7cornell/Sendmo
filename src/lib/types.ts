@@ -201,6 +201,20 @@ export type DistanceTier = 'nearby' | 'regional' | 'cross';
 export type RecipientPath = 'full_label' | 'flexible';
 /** The /onboarding picker choice. 'seller_link' routes to a SEPARATE seller-builder (not the recipient state machine). */
 export type OnboardingChoice = RecipientPath | 'seller_link';
+/**
+ * Answer to step 0's "Who's sending the package?".
+ *
+ * 'self'  — the account holder mails something out; the DESTINATION is the other
+ *           party and the ORIGIN is the account holder's own address.
+ * 'other' — someone else ships to the account holder (today's default shape);
+ *           the DESTINATION is the account holder.
+ *
+ * This is the only input that flips which address slot belongs to whom, so any
+ * prefill of a saved address MUST branch on it (see RecipientFlowContext).
+ * It is NOT the same axis as RecipientPath: both values start on 'full_label'
+ * and only the "I don't have their address" escape moves a flow to 'flexible'.
+ */
+export type SenderKind = 'self' | 'other';
 
 export interface ShippingMethodOption extends ShippingRate {
     speed_tier: SpeedTier;

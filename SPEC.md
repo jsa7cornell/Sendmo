@@ -29,9 +29,18 @@ SendMo Label Links. Recipients create a link once, share it with anyone who need
 2. **For Senders**: Dead simple — click a link, enter package info, print label, drop off. No payment needed.
 3. **Privacy**: Recipients keep their address private until label is printed
 
+### What SendMo leads with, and what it merely supports (decided 2026-08-17, OQ3)
+
+SendMo also produces a **plain outbound label** — you mail something to someone, you pay, you print. That has always worked (`full_label` is role-agnostic; only which address is yours differs), and since 2026-08-17 onboarding names it: step 0 asks *"Who's sending the package?"* and **"I am"** is that case.
+
+**It is deliberately not a headline claim.** Plain outbound labels are a commodity where SendMo competes on price and loses — the display price is `EasyPost rate × 1.15 + $1` (§3), against Pirate Ship and Click-N-Ship at no markup. The margin is earned by the coordination problem — address privacy, the other party filling in what they know, the who-pays inversion — and none of that applies to a label you could buy anywhere. So the outbound case is **discoverable in-product, not marketed on the homepage**: the hero stays coordination-led, and the first homepage door reads "Send or receive a package" so it stops *excluding* the case without *leading* with it.
+
+Revisit if SendMo ever has a rates story for that segment. Full reasoning: [`proposals/2026-08-17_onboarding-who-is-sending_reviewed-2026-08-17_decided-2026-08-17.md`](proposals/2026-08-17_onboarding-who-is-sending_reviewed-2026-08-17_decided-2026-08-17.md) OQ3.
+
 ### Target Users
 **Primary (Recipients)**: Marketplace buyers (Facebook Marketplace, Craigslist, OfferUp), office managers, anyone receiving packages from multiple senders.
 **Secondary (Senders)**: Marketplace sellers, friends/family, vendors, remote employees.
+**Also served (not led with)**: anyone mailing a package out themselves — see the section above.
 
 ---
 
@@ -199,7 +208,7 @@ The flow uses numeric step IDs for branching:
 
 ```
 src/components/recipient/
-  RecipientStepPathChoice.tsx              # Step 0: Full vs Flexible
+  RecipientStepWhoSending.tsx               # Step 0: "Who's sending the package?" (self | other)
   RecipientStepAddress.tsx                  # Step 1: Address + email + Google CTA (shared)
   RecipientStepFullShipping.tsx             # Full path: shipment details (Step 10)
   RecipientStepEmailVerifySupabase.tsx      # Full path: Supabase OTP confirm email (Step 11)
@@ -217,17 +226,28 @@ src/components/recipient/
 
 Steps are clickable to navigate back to completed steps (but not forward).
 
-### Step 0: Path Choice
-**Component**: `RecipientStepPathChoice.tsx` -- Step ID: `0`
+### Step 0: Who's sending? (replaced the path picker 2026-08-17)
+**Component**: `RecipientStepWhoSending.tsx` -- Step ID: `0`
 
-Two large selection cards with `whileTap={{ scale: 0.98 }}`:
+Asks **"Who's sending the package?"** — not which product the user wants. It's the one input that changes what happens next, and it needs no product knowledge to answer.
 
-| Option | Icon | Title | Badge | Subtitle |
-|--------|------|-------|-------|----------|
-| Full prepaid label | Package2 | "Full prepaid label" | "Recommended" (blue pill) | "I know exactly what's being shipped" |
-| Flexible shipping link | Link2 | "Flexible shipping link" | -- | "Details will be filled in by the sender" |
+| Option | Icon | Means | Destination is | Origin is |
+|--------|------|-------|----------------|-----------|
+| **I am** | Send | You're mailing something out | the other party | you |
+| **Someone else** | Inbox | Someone is shipping to you | you | the other party |
 
-Each card has 4 bullet points explaining the path.
+- Who-pays is stated **once**, in the subtitle ("Either way, you're the one paying for shipping"). Both answers are you-pay, so a per-option badge would differentiate nothing.
+- **Both answers enter the `full-label` path.** The link product is not a choice made here — it appears only via the escape at step 10 (below).
+- The answer is stored as `sender: 'self' | 'other'` in flow state. **It decides which party owns which address slot, so every saved-address prefill must branch on it** via `prefillSlotFor()` in [`src/lib/recipientFlowStorage.ts`](src/lib/recipientFlowStorage.ts). Filling the destination unconditionally pre-fills the account holder's own address as "where it's going" on the 'self' branch — pre-verified and green, so a user who doesn't overwrite it ships to themselves.
+- A launch-gated link-out (`VITE_ENABLE_SELLER_LINK`) points sellers at `/sell`; the Dashboard carries the same gated CTA. Signed-in users are redirected past the marketing homepage, so those two are the only seller doors that audience ever sees.
+
+### Step 10 escape: "I don't have their address"
+
+On the `sender: 'other'` branch, step 10's origin block carries an escape. Taking it navigates to `/onboarding/flexible/preferences` — the flow becomes a **Shipping link** (`link_type = 'flexible'`) and the other party fills in the origin later. An undo bar on step 20 returns to step 10 with the typed origin intact (it is never cleared).
+
+This is why there is no "flexible" door at step 0: the fork is a *fact about what the user can answer*, not a preference, and it's surfaced at the moment they discover it.
+
+**User-facing names** (strings only — `link_type` values are unchanged): `full_label` → "Prepaid label", `flexible` → "Shipping link", `seller_link` → "Seller link".
 
 ### Step 1: Destination & Email (Shared)
 **Component**: `RecipientStepAddress.tsx` -- Step ID: `1`
@@ -261,9 +281,13 @@ The most complex step -- collects all package details to compute an exact shippi
 3. **Magic Guestimator** -- AI-powered form pre-filler:
    - Textarea: "Skis in a large box, shipped slow and affordably"
    - "Guestimate it" button with sparkle icon
-   - Parses keywords to auto-fill packaging, dimensions, weight, shipping method
-   - Supported: laptop, phone, book, clothes, skis, shoes, document, headphones, tablet, poster, wine
-   - Urgency: "urgent"/"rush" -> express; "next week"/"soon" -> standard; "cheapest"/"no rush" -> economy
+   - Calls the `guestimate` Edge Function (`fetchGuestimate`) to turn a plain-English
+     description into packaging, dimensions, weight, and a speed hint. **Not a
+     client-side keyword matcher** — that was the pre-2026 implementation and the
+     description here was stale until 2026-08-17.
+   - Because it resolves size and weight from a sentence, "I don't know the package
+     dimensions" is NOT a reason to need a shipping link. The only real fork is
+     whether the user knows the other party's address (see Step 10 escape).
 
 4. **Item description** -- Optional text input
 

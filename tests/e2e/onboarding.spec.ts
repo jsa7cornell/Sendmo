@@ -243,7 +243,7 @@ async function fillSmartAddress(page: Page, label: string) {
 /** Drive Step 0 → Step 1 → Step 10, leaving the page on the shipment-details step. */
 async function gotoStep10(page: Page) {
   await page.goto("/onboarding");
-  await page.getByText("Completed Prepaid Label").click();
+  await page.getByRole("button", { name: /Someone else/ }).click();
   await page.locator("#destination-name").fill("Jane Doe");
   await fillSmartAddress(page, "destination");
   await page.locator("#recipient-email").fill("test@example.com");
@@ -256,14 +256,107 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
     await mockAllEdgeFunctions(page);
   });
 
-  test("Step 0: path choice renders both options", async ({ page }) => {
+  test("Step 0: asks who's sending and offers both answers", async ({ page }) => {
     await page.goto("/onboarding");
 
     await expect(
-      page.getByRole("heading", { name: /How should we set up your prepaid shipment/i })
+      page.getByRole("heading", { name: /Who's sending the package/i })
     ).toBeVisible();
-    await expect(page.getByText("Completed Prepaid Label")).toBeVisible();
-    await expect(page.getByText("Flexible Prepaid Shipping Link")).toBeVisible();
+    await expect(page.getByRole("button", { name: /I am/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Someone else/ })).toBeVisible();
+    // Who-pays is stated once, not badged on each option.
+    await expect(page.getByText(/you're the one paying for shipping/i)).toBeVisible();
+  });
+
+  test("Step 0: 'I am' starts an outbound label — the case that had no door", async ({ page }) => {
+    await page.goto("/onboarding");
+    await page.getByRole("button", { name: /I am/ }).click();
+
+    // Same link_type and same first step as every other full-label flow; only
+    // which party owns which address differs.
+    await expect(page).toHaveURL(/\/onboarding\/full-label\/destination/);
+    await expect(page.getByRole("heading", { name: /Where's it going/i })).toBeVisible();
+  });
+
+  test("'I am' survives a sessionStorage write failure", async ({ page }) => {
+    // Regression: startFlowAs writes sessionStorage, and persist() swallows
+    // write errors by design. When storage is unavailable the answer used to be
+    // lost, sender fell back to 'other', and the user's OWN saved address would
+    // be prefilled into the DESTINATION slot — the wrong-party bug the sender
+    // split exists to prevent. App.tsx now also carries it in router state.
+    await page.addInitScript(() => {
+      const store = new Map<string, string>();
+      Object.defineProperty(window, "sessionStorage", {
+        configurable: true,
+        value: {
+          getItem: (k: string) => (store.has(k) ? store.get(k)! : null),
+          setItem: () => { throw new DOMException("QuotaExceededError"); },
+          removeItem: (k: string) => { store.delete(k); },
+          clear: () => { store.clear(); },
+          key: () => null,
+          get length() { return store.size; },
+        },
+      });
+    });
+
+    await page.goto("/onboarding");
+    await page.getByRole("button", { name: /I am/ }).click();
+
+    // The 'self' branch must still be in force: step 1 collects the OTHER
+    // party's address, so it asks "Where's it going?", not "delivered to you".
+    await expect(page).toHaveURL(/\/onboarding\/full-label\/destination/);
+    await expect(page.getByRole("heading", { name: /Where's it going/i })).toBeVisible();
+  });
+
+  test("a deep-linked flow (no step 0) can still undo the address escape", async ({ page }) => {
+    // Regression: the escape is offered whenever sender !== 'self', but the undo
+    // was gated on sender === 'other'. A user entering via a pre-existing deep
+    // link — or a session persisted before the sender split shipped — has
+    // sender=null, so they could convert to a shipping link with no way back.
+    await page.goto("/onboarding/full-label/destination");
+    await page.locator("#destination-name").fill("Jane Doe");
+    await fillSmartAddress(page, "destination");
+    await page.locator("#recipient-email").fill("test@example.com");
+    await page.getByRole("button", { name: /Continue to shipment details/i }).click();
+    await expect(page.locator("#origin-name")).toBeVisible({ timeout: 5000 });
+
+    await page.getByRole("button", { name: /I don't have their address/i }).click();
+    await expect(page).toHaveURL(/\/onboarding\/flexible\/preferences/);
+
+    // The way back must be rendered for this user too.
+    await page.getByRole("button", { name: /I do have it/i }).click();
+    await expect(page).toHaveURL(/\/onboarding\/full-label\/shipping/);
+  });
+
+  test("the address escape converts to a shipping link, and undo restores what was typed", async ({
+    page,
+  }) => {
+    await gotoStep10(page);
+
+    // The user starts filling in the other party's address, then realises they
+    // don't have it — the exact moment the link product becomes the answer.
+    await page.locator("#origin-name").fill("Sarah Smith");
+    await page.getByRole("button", { name: /I don't have their address/i }).click();
+
+    // Moves to the shipping-link path. Guard must admit step 20 off the shared
+    // steps 0+1 — if it doesn't, the user gets bounced to firstIncompleteUrl
+    // (the 2026-05-19 navigate-vs-setData race).
+    await expect(page).toHaveURL(/\/onboarding\/flexible\/preferences/);
+
+    // The step must actually SWAP, not just the URL. An earlier cut of this
+    // change left step 10 frozen mid-exit under a correct /flexible/preferences
+    // URL — a URL-only assertion passed against that stale DOM. Assert the old
+    // step is gone and the new one is mounted.
+    await expect(page.locator("#origin-name")).toHaveCount(0);
+    await expect(
+      page.getByRole("heading", { name: /How fast should it get there/i })
+    ).toBeVisible();
+
+    // Undo is reachable and returns the flow — with the typed origin intact,
+    // because the escape never clears it.
+    await page.getByRole("button", { name: /I do have it/i }).click();
+    await expect(page).toHaveURL(/\/onboarding\/full-label\/shipping/);
+    await expect(page.locator("#origin-name")).toHaveValue("Sarah Smith");
   });
 
   test("Full label flow: Step 0 → Step 1 → Step 10 → reaches email verification", async ({
@@ -272,7 +365,7 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
     await page.goto("/onboarding");
 
     // ── Step 0: Select "Full prepaid label" ──────────────────
-    await page.getByText("Completed Prepaid Label").click();
+    await page.getByRole("button", { name: /Someone else/ }).click();
 
     // ── Step 1: Address + Email ──────────────────────────────
     await expect(
@@ -344,7 +437,7 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
     page,
   }) => {
     await page.goto("/onboarding");
-    await page.getByText("Completed Prepaid Label").click();
+    await page.getByRole("button", { name: /Someone else/ }).click();
 
     // Continue with nothing filled in.
     await page
@@ -360,7 +453,7 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
 
   test("Step 1: an invalid email is rejected", async ({ page }) => {
     await page.goto("/onboarding");
-    await page.getByText("Completed Prepaid Label").click();
+    await page.getByRole("button", { name: /Someone else/ }).click();
 
     await page.locator("#recipient-email").fill("notanemail");
     await page
