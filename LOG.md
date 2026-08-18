@@ -12,6 +12,19 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-18] Progress bar becomes one segment per question (unified-onboarding Phase 1)
+
+**Category:** fix | Onboarding
+**Deploy:** In PR — branch `fix/progress-bar-four-questions`, not merged, not deployed at entry time (update on merge).
+**Cross-link:** [proposals/2026-08-18_unified-onboarding-every-question-skippable.md](proposals/2026-08-18_unified-onboarding-every-question-skippable.md) §2, decision C (John: ship first, alone)
+**Browser-verified:** spec: tests/e2e/progress-bar.spec.ts · variants-covered: [full-label 5 segments + Origin active on shipping step, origin→package advances the bar (the regression), flex path 4 own-labeled segments with no falsely-completed segments after double deferral]
+
+**The complaint (John):** the bar didn't represent where you are — steps 10 (origin) and 14 (package) both mapped to one "Shipment Details" segment, so completing the origin advanced the bar by nothing.
+
+**The fix:** one segment per question. Full-label: Destination / Origin / **Package & Shipping** / Payment / Label (5 segments; verify folds into Payment; Package & Shipping stays one segment until step 14 itself splits in Phase 2 — the bar reflects the flow that exists). Flexible gets its own label set: Destination / Preferences / Save Card / Share Link. `ProgressBar` takes a `path` prop; `STEP_TO_PROGRESS` gives 14 its own index; buttons gained `aria-label` + `aria-current="step"` (a11y and what the spec asserts on).
+
+**Gotcha:** `completedProgressIndexes` must filter `completedSteps` to the active path's steps first — a flow that deferred both questions lands on flexible with 10 + 14 completed, and their indexes (1, 2) would light the flex bar's Preferences + Save Card, segments the user has never seen (and make them clickable).
+
 ### [2026-08-18] PR #68 code-review fixes — migration 041 applied to prod, parcel prefill wired, mid-deploy drafts recovered
 
 **Category:** fix | Onboarding + SenderFlow

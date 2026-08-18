@@ -120,13 +120,17 @@ describe("nextStep / prevStep", () => {
 });
 
 describe("stepToProgressIndex", () => {
-  it("maps full-label steps onto a 4-segment bar (verify + payment share segment 2)", () => {
+  // One segment per question (2026-08-18): origin (10) and package (14) no
+  // longer share a segment — completing the origin must visibly advance the
+  // bar. Full-label is 5 segments; verify (11) folds into Payment.
+  it("maps full-label steps onto a 5-segment bar, origin and package distinct", () => {
     expect(stepToProgressIndex(0)).toBe(-1);
     expect(stepToProgressIndex(1)).toBe(0);
     expect(stepToProgressIndex(10)).toBe(1);
-    expect(stepToProgressIndex(11)).toBe(2);
-    expect(stepToProgressIndex(12)).toBe(2);
-    expect(stepToProgressIndex(13)).toBe(3);
+    expect(stepToProgressIndex(14)).toBe(2);
+    expect(stepToProgressIndex(11)).toBe(3);
+    expect(stepToProgressIndex(12)).toBe(3);
+    expect(stepToProgressIndex(13)).toBe(4);
   });
 
   it("maps flex steps onto a 4-segment bar", () => {
@@ -138,11 +142,12 @@ describe("stepToProgressIndex", () => {
 });
 
 describe("progressIndexToStep", () => {
-  it("maps progress index back to step for full-label (segment 2 → verify)", () => {
+  it("maps progress index back to step for full-label (segment 3 → verify)", () => {
     expect(progressIndexToStep(0, "full_label")).toBe(1);
     expect(progressIndexToStep(1, "full_label")).toBe(10);
-    expect(progressIndexToStep(2, "full_label")).toBe(11);
-    expect(progressIndexToStep(3, "full_label")).toBe(13);
+    expect(progressIndexToStep(2, "full_label")).toBe(14);
+    expect(progressIndexToStep(3, "full_label")).toBe(11);
+    expect(progressIndexToStep(4, "full_label")).toBe(13);
   });
 
   it("maps progress index back to step for flexible", () => {
