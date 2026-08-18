@@ -12,6 +12,7 @@ import MagicGuestimator from "@/components/recipient/MagicGuestimator";
 import FlexPreferencesForm, { type FlexPreferencesValue } from "@/components/forms/FlexPreferencesForm";
 import LinkShareCard from "@/components/links/LinkShareCard";
 import { useAuth } from "@/contexts/AuthContext";
+import { SELLER_LINK_LIVE } from "@/lib/featureFlags";
 import { createSellerLink } from "@/lib/api";
 import type { CreateSellerLinkParams, CreateLinkResult } from "@/lib/api";
 import type { AddressInput, GuestimatorResult, PackagingType } from "@/lib/types";
@@ -71,7 +72,7 @@ function SellHeader({ subtitle }: { subtitle: string }) {
 
 export default function SellerBuilder() {
   const navigate = useNavigate();
-  const { session, loading } = useAuth();
+  const { session, loading, isAdmin } = useAuth();
 
   // ── Step + form state (local; no shared flow context) ──
   const [step, setStep] = useState<Step>("details");
@@ -180,6 +181,31 @@ export default function SellerBuilder() {
       <Shell>
         <div className="flex justify-center py-16">
           <Loader2 className="w-6 h-6 animate-spin text-emerald-600" />
+        </div>
+      </Shell>
+    );
+  }
+
+  // The entry points advertise this as "Coming soon" while the buyer checkout
+  // is still test-mode, but the route itself was never gated — a signed-in user
+  // who guessed the URL got a working builder and could share a link whose
+  // buyer's card is then declined. Admins keep access so the flow stays
+  // testable; everyone else sees the same "coming soon" the buttons show.
+  if (!SELLER_LINK_LIVE && !isAdmin) {
+    return (
+      <Shell>
+        <SellHeader subtitle="A link you post so the buyer pays for shipping — you just print the label." />
+        <div className="bg-card rounded-2xl border border-border shadow-sm p-6 text-center space-y-4">
+          <span className="inline-block text-[10px] font-bold uppercase tracking-wide text-muted-foreground bg-muted border border-border rounded-full px-2 py-0.5">
+            Coming soon
+          </span>
+          <p className="text-sm text-muted-foreground">
+            SendMo for Sellers isn't open yet. We're finishing the buyer checkout so your
+            buyers can actually pay — until then, creating a link would leave them stuck.
+          </p>
+          <Button onClick={() => navigate("/onboarding")} className="rounded-xl">
+            Send or receive a package instead
+          </Button>
         </div>
       </Shell>
     );

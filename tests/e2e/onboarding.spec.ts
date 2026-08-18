@@ -520,3 +520,15 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
     await expect(page.getByText("Verified").first()).toBeVisible();
   });
 });
+
+test.describe("Seller entry points — coming-soon mode", () => {
+  // The buttons are inert while the buyer checkout is test-mode, but the /sell
+  // route itself was ungated: a signed-in user who guessed the URL got a
+  // working builder and could share a link whose buyer's card is declined.
+  test("/sell is closed to non-admins while the seller flow is not live", async ({ page }) => {
+    await page.goto("/sell");
+    await expect(page.getByText(/Coming soon/i).first()).toBeVisible();
+    // The builder itself must not render — no origin address form.
+    await expect(page.locator("#origin-address")).toHaveCount(0);
+  });
+});
