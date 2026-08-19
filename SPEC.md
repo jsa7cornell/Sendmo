@@ -31,7 +31,7 @@ SendMo Label Links. Recipients create a link once, share it with anyone who need
 
 ### What SendMo leads with, and what it merely supports (decided 2026-08-17, OQ3)
 
-SendMo also produces a **plain outbound label** — you mail something to someone, you pay, you print. That has always worked (`full_label` is role-agnostic; only which address is yours differs), and since 2026-08-17 onboarding names it: step 0 asks *"Who's sending the package?"* and **"I am"** is that case.
+SendMo also produces a **plain outbound label** — you mail something to someone, you pay, you print. That has always worked (`full_label` is role-agnostic; only which address is yours differs). Since 2026-08-18 there is no upfront "who's sending?" question: the outbound case is claimed in-flow via "I'm the sender — it ships from my address" on the origin step.
 
 **It is deliberately not a headline claim.** Plain outbound labels are a commodity where SendMo competes on price and loses — the display price is `EasyPost rate × 1.15 + $1` (§3), against Pirate Ship and Click-N-Ship at no markup. The margin is earned by the coordination problem — address privacy, the other party filling in what they know, the who-pays inversion — and none of that applies to a label you could buy anywhere. So the outbound case is **discoverable in-product, not marketed on the homepage**: the hero stays coordination-led, and the first homepage door reads "Send or receive a package" so it stops *excluding* the case without *leading* with it.
 
@@ -208,7 +208,6 @@ The flow uses numeric step IDs for branching:
 
 ```
 src/components/recipient/
-  RecipientStepWhoSending.tsx               # Step 0: "Who's sending the package?" (self | other)
   RecipientStepAddress.tsx                  # Step 1: Address + email + Google CTA (shared)
   RecipientStepFullShipping.tsx             # Full path: shipment details (Step 10)
   RecipientStepEmailVerifySupabase.tsx      # Full path: Supabase OTP confirm email (Step 11)
@@ -226,20 +225,22 @@ src/components/recipient/
 
 Steps are clickable to navigate back to completed steps (but not forward).
 
-### Step 0: Who's sending? (replaced the path picker 2026-08-17)
-**Component**: `RecipientStepWhoSending.tsx` -- Step ID: `0`
+### Entry: /onboarding resolves straight to the destination step (who's-sending deleted 2026-08-18, Phase 2)
 
-Asks **"Who's sending the package?"** — not which product the user wants. It's the one input that changes what happens next, and it needs no product knowledge to answer.
+There is no step 0. `/onboarding` shows the resume-offer interstitial when an unfinished draft exists (Continue / Start fresh — resuming stays an explicit offer, never automatic), otherwise it `Navigate replace`s to `/onboarding/full-label/destination`. All existing deep links resolve unchanged.
 
-| Option | Icon | Means | Destination is | Origin is |
-|--------|------|-------|----------------|-----------|
-| **I am** | Send | You're mailing something out | the other party | you |
-| **Someone else** | Inbox | Someone is shipping to you | you | the other party |
+**`sender` is derived in-flow, not asked upfront.** It starts `null`; three claims resolve it, first one wins:
 
-- Who-pays is stated **once**, in the subtitle ("Either way, you're the one paying for shipping"). Both answers are you-pay, so a per-option badge would differentiate nothing.
-- **Both answers enter the `full-label` path.** The link product is not a choice made here — it appears only via the escape at step 10 (below).
-- The answer is stored as `sender: 'self' | 'other'` in flow state. **It decides which party owns which address slot, so every saved-address prefill must branch on it** via `prefillSlotFor()` in [`src/lib/recipientFlowStorage.ts`](src/lib/recipientFlowStorage.ts). Filling the destination unconditionally pre-fills the account holder's own address as "where it's going" on the 'self' branch — pre-verified and green, so a user who doesn't overwrite it ships to themselves.
-- A launch-gated link-out (`VITE_ENABLE_SELLER_LINK`) points sellers at `/sell`; the Dashboard carries the same gated CTA. Signed-in users are redirected past the marketing homepage, so those two are the only seller doors that audience ever sees.
+| Claim | Where | Resolves to |
+|-------|-------|-------------|
+| "Deliver to me — use my saved address" chip | destination step | `'other'` (+ fills destination) |
+| "I'm the sender — it ships from my address" | origin step | `'self'` (provider prefill effect fills origin) |
+| Deferring any question | steps 10/14 | `'other'` — "the sender will fill this in" is itself the claim |
+
+- **Nothing prefills while `sender` is null.** `prefillSlotFor(null)` returns `null` and both prefill sites gate on it; the destination step fetches the saved address but *holds* it for the chip. Silently guessing a slot puts the wrong party's address on a label (2026-08-16 class).
+- Who-pays is unchanged on every branch: the creator pays.
+- The seller link-out (gated by `SELLER_LINK_MODE`) lives in the destination step footer; the Dashboard and homepage carry the other seller doors.
+- **OAuth auto-advance gotcha:** step 1's post-Google auto-advance is authorized by the `sendmo:oauth_pending` sessionStorage flag set just before the redirect — NOT by "user was null at mount", which every visitor matches now that the entry redirect mounts the step before auth settles (it made forms auto-submit; see LOG 2026-08-18).
 
 ### Steps 10 + 14: two independently skippable questions (split 2026-08-18, PR #68)
 

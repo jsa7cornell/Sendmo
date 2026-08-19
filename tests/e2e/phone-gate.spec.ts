@@ -74,10 +74,11 @@ test.describe("phone gate — onboarding", () => {
 
   test("step 1: a blank destination phone blocks Continue; a valid one lets it through", async ({ page }) => {
     await page.goto("/onboarding");
-    await page.getByRole("button", { name: /Someone else/ }).click();
+    // /onboarding resolves straight to the destination step (no picker, 2026-08-18)
+    await expect(page).toHaveURL(/\/full-label\/destination$/);
 
     await expect(
-      page.getByRole("heading", { name: /Where should the package be delivered/i }),
+      page.getByRole("heading", { name: /Where's it going/i }),
     ).toBeVisible();
 
     // Everything filled EXCEPT the phone.
@@ -89,7 +90,7 @@ test.describe("phone gate — onboarding", () => {
     await page.getByRole("button", { name: /Continue to shipment details/i }).click();
     await expect(page.getByText(/Add a phone number/i).first()).toBeVisible();
     await expect(
-      page.getByRole("heading", { name: /Where should the package be delivered/i }),
+      page.getByRole("heading", { name: /Where's it going/i }),
     ).toBeVisible();
     // Step 10 must NOT have rendered.
     await expect(page.locator("#origin-name")).not.toBeVisible();
@@ -116,7 +117,8 @@ test.describe("phone gate — onboarding", () => {
     });
 
     await page.goto("/onboarding");
-    await page.getByRole("button", { name: /Someone else/ }).click();
+    // /onboarding resolves straight to the destination step (no picker, 2026-08-18)
+    await expect(page).toHaveURL(/\/full-label\/destination$/);
 
     // Step 1 — fully valid, including the phone.
     await page.locator("#destination-name").fill("Jane Doe");

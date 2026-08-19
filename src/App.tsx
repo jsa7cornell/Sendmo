@@ -2,7 +2,7 @@ import { BrowserRouter, Routes, Route, Outlet, Navigate, useNavigate } from "rea
 import * as Sentry from "@sentry/react";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { RecipientFlowProvider } from "@/contexts/RecipientFlowContext";
-import { startFlowAs, loadResumable, clearFlow } from "@/lib/recipientFlowStorage";
+import { startFreshFlow, loadResumable } from "@/lib/recipientFlowStorage";
 import { firstIncompleteUrl } from "@/lib/stepRouting";
 import { useState } from "react";
 import ProtectedRoute from "@/components/ProtectedRoute";
@@ -29,71 +29,58 @@ import LinksEdit from "@/pages/LinksEdit";
 import SellerBuilder from "@/pages/SellerBuilder";
 import NotFound from "@/pages/NotFound";
 import AppHeader from "@/components/AppHeader";
-import RecipientStepWhoSending from "@/components/recipient/RecipientStepWhoSending";
 
 // T1-3 monitoring (proposal review B1): gives Sentry events parameterized
 // route names (/onboarding/:pathSlug/:stepSlug, not raw URLs). Pass-through
 // when Sentry.init was never called — route definitions are unchanged.
 const SentryRoutes = Sentry.withSentryReactRouterV7Routing(Routes);
 
-// Step 0 — "Who's sending the package?", shown at /onboarding.
-//
-// Renders outside RecipientFlowProvider (the provider lives at
-// /onboarding/:pathSlug so its useParams can read the slugs), so the answer is
-// handed over through the flow's own sessionStorage seam via startFlowAs.
-//
-// BOTH answers enter the full-label path. "Someone else" defaults there
-// optimistically — it is the common case, and the only thing that moves a flow
-// to the shipping-link path is the "I don't have their address" escape at the
-// origin step. That keeps both URL slugs meaningful, leaves Sentry's
-// parameterized route names intact, and keeps every existing deep link valid.
-function OnboardingWhoSending() {
+// Entry to /onboarding (2026-08-18: the who's-sending picker is gone — the
+// flow itself resolves who's sending, via the "use my address" chips and the
+// defer answers). Two jobs remain:
+//   1. Offer — never auto-apply — an unfinished draft. Landing on the
+//      destination step directly would let the provider silently rehydrate an
+//      old draft's fields, so when a resumable draft exists this screen makes
+//      the user choose first (Continue / Start fresh).
+//   2. Otherwise, resolve straight to the destination step. Both former doors
+//      enter the same URL, so every existing deep link stays valid.
+function OnboardingEntry() {
   const navigate = useNavigate();
-  // Read once on mount. An unfinished flow is OFFERED here and never applied
-  // automatically — silently rehydrating someone's old draft is how the wrong
-  // party's address ends up on a label (see recipientFlowStorage).
-  const [draft, setDraft] = useState(() => loadResumable());
+  const [draft] = useState(() => loadResumable());
+  if (!draft) {
+    return <Navigate to="/onboarding/full-label/destination" replace />;
+  }
   return (
     <div className="min-h-screen bg-gradient-to-b from-background to-muted/50">
       <AppHeader />
       <div className="max-w-3xl mx-auto px-4 py-8">
-        {draft && (
-          <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-card px-5 py-4 shadow-sm">
-            <p className="text-sm text-foreground">
-              <span className="font-medium">You have a shipment in progress.</span>{" "}
-              <span className="text-muted-foreground">
-                Pick up where you left off, or start a new one.
-              </span>
-            </p>
-            <div className="flex items-center gap-2 shrink-0">
-              <button
-                type="button"
-                onClick={() => { clearFlow(); setDraft(null); }}
-                className="text-sm text-muted-foreground rounded-xl px-3 py-2 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-              >
-                Start over
-              </button>
-              <button
-                type="button"
-                onClick={() => navigate(firstIncompleteUrl(draft.completedSteps, draft.path ?? "full_label"))}
-                className="text-sm font-medium text-primary-foreground bg-primary rounded-xl px-4 py-2 shadow-sm transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-              >
-                Continue
-              </button>
-            </div>
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-card px-5 py-4 shadow-sm">
+          <p className="text-sm text-foreground">
+            <span className="font-medium">You have a shipment in progress.</span>{" "}
+            <span className="text-muted-foreground">
+              Pick up where you left off, or start a new one.
+            </span>
+          </p>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                startFreshFlow();
+                navigate("/onboarding/full-label/destination", { replace: true });
+              }}
+              className="text-sm text-muted-foreground rounded-xl px-3 py-2 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            >
+              Start fresh
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate(firstIncompleteUrl(draft.completedSteps, draft.path ?? "full_label"), { replace: true })}
+              className="text-sm font-medium text-primary-foreground bg-primary rounded-xl px-4 py-2 shadow-sm transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            >
+              Continue
+            </button>
           </div>
-        )}
-
-        <RecipientStepWhoSending
-          onSelect={(sender) => {
-            startFlowAs(sender);
-            // Also carried in router state: `startFlowAs` writes sessionStorage,
-            // which is best-effort and silently no-ops when storage is
-            // unavailable. The provider seeds from whichever arrives.
-            navigate("/onboarding/full-label/destination", { state: { sender } });
-          }}
-          onSellInstead={() => navigate("/sell")}
-        />
+        </div>
       </div>
     </div>
   );
@@ -118,7 +105,7 @@ function App() {
           <Route path="/login" element={<Login />} />
 
           {/* Recipient onboarding — path-scoped URL routing */}
-          <Route path="/onboarding" element={<OnboardingWhoSending />} />
+          <Route path="/onboarding" element={<OnboardingEntry />} />
           <Route path="/onboarding/:pathSlug" element={<OnboardingFlowLayout />}>
             {/* Bare /onboarding/{path} → redirect to first step */}
             <Route index element={<Navigate to="destination" replace />} />

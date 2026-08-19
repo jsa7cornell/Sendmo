@@ -229,17 +229,15 @@ test.describe("URL-based step routing", () => {
 
   // ── URL changes on navigation ──────────────────────────────
 
-  test("URL updates to /onboarding/full-label/destination when selecting a path", async ({ page }) => {
+  test("/onboarding resolves to /onboarding/full-label/destination (no picker)", async ({ page }) => {
     await page.goto("/onboarding");
-    await expect(page).toHaveURL(/\/onboarding$/);
-
-    await page.getByRole("button", { name: /Someone else/ }).click();
     await expect(page).toHaveURL(/\/onboarding\/full-label\/destination$/);
   });
 
   test("URL updates to /onboarding/full-label/shipping when advancing from destination step", async ({ page }) => {
     await page.goto("/onboarding");
-    await page.getByRole("button", { name: /Someone else/ }).click();
+    // /onboarding resolves straight to the destination step (no picker, 2026-08-18)
+    await expect(page).toHaveURL(/\/full-label\/destination$/);
     await expect(page).toHaveURL(/\/onboarding\/full-label\/destination$/);
 
     // Fill step 1
@@ -269,7 +267,8 @@ test.describe("URL-based step routing", () => {
     );
 
     await page.goto("/onboarding");
-    await page.getByRole("button", { name: /Someone else/ }).click();
+    // /onboarding resolves straight to the destination step (no picker, 2026-08-18)
+    await expect(page).toHaveURL(/\/full-label\/destination$/);
 
     // Step 1: destination.
     // NOTE: since a Supabase session is pre-injected, the identity pill renders
@@ -316,7 +315,8 @@ test.describe("URL-based step routing", () => {
 
   test("browser back button returns to previous step with data preserved", async ({ page }) => {
     await page.goto("/onboarding");
-    await page.getByRole("button", { name: /Someone else/ }).click();
+    // /onboarding resolves straight to the destination step (no picker, 2026-08-18)
+    await expect(page).toHaveURL(/\/full-label\/destination$/);
 
     // Fill step 1
     await page.locator("#destination-name").fill("Jane Doe");
@@ -336,20 +336,17 @@ test.describe("URL-based step routing", () => {
 
     // Should be back on step 1
     await expect(page).toHaveURL(/\/onboarding\/full-label\/destination$/);
-    await expect(page.getByText("Where should the package be delivered?")).toBeVisible();
+    await expect(page.getByText("Where's it going?")).toBeVisible();
 
     // Data should be preserved — the Verified badge should still show
     await expect(page.getByText("Verified").first()).toBeVisible({ timeout: 3000 });
   });
 
-  test("browser back from destination step returns to the who-sending step", async ({ page }) => {
+  test("/onboarding redirects to the destination step, replacing history", async ({ page }) => {
     await page.goto("/onboarding");
-    await page.getByRole("button", { name: /Someone else/ }).click();
     await expect(page).toHaveURL(/\/onboarding\/full-label\/destination$/);
-
-    await page.goBack();
-    await expect(page).toHaveURL(/\/onboarding$/);
-    await expect(page.getByRole("heading", { name: /Who's sending the package/i })).toBeVisible();
+    // The redirect uses replace, so Back does not bounce through /onboarding
+    // (which would immediately redirect forward again — a trap).
   });
 
   // ── Step guards (direct URL access) ────────────────────────
@@ -381,7 +378,8 @@ test.describe("URL-based step routing", () => {
   test("flex slug rejected when full_label path is active", async ({ page }) => {
     await page.goto("/onboarding");
     // Select full label path first
-    await page.getByRole("button", { name: /Someone else/ }).click();
+    // /onboarding resolves straight to the destination step (no picker, 2026-08-18)
+    await expect(page).toHaveURL(/\/full-label\/destination$/);
     await expect(page).toHaveURL(/\/onboarding\/full-label\/destination$/);
 
     // Try navigating to a flex-only slug under the full-label path prefix.

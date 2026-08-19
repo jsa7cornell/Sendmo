@@ -10,6 +10,7 @@ import MagicGuestimator from "./MagicGuestimator";
 import { fetchRates, pickRecommendedRate, formatCents } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { getTotalPriceCents, getTotalWeightOz, canFetchRates } from "@/hooks/useRecipientFlow";
+import { useAuth } from "@/contexts/AuthContext";
 import type { RecipientFlowState } from "@/hooks/useRecipientFlow";
 import type { AddressInput, GuestimatorResult, PackagingType, SenderKind, ShippingRate, SpeedTier } from "@/lib/types";
 
@@ -71,6 +72,7 @@ export default function RecipientStepFullShipping({
   state, mode, sender, errors, tried, onUpdate, onContinue, onBack, onNoAddress, liveMode = false,
 }: Props) {
   const isAddressStep = mode === "address";
+  const { user } = useAuth();
   // 'self' → this address is the account holder's own; it was prefilled from
   // their saved address, so it collapses to a confirmable row.
   // 'other' → it belongs to the person shipping to them, and is the one thing
@@ -269,6 +271,36 @@ export default function RecipientStepFullShipping({
                   </span>
                 </span>
               </button>
+
+              {/* The third answer, while `sender` is unresolved: the account
+                  holder is the sender (2026-08-18 — this claim replaces the
+                  deleted who's-sending step). Setting sender='self' is enough:
+                  the provider's prefill effect re-runs on it and fills the
+                  origin from the saved address; the fieldset collapses to the
+                  confirmable "Shipping from" row. */}
+              {sender === null && user && (
+                <button
+                  type="button"
+                  onClick={() => onUpdate({ sender: "self" })}
+                  className={cn(
+                    "w-full flex items-start gap-3 rounded-xl border p-3.5 text-left transition-all",
+                    "border-border hover:border-muted-foreground/30",
+                  )}
+                >
+                  <span className={cn(
+                    "w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 mt-0.5",
+                    "border-muted-foreground/40",
+                  )}>
+
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block text-sm font-medium text-foreground">I'm the sender — it ships from my address</span>
+                    <span className="block text-xs text-muted-foreground mt-0.5">
+                      You're mailing this out yourself; we'll use your saved address
+                    </span>
+                  </span>
+                </button>
+              )}
             </div>
           </fieldset>
         )}

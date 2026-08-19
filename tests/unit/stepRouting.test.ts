@@ -85,24 +85,24 @@ describe("stepToSlug", () => {
 });
 
 describe("stepsForPath", () => {
-  it("returns full-label steps including the new step 11 verify", () => {
-    // Step 14 (package) split out of 10 on 2026-08-18 so the ship-from
-    // address and the parcel can be deferred independently.
-    expect(stepsForPath("full_label")).toEqual([0, 1, 10, 14, 11, 12, 13]);
+  // No step 0 (2026-08-18): the who's-sending picker is gone; the destination
+  // step is first. Step 14 (package) split out of 10 on 2026-08-18 so the
+  // ship-from address and the parcel can be deferred independently.
+  it("returns full-label steps starting at destination, no step 0", () => {
+    expect(stepsForPath("full_label")).toEqual([1, 10, 14, 11, 12, 13]);
   });
 
-  it("returns flex steps", () => {
-    expect(stepsForPath("flexible")).toEqual([0, 1, 20, 21, 22, 23]);
+  it("returns flex steps starting at destination, no step 0", () => {
+    expect(stepsForPath("flexible")).toEqual([1, 20, 21, 22, 23]);
   });
 
   it("defaults to full-label when path is null", () => {
-    expect(stepsForPath(null)).toEqual([0, 1, 10, 14, 11, 12, 13]);
+    expect(stepsForPath(null)).toEqual([1, 10, 14, 11, 12, 13]);
   });
 });
 
 describe("nextStep / prevStep", () => {
   it("next walks the full-label sequence including verify", () => {
-    expect(nextStep(0, "full_label")).toBe(1);
     expect(nextStep(1, "full_label")).toBe(10);
     expect(nextStep(10, "full_label")).toBe(14);
     expect(nextStep(14, "full_label")).toBe(11);
@@ -111,11 +111,11 @@ describe("nextStep / prevStep", () => {
     expect(nextStep(13, "full_label")).toBeNull();
   });
 
-  it("prev walks the flex sequence backward", () => {
+  it("prev walks the flex sequence backward, ending at the first step", () => {
     expect(prevStep(23, "flexible")).toBe(22);
     expect(prevStep(20, "flexible")).toBe(1);
-    expect(prevStep(1, "flexible")).toBe(0);
-    expect(prevStep(0, "flexible")).toBeNull();
+    // Step 1 is the first step now — there is no picker behind it.
+    expect(prevStep(1, "flexible")).toBeNull();
   });
 });
 
@@ -173,12 +173,10 @@ describe("canAccessStep", () => {
     expect(canAccessStep(0, [], null)).toBe(true);
   });
 
-  it("allows step 1 when step 0 is completed", () => {
+  it("always allows step 1 — it is the first step (no picker behind it)", () => {
+    expect(canAccessStep(1, [], "full_label")).toBe(true);
+    // Old drafts may still carry an inert 0 in completedSteps — harmless.
     expect(canAccessStep(1, [0], "full_label")).toBe(true);
-  });
-
-  it("blocks step 1 when step 0 is not completed", () => {
-    expect(canAccessStep(1, [], "full_label")).toBe(false);
   });
 
   it("allows step 10 when 0 and 1 are completed", () => {

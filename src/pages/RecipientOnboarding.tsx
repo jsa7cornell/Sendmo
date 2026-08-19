@@ -74,10 +74,9 @@ export default function RecipientOnboarding() {
     return <Navigate to="/onboarding" replace />;
   }
 
-  // Trying to skip ahead → bounce to first incomplete step. Step 0 (path
-  // picker) is implicitly complete whenever the URL carries a valid pathSlug,
-  // so we always pass `[0, ...]` to the guard rather than racing the URL-sync
-  // effect that adds 0 to data.completedSteps.
+  // Trying to skip ahead → bounce to first incomplete step. (Step 0 is gone
+  // from the step arrays as of 2026-08-18, so completedSteps is passed as-is —
+  // the old `[0, ...]` splice guarded a picker that no longer exists.)
   //
   // If this bounce fires unexpectedly (user reports being "stuck" on a step
   // despite the server confirming the step's action succeeded), audit any
@@ -86,11 +85,8 @@ export default function RecipientOnboarding() {
   // URL flips before completedSteps commits and this guard sees inconsistent
   // state. Fix: wrap the setData in `flushSync` before `navigate`. See LOG.md
   // → 2026-05-19 "navigate vs setData race" + PLAYBOOK Rule 20.
-  const effectiveCompleted = data.completedSteps.includes(0)
-    ? data.completedSteps
-    : [0, ...data.completedSteps];
-  if (stepSlug && !canAccessStep(currentStep, effectiveCompleted, urlPath)) {
-    return <Navigate to={firstIncompleteUrl(effectiveCompleted, urlPath)} replace />;
+  if (stepSlug && !canAccessStep(currentStep, data.completedSteps, urlPath)) {
+    return <Navigate to={firstIncompleteUrl(data.completedSteps, urlPath)} replace />;
   }
 
   // ── Progress bar ──────────────────────────────────────────
@@ -153,6 +149,27 @@ export default function RecipientOnboarding() {
             escape is offered to null-sender users too — existing deep links,
             and sessions persisted before this shipped — let those users convert
             to a shipping link with no rendered way back. */}
+        {/* The moment anything is deferred the product changed — say so NOW,
+            not at the end (unified-onboarding proposal, John's point 3). Same
+            banner on step 14 (after deferring the origin) and step 20. Undo
+            reverses the deferral itself (flags + location). */}
+        {currentStep === 14 && (data.deferredOrigin || data.deferredPackage) && (
+          <div className="mb-5 flex items-center justify-between gap-3 rounded-xl bg-muted px-4 py-3">
+            <p className="text-sm text-muted-foreground">
+              <span className="font-medium text-foreground">This will be a shipping link, not a label.</span>{" "}
+              The sender fills in what you skipped and prints the label — you pay when they use it.
+            </p>
+            <button
+              type="button"
+              onClick={undoShippingLinkSwitch}
+              className="shrink-0 inline-flex items-center gap-1.5 text-sm font-medium text-primary rounded-lg px-2 py-1 transition-colors hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            >
+              <Undo2 className="w-3.5 h-3.5" aria-hidden="true" />
+              Undo skip
+            </button>
+          </div>
+        )}
+
         {currentStep === 20 && data.sender !== "self" && (
           <div className="mb-5 flex items-center justify-between gap-3 rounded-xl bg-muted px-4 py-3">
             <p className="text-sm text-muted-foreground">
@@ -192,6 +209,7 @@ export default function RecipientOnboarding() {
                 tried={!!state.tried[1]}
                 onAddressChange={(addr) => updateData({ destinationAddress: addr })}
                 onEmailChange={(email) => updateData({ email })}
+                onSenderResolved={(sender) => updateData({ sender })}
                 onContinue={() => tryAdvance(1)}
                 onBack={goBack}
               />

@@ -108,8 +108,12 @@ export function stepUrl(path: RecipientPath | null, step: number): string {
 
 // ─── Step Ordering ──────────────────────────────────────────
 
-const FULL_LABEL_STEPS = [0, 1, 10, 14, 11, 12, 13];
-const FLEX_LINK_STEPS = [0, 1, 20, 21, 22, 23];
+// No step 0 (2026-08-18): the who's-sending picker is gone; /onboarding
+// resolves straight to the destination step. Step 0 survives only as the
+// "no step" value in stepUrl/canAccessStep and as inert entries in old
+// persisted drafts' completedSteps.
+const FULL_LABEL_STEPS = [1, 10, 14, 11, 12, 13];
+const FLEX_LINK_STEPS = [1, 20, 21, 22, 23];
 
 export function stepsForPath(path: RecipientPath | null): number[] {
   return path === "flexible" ? FLEX_LINK_STEPS : FULL_LABEL_STEPS;

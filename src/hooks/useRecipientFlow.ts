@@ -3,6 +3,7 @@ import type {
   DistanceTier,
   PackagingType,
   RecipientPath,
+  SenderKind,
   ShippingRate,
   SpeedTier,
   LabelResult,
@@ -14,6 +15,8 @@ import { isUsablePhone } from "@/lib/phone";
 export interface RecipientFlowState {
   currentStep: number;
   path: RecipientPath | null;
+  /** Who's sending — derived in-flow (chips / deferring), null until claimed. */
+  sender: SenderKind | null;
   completedSteps: number[];
 
   // Step 1

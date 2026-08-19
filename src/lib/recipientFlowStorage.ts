@@ -125,7 +125,7 @@ export const INITIAL_DATA: RecipientFlowData = {
 //
 // The risk that buys is a stale flow silently resurrecting, which is precisely
 // how the wrong party's address ends up on a label. Three guards, all required:
-//   1. `startFlowAs` still RESETS on every new door pick — a fresh start is
+//   1. `startFreshFlow` still RESETS on an explicit fresh start — it is
 //      never contaminated by an old draft.
 //   2. Resuming is OFFERED, never automatic (see `loadResumable`): step 0 shows
 //      a banner the user must accept.
@@ -220,8 +220,7 @@ export function loadResumable(now: number = Date.now()): RecipientFlowData | nul
   if (data.labelResult || data.short_code) return null;
   // "Progress" is any typed field, not just a completed step. Someone who
   // entered a name, phone and email but hadn't verified an address yet has done
-  // real work — and losing exactly that is the complaint this fixes. Picking a
-  // door alone never qualifies: startFlowAs resets everything but `sender`.
+  // real work — and losing exactly that is the complaint this fixes.
   const progressed =
     data.completedSteps.some((n) => n >= 1) ||
     !!data.destinationAddress.street ||
@@ -240,24 +239,31 @@ export function loadResumable(now: number = Date.now()): RecipientFlowData | nul
  * fact every saved-address prefill has to agree on:
  *   'self'  → they ship OUT   → the saved address is the ORIGIN
  *   'other' → they RECEIVE    → the saved address is the DESTINATION
- *   null    → not asked yet (deep link) → treat as today's shape, 'destination'
+ *   null    → unresolved → NO slot; nothing prefills until a chip resolves it
  *
  * Named and shared rather than inlined because there are two prefill sites
  * (RecipientFlowContext and RecipientStepAddress) and a drift between them puts
  * the wrong party's address on a label. See the 2026-08-16 stale-autofill class.
  */
-export function prefillSlotFor(sender: SenderKind | null): "origin" | "destination" {
-  return sender === "self" ? "origin" : "destination";
+export function prefillSlotFor(sender: SenderKind | null): "origin" | "destination" | null {
+  if (sender === "self") return "origin";
+  if (sender === "other") return "destination";
+  // Unknown (step 0 is gone, 2026-08-18): nothing prefills silently. The
+  // address steps offer a "use my address" chip instead, and tapping it is
+  // what resolves `sender`. Prefilling a guessed slot is how the wrong
+  // party's address ends up on a label.
+  return null;
 }
 
 /**
- * Records step 0's answer and starts a clean flow.
+ * Starts a clean flow. (Replaces startFlowAs, 2026-08-18: the who's-sending
+ * door is gone, so there is no answer to record — `sender` starts null and is
+ * derived later from the "use my address" chips or from deferring.)
  *
- * Deliberately resets to INITIAL_DATA rather than merging: picking a door
- * starts a new shipment, and 'self' vs 'other' swap which party owns the
- * destination slot, so carrying a previous run's addresses across a re-pick is
- * exactly how the wrong party's address ends up on a label.
+ * Deliberately resets to INITIAL_DATA rather than merging: starting fresh is
+ * a new shipment, and carrying a previous run's addresses across is exactly
+ * how the wrong party's address ends up on a label.
  */
-export function startFlowAs(sender: SenderKind): void {
-  persist({ ...INITIAL_DATA, sender });
+export function startFreshFlow(): void {
+  persist({ ...INITIAL_DATA });
 }

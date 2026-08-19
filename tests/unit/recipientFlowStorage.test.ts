@@ -7,7 +7,7 @@ import {
   loadPersisted,
   persist,
   prefillSlotFor,
-  startFlowAs,
+  startFreshFlow,
 } from "@/lib/recipientFlowStorage";
 import { canAccessStep, slugToStep, stepUrl } from "@/lib/stepRouting";
 
@@ -48,41 +48,26 @@ describe("prefillSlotFor — which party owns the saved address", () => {
     expect(prefillSlotFor("other")).toBe("destination");
   });
 
-  it("falls back to DESTINATION when step 0 hasn't been answered (deep link)", () => {
-    // Preserves the pre-existing behaviour for every /onboarding/... deep link
-    // minted before this flow existed.
-    expect(prefillSlotFor(null)).toBe("destination");
+  it("returns NO slot while sender is unresolved — nothing prefills on a guess", () => {
+    // 2026-08-18: the who's-sending step is gone, so null is the normal
+    // starting state, not a deep-link edge case. Prefilling a guessed slot is
+    // the wrong-party bug; the chips resolve it instead.
+    expect(prefillSlotFor(null)).toBeNull();
   });
 });
 
-describe("startFlowAs", () => {
-  it("records the sender so the provider can hydrate it on the next route", () => {
-    startFlowAs("self");
-    expect(loadPersisted()?.sender).toBe("self");
-  });
-
-  it("clears a previous run's addresses when a new door is picked", () => {
-    // Regression guard: 'other' put the user's own address in destination.
-    // Re-picking 'self' must not carry it over — destination is now the OTHER
-    // party, and a stale value there mails the package to the wrong person.
+describe("startFreshFlow", () => {
+  it("clears a previous run's data — a fresh start is never contaminated", () => {
     persist({
       ...INITIAL_DATA,
       sender: "other",
-      destinationAddress: { ...INITIAL_DATA.destinationAddress, street: "231 Canyon Drive", verified: true },
-      originAddress: { ...INITIAL_DATA.originAddress, street: "88 Oak Ave" },
-      completedSteps: [0, 1, 10],
-      email: "someone@example.com",
+      destinationAddress: { ...INITIAL_DATA.destinationAddress, street: "1 Old Draft St" },
     });
-
-    startFlowAs("self");
-
-    const restored = loadPersisted()!;
-    expect(restored.sender).toBe("self");
-    expect(restored.destinationAddress.street).toBe("");
-    expect(restored.destinationAddress.verified).toBeFalsy();
-    expect(restored.originAddress.street).toBe("");
-    expect(restored.completedSteps).toEqual([]);
-    expect(restored.email).toBe("");
+    startFreshFlow();
+    const data = loadPersisted();
+    expect(data?.destinationAddress.street).toBe("");
+    // sender starts unresolved — it is derived in-flow now, not at a door.
+    expect(data?.sender).toBeNull();
   });
 });
 
@@ -213,11 +198,11 @@ describe("resuming an unfinished flow", () => {
     expect(loadResumable()).not.toBeNull();
   });
 
-  it("startFlowAs still wipes a draft — a new door pick is never contaminated", () => {
+  it("startFreshFlow still wipes a draft — Start fresh is never contaminated", () => {
     persist(started());
-    startFlowAs("self");
+    startFreshFlow();
     const after = loadPersisted()!;
-    expect(after.sender).toBe("self");
+    expect(after.sender).toBeNull();
     expect(after.destinationAddress.street).toBe("");
     expect(loadResumable()).toBeNull();
   });

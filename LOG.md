@@ -12,10 +12,30 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-18] The who's-sending step is gone — sender is derived in-flow (unified-onboarding Phase 2)
+
+**Category:** ship | Onboarding
+**Deploy:** In PR — branch `feat/unified-onboarding-phase2`, not merged, not deployed at entry time (update on merge).
+**Cross-link:** [proposals/2026-08-18_unified-onboarding-every-question-skippable.md](proposals/2026-08-18_unified-onboarding-every-question-skippable.md) §3, Phase 2
+**Browser-verified:** spec: tests/e2e/onboarding.spec.ts + tests/e2e/url-step-routing.spec.ts · variants-covered: [/onboarding resolves to destination with neutral heading, defer origin → banner on step 14 at the moment of skip, undo-skip clears deferral and restores the label path, full signed-in flow destination→shipping→verify→payment, back-nav data preserved, step guards on deep links]
+
+**What John asked for:** the flow itself should resolve who's sending — the upfront question was made unnecessary by the skippable steps.
+
+**How sender resolves now** (`sender` starts `null`; three claims, first one wins):
+1. Destination step: **"Deliver to me — use my saved address"** chip → `'other'` + fills destination. Rendered only while unresolved; the saved address is fetched but **held, never silently applied** — `prefillSlotFor(null)` now returns `null`, and both prefill sites gate on it. Silently guessing a slot is the wrong-party bug.
+2. Origin step: **"I'm the sender — it ships from my address"** third option → `'self'`; the provider's prefill effect re-runs on the sender change and fills the origin (no second fetch site).
+3. **Deferring anything → `'other'`** — "the sender will fill this in" is itself the identity claim.
+
+**Entry:** `/onboarding` renders the resume-offer interstitial when a draft exists (Continue / Start fresh — the offer stays explicit; landing directly on the step would let the provider silently rehydrate), otherwise `Navigate replace` to `/full-label/destination`. `startFlowAs` → `startFreshFlow` (no answer to record). Step 0 removed from both step arrays; the `[0, ...]` guard splice in RecipientOnboarding is gone. Seller link-out moved to the destination step footer. Existing deep links unchanged.
+
+**Skip banner at the moment of skip (John's point 3):** deferring on step 10 shows "This will be a shipping link, not a label" immediately on step 14, with **Undo skip**. Undo now clears the deferral flags, and passing a step's validation clears its flag too — fixing a latent PR #68 bug where defer → undo → fill-everything still produced a link at step 14's exit because the stale flag survived.
+
+**Gotcha — the redirect broke the OAuth auto-advance discriminator.** Step 1's auto-advance used "user was null at mount" to detect a fresh OAuth return. With `/onboarding` now redirecting straight to the step, it mounts before auth finishes loading, so EVERY signed-in visitor briefly matched — and the form auto-submitted 2s after becoming valid. The discriminator is now an explicit `sendmo:oauth_pending` sessionStorage flag written just before the Google redirect and consumed on return. Any future "was X at mount" check near an entry redirect deserves the same suspicion.
+
 ### [2026-08-18] Progress bar becomes one segment per question (unified-onboarding Phase 1)
 
 **Category:** fix | Onboarding
-**Deploy:** In PR — branch `fix/progress-bar-four-questions`, not merged, not deployed at entry time (update on merge).
+**Deploy:** **DEPLOYED.** Merged via [PR #70](https://github.com/jsa7cornell/Sendmo/pull/70) (merge commit `bc53611`), 2026-08-18; verified live — bundle `/assets/index-cSeZm5yN.js` on sendmo.co contains the new segment labels.
 **Cross-link:** [proposals/2026-08-18_unified-onboarding-every-question-skippable.md](proposals/2026-08-18_unified-onboarding-every-question-skippable.md) §2, decision C (John: ship first, alone)
 **Browser-verified:** spec: tests/e2e/progress-bar.spec.ts · variants-covered: [full-label 5 segments + Origin active on shipping step, origin→package advances the bar (the regression), flex path 4 own-labeled segments with no falsely-completed segments after double deferral]
 
