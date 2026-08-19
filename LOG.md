@@ -12,6 +12,13 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-19] Design brief for the onboarding UX refresh — handed to Claude design
+
+**Category:** docs | Onboarding
+**Cross-link:** [proposals/2026-08-19_onboarding-ux-refresh-design-brief.md](proposals/2026-08-19_onboarding-ux-refresh-design-brief.md) — the brief itself; continues [the unified-onboarding proposal](proposals/2026-08-18_unified-onboarding-every-question-skippable.md) after all three phases deployed.
+
+John's verdict on the deployed Phases 1–3: functionally OK, UX "super wonky." Four directives captured in the brief: skip options move to the TOP of each question; ONE progress mechanism that stays consistent but morphs as skips accumulate (not today's 5-segment↔4-segment swap); identity/sign-in/saved-address moments get a deliberate home; more creative overall, especially the label↔link transformation moment. The brief carries the full current-screen inventory, every state to design, and the hard constraints (who-pays copy, Rule 7, email non-skippable, carrier phone, Stripe Elements, resume semantics, stack limits). Design output will come back as a proposal before any implementation.
+
 ### [2026-08-18] Skippable destination — "the sender picks where it goes" (unified-onboarding Phase 3)
 
 **Category:** ship | Onboarding + SenderFlow + Edge Functions
