@@ -15,7 +15,7 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 ### [2026-08-18] Two parallelism-only e2e flakes — auto-advance timer reset by unstable callback + cold Vite transform
 
 **Category:** fix | Onboarding / test-infra
-**Deploy:** In PR — not merged, not deployed.
+**Deploy:** Merged via [PR #73](https://github.com/jsa7cornell/Sendmo/pull/73) (merge commit `5d67419`), 2026-08-18. Vercel prod deploy auto-triggered on the merge push.
 **Cross-link:** gotcha classes: "URL flips before unmount" (2026-08-17/18), auto-advance timers (2026-05-19)
 **Browser-verified:** spec: tests/e2e/auth-section-and-flex-otp.spec.ts + tests/e2e/onboarding.spec.ts · variants-covered: [full suite ×4 at default parallelism all green (87 passed), targeted --repeat-each=3 on both formerly-flaky specs green, unit suite green (710)]
 
