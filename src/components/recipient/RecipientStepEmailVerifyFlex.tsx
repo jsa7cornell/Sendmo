@@ -80,13 +80,19 @@ export default function RecipientStepEmailVerifyFlex({
     }
   }, [user, email, state.email_verified, onUpdate, arrivedViaLink]);
 
-  // Auto-advance after verification
+  // Auto-advance after verification. onContinue is read through a ref so the
+  // timer arms exactly once when email_verified flips — the parent recreates
+  // onContinue every render, and depending on it directly made each re-render
+  // (auth events, ?confirmed=1 strip, info toast) clear and restart the 1s
+  // timer, delaying the advance indefinitely under load.
+  const onContinueRef = useRef(onContinue);
+  onContinueRef.current = onContinue;
   useEffect(() => {
     if (state.email_verified) {
-      const timer = setTimeout(onContinue, 1000);
+      const timer = setTimeout(() => onContinueRef.current(), 1000);
       return () => clearTimeout(timer);
     }
-  }, [state.email_verified, onContinue]);
+  }, [state.email_verified]);
 
   // Focus the first digit input on mount
   useEffect(() => {
