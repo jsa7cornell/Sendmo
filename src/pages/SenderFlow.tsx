@@ -75,6 +75,10 @@ export default function SenderFlow() {
   const [shareContact, setShareContact] = useState(false);
 
   const [parcel, setParcel] = useState<SenderParcel | null>(null);
+  // Phase 3: destination entered BY THE SENDER when the link creator deferred
+  // it (linkData.needs_destination). Authoritative for rates; the label buy
+  // resolves it server-side from the reference-bound EasyPost shipment.
+  const [destinationAddress, setDestinationAddress] = useState<AddressInput>(emptyAddress());
   const [rates, setRates] = useState<ShippingRate[]>([]);
   const [easypostShipmentId, setEasypostShipmentId] = useState<string>("");
   const [ratesLoading, setRatesLoading] = useState(false);
@@ -164,12 +168,24 @@ export default function SenderFlow() {
     try {
       const { rates: r, easypost_shipment_id } = await fetchSenderRates(
         senderAddress,
-        {
-          name: linkData.recipient_name || "Recipient",
-          city: linkData.recipient_city || "",
-          state: linkData.recipient_state || "",
-          zip: linkData.recipient_zip || "",
-        },
+        linkData.needs_destination
+          ? {
+              // Sender-entered destination (Phase 3) — sent in FULL so the
+              // server can quote and bind it to the shipment. Ordinary flex
+              // links keep the city/state stub (Rule 7; server resolves).
+              name: destinationAddress.name || "Recipient",
+              city: destinationAddress.city,
+              state: destinationAddress.state,
+              zip: destinationAddress.zip,
+              street: destinationAddress.street,
+              phone: destinationAddress.phone,
+            }
+          : {
+              name: linkData.recipient_name || "Recipient",
+              city: linkData.recipient_city || "",
+              state: linkData.recipient_state || "",
+              zip: linkData.recipient_zip || "",
+            },
         { length: p.length, width: p.width, height: p.height, weight: p.weightOz },
         {
           preferred_carrier: linkData.preferred_carrier,
@@ -326,6 +342,9 @@ export default function SenderFlow() {
                   linkData={linkData}
                   senderAddress={senderAddress}
                   onAddressChange={setSenderAddress}
+                  needsDestination={linkData.needs_destination === true}
+                  destinationAddress={destinationAddress}
+                  onDestinationChange={setDestinationAddress}
                   initialParcel={parcel}
                   onSubmit={(p) => {
                     setParcel(p);
@@ -358,6 +377,7 @@ export default function SenderFlow() {
               <motion.div key="review" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} transition={{ duration: 0.25 }}>
                 <SenderStepReview
                   linkData={linkData}
+                  destinationOverride={linkData.needs_destination ? destinationAddress : undefined}
                   senderAddress={senderAddress}
                   parcel={parcel}
                   selectedRate={selectedRate}

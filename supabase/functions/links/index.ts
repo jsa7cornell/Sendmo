@@ -505,9 +505,18 @@ Deno.serve(async (req: Request) => {
                               weight_oz: link.weight_hint_oz === null ? null : Number(link.weight_hint_oz),
                           }
                         : null,
+                // The creator deferred the destination (Phase 3): the sender
+                // must supply it. Distinct from recipient_address_complete —
+                // NULL is a deliberate state, an existing-but-streetless
+                // address is corruption.
+                needs_destination: link.link_type === "flexible" && link.recipient_address == null,
                 // Tells the sender flow whether the full address is on file.
-                // False → show an error immediately rather than failing at label creation.
-                recipient_address_complete: !!(link.recipient_address as unknown as { street1?: string } | null)?.street1,
+                // False → show an error immediately rather than failing at
+                // label creation. A deliberately-deferred destination (above)
+                // is NOT incomplete.
+                recipient_address_complete: link.recipient_address == null
+                    ? true
+                    : !!(link.recipient_address as unknown as { street1?: string } | null)?.street1,
                 // Pattern D (Phase F): false → sender flow shows the "this
                 // link isn't accepting payments right now" message up front
                 // instead of letting the user reach Review & Confirm.
@@ -748,43 +757,49 @@ Deno.serve(async (req: Request) => {
         // and UPS reject label purchases without it (PHONENUMBEREMPTY). Server
         // enforces independently of the client form (Rule 5 — client-side
         // validation is UX only). 10-digit minimum after stripping non-digits.
-        if (!recipient_address?.street1 || !recipient_address?.city || !recipient_address?.state || !recipient_address?.zip) {
-            return new Response(
-                JSON.stringify({ error: "Missing required recipient address fields" }),
-                { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-            );
-        }
-        if (!isUsablePhone(recipient_address?.phone)) {
-            return new Response(
-                JSON.stringify({ error: "We need a phone number for the delivery address — the shipping carriers require one to make the delivery." }),
-                { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-            );
-        }
+        // 1. Recipient address — OPTIONAL as of Phase 3 (migration 042): absent
+        // means the creator deferred the destination and the sender supplies it
+        // in the sender flow. When present it is validated exactly as before —
+        // an incomplete address is rejected, never silently dropped.
+        let recipientAddressId: string | null = null;
+        if (recipient_address) {
+            if (!recipient_address.street1 || !recipient_address.city || !recipient_address.state || !recipient_address.zip) {
+                return new Response(
+                    JSON.stringify({ error: "Missing required recipient address fields" }),
+                    { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+            if (!isUsablePhone(recipient_address.phone)) {
+                return new Response(
+                    JSON.stringify({ error: "We need a phone number for the delivery address — the shipping carriers require one to make the delivery." }),
+                    { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+            const { data: address, error: addrError } = await supabase
+                .from("addresses")
+                .insert({
+                    user_id: user.id,
+                    name: recipient_address.name || "Recipient",
+                    street1: recipient_address.street1,
+                    street2: recipient_address.street2 || null,
+                    city: recipient_address.city,
+                    state: recipient_address.state,
+                    zip: recipient_address.zip,
+                    country: "US",
+                    phone: recipient_address.phone,
+                    is_verified: recipient_address.verified || false,
+                })
+                .select("id")
+                .single();
 
-        // 1. Upsert recipient address
-        const { data: address, error: addrError } = await supabase
-            .from("addresses")
-            .insert({
-                user_id: user.id,
-                name: recipient_address.name || "Recipient",
-                street1: recipient_address.street1,
-                street2: recipient_address.street2 || null,
-                city: recipient_address.city,
-                state: recipient_address.state,
-                zip: recipient_address.zip,
-                country: "US",
-                phone: recipient_address.phone,
-                is_verified: recipient_address.verified || false,
-            })
-            .select("id")
-            .single();
-
-        if (addrError || !address) {
-            console.error("Address insert error:", addrError);
-            return new Response(
-                JSON.stringify({ error: "Failed to save recipient address" }),
-                { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-            );
+            if (addrError || !address) {
+                console.error("Address insert error:", addrError);
+                return new Response(
+                    JSON.stringify({ error: "Failed to save recipient address" }),
+                    { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+            recipientAddressId = address.id;
         }
 
         // 1b. Optional carried ship-from address. Validated only when supplied —
@@ -871,7 +886,7 @@ Deno.serve(async (req: Request) => {
                 status: startStatus,
                 // Explicit — the column default (TRUE) no longer decides (T1-1 gate D).
                 is_test: linkIsTest,
-                recipient_address_id: address.id,
+                recipient_address_id: recipientAddressId,
                 max_price_cents: Math.round(priceCap * 100),
                 preferred_speed: speed_preference || null,
                 preferred_carrier: preferred_carrier === "any" ? null : (preferred_carrier || null),
@@ -1019,7 +1034,18 @@ Deno.serve(async (req: Request) => {
         let previousAddressId: string | null = null;
         let newAddressId: string | null = null;
 
-        if ("recipient_address" in payload && payload.recipient_address) {
+        if ("recipient_address" in payload && payload.recipient_address === null) {
+            // Explicit CLEAR (Phase 3): the creator chose "the sender picks the
+            // destination" after a draft link had already stored an address.
+            // Absent-vs-null matters — absent means "don't touch", null means
+            // "remove". Migration 042 permits a recipient-less flexible link
+            // (this handler already rejects non-flexible links above).
+            if (existing.recipient_address_id !== null) {
+                previousAddressId = existing.recipient_address_id;
+                updates.recipient_address_id = null;
+                changedFields.push("recipient_address");
+            }
+        } else if ("recipient_address" in payload && payload.recipient_address) {
             const addr = payload.recipient_address as Record<string, unknown>;
             const street1 = typeof addr.street1 === "string" ? addr.street1 : "";
             const city = typeof addr.city === "string" ? addr.city : "";

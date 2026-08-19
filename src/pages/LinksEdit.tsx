@@ -30,6 +30,7 @@ export default function LinksEdit() {
   const { id } = useParams<{ id: string }>();
   const { user } = useAuth();
   const [initial, setInitial] = useState<FlexFormValue | null>(null);
+  const [destinationDeferred, setDestinationDeferred] = useState(false);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [notEditable, setNotEditable] = useState<string | null>(null);
@@ -67,6 +68,9 @@ export default function LinksEdit() {
       }
 
       const addr = Array.isArray(row.recipient_address) ? row.recipient_address[0] : row.recipient_address;
+      // Phase 3: a NULL recipient means the creator deferred the destination —
+      // the editor must allow prefs-only edits without forcing an address in.
+      setDestinationDeferred(addr == null);
       const v: FlexFormValue = {
         ...defaultFlexValue(),
         address: addr ? {
@@ -106,7 +110,7 @@ export default function LinksEdit() {
           <p className="text-sm text-muted-foreground mt-1">Status: {notEditable}</p>
         </div>
       ) : (
-        <LinksEditor mode="edit" initialValue={initial} linkId={id ?? null} />
+        <LinksEditor mode="edit" initialValue={initial} linkId={id ?? null} destinationDeferred={destinationDeferred} />
       )}
     </div>
   );

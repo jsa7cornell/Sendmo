@@ -13,9 +13,11 @@ interface Props {
 // in sender UI text. The printed label is the only address surface.
 export default function SenderStepIntro({ linkData, onContinue }: Props) {
   const recipientName = displayName(linkData.recipient_name);
-  const headline = recipientName
-    ? `You're sending a package to ${recipientName}`
-    : "You're sending a package via this prepaid link";
+  const headline = linkData.needs_destination
+    ? "You're sending a package — you choose where it goes"
+    : recipientName
+      ? `You're sending a package to ${recipientName}`
+      : "You're sending a package via this prepaid link";
 
   const cityState = linkData.recipient_city && linkData.recipient_state
     ? `${linkData.recipient_city}, ${linkData.recipient_state}`

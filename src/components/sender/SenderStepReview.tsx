@@ -13,6 +13,8 @@ import { isValidEmail, type SenderParcel } from "./senderState";
 interface Props {
   linkData: LinkData;
   senderAddress: AddressInput;
+  /** Phase 3: the sender-entered destination on a needs_destination link. */
+  destinationOverride?: AddressInput;
   parcel: SenderParcel;
   selectedRate: ShippingRate;
   senderEmail: string;
@@ -31,7 +33,7 @@ interface Props {
 // SPEC §8 Step 3: Review & Confirm. Edit buttons on summary cards;
 // email-for-tracking field; two checkboxes; AlertDialog-equivalent confirm.
 export default function SenderStepReview({
-  linkData, senderAddress, parcel, selectedRate,
+  linkData, senderAddress, destinationOverride, parcel, selectedRate,
   senderEmail, onSenderEmailChange,
   saveInfo, onSaveInfoChange, shareContact, onShareContactChange,
   onEditPackage, onEditRate, onConfirm, submitting, submitError,
@@ -44,10 +46,18 @@ export default function SenderStepReview({
   const emailFormatBad = senderEmail.length > 0 && !isValidEmail(senderEmail);
   const emailInvalid = emailMissing || emailFormatBad;
 
+  // Phase 3: on a destination-deferred link the "To" line is the address the
+  // SENDER just entered — linkData carries none. `recipient` (the payer who
+  // prepaid) keeps its linkData meaning in the other copy.
   const recipient = displayName(linkData.recipient_name) || "the recipient";
-  const cityState = linkData.recipient_city && linkData.recipient_state
-    ? `${linkData.recipient_city}, ${linkData.recipient_state}`
-    : "this prepaid link";
+  const cityState = destinationOverride?.city && destinationOverride.state
+    ? `${destinationOverride.city}, ${destinationOverride.state}`
+    : linkData.recipient_city && linkData.recipient_state
+      ? `${linkData.recipient_city}, ${linkData.recipient_state}`
+      : "this prepaid link";
+  const toName = destinationOverride?.name
+    ? displayName(destinationOverride.name) || destinationOverride.name
+    : recipient;
 
   async function handleConfirm() {
     setConfirmOpen(false);
@@ -81,7 +91,7 @@ export default function SenderStepReview({
           <div className="flex justify-between"><dt className="text-muted-foreground">From</dt>
             <dd className="font-medium text-foreground text-right">{senderAddress.city}, {senderAddress.state}</dd></div>
           <div className="flex justify-between"><dt className="text-muted-foreground">To</dt>
-            <dd className="font-medium text-foreground text-right">{recipient} · {cityState}</dd></div>
+            <dd className="font-medium text-foreground text-right">{toName} · {cityState}</dd></div>
           <div className="flex justify-between"><dt className="text-muted-foreground">Packaging</dt>
             <dd className="font-medium text-foreground capitalize">{parcel.packaging}</dd></div>
           <div className="flex justify-between"><dt className="text-muted-foreground">Dimensions</dt>

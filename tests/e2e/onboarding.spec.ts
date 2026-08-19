@@ -304,6 +304,24 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
     await expect(page.locator("#recipient-email")).toHaveValue("");
   });
 
+  test("deferring the DESTINATION keeps email required, banners the change, and reaches the link path", async ({ page }) => {
+    // Phase 3, decision B: every question is skippable. Deferring the
+    // destination answers the address half only — email still gates step 1.
+    await page.goto("/onboarding");
+    await page.getByRole("button", { name: /The sender picks the destination/i }).click();
+    // Address form replaced by the deferred state, with an inline undo.
+    await expect(page.getByText(/I have the address — enter it now/i)).toBeVisible();
+    // Continue without an email → blocked by validation.
+    await page.getByRole("button", { name: /Continue to shipment details/i }).click();
+    await expect(page.getByText(/Email is required/i)).toBeVisible();
+    // With an email, the step passes.
+    await page.locator("#recipient-email").fill("test@example.com");
+    await page.getByRole("button", { name: /Continue to shipment details/i }).click();
+    await expect(page).toHaveURL(/\/full-label\/shipping$/);
+    // The product change is announced immediately, on the origin step.
+    await expect(page.getByText(/This will be a shipping link, not a label/i)).toBeVisible();
+  });
+
   test("deferring resolves the sender — the skip banner appears the moment it happens", async ({ page }) => {
     await gotoStep10(page);
 

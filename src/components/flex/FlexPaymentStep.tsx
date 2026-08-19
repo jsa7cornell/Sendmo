@@ -276,7 +276,11 @@ export default function FlexPaymentStep({
     updateFlexLink(
       initialLinkId,
       {
-        recipient_address: input.recipient_address,
+        // Explicit null when the creator deferred the destination after this
+        // draft was created with one — undefined would be dropped by
+        // JSON.stringify and the PATCH would leave the abandoned address on
+        // the link (review finding 1, Phase 3).
+        recipient_address: input.recipient_address ?? null,
         speed_preference: input.speed_preference,
         preferred_carrier: input.preferred_carrier,
         price_cap_dollars: input.price_cap_dollars,
@@ -364,18 +368,25 @@ export default function FlexPaymentStep({
               </button>
             )}
           </div>
-          <div className="text-sm space-y-0.5">
-            {input.recipient_address.name && (
-              <p className="font-medium text-foreground">{input.recipient_address.name}</p>
-            )}
-            <p className="text-muted-foreground">{input.recipient_address.street1}</p>
-            <p className="text-muted-foreground">
-              {input.recipient_address.city}, {input.recipient_address.state} {input.recipient_address.zip}
+          {input.recipient_address ? (
+            <div className="text-sm space-y-0.5">
+              {input.recipient_address.name && (
+                <p className="font-medium text-foreground">{input.recipient_address.name}</p>
+              )}
+              <p className="text-muted-foreground">{input.recipient_address.street1}</p>
+              <p className="text-muted-foreground">
+                {input.recipient_address.city}, {input.recipient_address.state} {input.recipient_address.zip}
+              </p>
+              {input.recipient_address.phone && (
+                <p className="text-muted-foreground">{input.recipient_address.phone}</p>
+              )}
+            </div>
+          ) : (
+            /* Destination deferred (Phase 3): the sender picks it. */
+            <p className="text-sm text-muted-foreground">
+              The sender chooses the delivery address when they use your link.
             </p>
-            {input.recipient_address.phone && (
-              <p className="text-muted-foreground">{input.recipient_address.phone}</p>
-            )}
-          </div>
+          )}
         </div>
       )}
 

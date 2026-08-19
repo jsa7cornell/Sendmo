@@ -340,15 +340,21 @@ export function RecipientFlowProvider({ children }: { children: React.ReactNode 
     // completedSteps let the progress bar jump defer→undo users forward past
     // an empty origin on the label path (review finding 5) — deferral was how
     // those steps got "completed", so undoing it un-completes them.
+    // (Step 1 is different: deferring the DESTINATION never marked it
+    // complete — email validation still had to pass — so there is nothing to
+    // un-complete for it; the user just gets the address form back.)
+    const hadDeferredDestination = data.deferredDestination;
     setData((prev) => ({
       ...prev,
+      deferredDestination: false,
       deferredOrigin: false,
       deferredPackage: false,
       completedSteps: prev.completedSteps.filter((s) => s !== 10 && s !== 14),
     }));
     directionRef.current = "backward";
-    navigate(stepUrl("full_label", 10));
-  }, [navigate]);
+    // Land on the earliest question that was skipped.
+    navigate(stepUrl("full_label", hadDeferredDestination ? 1 : 10));
+  }, [navigate, data.deferredDestination]);
 
   const markStepComplete = useCallback((step: number) => {
     setData((prev) => ({

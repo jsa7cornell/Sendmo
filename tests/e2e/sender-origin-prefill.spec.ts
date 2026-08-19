@@ -88,3 +88,28 @@ test.describe("sender parcel prefill", () => {
     await expect(page.getByPlaceholder("Length")).toHaveValue("");
   });
 });
+
+test.describe("sender destination entry (needs_destination, Phase 3)", () => {
+  test("a destination-deferred link asks the sender where it's going", async ({ page }) => {
+    await mockLink(page, {
+      ...LINK, origin_prefill: null, package_prefill: null,
+      recipient_name: null, recipient_city: null, recipient_state: null, recipient_zip: null,
+      needs_destination: true, recipient_address_complete: true,
+    });
+    await page.goto("/s/PREFIL1");
+    // Intro names the shape.
+    await expect(page.getByRole("heading", { name: /you choose where it goes/i })).toBeVisible();
+    await page.getByRole("button", { name: /Get Started/i }).click();
+    // The destination card renders above the origin card.
+    await expect(page.getByText(/Where is the package going\?/i)).toBeVisible();
+    await expect(page.getByText(/left the delivery address up to you/i)).toBeVisible();
+  });
+
+  test("an ordinary link never shows the destination card", async ({ page }) => {
+    await mockLink(page, { ...LINK, origin_prefill: null, package_prefill: null });
+    await page.goto("/s/PREFIL1");
+    await page.getByRole("button", { name: /Get Started/i }).click();
+    await expect(page.getByText(/Your name/i).first()).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText(/Where is the package going\?/i)).toHaveCount(0);
+  });
+});

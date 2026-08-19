@@ -35,13 +35,19 @@ export function defaultFlexValue(): FlexFormValue {
 
 interface Props {
   mode: "create" | "edit";
+  /**
+   * Phase 3: the link deferred its destination to the sender. Editing prefs
+   * must not force typing an address (which would silently convert the link);
+   * entering one anyway is a legitimate conversion and validates fully.
+   */
+  destinationDeferred?: boolean;
   initialValue: FlexFormValue | null;
   linkId: string | null;
 }
 
 type CreateStep = "details" | "payment" | "ready";
 
-export default function LinksEditor({ mode, initialValue, linkId }: Props) {
+export default function LinksEditor({ mode, initialValue, linkId, destinationDeferred = false }: Props) {
   const { user, session } = useAuth();
   const navigate = useNavigate();
   const [value, setValue] = useState<FlexFormValue>(initialValue ?? defaultFlexValue());
@@ -65,16 +71,23 @@ export default function LinksEditor({ mode, initialValue, linkId }: Props) {
   // flow must gate it here too, or the failure surfaces as an ugly server
   // error on the "Add your card" step instead of an inline field error.
   const phoneOk = isUsablePhone(value.address.phone);
+  // Deferred link + address form never touched: this is a prefs-only edit —
+  // the PATCH omits recipient_address entirely ("don't touch"), so the link
+  // keeps deferring. Any typed address flips to full validation + conversion.
+  const addressUntouched = !value.address.street && !value.address.name && !value.address.phone;
+  const prefsOnlyEdit = destinationDeferred && addressUntouched;
 
   const errors: string[] = [];
-  if (tried && !value.address.verified) {
+  if (prefsOnlyEdit) {
+    // no address errors — there deliberately is no address
+  } else if (tried && !value.address.verified) {
     errors.push("Select a destination address from the dropdown");
   } else if (tried && value.address.verified && !addressComplete) {
     errors.push(
       "The selected address is missing details (street, city, state, or ZIP). Please re-pick it from the dropdown.",
     );
   }
-  if (tried && !phoneOk) {
+  if (!prefsOnlyEdit && tried && !phoneOk) {
     errors.push("Add a phone number for the delivery address — the shipping carriers require it");
   }
 
@@ -91,7 +104,7 @@ export default function LinksEditor({ mode, initialValue, linkId }: Props) {
 
   async function handleEditSubmit() {
     setTried(true);
-    if (!value.address.verified || !addressComplete || !phoneOk) return;
+    if (!prefsOnlyEdit && (!value.address.verified || !addressComplete || !phoneOk)) return;
     if (!session?.access_token) {
       setError("You're signed out — please sign in again.");
       return;
@@ -103,15 +116,20 @@ export default function LinksEditor({ mode, initialValue, linkId }: Props) {
       await updateFlexLink(
         linkId,
         {
-          recipient_address: {
-            name: value.address.name,
-            street1: value.address.street,
-            city: value.address.city,
-            state: value.address.state,
-            zip: value.address.zip,
-            phone: value.address.phone,
-            verified: value.address.verified,
-          },
+          // Omitted (= "don't touch") on a prefs-only edit of a deferred link.
+          ...(prefsOnlyEdit
+            ? {}
+            : {
+                recipient_address: {
+                  name: value.address.name,
+                  street1: value.address.street,
+                  city: value.address.city,
+                  state: value.address.state,
+                  zip: value.address.zip,
+                  phone: value.address.phone,
+                  verified: value.address.verified,
+                },
+              }),
           speed_preference: value.speed_preference,
           preferred_carrier: value.preferred_carrier,
           price_cap_dollars: value.price_cap,
@@ -188,6 +206,9 @@ export default function LinksEditor({ mode, initialValue, linkId }: Props) {
 
   // ── Step 1: details (default) ────────────────────────────────
   const isEdit = mode === "edit";
+  // Rendered above the address form in edit mode for a deferred link, so the
+  // empty form reads as the deliberate state it is, not missing data.
+  const deferredNote = isEdit && destinationDeferred && addressUntouched;
   return (
     <main className="max-w-xl mx-auto px-4 py-8 space-y-6">
       {!isEdit && <StepIndicator activeStep="details" />}
@@ -204,6 +225,12 @@ export default function LinksEditor({ mode, initialValue, linkId }: Props) {
 
       <section className="space-y-3">
         <h2 className="text-sm font-semibold text-foreground">Where should packages be delivered?</h2>
+        {deferredNote && (
+          <p className="text-xs text-muted-foreground rounded-xl border border-border bg-muted/50 px-3 py-2">
+            This link lets the <span className="font-medium text-foreground">sender pick the destination</span> —
+            leave the address empty to keep it that way, or enter one to fix the delivery address.
+          </p>
+        )}
         <AddressForm
           value={value.address}
           tried={tried}

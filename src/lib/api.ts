@@ -434,7 +434,12 @@ export async function buyLabel(
 // ─── Flexible Link CRUD ────────────────────────────────────
 
 export interface CreateLinkParams {
-  recipient_address: {
+  /**
+   * OPTIONAL as of Phase 3 (2026-08-18, migration 042): absent means the
+   * creator deferred the destination — the sender enters it in the sender
+   * flow. When present it is validated server-side exactly as before.
+   */
+  recipient_address?: {
     name: string;
     street1: string;
     street2?: string;
@@ -583,6 +588,12 @@ export interface LinkData {
   // False when the stored destination address has no street1 — sender flow
   // should surface an error immediately rather than failing at label creation.
   recipient_address_complete: boolean;
+  /**
+   * Phase 3: the creator deferred the destination — the sender flow must
+   * collect it. Distinct from recipient_address_complete=false, which means
+   * an address exists but is corrupt.
+   */
+  needs_destination?: boolean;
   // Pattern D (Phase F): false → flex link has no usable saved PM (either
   // none exists, or the default's stored expiry passed). Sender flow shows
   // "this link isn't accepting payments" up-front instead of letting the
@@ -626,7 +637,11 @@ export interface LinkData {
 }
 
 export interface UpdateLinkParams {
-  recipient_address?: {
+  /**
+   * Absent = don't touch. `null` = CLEAR the destination (Phase 3 — the
+   * creator deferred it after a draft had stored one). Object = replace.
+   */
+  recipient_address?: null | {
     name: string;
     street1: string;
     street2?: string;
@@ -763,7 +778,11 @@ export async function activateLinkWithExistingPm(
 
 export async function fetchSenderRates(
   from: AddressInput,
-  to: { name: string; city: string; state: string; zip: string },
+  // street/phone are sent ONLY for destination-deferred links (needs_destination),
+  // where the sender's own entry is the authoritative to_address; on ordinary
+  // flex links the server resolves the full address from the link (Rule 7 —
+  // the client is sent city/state only).
+  to: { name: string; city: string; state: string; zip: string; street?: string; street2?: string; phone?: string },
   parcel: { length: number; width: number; height: number; weight: number },
   linkPrefs?: {
     preferred_carrier?: string | null;
@@ -780,6 +799,7 @@ export async function fetchSenderRates(
       city: to.city,
       state: to.state,
       zip: to.zip,
+      ...(to.street ? { street1: to.street, street2: to.street2 || undefined, phone: to.phone || undefined } : {}),
     },
     parcel: {
       length: parcel.length,
