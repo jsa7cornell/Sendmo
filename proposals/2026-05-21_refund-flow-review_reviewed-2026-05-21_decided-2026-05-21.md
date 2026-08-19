@@ -143,7 +143,7 @@ actually resolve it. "Contact support" routes to a process that does not exist.
 waits 2–3 weeks may dispute the charge with their bank instead. A dispute costs
 SendMo a fee (~$15) and operational time, and can collide with the pending
 refund. The two-step trades a *rare* void-rejection loss for a *recurring*
-dispute-risk premium. Adjacent: [`2026-05-21_payments-risk-intelligence`](2026-05-21_payments-risk-intelligence.md)
+dispute-risk premium. Adjacent: [`2026-05-21_payments-risk-intelligence`](2026-05-21_payments-risk-intelligence_reviewed-2026-05-22_decided-2026-05-22.md)
 covers chargeback protection but does not address refund latency as a dispute
 *driver* — that belongs here.
 
@@ -216,7 +216,7 @@ no resolution path.
   `refund_status='submitted'`") — real, but a separate build; this proposal only
   flags it (F8). Cross-link, don't duplicate.
 - **Fraud / Radar / chargeback *prevention*** — owned by
-  [`2026-05-21_payments-risk-intelligence`](2026-05-21_payments-risk-intelligence.md).
+  [`2026-05-21_payments-risk-intelligence`](2026-05-21_payments-risk-intelligence_reviewed-2026-05-22_decided-2026-05-22.md).
   This proposal only notes refund *latency* as a dispute driver (F7).
 - **Phase 3 escrow / `holds` table** — unrelated.
 - **The Job 3 edge-function redeploy gap** — an unrelated CI bug (the deploy

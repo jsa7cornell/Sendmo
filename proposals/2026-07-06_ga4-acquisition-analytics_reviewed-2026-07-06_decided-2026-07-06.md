@@ -350,7 +350,7 @@ sentence rewritten not deleted), the env-var documentation convention (N4), and
 the CrashScreen boundary (B2: "an improvement we want regardless of Sentry" —
 survives on a plain React boundary). The T1-3 **server half** (admin-alert emails,
 LOG 2026-07-04) is untouched. Sibling:
-[2026-07-06_seo-crawl-hygiene-and-discovery.md](2026-07-06_seo-crawl-hygiene-and-discovery.md)
+[2026-07-06_seo-crawl-hygiene-and-discovery_reviewed-2026-07-06.md](2026-07-06_seo-crawl-hygiene-and-discovery_reviewed-2026-07-06.md)
 is unaffected by the reversal (no monitoring dependency) and supplies the Search
 Console verification §6 step 5 links to — soft dependency. No external contract
 (MCP or otherwise) is affected.

@@ -580,7 +580,7 @@ What this means going forward:
 - **The merged inert layer is slated for removal.** The removal (deps, Sentry
   plumbing in `main.tsx`/`App.tsx`/`vite.config.ts`, PostHog branch) plus the
   replacement analytics (GA4) are specified in
-  [2026-07-06_ga4-acquisition-analytics.md](2026-07-06_ga4-acquisition-analytics.md)
+  [2026-07-06_ga4-acquisition-analytics_reviewed-2026-07-06_decided-2026-07-06.md](2026-07-06_ga4-acquisition-analytics_reviewed-2026-07-06_decided-2026-07-06.md)
   — in-review; nothing is removed until that proposal is decided.
 - **What survives the reversal:** the CrashScreen error boundary (this review's B2:
   "an improvement we want regardless of Sentry" — reimplemented as a plain React
