@@ -1,0 +1,1164 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    body { margin: 0; }
+    a { color: hsl(214,89%,45%); }
+    a:hover { color: hsl(214,89%,35%); }
+    input::placeholder, textarea::placeholder { color: hsl(210,7%,60%); }
+  </style>
+</helmet>
+
+<div style="min-height:100vh;background:hsl(0,0%,96%);font-family:'Inter',sans-serif;color:hsl(210,11%,15%);">
+
+  <div style="position:sticky;top:0;z-index:50;background:#fff;border-bottom:1px solid hsl(210,14%,89%);padding:12px 24px;display:flex;align-items:center;gap:20px;overflow-x:auto;">
+    <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
+      <div style="width:22px;height:22px;border-radius:6px;background:hsl(214,89%,52%);flex-shrink:0;"></div>
+      <span style="font-weight:800;font-size:14.5px;white-space:nowrap;">SendMo — Onboarding Flow</span>
+    </div>
+    <nav style="display:flex;gap:4px;flex-shrink:0;">
+      <a href="#progress-concept" style="font-size:12.5px;font-weight:600;color:hsl(210,7%,46%);text-decoration:none;padding:6px 10px;border-radius:8px;white-space:nowrap;">Progress mechanism</a>
+      <a href="#creator-flow" style="font-size:12.5px;font-weight:600;color:hsl(210,7%,46%);text-decoration:none;padding:6px 10px;border-radius:8px;white-space:nowrap;">Creator flow</a>
+      <a href="#states-gallery" style="font-size:12.5px;font-weight:600;color:hsl(210,7%,46%);text-decoration:none;padding:6px 10px;border-radius:8px;white-space:nowrap;">Identity &amp; states</a>
+      <a href="#desktop" style="font-size:12.5px;font-weight:600;color:hsl(210,7%,46%);text-decoration:none;padding:6px 10px;border-radius:8px;white-space:nowrap;">Desktop</a>
+      <a href="#sender-flow" style="font-size:12.5px;font-weight:600;color:hsl(210,7%,46%);text-decoration:none;padding:6px 10px;border-radius:8px;white-space:nowrap;">Sender flow</a>
+      <a href="#motion-notes" style="font-size:12.5px;font-weight:600;color:hsl(210,7%,46%);text-decoration:none;padding:6px 10px;border-radius:8px;white-space:nowrap;">Motion notes</a>
+    </nav>
+  </div>
+
+  <div style="max-width:900px;margin:0 auto;padding:44px 24px 8px;">
+    <h1 style="font-size:28px;font-weight:800;margin:0 0 12px;letter-spacing:-0.01em;">Four skippable questions, one honest progress bar</h1>
+    <p style="font-size:15px;color:hsl(210,7%,46%);line-height:1.6;margin:0;max-width:680px;">
+      Every question in this flow — destination, origin, package, shipping — can be answered or handed to the sender. Answer everything and you buy a label now, at an exact price. Hand anything off and you get a shipping link instead, and you pay when it's used. Nothing below asks the user to pick "label" or "link" up front — that choice is just what their answers add up to.
+    </p>
+  </div>
+
+  <section id="progress-concept" style="max-width:1100px;margin:0 auto;padding:36px 24px;">
+    <h2 style="font-size:21px;font-weight:700;margin:0 0 6px;">The progress mechanism</h2>
+    <p style="font-size:13.5px;color:hsl(210,7%,46%);margin:0 0 22px;max-width:680px;line-height:1.6;">
+      One bar, four segments, always — Destination, Origin, Package, Shipping. A segment fills solid when answered, and turns amber when skipped. A trailing pill names the destination the answers are building toward, and it morphs the instant a skip changes that destination. The bar never swaps to a different shape between paths — it just fills in differently.
+    </p>
+    <div style="display:flex;gap:20px;flex-wrap:wrap;">
+      <div style="background:#fff;border:1px solid hsl(210,14%,89%);border-radius:16px;padding:20px;width:230px;">
+        <p style="font-size:11px;font-weight:700;color:hsl(210,7%,46%);text-transform:uppercase;letter-spacing:0.03em;margin:0 0 14px;">Just started</p>
+        <dc-import name="MorphProgressBar" nodes="{{ snapAllUpcoming }}" outcome-label="Prepaid label" outcome-is-link="{{ false }}" hint-size="100%,70"></dc-import>
+      </div>
+      <div style="background:#fff;border:1px solid hsl(210,14%,89%);border-radius:16px;padding:20px;width:230px;">
+        <p style="font-size:11px;font-weight:700;color:hsl(210,7%,46%);text-transform:uppercase;letter-spacing:0.03em;margin:0 0 14px;">Answering normally</p>
+        <dc-import name="MorphProgressBar" nodes="{{ snapAnsweringNormally }}" outcome-label="Prepaid label" outcome-is-link="{{ false }}" hint-size="100%,70"></dc-import>
+      </div>
+      <div style="background:#fff;border:1px solid oklch(85% 0.06 70);border-radius:16px;padding:20px;width:230px;">
+        <p style="font-size:11px;font-weight:700;color:oklch(45% 0.12 70);text-transform:uppercase;letter-spacing:0.03em;margin:0 0 14px;">The morph moment</p>
+        <dc-import name="MorphProgressBar" nodes="{{ snapJustSkipped }}" outcome-label="Shipping link" outcome-is-link="{{ true }}" hint-size="100%,70"></dc-import>
+      </div>
+      <div style="background:#fff;border:1px solid hsl(210,14%,89%);border-radius:16px;padding:20px;width:230px;">
+        <p style="font-size:11px;font-weight:700;color:hsl(210,7%,46%);text-transform:uppercase;letter-spacing:0.03em;margin:0 0 14px;">Undo — back to label</p>
+        <dc-import name="MorphProgressBar" nodes="{{ snapUndone }}" outcome-label="Prepaid label" outcome-is-link="{{ false }}" hint-size="100%,70"></dc-import>
+      </div>
+      <div style="background:#fff;border:1px solid oklch(85% 0.06 70);border-radius:16px;padding:20px;width:230px;">
+        <p style="font-size:11px;font-weight:700;color:oklch(45% 0.12 70);text-transform:uppercase;letter-spacing:0.03em;margin:0 0 14px;">Link, complete</p>
+        <dc-import name="MorphProgressBar" nodes="{{ snapDoneLink }}" outcome-label="Shipping link" outcome-is-link="{{ true }}" hint-size="100%,70"></dc-import>
+      </div>
+    </div>
+    <p style="font-size:12px;color:hsl(210,7%,55%);margin:16px 0 0;max-width:680px;line-height:1.6;">
+      On defaults: the answer lives in a two-way toggle, not a radio hidden under a form — "I have it" and "Sender fills this in" sit side by side, equal weight, above the fields. Toggling to "Sender fills this in" doesn't swap the screen for a big colored panel — it just dims the fields in place, so the layout never jumps. Nothing is pre-selected: whichever you tap is the answer.
+    </p>
+  </section>
+
+  <section id="creator-flow" style="max-width:1100px;margin:0 auto;padding:16px 24px 40px;">
+    <h2 style="font-size:21px;font-weight:700;margin:0 0 6px;">Creator flow — click through it</h2>
+    <p style="font-size:13.5px;color:hsl(210,7%,46%);margin:0 0 18px;max-width:680px;line-height:1.6;">
+      Fully interactive. Skip a question, watch the bar morph, undo it, sign in with Google, or answer everything and buy a label. The chips below jump straight to a step if you'd rather explore out of order.
+    </p>
+
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:18px;">
+      <sc-for list="{{ stepChips }}" as="chip" hint-placeholder-count="7">
+        <button type="button" onClick="{{ chip.onClick }}" style="{{ chip.style }}">{{ chip.label }}</button>
+      </sc-for>
+      <button type="button" onClick="{{ resetDemo }}" style="padding:6px 12px;border-radius:999px;font-size:12px;font-weight:600;border:1px solid hsl(210,14%,89%);background:#fff;color:hsl(210,7%,46%);cursor:pointer;">Reset</button>
+    </div>
+
+    <div style="display:flex;gap:32px;flex-wrap:wrap;align-items:flex-start;">
+      <div style="width:375px;flex-shrink:0;background:hsl(0,0%,96%);border:1px solid hsl(210,14%,89%);border-radius:20px;padding:18px;height:760px;overflow-y:auto;box-sizing:border-box;" data-screen-label="{{ step }}">
+
+        <div style="margin-bottom:16px;">
+          <dc-import name="MorphProgressBar" nodes="{{ progressNodes }}" outcome-label="{{ outcomeLabel }}" outcome-is-link="{{ isFlexFlag }}" hint-size="100%,70"></dc-import>
+        </div>
+
+        <sc-if value="{{ showBubble }}" hint-placeholder-val="{{ false }}">
+          <div style="background:hsl(210,11%,15%);color:#fff;border-radius:12px;padding:11px 13px;font-size:12px;line-height:1.55;margin-bottom:14px;">
+            This is now a <strong>shipping link</strong> — your sender fills in what you skipped, and you pay when they use it. Toggle "I have it" any time to switch back.
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ isDestination }}" hint-placeholder-val="{{ true }}">
+          <div>
+            <h3 style="font-size:18px;font-weight:700;margin:0 0 14px;">Where's it going?</h3>
+
+            <div style="display:flex;background:hsl(210,14%,95%);border-radius:10px;padding:3px;margin-bottom:8px;">
+              <button type="button" onClick="{{ undoDeferDestination }}" style="{{ destToggleHaveStyle }}">I have it</button>
+              <button type="button" onClick="{{ deferDestination }}" style="{{ destToggleDeferStyle }}">Sender fills this in</button>
+            </div>
+            <p style="font-size:11.5px;color:hsl(210,7%,46%);margin:0 0 12px;line-height:1.5;">{{ destCaption }}</p>
+
+            <sc-if value="{{ showSavedAddressChip }}" hint-placeholder-val="{{ false }}">
+              <button type="button" onClick="{{ useSavedAddress }}" style="display:flex;gap:9px;align-items:flex-start;width:100%;text-align:left;border:1px solid hsl(210,14%,89%);border-radius:14px;padding:12px 13px;background:#fff;cursor:pointer;font-family:inherit;box-sizing:border-box;margin-bottom:12px;">
+                <span style="width:14px;height:14px;border-radius:4px;background:hsl(214,89%,95%);flex-shrink:0;margin-top:2px;"></span>
+                <span>
+                  <span style="display:block;font-size:13px;font-weight:600;">Deliver to me — use my saved address</span>
+                  <span style="display:block;font-size:11.5px;color:hsl(210,7%,46%);margin-top:2px;">1420 Maple Ave, Austin, TX 78701</span>
+                </span>
+              </button>
+            </sc-if>
+
+            <div style="{{ destFieldsStyle }}">
+              <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px;">
+                <input value="{{ destName }}" onChange="{{ onDestNameChange }}" placeholder="Recipient's name" style="width:100%;box-sizing:border-box;border:1px solid hsl(210,14%,89%);border-radius:10px;padding:9px 12px;font-size:13.5px;font-family:inherit;outline:none;" />
+                <input value="{{ destStreet }}" onChange="{{ onDestStreetChange }}" placeholder="Start typing the delivery address…" style="width:100%;box-sizing:border-box;border:1px solid hsl(210,14%,89%);border-radius:10px;padding:9px 12px;font-size:13.5px;font-family:inherit;outline:none;" />
+                <input value="{{ destPhone }}" onChange="{{ onDestPhoneChange }}" placeholder="Phone (carriers require this)" style="width:100%;box-sizing:border-box;border:1px solid hsl(210,14%,89%);border-radius:10px;padding:9px 12px;font-size:13.5px;font-family:inherit;outline:none;" />
+              </div>
+            </div>
+
+            <button type="button" onClick="{{ continueDestination }}" disabled="{{ destinationBlocked }}" style="{{ destContinueStyle }}">Continue</button>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ isOrigin }}" hint-placeholder-val="{{ false }}">
+          <div>
+            <h3 style="font-size:18px;font-weight:700;margin:0 0 14px;">Where's it shipping from?</h3>
+
+            <div style="display:flex;background:hsl(210,14%,95%);border-radius:10px;padding:3px;margin-bottom:8px;">
+              <button type="button" onClick="{{ undoDeferOrigin }}" style="{{ originToggleHaveStyle }}">I have it</button>
+              <button type="button" onClick="{{ deferOrigin }}" style="{{ originToggleDeferStyle }}">Sender fills this in</button>
+            </div>
+            <p style="font-size:11.5px;color:hsl(210,7%,46%);margin:0 0 12px;line-height:1.5;">{{ originCaption }}</p>
+
+            <sc-if value="{{ showSelfChip }}" hint-placeholder-val="{{ false }}">
+              <button type="button" onClick="{{ claimSelfSender }}" style="display:flex;gap:9px;align-items:flex-start;width:100%;text-align:left;border:1px solid hsl(210,14%,89%);border-radius:14px;padding:12px 13px;background:#fff;cursor:pointer;font-family:inherit;box-sizing:border-box;margin-bottom:12px;">
+                <span style="width:15px;height:15px;border-radius:999px;border:2px solid hsl(210,14%,75%);flex-shrink:0;margin-top:1px;"></span>
+                <span>
+                  <span style="display:block;font-size:13px;font-weight:600;">I'm the sender — mailing this out myself</span>
+                  <span style="display:block;font-size:11.5px;color:hsl(210,7%,46%);margin-top:2px;">It ships from your address</span>
+                </span>
+              </button>
+            </sc-if>
+
+            <div style="{{ originFieldsStyle }}">
+              <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:6px;">
+                <input value="{{ originName }}" onChange="{{ onOriginNameChange }}" placeholder="{{ originNamePlaceholder }}" style="width:100%;box-sizing:border-box;border:1px solid hsl(210,14%,89%);border-radius:10px;padding:9px 12px;font-size:13.5px;font-family:inherit;outline:none;" />
+                <input value="{{ originStreet }}" onChange="{{ onOriginStreetChange }}" placeholder="Start typing the origin address…" style="width:100%;box-sizing:border-box;border:1px solid hsl(210,14%,89%);border-radius:10px;padding:9px 12px;font-size:13.5px;font-family:inherit;outline:none;" />
+                <input value="{{ originPhone }}" onChange="{{ onOriginPhoneChange }}" placeholder="Phone (carriers require this)" style="width:100%;box-sizing:border-box;border:1px solid hsl(210,14%,89%);border-radius:10px;padding:9px 12px;font-size:13.5px;font-family:inherit;outline:none;" />
+              </div>
+            </div>
+
+            <div style="display:flex;gap:10px;margin-top:16px;">
+              <button type="button" onClick="{{ backOrigin }}" style="border:1px solid hsl(210,14%,89%);background:#fff;border-radius:12px;padding:12px 16px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;">Back</button>
+              <button type="button" onClick="{{ continueOrigin }}" disabled="{{ originBlocked }}" style="flex:1;{{ originContinueStyle }}">Continue</button>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ isPackage }}" hint-placeholder-val="{{ false }}">
+          <div>
+            <h3 style="font-size:18px;font-weight:700;margin:0 0 14px;">What's being shipped?</h3>
+
+            <div style="display:flex;background:hsl(210,14%,95%);border-radius:10px;padding:3px;margin-bottom:8px;">
+              <button type="button" onClick="{{ undoDeferPackage }}" style="{{ packageToggleHaveStyle }}">I have it</button>
+              <button type="button" onClick="{{ deferPackage }}" style="{{ packageToggleDeferStyle }}">Sender fills this in</button>
+            </div>
+            <p style="font-size:11.5px;color:hsl(210,7%,46%);margin:0 0 12px;line-height:1.5;">{{ packageCaption }}</p>
+
+            <div style="{{ packageFieldsStyle }}">
+              <div style="background:#fff;border:1px solid hsl(210,14%,89%);border-radius:14px;padding:14px;margin-bottom:10px;">
+                <p style="font-size:12.5px;font-weight:700;margin:0 0 8px;">Magic Guestimator</p>
+                <textarea value="{{ itemDesc }}" onChange="{{ onItemDescChange }}" placeholder="e.g., a hardcover cookbook" rows="1" style="width:100%;box-sizing:border-box;border:1px solid hsl(210,14%,89%);border-radius:10px;padding:9px 12px;font-size:13.5px;font-family:inherit;outline:none;resize:none;margin-bottom:8px;"></textarea>
+                <button type="button" onClick="{{ runGuestimator }}" style="border:none;background:hsl(214,89%,52%);color:#fff;border-radius:10px;padding:8px 14px;font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit;">I'm Feeling Lucky</button>
+                <sc-if value="{{ usedGuestimator }}" hint-placeholder-val="{{ false }}">
+                  <div style="margin-top:10px;background:hsl(142,60%,96%);border:1px solid hsl(142,50%,80%);border-radius:10px;padding:10px 11px;">
+                    <p style="margin:0 0 8px;font-size:11.5px;font-weight:600;color:hsl(142,60%,25%);">Box · dimensions in inches, weight in lb/oz — edit if needed</p>
+                    <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;">
+                      <input value="{{ boxL }}" onChange="{{ onBoxLChange }}" style="width:44px;box-sizing:border-box;border:1px solid hsl(142,40%,70%);border-radius:8px;padding:6px 7px;font-size:12.5px;font-family:inherit;outline:none;text-align:center;" />
+                      <span style="font-size:12px;color:hsl(142,40%,35%);">×</span>
+                      <input value="{{ boxW }}" onChange="{{ onBoxWChange }}" style="width:44px;box-sizing:border-box;border:1px solid hsl(142,40%,70%);border-radius:8px;padding:6px 7px;font-size:12.5px;font-family:inherit;outline:none;text-align:center;" />
+                      <span style="font-size:12px;color:hsl(142,40%,35%);">×</span>
+                      <input value="{{ boxH }}" onChange="{{ onBoxHChange }}" style="width:44px;box-sizing:border-box;border:1px solid hsl(142,40%,70%);border-radius:8px;padding:6px 7px;font-size:12.5px;font-family:inherit;outline:none;text-align:center;" />
+                      <span style="font-size:11px;color:hsl(142,40%,35%);">in</span>
+                    </div>
+                    <div style="display:flex;gap:6px;align-items:center;">
+                      <input value="{{ weightLb }}" onChange="{{ onWeightLbChange }}" style="width:44px;box-sizing:border-box;border:1px solid hsl(142,40%,70%);border-radius:8px;padding:6px 7px;font-size:12.5px;font-family:inherit;outline:none;text-align:center;" />
+                      <span style="font-size:11px;color:hsl(142,40%,35%);">lb</span>
+                      <input value="{{ weightOz }}" onChange="{{ onWeightOzChange }}" style="width:44px;box-sizing:border-box;border:1px solid hsl(142,40%,70%);border-radius:8px;padding:6px 7px;font-size:12.5px;font-family:inherit;outline:none;text-align:center;" />
+                      <span style="font-size:11px;color:hsl(142,40%,35%);">oz</span>
+                    </div>
+                  </div>
+                </sc-if>
+              </div>
+            </div>
+
+            <div style="display:flex;gap:10px;margin-top:6px;">
+              <button type="button" onClick="{{ backPackage }}" style="border:1px solid hsl(210,14%,89%);background:#fff;border-radius:12px;padding:12px 16px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;">Back</button>
+              <button type="button" onClick="{{ continuePackage }}" disabled="{{ packageBlocked }}" style="flex:1;{{ packageContinueStyle }}">Continue</button>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ isShipping }}" hint-placeholder-val="{{ false }}">
+          <div>
+            <sc-if value="{{ isFlexFlag }}" hint-placeholder-val="{{ false }}">
+              <h3 style="font-size:18px;font-weight:700;margin:0 0 4px;">How fast should it get there?</h3>
+              <p style="font-size:12.5px;color:hsl(210,7%,46%);margin:0 0 14px;">Pick a speed — your sender handles the rest.</p>
+              <div style="display:flex;gap:6px;background:hsl(210,14%,95%);border-radius:14px;padding:6px;margin-bottom:12px;">
+                <sc-for list="{{ speeds }}" as="sp" hint-placeholder-count="3">
+                  <button type="button" onClick="{{ sp.onSelect }}" style="{{ sp.style }}">
+                    <span style="display:block;font-size:13px;font-weight:700;">{{ sp.label }}</span>
+                    <span style="display:block;font-size:10px;margin-top:2px;">{{ sp.time }}</span>
+                  </button>
+                </sc-for>
+              </div>
+              <div style="background:hsl(214,89%,96%);border:1px solid hsl(214,89%,85%);border-radius:14px;padding:16px;text-align:center;margin-bottom:14px;">
+                <p style="margin:0 0 4px;font-size:26px;font-weight:800;color:hsl(214,89%,42%);">{{ selectedSpeedRange }}</p>
+                <p style="margin:0;font-size:11.5px;color:hsl(210,7%,46%);">typical range for a medium package, regionally</p>
+              </div>
+              <p style="font-size:12px;font-weight:700;margin:0 0 6px;">Preferred carrier</p>
+              <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;">
+                <sc-for list="{{ carriers }}" as="cr" hint-placeholder-count="4">
+                  <button type="button" onClick="{{ cr.onSelect }}" style="{{ cr.style }}">{{ cr.label }}</button>
+                </sc-for>
+              </div>
+              <p style="font-size:12px;font-weight:700;margin:0 0 6px;">Maximum shipping cost</p>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px;">
+                <sc-for list="{{ caps }}" as="cp" hint-placeholder-count="4">
+                  <button type="button" onClick="{{ cp.onSelect }}" style="{{ cp.style }}">{{ cp.label }}</button>
+                </sc-for>
+              </div>
+              <p style="font-size:11px;color:hsl(210,7%,46%);margin:0 0 14px;">Your sender won't see options above this price.</p>
+            </sc-if>
+            <sc-if value="{{ isFullFlag }}" hint-placeholder-val="{{ true }}">
+              <h3 style="font-size:18px;font-weight:700;margin:0 0 14px;">How should it ship?</h3>
+              <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px;">
+                <sc-for list="{{ rates }}" as="rt" hint-placeholder-count="3">
+                  <button type="button" onClick="{{ rt.onSelect }}" style="{{ rt.style }}">
+                    <span style="min-width:0;">
+                      <span style="display:block;font-size:13px;font-weight:700;">{{ rt.carrier }} {{ rt.service }}</span>
+                      <span style="display:block;font-size:11px;color:hsl(210,7%,46%);margin-top:2px;">{{ rt.days }}</span>
+                    </span>
+                    <span style="font-size:15px;font-weight:800;flex-shrink:0;">{{ rt.price }}</span>
+                  </button>
+                </sc-for>
+              </div>
+              <sc-if value="{{ selectedRateId }}" hint-placeholder-val="{{ false }}">
+                <div style="background:hsl(214,89%,96%);border:1px solid hsl(214,89%,85%);border-radius:14px;padding:14px;margin-bottom:14px;">
+                  <p style="margin:0 0 2px;font-size:11.5px;color:hsl(210,7%,46%);">Estimated cost</p>
+                  <p style="margin:0;font-size:24px;font-weight:800;color:hsl(214,89%,42%);">{{ selectedPrice }}</p>
+                </div>
+              </sc-if>
+            </sc-if>
+            <div style="display:flex;gap:10px;">
+              <button type="button" onClick="{{ backShipping }}" style="border:1px solid hsl(210,14%,89%);background:#fff;border-radius:12px;padding:12px 16px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;">Back</button>
+              <button type="button" onClick="{{ continueShipping }}" disabled="{{ shippingBlocked }}" style="flex:1;{{ shippingContinueStyle }}">Continue</button>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ isVerify }}" hint-placeholder-val="{{ false }}">
+          <div>
+            <div style="text-align:center;margin-bottom:16px;">
+              <h3 style="font-size:18px;font-weight:700;margin:0 0 4px;">Verify your email or account</h3>
+              <p style="font-size:12.5px;color:hsl(210,7%,46%);margin:0;line-height:1.5;">Required so you can securely manage your shipments and so we can help if something goes wrong.</p>
+            </div>
+            <div style="background:#fff;border:1px solid hsl(210,14%,89%);border-radius:14px;padding:16px;margin-bottom:12px;">
+              <button type="button" onClick="{{ useGoogleAtVerify }}" style="width:100%;background:#fff;border:1px solid hsl(210,14%,89%);border-radius:10px;padding:10px;font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit;box-sizing:border-box;margin-bottom:12px;">Continue with Google</button>
+              <div style="text-align:center;font-size:11px;color:hsl(210,7%,60%);margin-bottom:12px;">or use your email</div>
+              <input value="{{ destEmail }}" onChange="{{ onDestEmailChange }}" placeholder="Email address" style="width:100%;box-sizing:border-box;border:1px solid hsl(210,14%,89%);border-radius:10px;padding:9px 12px;font-size:13.5px;font-family:inherit;outline:none;margin-bottom:12px;" />
+              <div style="display:flex;justify-content:center;gap:6px;margin-bottom:12px;">
+                <sc-for list="{{ otpBoxes }}" as="ob" hint-placeholder-count="6">
+                  <div style="width:32px;height:38px;border:1px solid hsl(210,14%,89%);border-radius:8px;"></div>
+                </sc-for>
+              </div>
+              <button type="button" onClick="{{ verifyContinue }}" disabled="{{ verifyBlocked }}" style="{{ verifyContinueStyle }}">Verify and continue</button>
+            </div>
+            <button type="button" onClick="{{ backVerify }}" style="border:1px solid hsl(210,14%,89%);background:#fff;border-radius:12px;padding:11px 16px;font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit;">Back</button>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ isPayment }}" hint-placeholder-val="{{ false }}">
+          <div>
+            <sc-if value="{{ isFullFlag }}" hint-placeholder-val="{{ true }}">
+              <h3 style="font-size:18px;font-weight:700;margin:0 0 12px;">Enter your payment information</h3>
+              <div style="background:#fff;border:1px solid hsl(210,14%,89%);border-radius:14px;padding:15px;margin-bottom:12px;">
+                <span style="display:inline-block;font-size:10.5px;font-weight:700;color:hsl(214,89%,45%);background:hsl(214,89%,95%);padding:3px 9px;border-radius:999px;margin-bottom:10px;">Prepaid label</span>
+                <div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:5px;"><span style="color:hsl(210,7%,46%);">To</span><span style="font-weight:600;">{{ summaryTo }}</span></div>
+                <div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:5px;"><span style="color:hsl(210,7%,46%);">From</span><span style="font-weight:600;">{{ summaryFrom }}</span></div>
+                <div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:5px;"><span style="color:hsl(210,7%,46%);">Carrier</span><span style="font-weight:600;">{{ summaryService }}</span></div>
+                <p style="margin:6px 0 0;font-size:11px;color:hsl(210,7%,46%);">Everything is filled in — you print the label yourself, nothing is left for a sender.</p>
+                <div style="display:flex;justify-content:space-between;font-size:14px;padding-top:8px;margin-top:10px;border-top:1px solid hsl(210,14%,89%);"><span style="font-weight:700;">Total — charged now</span><span style="font-weight:800;color:hsl(214,89%,42%);">{{ summaryCost }}</span></div>
+              </div>
+              <div style="background:hsl(210,14%,95%);border:1px dashed hsl(210,14%,80%);border-radius:12px;padding:14px;margin-bottom:12px;text-align:center;">
+                <p style="margin:0;font-size:11.5px;color:hsl(210,7%,46%);font-family:monospace;">Card details — Stripe Elements</p>
+              </div>
+              <button type="button" onClick="{{ payContinue }}" style="width:100%;background:hsl(214,89%,52%);color:#fff;border:none;border-radius:12px;padding:13px 16px;font-size:14.5px;font-weight:600;cursor:pointer;font-family:inherit;">Pay {{ selectedPrice }}</button>
+            </sc-if>
+            <sc-if value="{{ isFlexFlag }}" hint-placeholder-val="{{ false }}">
+              <h3 style="font-size:18px;font-weight:700;margin:0 0 12px;">Add payment information to activate your link</h3>
+              <div style="background:#fff;border:1px solid hsl(210,14%,89%);border-radius:14px;padding:15px;margin-bottom:12px;">
+                <span style="display:inline-block;font-size:10.5px;font-weight:700;color:oklch(45% 0.1 70);background:oklch(97% 0.02 70);padding:3px 9px;border-radius:999px;margin-bottom:10px;">Shipping link</span>
+                <div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:5px;"><span style="color:hsl(210,7%,46%);">To</span><span style="font-weight:600;">{{ summaryTo }}</span></div>
+                <div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:5px;"><span style="color:hsl(210,7%,46%);">From</span><span style="font-weight:600;">{{ summaryFrom }}</span></div>
+                <div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:5px;"><span style="color:hsl(210,7%,46%);">Carrier</span><span style="font-weight:600;">{{ summaryService }}</span></div>
+                <p style="margin:6px 0 0;font-size:11px;color:hsl(210,7%,46%);">{{ senderNarrative }}</p>
+                <div style="display:flex;justify-content:space-between;font-size:14px;padding-top:8px;margin-top:10px;border-top:1px solid hsl(210,14%,89%);"><span style="font-weight:700;">You pay</span><span style="font-weight:800;color:oklch(42% 0.12 70);">{{ summaryCost }}</span></div>
+              </div>
+              <div style="background:hsl(210,14%,95%);border:1px dashed hsl(210,14%,80%);border-radius:12px;padding:14px;margin-bottom:12px;text-align:center;">
+                <p style="margin:0;font-size:11.5px;color:hsl(210,7%,46%);font-family:monospace;">Card details — Stripe SetupIntent</p>
+              </div>
+              <button type="button" onClick="{{ payContinue }}" style="width:100%;background:hsl(214,89%,52%);color:#fff;border:none;border-radius:12px;padding:13px 16px;font-size:14.5px;font-weight:600;cursor:pointer;font-family:inherit;">Save card &amp; activate link</button>
+            </sc-if>
+            <button type="button" onClick="{{ backPayment }}" style="margin-top:10px;border:1px solid hsl(210,14%,89%);background:#fff;border-radius:12px;padding:11px 16px;font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit;">Back</button>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ isDone }}" hint-placeholder-val="{{ false }}">
+          <div>
+            <sc-if value="{{ isFullFlag }}" hint-placeholder-val="{{ true }}">
+              <div style="text-align:center;background:hsl(142,60%,96%);border:1px solid hsl(142,50%,80%);border-radius:16px;padding:24px 16px;margin-bottom:14px;">
+                <div style="width:44px;height:44px;border-radius:999px;background:hsl(142,71%,45%);color:#fff;font-size:22px;font-weight:800;display:flex;align-items:center;justify-content:center;margin:0 auto 10px;">✓</div>
+                <p style="margin:0;font-size:17px;font-weight:700;">Label ready</p>
+                <p style="margin:6px 0 0;font-size:12px;color:hsl(210,7%,46%);font-family:monospace;">9400 1000 0000 0000 0000 00</p>
+              </div>
+              <div style="display:flex;gap:8px;margin-bottom:10px;">
+                <button type="button" style="flex:1;background:hsl(214,89%,52%);color:#fff;border:none;border-radius:12px;padding:12px;font-size:13.5px;font-weight:600;font-family:inherit;">Print label</button>
+                <button type="button" style="flex:1;border:1px solid hsl(210,14%,89%);background:#fff;border-radius:12px;padding:12px;font-size:13.5px;font-weight:600;font-family:inherit;">Download PDF</button>
+              </div>
+              <p style="text-align:center;font-size:12px;color:hsl(210,7%,46%);margin:0;">Tracking updates go to {{ destEmail }}</p>
+            </sc-if>
+            <sc-if value="{{ isFlexFlag }}" hint-placeholder-val="{{ false }}">
+              <p style="font-size:11px;font-weight:700;color:hsl(214,89%,45%);text-transform:uppercase;letter-spacing:0.03em;margin:0 0 6px;">Your shipping link</p>
+              <div style="background:#fff;border:1px solid hsl(210,14%,89%);border-radius:12px;padding:11px 13px;display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;">
+                <span style="font-size:12.5px;font-family:monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">sendmo.co/s/AB3F9Q</span>
+                <button type="button" onClick="{{ copyLink }}" style="flex-shrink:0;border:none;background:hsl(214,89%,52%);color:#fff;border-radius:8px;padding:7px 11px;font-size:11.5px;font-weight:700;cursor:pointer;font-family:inherit;">{{ copyLabel }}</button>
+              </div>
+              <p style="margin:0;font-size:13px;color:hsl(210,11%,25%);line-height:1.65;">{{ senderNarrative }}</p>
+            </sc-if>
+          </div>
+        </sc-if>
+
+      </div>
+
+      <div style="flex:1;min-width:260px;max-width:340px;">
+        <p style="font-size:11px;font-weight:700;color:hsl(210,7%,46%);text-transform:uppercase;letter-spacing:0.03em;margin:0 0 10px;">What to notice</p>
+        <ul style="margin:0;padding-left:18px;font-size:12.5px;color:hsl(210,11%,30%);line-height:1.9;">
+          <li>A two-way toggle — "I have it" / "Sender fills this in" — replaces the old skip card. Toggling back to "I have it" is the undo — no separate control needed.</li>
+          <li>Handing off doesn't swap the screen for a big colored panel — the fields just dim in place, so nothing jumps.</li>
+          <li>Email and Google sign-in live on their own step, right before payment — not squeezed into the first address form.</li>
+          <li>The first hand-off shows a one-time explainer bubble, then gets out of the way.</li>
+          <li>The progress bar just fills in and highlights the current numbered step — no checkmarks or arrows to parse.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section id="states-gallery" style="max-width:1100px;margin:0 auto;padding:24px 24px 40px;border-top:1px solid hsl(210,14%,89%);">
+    <h2 style="font-size:21px;font-weight:700;margin:28px 0 6px;">Identity, resume &amp; error states</h2>
+    <p style="font-size:13.5px;color:hsl(210,7%,46%);margin:0 0 20px;max-width:680px;line-height:1.6;">Static reference states — not wired into the click-through above.</p>
+
+    <p style="font-size:12px;font-weight:700;color:hsl(210,7%,46%);text-transform:uppercase;letter-spacing:0.03em;margin:0 0 10px;">Resume a draft</p>
+    <div style="background:#fff;border:1px solid hsl(214,89%,85%);border-radius:14px;padding:14px 16px;display:flex;align-items:center;justify-content:space-between;gap:12px;max-width:520px;margin-bottom:26px;flex-wrap:wrap;">
+      <div>
+        <p style="margin:0;font-size:13px;font-weight:600;">Pick up where you left off?</p>
+        <p style="margin:2px 0 0;font-size:12px;color:hsl(210,7%,46%);">Destination step, started 2 hours ago</p>
+      </div>
+      <div style="display:flex;gap:8px;">
+        <button type="button" style="border:1px solid hsl(210,14%,89%);background:#fff;border-radius:10px;padding:8px 14px;font-size:12.5px;font-weight:600;font-family:inherit;">Start over</button>
+        <button type="button" style="border:none;background:hsl(214,89%,52%);color:#fff;border-radius:10px;padding:8px 14px;font-size:12.5px;font-weight:600;font-family:inherit;">Resume</button>
+      </div>
+    </div>
+
+    <p style="font-size:12px;font-weight:700;color:hsl(210,7%,46%);text-transform:uppercase;letter-spacing:0.03em;margin:0 0 10px;">Validation &amp; rate errors</p>
+    <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:26px;">
+      <div style="background:#fff;border:1px solid hsl(0,72%,88%);border-radius:14px;padding:14px 16px;width:300px;">
+        <p style="margin:0 0 6px;font-size:12.5px;font-weight:700;color:hsl(0,72%,45%);">Please fix the following:</p>
+        <ul style="margin:0;padding-left:16px;font-size:12px;color:hsl(0,72%,45%);line-height:1.7;">
+          <li>Choose an address from the suggestions list</li>
+          <li>Phone number is required for the delivery address</li>
+        </ul>
+      </div>
+      <div style="background:#fff;border:1px solid hsl(0,72%,88%);border-radius:14px;padding:14px 16px;width:300px;">
+        <p style="margin:0 0 6px;font-size:13px;font-weight:700;">We couldn't get shipping rates</p>
+        <p style="margin:0 0 10px;font-size:12px;color:hsl(210,7%,46%);line-height:1.5;">FedEx rejected this route — the destination address is missing a unit number.</p>
+        <div style="display:flex;gap:8px;">
+          <button type="button" style="border:1px solid hsl(210,14%,89%);background:#fff;border-radius:9px;padding:7px 12px;font-size:12px;font-weight:600;font-family:inherit;">Edit address</button>
+          <button type="button" style="border:none;background:hsl(214,89%,52%);color:#fff;border-radius:9px;padding:7px 12px;font-size:12px;font-weight:600;font-family:inherit;">Try again</button>
+        </div>
+      </div>
+    </div>
+
+    <p style="font-size:12px;font-weight:700;color:hsl(210,7%,46%);text-transform:uppercase;letter-spacing:0.03em;margin:0 0 10px;">Identity states</p>
+    <div style="display:flex;gap:16px;flex-wrap:wrap;">
+      <div style="background:#fff;border:1px solid hsl(210,14%,89%);border-radius:14px;padding:16px;width:260px;">
+        <p style="margin:0 0 8px;font-size:11px;font-weight:700;color:hsl(210,7%,46%);text-transform:uppercase;">Signed out</p>
+        <button type="button" style="width:100%;box-sizing:border-box;background:#fff;border:1px solid hsl(210,14%,89%);border-radius:10px;padding:9px;font-size:13px;font-weight:600;font-family:inherit;margin-bottom:8px;">Continue with Google</button>
+        <input placeholder="Email address" style="width:100%;box-sizing:border-box;border:1px solid hsl(210,14%,89%);border-radius:10px;padding:8px 11px;font-size:13px;font-family:inherit;" />
+      </div>
+      <div style="background:#fff;border:1px solid hsl(210,14%,89%);border-radius:14px;padding:16px;width:260px;">
+        <p style="margin:0 0 8px;font-size:11px;font-weight:700;color:hsl(210,7%,46%);text-transform:uppercase;">Signed in</p>
+        <div style="display:flex;gap:9px;align-items:center;">
+          <div style="width:32px;height:32px;border-radius:999px;background:hsl(214,89%,95%);color:hsl(214,89%,42%);font-weight:700;font-size:13px;display:flex;align-items:center;justify-content:center;">J</div>
+          <div>
+            <p style="margin:0;font-size:13px;font-weight:600;">Jordan Ellis</p>
+            <p style="margin:1px 0 0;font-size:11.5px;color:hsl(210,7%,46%);">jordan@gmail.com</p>
+          </div>
+        </div>
+      </div>
+      <div style="background:#fff;border:1px solid hsl(210,14%,89%);border-radius:14px;padding:16px;width:260px;">
+        <p style="margin:0 0 8px;font-size:11px;font-weight:700;color:hsl(210,7%,46%);text-transform:uppercase;">Returning, saved address</p>
+        <div style="display:flex;gap:9px;align-items:flex-start;border:1px solid hsl(210,14%,89%);border-radius:12px;padding:10px;">
+          <span style="width:14px;height:14px;border-radius:4px;background:hsl(214,89%,95%);flex-shrink:0;margin-top:2px;"></span>
+          <div>
+            <p style="margin:0;font-size:12.5px;font-weight:600;">Deliver to me — use my saved address</p>
+            <p style="margin:2px 0 0;font-size:11px;color:hsl(210,7%,46%);">1420 Maple Ave, Austin, TX</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="desktop" style="max-width:1100px;margin:0 auto;padding:24px 24px 40px;border-top:1px solid hsl(210,14%,89%);">
+    <h2 style="font-size:21px;font-weight:700;margin:28px 0 6px;">Desktop — key screens</h2>
+    <p style="font-size:13.5px;color:hsl(210,7%,46%);margin:0 0 20px;max-width:680px;line-height:1.6;">Same components, two columns instead of one stack. Static reference.</p>
+
+    <div style="background:#fff;border:1px solid hsl(210,14%,89%);border-radius:16px;padding:28px;margin-bottom:20px;display:grid;grid-template-columns:1.1fr 0.9fr;gap:32px;">
+      <div>
+        <h3 style="font-size:19px;font-weight:700;margin:0 0 4px;">Where's it going?</h3>
+        <p style="font-size:13px;color:hsl(210,7%,46%);margin:0 0 16px;">Where the package should be delivered, plus your email.</p>
+        <button type="button" style="display:flex;gap:9px;align-items:flex-start;width:100%;text-align:left;border:1.5px solid hsl(210,14%,89%);border-radius:14px;padding:13px 15px;background:#fff;font-family:inherit;box-sizing:border-box;margin-bottom:12px;">
+          <span style="width:15px;height:15px;border-radius:999px;border:2px solid hsl(210,14%,75%);flex-shrink:0;margin-top:1px;"></span>
+          <span><span style="display:block;font-size:13.5px;font-weight:600;">The sender picks the destination</span><span style="display:block;font-size:12px;color:hsl(210,7%,46%);margin-top:2px;">They'll enter it when they use your link</span></span>
+        </button>
+        <div style="display:flex;flex-direction:column;gap:8px;">
+          <input placeholder="Recipient's name" style="width:100%;box-sizing:border-box;border:1px solid hsl(210,14%,89%);border-radius:10px;padding:10px 12px;font-size:14px;font-family:inherit;" />
+          <input placeholder="Start typing the delivery address…" style="width:100%;box-sizing:border-box;border:1px solid hsl(210,14%,89%);border-radius:10px;padding:10px 12px;font-size:14px;font-family:inherit;" />
+        </div>
+      </div>
+      <div style="background:hsl(0,0%,97%);border:1px solid hsl(210,14%,89%);border-radius:14px;padding:18px;align-self:start;">
+        <p style="margin:0 0 10px;font-size:12px;font-weight:700;color:hsl(210,7%,46%);text-transform:uppercase;">Identity</p>
+        <button type="button" style="width:100%;box-sizing:border-box;background:#fff;border:1px solid hsl(210,14%,89%);border-radius:10px;padding:10px;font-size:13.5px;font-weight:600;font-family:inherit;margin-bottom:10px;">Continue with Google</button>
+        <input placeholder="Email address" style="width:100%;box-sizing:border-box;border:1px solid hsl(210,14%,89%);border-radius:10px;padding:9px 12px;font-size:13.5px;font-family:inherit;" />
+      </div>
+    </div>
+
+    <div style="background:#fff;border:1px solid hsl(210,14%,89%);border-radius:16px;padding:28px;display:grid;grid-template-columns:1.2fr 0.8fr;gap:32px;">
+      <div>
+        <h3 style="font-size:19px;font-weight:700;margin:0 0 4px;">How should it ship?</h3>
+        <p style="font-size:13px;color:hsl(210,7%,46%);margin:0 0 16px;">Live carrier rates for this package.</p>
+        <div style="display:flex;flex-direction:column;gap:8px;">
+          <div style="border:1.5px solid hsl(214,89%,52%);background:hsl(214,89%,97%);border-radius:12px;padding:12px 14px;display:flex;justify-content:space-between;"><span style="font-size:13.5px;font-weight:700;">UPS Ground</span><span style="font-size:14px;font-weight:800;">$11.20</span></div>
+          <div style="border:1px solid hsl(210,14%,89%);border-radius:12px;padding:12px 14px;display:flex;justify-content:space-between;"><span style="font-size:13.5px;">USPS Ground Advantage</span><span style="font-size:14px;font-weight:700;">$8.40</span></div>
+          <div style="border:1px solid hsl(210,14%,89%);border-radius:12px;padding:12px 14px;display:flex;justify-content:space-between;"><span style="font-size:13.5px;">FedEx 2Day</span><span style="font-size:14px;font-weight:700;">$24.90</span></div>
+        </div>
+      </div>
+      <div style="background:hsl(214,89%,96%);border:1px solid hsl(214,89%,85%);border-radius:14px;padding:18px;align-self:start;position:sticky;top:80px;">
+        <p style="margin:0 0 2px;font-size:11.5px;color:hsl(210,7%,46%);">Shipping to Austin, TX</p>
+        <p style="margin:0;font-size:28px;font-weight:800;color:hsl(214,89%,42%);">$11.20</p>
+        <p style="margin:6px 0 0;font-size:12px;color:hsl(210,7%,46%);">Estimated arrival: 3 days</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="sender-flow" style="max-width:1100px;margin:0 auto;padding:24px 24px 40px;border-top:1px solid hsl(210,14%,89%);">
+    <h2 style="font-size:21px;font-weight:700;margin:28px 0 6px;">Sender flow — click through it</h2>
+    <p style="font-size:13.5px;color:hsl(210,7%,46%);margin:0 0 18px;max-width:680px;line-height:1.6;">
+      Secondary scope, structure unchanged. What's prefilled depends on what the creator answered — this always shows city/state only, never a street address or ZIP (privacy rule 7), except fields the sender types in themselves.
+    </p>
+
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:18px;">
+      <div style="display:flex;gap:4px;background:hsl(210,14%,95%);border-radius:11px;padding:4px;max-width:420px;">
+        <sc-for list="{{ senderScenarioOptions }}" as="opt" hint-placeholder-count="3">
+          <button type="button" onClick="{{ opt.onSelect }}" style="{{ opt.style }}">{{ opt.label }}</button>
+        </sc-for>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">
+        <sc-for list="{{ senderStepChips }}" as="chip" hint-placeholder-count="5">
+          <button type="button" onClick="{{ chip.onClick }}" style="{{ chip.style }}">{{ chip.label }}</button>
+        </sc-for>
+        <button type="button" onClick="{{ senderResetDemo }}" style="padding:6px 12px;border-radius:999px;font-size:12px;font-weight:600;border:1px solid hsl(210,14%,89%);background:#fff;color:hsl(210,7%,46%);cursor:pointer;">Reset</button>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:32px;flex-wrap:wrap;align-items:flex-start;">
+      <div style="width:375px;flex-shrink:0;background:hsl(0,0%,96%);border:1px solid hsl(210,14%,89%);border-radius:20px;padding:18px;height:640px;overflow-y:auto;box-sizing:border-box;" data-screen-label="{{ senderScreenLabel }}">
+
+        <sc-if value="{{ isSenderIntro }}" hint-placeholder-val="{{ true }}">
+          <div style="text-align:center;padding-top:20px;">
+            <span style="display:inline-block;font-size:10.5px;font-weight:700;color:hsl(214,89%,45%);background:hsl(214,89%,95%);padding:3px 9px;border-radius:999px;margin-bottom:14px;">SendMo Label Link</span>
+            <h3 style="font-size:19px;font-weight:700;margin:0 0 8px;line-height:1.3;">{{ senderIntroHeadline }}</h3>
+            <p style="font-size:13px;color:hsl(210,7%,46%);margin:0 0 20px;line-height:1.5;">{{ senderIntroSub }}</p>
+            <div style="background:#fff;border:1px solid hsl(210,14%,89%);border-radius:14px;padding:15px;text-align:left;margin-bottom:16px;">
+              <p style="font-size:12px;font-weight:700;margin:0 0 8px;">How it works</p>
+              <p style="font-size:12px;color:hsl(210,7%,46%);margin:0 0 4px;line-height:1.6;">1. Add anything still missing</p>
+              <p style="font-size:12px;color:hsl(210,7%,46%);margin:0 0 4px;line-height:1.6;">2. Choose a shipping speed</p>
+              <p style="font-size:12px;color:hsl(210,7%,46%);margin:0;line-height:1.6;">3. Print the label — shipping's already paid</p>
+            </div>
+            <button type="button" onClick="{{ senderGoPackage }}" style="width:100%;background:hsl(214,89%,52%);color:#fff;border:none;border-radius:12px;padding:13px 16px;font-size:14.5px;font-weight:600;cursor:pointer;font-family:inherit;">Get Started</button>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ isSenderPackage }}" hint-placeholder-val="{{ false }}">
+          <div>
+            <dc-import name="MorphProgressBar" nodes="{{ senderProgressNodes }}" style="margin-bottom:16px;" hint-size="100%,52px"></dc-import>
+            <div style="margin:0 0 4px;">
+              <p style="font-size:11.5px;color:hsl(214,89%,45%);font-weight:700;margin:0 0 2px;">{{ senderHeaderText }}</p>
+              <sc-if value="{{ senderOriginKnown }}" hint-placeholder-val="{{ false }}">
+                <p style="font-size:11px;color:hsl(210,7%,46%);margin:0;">From {{ senderFromSummary }}</p>
+              </sc-if>
+            </div>
+            <h3 style="font-size:18px;font-weight:700;margin:0 0 14px;">Package details</h3>
+
+            <sc-if value="{{ senderNeedsDest }}" hint-placeholder-val="{{ false }}">
+              <div style="background:#fff;border:1px solid hsl(210,14%,89%);border-radius:14px;padding:14px;margin-bottom:12px;">
+                <p style="font-size:12.5px;font-weight:700;margin:0 0 3px;">Where is the package going?</p>
+                <p style="font-size:11px;color:hsl(210,7%,46%);margin:0 0 10px;">The link's creator left the delivery address up to you.</p>
+                <div style="display:flex;flex-direction:column;gap:8px;">
+                  <input value="{{ senderDestName }}" onChange="{{ onSenderDestNameChange }}" placeholder="Recipient's name" style="width:100%;box-sizing:border-box;border:1px solid hsl(210,14%,89%);border-radius:10px;padding:9px 12px;font-size:13.5px;font-family:inherit;outline:none;" />
+                  <input value="{{ senderDestStreet }}" onChange="{{ onSenderDestStreetChange }}" placeholder="Delivery address" style="width:100%;box-sizing:border-box;border:1px solid hsl(210,14%,89%);border-radius:10px;padding:9px 12px;font-size:13.5px;font-family:inherit;outline:none;" />
+                  <input value="{{ senderDestPhone }}" onChange="{{ onSenderDestPhoneChange }}" placeholder="Phone" style="width:100%;box-sizing:border-box;border:1px solid hsl(210,14%,89%);border-radius:10px;padding:9px 12px;font-size:13.5px;font-family:inherit;outline:none;" />
+                </div>
+              </div>
+            </sc-if>
+
+            <sc-if value="{{ senderNeedsOrigin }}" hint-placeholder-val="{{ true }}">
+              <div style="background:#fff;border:1px solid hsl(210,14%,89%);border-radius:14px;padding:14px;margin-bottom:12px;">
+                <p style="font-size:12.5px;font-weight:700;margin:0 0 8px;">Where is it shipping from?</p>
+                <div style="display:flex;flex-direction:column;gap:8px;">
+                  <input value="{{ senderOriginName }}" onChange="{{ onSenderOriginNameChange }}" placeholder="Your name" style="width:100%;box-sizing:border-box;border:1px solid hsl(210,14%,89%);border-radius:10px;padding:9px 12px;font-size:13.5px;font-family:inherit;outline:none;" />
+                  <input value="{{ senderOriginStreet }}" onChange="{{ onSenderOriginStreetChange }}" placeholder="Your address" style="width:100%;box-sizing:border-box;border:1px solid hsl(210,14%,89%);border-radius:10px;padding:9px 12px;font-size:13.5px;font-family:inherit;outline:none;" />
+                  <input value="{{ senderOriginPhone }}" onChange="{{ onSenderOriginPhoneChange }}" placeholder="Phone" style="width:100%;box-sizing:border-box;border:1px solid hsl(210,14%,89%);border-radius:10px;padding:9px 12px;font-size:13.5px;font-family:inherit;outline:none;" />
+                </div>
+              </div>
+            </sc-if>
+
+            <div style="background:#fff;border:1px solid hsl(210,14%,89%);border-radius:14px;padding:14px;margin-bottom:12px;">
+              <p style="font-size:12.5px;font-weight:700;margin:0 0 8px;">Describe the product</p>
+              <textarea value="{{ senderItemDesc }}" onChange="{{ onSenderItemDescChange }}" placeholder="e.g., a hardcover cookbook" rows="1" style="width:100%;box-sizing:border-box;border:1px solid hsl(210,14%,89%);border-radius:10px;padding:9px 12px;font-size:13.5px;font-family:inherit;outline:none;resize:none;margin-bottom:8px;"></textarea>
+              <button type="button" onClick="{{ runSenderGuestimator }}" style="border:none;background:hsl(214,89%,52%);color:#fff;border-radius:10px;padding:8px 14px;font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit;">I'm Feeling Lucky</button>
+              <sc-if value="{{ senderUsedGuestimator }}" hint-placeholder-val="{{ false }}">
+                <div style="margin-top:10px;background:hsl(142,60%,96%);border:1px solid hsl(142,50%,80%);border-radius:10px;padding:10px 11px;">
+                  <p style="margin:0 0 8px;font-size:11.5px;font-weight:600;color:hsl(142,60%,25%);">Box · dimensions in inches, weight in lb/oz — edit if needed</p>
+                  <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;">
+                    <input value="{{ senderBoxL }}" onChange="{{ onSenderBoxLChange }}" style="width:44px;box-sizing:border-box;border:1px solid hsl(142,40%,70%);border-radius:8px;padding:6px 7px;font-size:12.5px;font-family:inherit;outline:none;text-align:center;" />
+                    <span style="font-size:12px;color:hsl(142,40%,35%);">×</span>
+                    <input value="{{ senderBoxW }}" onChange="{{ onSenderBoxWChange }}" style="width:44px;box-sizing:border-box;border:1px solid hsl(142,40%,70%);border-radius:8px;padding:6px 7px;font-size:12.5px;font-family:inherit;outline:none;text-align:center;" />
+                    <span style="font-size:12px;color:hsl(142,40%,35%);">×</span>
+                    <input value="{{ senderBoxH }}" onChange="{{ onSenderBoxHChange }}" style="width:44px;box-sizing:border-box;border:1px solid hsl(142,40%,70%);border-radius:8px;padding:6px 7px;font-size:12.5px;font-family:inherit;outline:none;text-align:center;" />
+                    <span style="font-size:11px;color:hsl(142,40%,35%);">in</span>
+                  </div>
+                  <div style="display:flex;gap:6px;align-items:center;">
+                    <input value="{{ senderWeightLb }}" onChange="{{ onSenderWeightLbChange }}" style="width:44px;box-sizing:border-box;border:1px solid hsl(142,40%,70%);border-radius:8px;padding:6px 7px;font-size:12.5px;font-family:inherit;outline:none;text-align:center;" />
+                    <span style="font-size:11px;color:hsl(142,40%,35%);">lb</span>
+                    <input value="{{ senderWeightOz }}" onChange="{{ onSenderWeightOzChange }}" style="width:44px;box-sizing:border-box;border:1px solid hsl(142,40%,70%);border-radius:8px;padding:6px 7px;font-size:12.5px;font-family:inherit;outline:none;text-align:center;" />
+                    <span style="font-size:11px;color:hsl(142,40%,35%);">oz</span>
+                  </div>
+                </div>
+              </sc-if>
+            </div>
+
+            <button type="button" onClick="{{ senderContinuePackage }}" disabled="{{ senderPackageBlocked }}" style="{{ senderPackageContinueStyle }}">See shipping options</button>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ isSenderRates }}" hint-placeholder-val="{{ false }}">
+          <div>
+            <dc-import name="MorphProgressBar" nodes="{{ senderProgressNodes }}" style="margin-bottom:16px;" hint-size="100%,52px"></dc-import>
+            <h3 style="font-size:18px;font-weight:700;margin:0 0 4px;">Choose a shipping option</h3>
+            <p style="font-size:12px;color:hsl(210,7%,46%);margin:0 0 14px;">Jordan will pay for shipping.</p>
+            <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px;">
+              <sc-for list="{{ senderRates }}" as="rt" hint-placeholder-count="3">
+                <button type="button" onClick="{{ rt.onSelect }}" style="{{ rt.style }}">
+                  <span style="min-width:0;">
+                    <span style="display:flex;align-items:center;gap:6px;">
+                      <span style="font-size:13px;font-weight:700;">{{ rt.carrier }} {{ rt.service }}</span>
+                      <sc-if value="{{ rt.preferred }}" hint-placeholder-val="{{ false }}">
+                        <span style="font-size:9.5px;font-weight:700;color:hsl(214,89%,45%);background:hsl(214,89%,95%);padding:2px 6px;border-radius:999px;white-space:nowrap;">Preferred by Jordan</span>
+                      </sc-if>
+                    </span>
+                    <span style="display:block;font-size:11px;color:hsl(210,7%,46%);margin-top:3px;">{{ rt.days }}</span>
+                  </span>
+                  <span style="font-family:monospace;font-size:13px;color:hsl(210,7%,46%);flex-shrink:0;">{{ rt.tier }}</span>
+                </button>
+              </sc-for>
+            </div>
+            <div style="display:flex;gap:10px;">
+              <button type="button" onClick="{{ senderBackRates }}" style="border:1px solid hsl(210,14%,89%);background:#fff;border-radius:12px;padding:12px 16px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;">Back</button>
+              <button type="button" onClick="{{ senderContinueRates }}" disabled="{{ senderRatesBlocked }}" style="flex:1;{{ senderRatesContinueStyle }}">Continue</button>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ isSenderReview }}" hint-placeholder-val="{{ false }}">
+          <div>
+            <dc-import name="MorphProgressBar" nodes="{{ senderProgressNodes }}" style="margin-bottom:16px;" hint-size="100%,52px"></dc-import>
+            <h3 style="font-size:18px;font-weight:700;margin:0 0 12px;">Review and confirm</h3>
+            <div style="background:#fff;border:1px solid hsl(210,14%,89%);border-radius:14px;padding:14px;margin-bottom:10px;">
+              <div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:6px;"><span style="color:hsl(210,7%,46%);">From</span><span style="font-weight:600;text-align:right;">{{ senderFromSummary }}</span></div>
+              <div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:6px;"><span style="color:hsl(210,7%,46%);">To</span><span style="font-weight:600;text-align:right;">{{ senderToSummary }}</span></div>
+              <div style="padding-top:6px;border-top:1px solid hsl(210,14%,92%);">
+                <p style="margin:0 0 2px;font-size:12.5px;color:hsl(210,7%,46%);">Service</p>
+                <p style="margin:0;font-size:14px;font-weight:700;">{{ senderSelectedCarrier }} · {{ senderSelectedDays }}</p>
+              </div>
+              <p style="margin:6px 0 0;font-size:11.5px;color:hsl(210,7%,46%);">{{ senderEstimatedDelivery }}</p>
+            </div>
+            <div style="background:#fff;border:1px solid hsl(210,14%,89%);border-radius:14px;padding:14px;margin-bottom:14px;">
+              <label style="font-size:12.5px;font-weight:600;display:block;margin-bottom:6px;">Your email <span style="color:hsl(0,72%,51%);">*</span></label>
+              <input value="{{ senderEmail }}" onChange="{{ onSenderEmailChange }}" placeholder="you@example.com" style="width:100%;box-sizing:border-box;border:1px solid hsl(210,14%,89%);border-radius:10px;padding:9px 12px;font-size:13.5px;font-family:inherit;outline:none;margin-bottom:4px;" />
+              <p style="font-size:10.5px;color:hsl(210,7%,55%);margin:0 0 12px;">So we can send delivery updates and help if something goes wrong.</p>
+              <label style="display:flex;gap:8px;align-items:flex-start;font-size:12px;color:hsl(210,11%,25%);cursor:pointer;">
+                <input type="checkbox" checked="{{ senderShareContact }}" onChange="{{ toggleSenderShareContact }}" style="margin-top:2px;" />
+                Share my contact info with Jordan
+              </label>
+            </div>
+            <div style="display:flex;gap:10px;">
+              <button type="button" onClick="{{ senderBackReview }}" style="border:1px solid hsl(210,14%,89%);background:#fff;border-radius:12px;padding:12px 16px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;">Back</button>
+              <button type="button" onClick="{{ senderConfirm }}" disabled="{{ senderReviewBlocked }}" style="flex:1;{{ senderReviewStyle }}">Confirm &amp; generate label</button>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ isSenderDone }}" hint-placeholder-val="{{ false }}">
+          <div>
+            <div style="text-align:center;background:hsl(142,60%,96%);border:1px solid hsl(142,50%,80%);border-radius:16px;padding:24px 16px;margin-bottom:14px;">
+              <div style="width:44px;height:44px;border-radius:999px;background:hsl(142,71%,45%);color:#fff;font-size:22px;font-weight:800;display:flex;align-items:center;justify-content:center;margin:0 auto 10px;">✓</div>
+              <p style="margin:0;font-size:17px;font-weight:700;">Label ready</p>
+              <p style="margin:6px 0 0;font-size:12px;color:hsl(210,7%,46%);">Jordan already paid for shipping</p>
+            </div>
+            <button type="button" style="width:100%;background:hsl(214,89%,52%);color:#fff;border:none;border-radius:12px;padding:13px;font-size:14px;font-weight:600;font-family:inherit;margin-bottom:10px;">Print label</button>
+            <p style="text-align:center;font-size:12px;color:hsl(210,7%,46%);margin:0;">Tracking sent to {{ senderEmail }}</p>
+          </div>
+        </sc-if>
+
+      </div>
+
+      <div style="flex:1;min-width:260px;max-width:340px;">
+        <p style="font-size:11px;font-weight:700;color:hsl(210,7%,46%);text-transform:uppercase;letter-spacing:0.03em;margin:0 0 10px;">What to notice</p>
+        <ul style="margin:0;padding-left:18px;font-size:12.5px;color:hsl(210,11%,30%);line-height:1.9;">
+          <li>Only the fields the creator actually deferred show up here — never a field that was already answered.</li>
+          <li>The destination card only shows city/state, or a name the sender typed themselves — never a street address (Rule 7).</li>
+          <li>Rates show no prices, just a rough cost tier ($–$$$$) and a "Preferred by Jordan" badge — the sender never sees what Jordan pays.</li>
+          <li>The finale never mentions cost — "Jordan already paid for shipping" is the only money language the sender sees.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section id="motion-notes" style="max-width:900px;margin:0 auto;padding:24px 24px 60px;border-top:1px solid hsl(210,14%,89%);">
+    <h2 style="font-size:21px;font-weight:700;margin:28px 0 12px;">Motion notes</h2>
+    <div style="background:#fff;border:1px solid hsl(210,14%,89%);border-radius:16px;padding:22px;">
+      <ul style="margin:0;padding-left:18px;font-size:13.5px;color:hsl(210,11%,25%);line-height:2;">
+        <li><strong>Step transitions</strong> — keep the app's existing pattern: 250ms ease, 20px horizontal slide + fade, AnimatePresence mode="wait". No new timing needed.</li>
+        <li><strong>Progress node morph</strong> — 300ms color/background/border crossfade on the node itself (already just CSS transitions, no JS animation needed) plus a brief scale pulse (1 → 1.08 → 1, spring) on the exact node that flips to skipped, so the eye catches which question just changed.</li>
+        <li><strong>Outcome pill</strong> — crossfades background, border and text together over 300–350ms; pair with a 4px upward shift so it reads as a gentle flip rather than a flicker.</li>
+        <li><strong>Skip banner</strong> — height + opacity animate in/out (Framer's height:"auto" pattern, already used for validation errors in the codebase). Same easing on undo, reversed.</li>
+        <li><strong>Guestimator success</strong> — keep the existing spring checkmark pop (stiffness 400, damping 24) — it already works well, no change.</li>
+      </ul>
+    </div>
+  </section>
+
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+const RATE_DATA = [
+  { id: 'usps', carrier: 'USPS', service: 'Ground Advantage', price: '$8.40', days: '3–5 business days' },
+  { id: 'ups', carrier: 'UPS', service: 'Ground', price: '$11.20', days: '2–4 business days' },
+  { id: 'fedex', carrier: 'FedEx', service: '2Day', price: '$24.90', days: '2 business days' },
+];
+const SPEED_DATA = [
+  { id: 'economy', label: 'Economy', time: '5–8 days', range: '$13–$18' },
+  { id: 'standard', label: 'Standard', time: '3–5 days', range: '$21–$28' },
+  { id: 'express', label: 'Express', time: '1–3 days', range: '$50–$70' },
+];
+const CARRIER_DATA = [
+  { id: 'any', label: 'Any carrier' },
+  { id: 'usps', label: 'USPS' },
+  { id: 'ups', label: 'UPS' },
+  { id: 'fedex', label: 'FedEx' },
+];
+const CAP_DATA = [25, 50, 100, 150];
+
+class Component extends DCLogic {
+  state = {
+    step: 'destination',
+    signedIn: false,
+    destName: '', destStreet: '', destPhone: '', destEmail: '', destDeferred: false,
+    originName: '', originStreet: '', originPhone: '', originDeferred: false, originSender: null,
+    itemDesc: '', usedGuestimator: false, packageDeferred: false,
+    boxL: '10', boxW: '7', boxH: '4', weightLb: '2', weightOz: '3',
+    selectedRateId: null,
+    speed: 'standard', carrier: 'any', cap: 100,
+    emailVerified: false, paid: false, cardSaved: false,
+    copied: false, editingEmail: false, sawLinkBubble: false, showBubble: false,
+    senderScenario: 'package', senderStep: 'intro',
+    senderOriginName: '', senderOriginStreet: '', senderOriginPhone: '',
+    senderDestName: '', senderDestStreet: '', senderDestPhone: '',
+    senderItemDesc: '', senderUsedGuestimator: false, senderRateId: null,
+    senderBoxL: '10', senderBoxW: '7', senderBoxH: '4', senderWeightLb: '2', senderWeightOz: '3',
+    senderEmail: '', senderSaveInfo: false, senderShareContact: false,
+  };
+
+  isFlex() {
+    const s = this.state;
+    return s.destDeferred || s.originDeferred || s.packageDeferred;
+  }
+
+  reset = () => this.setState({
+    step: 'destination', signedIn: false,
+    destName: '', destStreet: '', destPhone: '', destEmail: '', destDeferred: false,
+    originName: '', originStreet: '', originPhone: '', originDeferred: false, originSender: null,
+    itemDesc: '', usedGuestimator: false, packageDeferred: false,
+    boxL: '10', boxW: '7', boxH: '4', weightLb: '2', weightOz: '3',
+    selectedRateId: null, speed: 'standard', carrier: 'any', cap: 100,
+    emailVerified: false, paid: false, cardSaved: false, copied: false,
+    editingEmail: false, sawLinkBubble: false, showBubble: false,
+  });
+
+  goto = (step) => this.setState({ step });
+  signIn = () => this.setState({ signedIn: true, emailVerified: true, destEmail: 'jordan@gmail.com' });
+
+  onDestNameChange = (e) => this.setState({ destName: e.target.value });
+  onDestStreetChange = (e) => this.setState({ destStreet: e.target.value });
+  onDestPhoneChange = (e) => this.setState({ destPhone: e.target.value });
+  onDestEmailChange = (e) => this.setState({ destEmail: e.target.value });
+  editEmail = () => this.setState({ editingEmail: true });
+  saveEmailEdit = () => this.setState({ editingEmail: false });
+  maybeShowBubble = (patch) => {
+    if (!this.state.sawLinkBubble) {
+      patch.showBubble = true;
+      patch.sawLinkBubble = true;
+      setTimeout(() => this.setState({ showBubble: false }), 3500);
+    }
+    this.setState(patch);
+  };
+  deferDestination = () => this.maybeShowBubble({ destDeferred: true });
+  undoDeferDestination = () => this.setState({ destDeferred: false });
+  useSavedAddress = () => this.setState({ destName: 'Jordan Ellis', destStreet: '1420 Maple Ave, Austin, TX 78701', destPhone: '(512) 555-0148' });
+
+  onOriginNameChange = (e) => this.setState({ originName: e.target.value });
+  onOriginStreetChange = (e) => this.setState({ originStreet: e.target.value });
+  onOriginPhoneChange = (e) => this.setState({ originPhone: e.target.value });
+  deferOrigin = () => this.maybeShowBubble({ originDeferred: true });
+  undoDeferOrigin = () => this.setState({ originDeferred: false });
+  claimSelfSender = () => this.setState({ originSender: 'self', originName: 'Jordan Ellis', originStreet: '1420 Maple Ave, Austin, TX 78701', originPhone: '(512) 555-0148' });
+
+  onItemDescChange = (e) => this.setState({ itemDesc: e.target.value });
+  runGuestimator = () => this.setState({ usedGuestimator: true, boxL: '10', boxW: '7', boxH: '4', weightLb: '2', weightOz: '3' });
+  onBoxLChange = (e) => this.setState({ boxL: e.target.value });
+  onBoxWChange = (e) => this.setState({ boxW: e.target.value });
+  onBoxHChange = (e) => this.setState({ boxH: e.target.value });
+  onWeightLbChange = (e) => this.setState({ weightLb: e.target.value });
+  onWeightOzChange = (e) => this.setState({ weightOz: e.target.value });
+  deferPackage = () => this.maybeShowBubble({ packageDeferred: true });
+  undoDeferPackage = () => this.setState({ packageDeferred: false });
+
+  undoSkip = () => this.setState({ destDeferred: false, originDeferred: false, packageDeferred: false });
+
+  continueFrom(step) {
+    if (step === 'destination') { this.setState({ step: 'origin' }); return; }
+    if (step === 'origin') { this.setState({ step: 'package' }); return; }
+    if (step === 'package') { this.setState({ step: 'shipping' }); return; }
+    if (step === 'shipping') { this.setState({ step: this.state.signedIn ? 'payment' : 'verify' }); return; }
+    if (step === 'verify') { this.setState({ emailVerified: true, step: 'payment' }); return; }
+    if (step === 'payment') {
+      if (this.isFlex()) this.setState({ cardSaved: true, step: 'done' });
+      else this.setState({ paid: true, step: 'done' });
+    }
+  }
+
+  backFrom(step) {
+    const order = ['destination', 'origin', 'package', 'shipping', 'verify', 'payment', 'done'];
+    let idx = order.indexOf(step) - 1;
+    while (idx > 0 && order[idx] === 'verify' && this.state.signedIn) idx--;
+    this.setState({ step: order[Math.max(idx, 0)] });
+  }
+
+  canContinue(step) {
+    const s = this.state;
+    if (step === 'destination') return !!(s.destDeferred || (s.destName.trim() && s.destStreet.trim()));
+    if (step === 'origin') return !!(s.originDeferred || (s.originName.trim() && s.originStreet.trim()));
+    if (step === 'package') return !!(s.packageDeferred || s.usedGuestimator);
+    if (step === 'shipping') return this.isFlex() || !!s.selectedRateId;
+    if (step === 'verify') return !!(s.signedIn || /\S+@\S+\.\S+/.test(s.destEmail));
+    return true;
+  }
+
+  copyLink = () => {
+    try { navigator.clipboard.writeText('https://sendmo.co/s/AB3F9Q'); } catch (e) {}
+    this.setState({ copied: true });
+    setTimeout(() => this.setState({ copied: false }), 1400);
+  };
+
+  setSenderScenario = (v) => this.setState({
+    senderScenario: v, senderStep: 'intro',
+    senderOriginName: '', senderOriginStreet: '', senderOriginPhone: '',
+    senderDestName: '', senderDestStreet: '', senderDestPhone: '',
+    senderItemDesc: '', senderUsedGuestimator: false, senderRateId: null,
+    senderBoxL: '10', senderBoxW: '7', senderBoxH: '4', senderWeightLb: '2', senderWeightOz: '3',
+    senderEmail: '', senderSaveInfo: false, senderShareContact: false,
+  });
+  senderResetDemo = () => this.setSenderScenario(this.state.senderScenario);
+  senderGoto = (step) => this.setState({ senderStep: step });
+  onSenderOriginNameChange = (e) => this.setState({ senderOriginName: e.target.value });
+  onSenderOriginStreetChange = (e) => this.setState({ senderOriginStreet: e.target.value });
+  onSenderOriginPhoneChange = (e) => this.setState({ senderOriginPhone: e.target.value });
+  onSenderDestNameChange = (e) => this.setState({ senderDestName: e.target.value });
+  onSenderDestStreetChange = (e) => this.setState({ senderDestStreet: e.target.value });
+  onSenderDestPhoneChange = (e) => this.setState({ senderDestPhone: e.target.value });
+  onSenderItemDescChange = (e) => this.setState({ senderItemDesc: e.target.value });
+  runSenderGuestimator = () => this.setState({ senderUsedGuestimator: true, senderBoxL: '10', senderBoxW: '7', senderBoxH: '4', senderWeightLb: '2', senderWeightOz: '3' });
+  onSenderBoxLChange = (e) => this.setState({ senderBoxL: e.target.value });
+  onSenderBoxWChange = (e) => this.setState({ senderBoxW: e.target.value });
+  onSenderBoxHChange = (e) => this.setState({ senderBoxH: e.target.value });
+  onSenderWeightLbChange = (e) => this.setState({ senderWeightLb: e.target.value });
+  onSenderWeightOzChange = (e) => this.setState({ senderWeightOz: e.target.value });
+  onSenderEmailChange = (e) => this.setState({ senderEmail: e.target.value });
+  senderUseGoogle = () => this.setState({ senderEmail: 'jamie.p@gmail.com', senderSaveInfo: true });
+  toggleSenderSaveInfo = () => this.setState({ senderSaveInfo: !this.state.senderSaveInfo });
+  toggleSenderShareContact = () => this.setState({ senderShareContact: !this.state.senderShareContact });
+
+  senderCanContinue(step) {
+    const s = this.state;
+    if (step === 'package') {
+      const needsOrigin = s.senderScenario !== 'package';
+      const needsDest = s.senderScenario === 'none';
+      const originOk = !needsOrigin || (s.senderOriginName.trim() && s.senderOriginStreet.trim());
+      const destOk = !needsDest || (s.senderDestName.trim() && s.senderDestStreet.trim());
+      return !!(originOk && destOk && s.senderUsedGuestimator);
+    }
+    if (step === 'rates') return !!s.senderRateId;
+    if (step === 'review') return !!(s.senderEmail.trim() && /\S+@\S+\.\S+/.test(s.senderEmail));
+    return true;
+  }
+  senderContinueFrom(step) {
+    const order = ['intro', 'package', 'rates', 'review', 'done'];
+    const idx = order.indexOf(step);
+    this.setState({ senderStep: order[Math.min(idx + 1, order.length - 1)] });
+  }
+  senderBackFrom(step) {
+    const order = ['intro', 'package', 'rates', 'review', 'done'];
+    const idx = order.indexOf(step);
+    this.setState({ senderStep: order[Math.max(idx - 1, 0)] });
+  }
+
+  contBtnStyle(enabled) {
+    return `width:100%;background:${enabled ? 'hsl(214,89%,52%)' : 'hsl(210,14%,91%)'};color:${enabled ? '#fff' : 'hsl(210,7%,62%)'};border:none;border-radius:12px;padding:13px 16px;font-size:14.5px;font-weight:600;cursor:${enabled ? 'pointer' : 'not-allowed'};font-family:inherit;`;
+  }
+
+  toggleBtnStyle(active) {
+    return `flex:1;border:none;border-radius:8px;padding:8px 6px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;transition:background 150ms ease,color 150ms ease;background:${active ? '#fff' : 'transparent'};color:${active ? 'hsl(210,11%,15%)' : 'hsl(210,7%,46%)'};box-shadow:${active ? '0 1px 2px rgba(16,24,40,0.08)' : 'none'};`;
+  }
+
+  snapshot(nodeStates) {
+    const labels = ['Destination', 'Origin', 'Package', 'Shipping'];
+    return labels.map((label, i) => ({ label, state: nodeStates[i] }));
+  }
+
+  renderVals() {
+    const s = this.state;
+    const flex = this.isFlex();
+
+    const destFilled = !!(s.destName.trim() && s.destStreet.trim());
+    const originFilled = !!(s.originName.trim() && s.originStreet.trim());
+    const packageFilled = s.usedGuestimator;
+    const shippingDoneStep = ['verify', 'payment', 'done'].includes(s.step);
+
+    const nodeState = (deferred, filled, current) => deferred ? 'skipped' : filled ? 'done' : current ? 'current' : 'upcoming';
+    const verifyState = (s.step === 'verify') ? 'current' : ((s.signedIn || s.emailVerified || ['payment', 'done'].includes(s.step)) ? 'done' : 'upcoming');
+    const payState = (s.step === 'payment') ? 'current' : (s.step === 'done' ? 'done' : 'upcoming');
+    const progressNodes = [
+      { label: 'Destination', state: nodeState(s.destDeferred, destFilled, s.step === 'destination') },
+      { label: 'Origin', state: nodeState(s.originDeferred, originFilled, s.step === 'origin') },
+      { label: 'Package', state: nodeState(s.packageDeferred, packageFilled, s.step === 'package') },
+      { label: 'Shipping', state: shippingDoneStep ? 'done' : (s.step === 'shipping' ? 'current' : 'upcoming') },
+      { label: 'Contact', state: verifyState },
+      { label: 'Payment', state: payState },
+    ];
+
+    const stepLabelMap = {
+      destination: '1. Destination', origin: '2. Origin', package: '3. Package', shipping: '4. Shipping',
+      verify: 'Contact', payment: 'Payment', done: flex ? 'Share' : 'Label',
+    };
+    const stepChips = ['destination', 'origin', 'package', 'shipping', 'verify', 'payment', 'done'].map((key) => {
+      const active = key === s.step;
+      return {
+        key, label: stepLabelMap[key], active,
+        style: `padding:6px 12px;border-radius:999px;font-size:12px;font-weight:600;border:1px solid ${active ? 'hsl(214,89%,52%)' : 'hsl(210,14%,89%)'};background:${active ? 'hsl(214,89%,52%)' : '#fff'};color:${active ? '#fff' : 'hsl(210,7%,46%)'};cursor:pointer;white-space:nowrap;font-family:inherit;`,
+        onClick: () => this.setState({ step: key }),
+      };
+    });
+
+    const rates = RATE_DATA.map((r) => {
+      const selected = r.id === s.selectedRateId;
+      return {
+        ...r, selected, onSelect: () => this.setState({ selectedRateId: r.id }),
+        style: `width:100%;text-align:left;display:flex;align-items:center;justify-content:space-between;gap:10px;border:1.5px solid ${selected ? 'hsl(214,89%,52%)' : 'hsl(210,14%,89%)'};background:${selected ? 'hsl(214,89%,97%)' : '#fff'};border-radius:12px;padding:11px 13px;cursor:pointer;font-family:inherit;box-sizing:border-box;`,
+      };
+    });
+    const selectedRateObj = rates.find((r) => r.selected) || null;
+
+    const speeds = SPEED_DATA.map((sp) => {
+      const selected = sp.id === s.speed;
+      return {
+        ...sp, onSelect: () => this.setState({ speed: sp.id }),
+        style: `flex:1;text-align:center;border:none;border-radius:10px;padding:9px 4px;cursor:pointer;font-family:inherit;background:${selected ? '#fff' : 'transparent'};color:${selected ? 'hsl(210,11%,15%)' : 'hsl(210,7%,46%)'};box-shadow:${selected ? '0 1px 2px rgba(16,24,40,0.08)' : 'none'};`,
+      };
+    });
+    const selectedSpeedObj = speeds.find((sp) => sp.id === s.speed) || SPEED_DATA[1];
+
+    const carriers = CARRIER_DATA.map((c) => {
+      const selected = c.id === s.carrier;
+      return {
+        ...c, onSelect: () => this.setState({ carrier: c.id }),
+        style: `padding:7px 12px;border-radius:9px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;border:1px solid ${selected ? 'hsl(214,89%,52%)' : 'hsl(210,14%,89%)'};background:${selected ? 'hsl(214,89%,96%)' : '#fff'};color:${selected ? 'hsl(214,89%,42%)' : 'hsl(210,7%,46%)'};`,
+      };
+    });
+
+    const caps = CAP_DATA.map((v) => {
+      const selected = v === s.cap;
+      return {
+        value: v, label: '$' + v, onSelect: () => this.setState({ cap: v }),
+        style: `text-align:left;border-radius:10px;padding:9px 11px;cursor:pointer;font-family:inherit;border:1px solid ${selected ? 'hsl(214,89%,52%)' : 'hsl(210,14%,89%)'};background:${selected ? 'hsl(214,89%,96%)' : '#fff'};font-size:13px;font-weight:700;color:${selected ? 'hsl(214,89%,42%)' : 'hsl(210,11%,15%)'};`,
+      };
+    });
+
+    const stillNeeded = [];
+    if (s.destDeferred) stillNeeded.push('the delivery address');
+    if (s.originDeferred) stillNeeded.push('the ship-from address');
+    if (s.packageDeferred) stillNeeded.push('the package details');
+    let doPart;
+    if (stillNeeded.length === 0) doPart = "They just print it and ship — everything else is already set.";
+    else if (stillNeeded.length === 1) doPart = `They'll add ${stillNeeded[0]}, then print the label.`;
+    else doPart = `They'll add ${stillNeeded.slice(0, -1).join(', ')} and ${stillNeeded[stillNeeded.length - 1]}, then print the label.`;
+    const senderNarrative = `${doPart} You're only charged when they ship — up to $${s.cap}, never more.`;
+
+    return {
+      step: s.step,
+      isDestination: s.step === 'destination', isOrigin: s.step === 'origin', isPackage: s.step === 'package',
+      isShipping: s.step === 'shipping', isVerify: s.step === 'verify', isPayment: s.step === 'payment', isDone: s.step === 'done',
+      isFlexFlag: flex, isFullFlag: !flex,
+      signedIn: s.signedIn, signedOut: !s.signedIn,
+      destDeferred: s.destDeferred, destAnswering: !s.destDeferred,
+      originDeferred: s.originDeferred, originAnswering: !s.originDeferred,
+      packageDeferred: s.packageDeferred, packageAnswering: !s.packageDeferred,
+      showSavedAddressChip: s.signedIn && !destFilled && !s.destDeferred,
+      showSelfChip: s.signedIn && s.originSender === null && !s.originDeferred,
+      originNamePlaceholder: s.originSender === 'self' ? 'Your name' : "Sender's name",
+      destName: s.destName, destStreet: s.destStreet, destPhone: s.destPhone, destEmail: s.destEmail,
+      originName: s.originName, originStreet: s.originStreet, originPhone: s.originPhone,
+      itemDesc: s.itemDesc, usedGuestimator: s.usedGuestimator,
+      boxL: s.boxL, boxW: s.boxW, boxH: s.boxH, weightLb: s.weightLb, weightOz: s.weightOz,
+      onBoxLChange: this.onBoxLChange, onBoxWChange: this.onBoxWChange, onBoxHChange: this.onBoxHChange,
+      onWeightLbChange: this.onWeightLbChange, onWeightOzChange: this.onWeightOzChange,
+      cap: s.cap,
+      showBubble: s.showBubble,
+      progressNodes,
+      destToggleHaveStyle: this.toggleBtnStyle(!s.destDeferred),
+      destToggleDeferStyle: this.toggleBtnStyle(s.destDeferred),
+      destCaption: s.destDeferred ? "They'll enter the delivery address when they use your link — you set a cap and pay when they ship." : 'Enter their name, address, and phone.',
+      destFieldsStyle: `transition:opacity 200ms ease;opacity:${s.destDeferred ? 0.4 : 1};pointer-events:${s.destDeferred ? 'none' : 'auto'};`,
+      originToggleHaveStyle: this.toggleBtnStyle(!s.originDeferred),
+      originToggleDeferStyle: this.toggleBtnStyle(s.originDeferred),
+      originCaption: s.originDeferred ? "They'll add their own address when they use your link." : "Enter the sender's name, address, and phone.",
+      originFieldsStyle: `transition:opacity 200ms ease;opacity:${s.originDeferred ? 0.4 : 1};pointer-events:${s.originDeferred ? 'none' : 'auto'};`,
+      packageToggleHaveStyle: this.toggleBtnStyle(!s.packageDeferred),
+      packageToggleDeferStyle: this.toggleBtnStyle(s.packageDeferred),
+      packageCaption: s.packageDeferred ? "They'll describe the package when they use your link." : "Describe it below and we'll estimate the size and weight.",
+      packageFieldsStyle: `transition:opacity 200ms ease;opacity:${s.packageDeferred ? 0.4 : 1};pointer-events:${s.packageDeferred ? 'none' : 'auto'};`,
+      verifyPurposeText: flex ? 'activate your link' : 'take payment',
+      verifyBlocked: !this.canContinue('verify'),
+      verifyContinueStyle: this.contBtnStyle(this.canContinue('verify')),
+      outcomeLabel: flex ? 'Shipping link' : 'Prepaid label',
+      stepChips,
+      resetDemo: this.reset,
+      onDestNameChange: this.onDestNameChange, onDestStreetChange: this.onDestStreetChange, onDestPhoneChange: this.onDestPhoneChange, onDestEmailChange: this.onDestEmailChange,
+      deferDestination: this.deferDestination, undoDeferDestination: this.undoDeferDestination, useSavedAddress: this.useSavedAddress, signIn: this.signIn,
+      destinationBlocked: !this.canContinue('destination'),
+      destContinueStyle: this.contBtnStyle(this.canContinue('destination')),
+      continueDestination: () => this.continueFrom('destination'),
+
+      onOriginNameChange: this.onOriginNameChange, onOriginStreetChange: this.onOriginStreetChange, onOriginPhoneChange: this.onOriginPhoneChange,
+      deferOrigin: this.deferOrigin, undoDeferOrigin: this.undoDeferOrigin, claimSelfSender: this.claimSelfSender,
+      originBlocked: !this.canContinue('origin'),
+      originContinueStyle: this.contBtnStyle(this.canContinue('origin')),
+      continueOrigin: () => this.continueFrom('origin'),
+      backOrigin: () => this.backFrom('origin'),
+
+      onItemDescChange: this.onItemDescChange, runGuestimator: this.runGuestimator, deferPackage: this.deferPackage, undoDeferPackage: this.undoDeferPackage,
+      packageBlocked: !this.canContinue('package'),
+      packageContinueStyle: this.contBtnStyle(this.canContinue('package')),
+      continuePackage: () => this.continueFrom('package'),
+      backPackage: () => this.backFrom('package'),
+
+      rates, selectedRateId: s.selectedRateId, selectedPrice: selectedRateObj ? selectedRateObj.price : '—', selectedService: selectedRateObj ? (selectedRateObj.carrier + ' ' + selectedRateObj.service) : '—',
+      speeds, selectedSpeedRange: selectedSpeedObj.range, carriers, caps,
+      shippingBlocked: !this.canContinue('shipping'),
+      shippingContinueStyle: this.contBtnStyle(this.canContinue('shipping')),
+      continueShipping: () => this.continueFrom('shipping'),
+      backShipping: () => this.backFrom('shipping'),
+
+      otpBoxes: [0, 1, 2, 3, 4, 5],
+      verifyContinue: () => this.continueFrom('verify'),
+      useGoogleAtVerify: () => { this.signIn(); this.continueFrom('verify'); },
+      backVerify: () => this.backFrom('verify'),
+
+      destSummary: s.destName || 'Recipient', originSummary: s.originName || 'Sender',
+      summaryTo: s.destDeferred ? 'Sender fills this in' : (s.destName.trim() || 'Recipient'),
+      summaryFrom: s.originDeferred ? 'Sender fills this in' : (s.originName.trim() || 'Sender'),
+      summaryService: flex
+        ? (s.carrier === 'any' ? `Sender picks · ${selectedSpeedObj.label} speed` : `${(CARRIER_DATA.find(c => c.id === s.carrier) || {}).label || s.carrier} preferred · ${selectedSpeedObj.label} speed`)
+        : (selectedRateObj ? `${selectedRateObj.carrier} ${selectedRateObj.service}` : '—'),
+      summaryCost: flex ? `Up to $${s.cap}` : (selectedRateObj ? selectedRateObj.price : '—'),
+      payContinue: () => this.continueFrom('payment'),
+      backPayment: () => this.backFrom('payment'),
+
+      senderNarrative, copyLink: this.copyLink, copyLabel: s.copied ? 'Copied!' : 'Copy link',
+
+      snapAllUpcoming: this.snapshot(['upcoming', 'upcoming', 'upcoming', 'upcoming']),
+      snapAnsweringNormally: this.snapshot(['done', 'current', 'upcoming', 'upcoming']),
+      snapJustSkipped: this.snapshot(['done', 'skipped', 'upcoming', 'upcoming']),
+      snapUndone: this.snapshot(['done', 'done', 'current', 'upcoming']),
+      snapDoneLink: this.snapshot(['done', 'skipped', 'skipped', 'done']),
+
+      ...this.senderRenderVals(),
+    };
+  }
+
+  senderRenderVals() {
+    const s = this.state;
+    const needsOrigin = s.senderScenario !== 'package';
+    const needsDest = s.senderScenario === 'none';
+
+    const scenarioDefs = [
+      { id: 'package', label: 'Only package left' },
+      { id: 'originPackage', label: 'Origin + package left' },
+      { id: 'none', label: 'Nothing filled in' },
+    ];
+    const senderScenarioOptions = scenarioDefs.map((d) => {
+      const active = d.id === s.senderScenario;
+      return {
+        ...d, onSelect: () => this.setSenderScenario(d.id),
+        style: `flex:1;text-align:center;border:none;border-radius:9px;padding:8px 6px;font-size:11.5px;font-weight:700;cursor:pointer;font-family:inherit;background:${active ? '#fff' : 'transparent'};color:${active ? 'hsl(210,11%,15%)' : 'hsl(210,7%,46%)'};box-shadow:${active ? '0 1px 2px rgba(16,24,40,0.08)' : 'none'};`,
+      };
+    });
+
+    const introHeadlines = {
+      package: { h: "You're sending a package to Jordan", sub: "You'll describe what's inside — everything else is set." },
+      originPackage: { h: "You're sending a package to Jordan", sub: "You'll add your return address and describe the package." },
+      none: { h: "You're sending a package — you choose where it goes", sub: "Postage is covered — you'll fill in every detail." },
+    };
+    const intro = introHeadlines[s.senderScenario];
+
+    const senderHeaderText = s.senderScenario === 'none'
+      ? (s.senderDestName.trim() ? `Shipping to ${s.senderDestName.trim()}` : 'Shipping to — you choose the destination')
+      : 'Shipping to Jordan Ellis · Austin, TX';
+
+    const stepOrder = ['package', 'rates', 'review'];
+    const stepIdx = stepOrder.indexOf(s.senderStep);
+    const infoStepLabel = s.senderScenario === 'package' ? 'Package'
+      : s.senderScenario === 'originPackage' ? 'Your info'
+      : 'Destination & info';
+    const senderProgressNodes = [infoStepLabel, 'Shipping', 'Review'].map((label, i) => ({
+      label, state: i < stepIdx ? 'done' : (i === stepIdx ? 'current' : 'upcoming'),
+    }));
+
+    const RATE_TIERS = [
+      { id: 'usps', carrier: 'USPS', service: 'Ground Advantage', days: '3–5 business days', tier: '$', minDays: 3, maxDays: 5 },
+      { id: 'ups', carrier: 'UPS', service: 'Ground', days: '2–4 business days', tier: '$$', preferred: true, minDays: 2, maxDays: 4 },
+      { id: 'fedex', carrier: 'FedEx', service: '2Day', days: '2 business days', tier: '$$$$', minDays: 2, maxDays: 2 },
+    ];
+    const fmtDate = (d) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    const estimateDelivery = (minDays, maxDays) => {
+      const start = new Date();
+      const end = new Date();
+      start.setDate(start.getDate() + minDays);
+      end.setDate(end.getDate() + maxDays);
+      return minDays === maxDays ? `Arrives ${fmtDate(start)}` : `Arrives ${fmtDate(start)}–${fmtDate(end)}`;
+    };
+    const senderRates = RATE_TIERS.map((r) => {
+      const selected = r.id === s.senderRateId;
+      return {
+        ...r, onSelect: () => this.setState({ senderRateId: r.id }),
+        style: `width:100%;text-align:left;display:flex;align-items:center;justify-content:space-between;gap:10px;border:1.5px solid ${selected ? 'hsl(214,89%,52%)' : 'hsl(210,14%,89%)'};background:${selected ? 'hsl(214,89%,97%)' : '#fff'};border-radius:12px;padding:11px 13px;cursor:pointer;font-family:inherit;box-sizing:border-box;`,
+      };
+    });
+    const senderSelectedRate = senderRates.find((r) => r.id === s.senderRateId) || null;
+    const senderEstimatedDelivery = senderSelectedRate ? estimateDelivery(senderSelectedRate.minDays, senderSelectedRate.maxDays) : '—';
+
+    const senderFromSummary = s.senderScenario === 'package' ? 'Alex Rivera, Denver, CO' : (s.senderOriginName.trim() || 'You');
+    const senderToSummary = s.senderScenario === 'none' ? (s.senderDestName.trim() || 'Recipient') : 'Jordan Ellis, Austin, TX';
+
+    const stepLabel = { intro: 'Intro', package: 'Package', rates: 'Rates', review: 'Review', done: 'Done' };
+    const senderStepChips = ['intro', 'package', 'rates', 'review', 'done'].map((key) => {
+      const active = key === s.senderStep;
+      return {
+        key, label: stepLabel[key],
+        style: `padding:6px 12px;border-radius:999px;font-size:12px;font-weight:600;border:1px solid ${active ? 'hsl(214,89%,52%)' : 'hsl(210,14%,89%)'};background:${active ? 'hsl(214,89%,52%)' : '#fff'};color:${active ? '#fff' : 'hsl(210,7%,46%)'};cursor:pointer;white-space:nowrap;font-family:inherit;`,
+        onClick: () => this.senderGoto(key),
+      };
+    });
+
+    return {
+      senderScenarioOptions,
+      senderStepChips,
+      senderScreenLabel: 'sender-' + s.senderStep,
+      senderResetDemo: this.senderResetDemo,
+      isSenderIntro: s.senderStep === 'intro', isSenderPackage: s.senderStep === 'package',
+      isSenderRates: s.senderStep === 'rates', isSenderReview: s.senderStep === 'review', isSenderDone: s.senderStep === 'done',
+      senderNeedsOrigin: needsOrigin, senderNeedsDest: needsDest, senderOriginKnown: !needsOrigin,
+      senderIntroHeadline: intro.h, senderIntroSub: intro.sub,
+      senderHeaderText,
+      senderProgressNodes,
+      senderGoPackage: () => this.senderGoto('package'),
+      senderOriginName: s.senderOriginName, senderOriginStreet: s.senderOriginStreet, senderOriginPhone: s.senderOriginPhone,
+      onSenderOriginNameChange: this.onSenderOriginNameChange, onSenderOriginStreetChange: this.onSenderOriginStreetChange, onSenderOriginPhoneChange: this.onSenderOriginPhoneChange,
+      senderDestName: s.senderDestName, senderDestStreet: s.senderDestStreet, senderDestPhone: s.senderDestPhone,
+      onSenderDestNameChange: this.onSenderDestNameChange, onSenderDestStreetChange: this.onSenderDestStreetChange, onSenderDestPhoneChange: this.onSenderDestPhoneChange,
+      senderItemDesc: s.senderItemDesc, senderUsedGuestimator: s.senderUsedGuestimator,
+      onSenderItemDescChange: this.onSenderItemDescChange, runSenderGuestimator: this.runSenderGuestimator,
+      senderBoxL: s.senderBoxL, senderBoxW: s.senderBoxW, senderBoxH: s.senderBoxH,
+      senderWeightLb: s.senderWeightLb, senderWeightOz: s.senderWeightOz,
+      onSenderBoxLChange: this.onSenderBoxLChange, onSenderBoxWChange: this.onSenderBoxWChange, onSenderBoxHChange: this.onSenderBoxHChange,
+      onSenderWeightLbChange: this.onSenderWeightLbChange, onSenderWeightOzChange: this.onSenderWeightOzChange,
+      senderPackageBlocked: !this.senderCanContinue('package'),
+      senderPackageContinueStyle: this.contBtnStyle(this.senderCanContinue('package')),
+      senderContinuePackage: () => this.senderContinueFrom('package'),
+      senderBackPackage: () => this.senderBackFrom('package'),
+      senderRates,
+      senderRateId: s.senderRateId,
+      senderRatesBlocked: !this.senderCanContinue('rates'),
+      senderRatesContinueStyle: this.contBtnStyle(this.senderCanContinue('rates')),
+      senderContinueRates: () => this.senderContinueFrom('rates'),
+      senderBackRates: () => this.senderBackFrom('rates'),
+      senderFromSummary, senderToSummary,
+      senderSelectedCarrier: senderSelectedRate ? `${senderSelectedRate.carrier} ${senderSelectedRate.service}` : '—',
+      senderSelectedDays: senderSelectedRate ? senderSelectedRate.days : '—',
+      senderEstimatedDelivery,
+      senderEmail: s.senderEmail, onSenderEmailChange: this.onSenderEmailChange, senderUseGoogle: this.senderUseGoogle,
+      senderSaveInfo: s.senderSaveInfo, senderShareContact: s.senderShareContact,
+      toggleSenderSaveInfo: this.toggleSenderSaveInfo, toggleSenderShareContact: this.toggleSenderShareContact,
+      senderReviewBlocked: !this.senderCanContinue('review'),
+      senderReviewStyle: this.contBtnStyle(this.senderCanContinue('review')),
+      senderConfirm: () => this.senderContinueFrom('review'),
+      senderBackReview: () => this.senderBackFrom('review'),
+    };
+  }
+}
+
+</script>
+</body>
+</html>

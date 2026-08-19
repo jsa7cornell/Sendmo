@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<div style="display:flex;flex-direction:column;align-items:center;gap:10px;width:100%;font-family:'Inter',sans-serif;">
+  <div style="display:flex;align-items:flex-start;width:100%;">
+    <sc-for list="{{ nodes }}" as="node" hint-placeholder-count="4">
+      <div style="display:flex;align-items:center;flex:1;">
+        <div style="display:flex;flex-direction:column;align-items:center;gap:4px;flex-shrink:0;width:42px;">
+          <div style="{{ node.circleStyle }}">{{ node.symbol }}</div>
+          <span style="{{ node.labelStyle }}">{{ node.label }}</span>
+        </div>
+        <sc-if value="{{ node.connector }}" hint-placeholder-val="{{ true }}">
+          <div style="flex:1;height:2px;margin:0 1px 15px;min-width:6px;transition:background 300ms ease;background:{{ node.lineBg }};"></div>
+        </sc-if>
+      </div>
+    </sc-for>
+  </div>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:375,&quot;height&quot;:80},&quot;nodes&quot;:{&quot;editor&quot;:null,&quot;default&quot;:[],&quot;tsType&quot;:&quot;Array&lt;{label:string,state:string,small?:boolean}&gt;&quot;},&quot;outcomeLabel&quot;:{&quot;editor&quot;:null,&quot;default&quot;:&quot;Prepaid label&quot;,&quot;tsType&quot;:&quot;string&quot;},&quot;outcomeIsLink&quot;:{&quot;editor&quot;:null,&quot;default&quot;:false,&quot;tsType&quot;:&quot;boolean&quot;}}">
+class Component extends DCLogic {
+  renderVals() {
+    const rawNodes = this.props.nodes || [];
+    const nodes = rawNodes.map((n, i, arr) => {
+      const small = !!n.small;
+      const symbol = small ? '' : String(i + 1);
+      let bg = '#fff', border = '2px solid hsl(210,14%,89%)', color = 'hsl(210,7%,46%)';
+      if (n.state === 'done') {
+        bg = 'hsl(214,89%,52%)'; border = '2px solid hsl(214,89%,52%)'; color = '#fff';
+      } else if (n.state === 'current') {
+        bg = 'hsl(214,89%,96%)'; border = '2px solid hsl(214,89%,52%)'; color = 'hsl(214,89%,45%)';
+      } else if (n.state === 'skipped') {
+        bg = 'oklch(72% 0.15 70)'; border = '2px solid oklch(72% 0.15 70)'; color = '#fff';
+      }
+      const size = small ? 21 : 30;
+      const fontSize = small ? 10 : 13;
+      const doneOrSkipped = n.state === 'done' || n.state === 'skipped';
+      return {
+        label: n.label,
+        symbol,
+        circleStyle: `width:${size}px;height:${size}px;border-radius:999px;display:flex;align-items:center;justify-content:center;font-size:${fontSize}px;font-weight:700;transition:background 300ms ease,border-color 300ms ease,color 300ms ease;background:${bg};border:${border};color:${color};`,
+        labelStyle: `font-size:${small ? '8.5px' : '9.5px'};font-weight:600;color:hsl(210,7%,46%);white-space:nowrap;`,
+        connector: i < arr.length - 1,
+        lineBg: doneOrSkipped ? 'hsl(214,89%,52%)' : 'hsl(210,14%,89%)',
+      };
+    });
+    const isLink = !!this.props.outcomeIsLink;
+    return {
+      nodes,
+      outcomeLabel: this.props.outcomeLabel ?? 'Prepaid label',
+      outcomeBg: isLink ? 'oklch(97% 0.02 70)' : 'hsl(214,89%,96%)',
+      outcomeBorder: isLink ? 'oklch(72% 0.15 70)' : 'hsl(214,89%,52%)',
+      outcomeColor: isLink ? 'oklch(45% 0.1 70)' : 'hsl(214,89%,40%)',
+    };
+  }
+}
+
+</script>
+</body>
+</html>
