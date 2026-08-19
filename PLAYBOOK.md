@@ -353,7 +353,21 @@ No production-path stubs remain. (Minor non-production leftovers: `src/pages/Sen
 
     If `github-actions` is absent from that list, no tests ran on that commit. Resolve the conflict (merge `main` in — rebasing a pushed branch needs a force-push, which is gated) and confirm a run is created. **Reference incident:** 2026-08-18 — three commits on PR #64 sat with zero test coverage while the session reported "waiting on CI." The tell was that a newly-pushed commit failed to cancel the previous run via the concurrency group: no run existed to cancel.
 
-    **A green "Provide Tests" run does not mean the e2e suite passed.** The ESLint and both Playwright steps run `|| true` *and* `continue-on-error: true`, so they report `success` no matter what. The `|| true` is the load-bearing half: it makes the shell exit 0, so `continue-on-error` never engages and GitHub records a clean green rather than a yellow warning. To actually check e2e, download the report and read its stats:
+    **What a green "Provide Tests" run does and does not certify** (corrected 2026-08-19 — this paragraph described the pre-2026-08-18 config and had been wrong on `main` for a day):
+
+    | Step | Config | Blocking? |
+    |---|---|---|
+    | ESLint | `\|\| true` + `continue-on-error` | No — always green. 27 pre-existing errors, tracked separately. |
+    | `tsc -b` | bare | **Yes** |
+    | Unit tests | bare | **Yes** |
+    | Playwright e2e (mocked) | bare `npm run test:e2e` | **Yes — a red result stops the merge** |
+    | Authed e2e (real Supabase) | `continue-on-error`, no `\|\| true` | No — renders as a visible warning |
+
+    So a fully green run **does** certify the mocked suite, and **does not** certify the authed step — that one depends on live Supabase, and gating every merge on a third party's uptime was rejected deliberately. Check the run's annotations for an authed-step failure. Note `continue-on-error` alone is honest (yellow warning); it was `\|\| true` that made a failure render as a clean green, because the shell exited 0 so `continue-on-error` never engaged.
+
+    **As of 2026-08-19 `main` is also gated by ruleset `21062139`**: pull request required, force-push and deletion blocked, zero bypass actors, and `Lint, Unit, and E2E Tests` is a required status check. Direct pushes to `main` are refused. The required check is what closes the missing-check-suite hole above — a check that never reported counts as *not passed*, so an absent run now fails loudly instead of reading as "checks are fine."
+
+    To read the actual e2e numbers rather than the step colour, download the report:
 
     ```bash
     gh run download <run-id> -R jsa7cornell/Sendmo -n playwright-report-main

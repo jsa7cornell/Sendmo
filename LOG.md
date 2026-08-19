@@ -12,6 +12,40 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-19] The CI docs told every agent that a red e2e suite doesn't block
+
+**Category:** fix | Docs / CI
+**Cross-link:** F6 of [proposals/2026-08-19_shipping-process-and-stale-branch-rca_reviewed-2026-08-19.md](proposals/2026-08-19_shipping-process-and-stale-branch-rca_reviewed-2026-08-19.md) | corrects PLAYBOOK Rule 21 and TESTING.md §CI
+
+**Browser-verified:**
+  n/a-category: copy-only
+  n/a-reason: Two prose corrections. No code, no config, no rendered surface. Every replacement claim was checked line-by-line against `.github/workflows/test.yml` on `main` — table below.
+
+**What was wrong.** Both docs described the pre-2026-08-18 workflow:
+
+- **PLAYBOOK Rule 21** — *"The ESLint and both Playwright steps run `|| true` and `continue-on-error: true`, so they report `success` no matter what."* The mocked e2e step has been bare `npm run test:e2e` since `d2a28db`, and the authed step lost its `|| true` in the same commit.
+- **TESTING.md** — *"The e2e steps are currently non-blocking (`continue-on-error`) — a deliberate state while the suite is stabilised; once it's reliably green they should be made blocking."* They were made blocking on 2026-08-18. The sentence described its own completed to-do as pending.
+
+**Why this one mattered more than an ordinary stale doc.** PLAYBOOK is the first thing every agent reads, and it was telling them a red e2e result does not stop a merge. That became actively dangerous on 2026-08-19 when ruleset `21062139` made the run a **required status check** — an agent trusting the doc would read a red suite as advisory and keep pushing at a gate that will never open. Stale docs are usually a nuisance; this one inverted a hard gate.
+
+**Ground truth now recorded as a table**, because the previous prose form is what allowed one clause to rot invisibly:
+
+| Step | Config on `main` | Blocking? |
+|---|---|---|
+| ESLint | `\|\| true` + `continue-on-error` | No — always green, 27 known errors |
+| `tsc -b` | bare | **Yes** |
+| Unit | bare | **Yes** |
+| Playwright e2e (mocked) | bare `npm run test:e2e` | **Yes** |
+| Authed e2e (real Supabase) | `continue-on-error`, no `\|\| true` | No — visible warning |
+
+**Rewritten, not deleted.** Half the old paragraph was still true and deleting it would have created the inverse false assurance: a green run genuinely does **not** certify the authed step, which stays non-blocking on purpose so merges are not coupled to a third party's uptime. Both docs now say which half is certified and point at the run's annotations for the other.
+
+**Gotcha — grepping a workflow for `|| true` finds its own documentation.** The authed step's comment contains the sentence *"`|| true` is gone"*, so a naive `grep -n "|| true" test.yml` returns two hits and reads as if the step still has it. Only line 48 (ESLint) is code; line 113 is prose. Check the `run:` line specifically, not the block.
+
+**Verified:** every claim in both replacements checked against `test.yml` at `158104e` — ESLint `|| true` present, mocked e2e bare, authed `continue-on-error: true` with no `|| true` on its `run:` line, and the ruleset id in the doc matches the live ruleset.
+
+---
+
 ### [2026-08-19] Re-review of the stale-tree hook — FETCH_HEAD is per-worktree, not common-dir
 
 **Category:** fix | Tooling / Session hygiene
