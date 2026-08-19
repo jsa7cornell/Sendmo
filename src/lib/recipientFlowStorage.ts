@@ -35,6 +35,7 @@ export interface RecipientFlowData {
    * neither deferred = an ordinary prepaid label; either deferred = a shipping
    * link the sender completes.
    */
+  deferredDestination: boolean;
   deferredOrigin: boolean;
   deferredPackage: boolean;
 
@@ -79,6 +80,7 @@ export const INITIAL_DATA: RecipientFlowData = {
   destinationAddress: emptyAddress(),
   email: "",
 
+  deferredDestination: false,
   deferredOrigin: false,
   deferredPackage: false,
 

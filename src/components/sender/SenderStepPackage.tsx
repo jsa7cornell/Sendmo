@@ -14,6 +14,13 @@ interface Props {
   senderAddress: AddressInput;
   onAddressChange: (a: AddressInput) => void;
   initialParcel: SenderParcel | null;
+  /**
+   * Phase 3: the link creator deferred the destination, so the sender enters
+   * it here. All three destination props travel together.
+   */
+  needsDestination?: boolean;
+  destinationAddress?: AddressInput;
+  onDestinationChange?: (addr: AddressInput) => void;
   onSubmit: (parcel: SenderParcel) => void;
   onBack: () => void;
   onGuestimatorUsed?: () => void;
@@ -29,7 +36,9 @@ const PACKAGING_OPTIONS: { value: PackagingType; label: string; Icon: typeof Pac
 // keeps "shipping to {recipient}" always visible. Packaging type is a 3-option
 // grid; height is hidden for envelopes.
 export default function SenderStepPackage({
-  linkData, senderAddress, onAddressChange, initialParcel, onSubmit, onBack, onGuestimatorUsed,
+  linkData, senderAddress, onAddressChange, initialParcel,
+  needsDestination, destinationAddress, onDestinationChange,
+  onSubmit, onBack, onGuestimatorUsed,
 }: Props) {
   const [tried, setTried] = useState(false);
   const [packaging, setPackaging] = useState<PackagingType>(initialParcel?.packaging ?? "box");
@@ -58,6 +67,13 @@ export default function SenderStepPackage({
     if (!senderAddress.street || !senderAddress.city || !senderAddress.state || !senderAddress.zip) return;
     // Phone required — FedEx/UPS reject labels without it.
     if (!isUsablePhone(senderAddress.phone)) return;
+    // Destination, when the creator deferred it (Phase 3): same completeness
+    // + phone bar as every other address the carriers see.
+    if (needsDestination) {
+      const d = destinationAddress;
+      if (!d?.street || !d.city || !d.state || !d.zip) return;
+      if (!isUsablePhone(d.phone)) return;
+    }
     if (!l || !w || !h || !wt) return;
 
     onSubmit({
@@ -69,6 +85,8 @@ export default function SenderStepPackage({
   }
 
   const addrIncomplete = tried && (!senderAddress.street || !senderAddress.city || !senderAddress.state || !senderAddress.zip);
+  const destIncomplete = tried && !!needsDestination &&
+    (!destinationAddress?.street || !destinationAddress.city || !destinationAddress.state || !destinationAddress.zip || !isUsablePhone(destinationAddress.phone));
   const phoneIncomplete = tried && !isUsablePhone(senderAddress.phone);
   const dimsIncomplete = tried && (!length || !width || (packaging !== "envelope" && !height) || !weightLbs);
   const recipient = displayName(linkData.recipient_name);
@@ -97,6 +115,26 @@ export default function SenderStepPackage({
           Details
         </h1>
       </div>
+
+      {/* Destination — only when the creator deferred it (Phase 3): they said
+          "the sender picks the destination", and that sender is you. */}
+      {needsDestination && onDestinationChange && (
+        <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
+          <h3 className="text-sm font-semibold text-foreground mb-3">Where is the package going?</h3>
+          <p className="text-xs text-muted-foreground mb-3">
+            The link's creator left the delivery address up to you.
+          </p>
+          <SmartAddressInput
+            label="Delivery address"
+            nameLabel="Recipient's name"
+            nameHint="who it's going to"
+            addressLabel="Delivery address"
+            value={destinationAddress ?? { name: "", street: "", city: "", state: "", zip: "", phone: "", verified: false }}
+            onChange={onDestinationChange}
+            error={destIncomplete ? "Please enter a complete delivery address, including a phone number" : undefined}
+          />
+        </div>
+      )}
 
       {/* Origin address */}
       <div className="bg-card rounded-2xl border border-border shadow-sm p-5">

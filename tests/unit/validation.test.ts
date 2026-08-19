@@ -178,3 +178,28 @@ describe("Step 10 validation", () => {
     expect(errors).toHaveLength(0);
   });
 });
+
+describe("step 1 — deferred destination (Phase 3)", () => {
+  // Decision B (2026-08-18): every question is skippable, including the
+  // destination. Deferring it answers the ADDRESS half only — email (and its
+  // verification downstream) is how the creator gets an account and a card,
+  // so it must still gate the step.
+  it("drops the address requirements but keeps the email ones", () => {
+    const errors = getValidationErrors(
+      makeState({ deferredDestination: true, email: "pat@example.com" }),
+      1,
+    );
+    expect(errors).toEqual([]);
+  });
+
+  it("still rejects a missing email when the destination is deferred", () => {
+    const errors = getValidationErrors(makeState({ deferredDestination: true }), 1);
+    expect(errors).toContain("Email is required");
+    expect(errors).not.toContain("Destination address is required");
+  });
+
+  it("unchanged when not deferred: empty address still fails", () => {
+    const errors = getValidationErrors(makeState({ email: "pat@example.com" }), 1);
+    expect(errors).toContain("Destination address is required");
+  });
+});

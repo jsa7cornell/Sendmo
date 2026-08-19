@@ -153,7 +153,8 @@ export default function RecipientOnboarding() {
             not at the end (unified-onboarding proposal, John's point 3). Same
             banner on step 14 (after deferring the origin) and step 20. Undo
             reverses the deferral itself (flags + location). */}
-        {currentStep === 14 && (data.deferredOrigin || data.deferredPackage) && (
+        {(currentStep === 10 || currentStep === 14) &&
+          (data.deferredDestination || data.deferredOrigin || data.deferredPackage) && (
           <div className="mb-5 flex items-center justify-between gap-3 rounded-xl bg-muted px-4 py-3">
             <p className="text-sm text-muted-foreground">
               <span className="font-medium text-foreground">This will be a shipping link, not a label.</span>{" "}
@@ -210,6 +211,12 @@ export default function RecipientOnboarding() {
                 onAddressChange={(addr) => updateData({ destinationAddress: addr })}
                 onEmailChange={(email) => updateData({ email })}
                 onSenderResolved={(sender) => updateData({ sender })}
+                deferredDestination={data.deferredDestination}
+                // Deferring the destination is an identity claim like every
+                // other defer: someone else is the sender. It does NOT
+                // auto-advance — email verification below is not deferrable.
+                onDeferDestination={() => updateData({ deferredDestination: true, sender: data.sender ?? "other" })}
+                onUndoDeferDestination={() => updateData({ deferredDestination: false })}
                 onContinue={() => tryAdvance(1)}
               />
             )}
@@ -244,7 +251,7 @@ export default function RecipientOnboarding() {
                 // Leaving step 14: if either question was handed to the sender
                 // the price isn't knowable, so the flow becomes a shipping link.
                 onContinue={() => {
-                  if (data.deferredOrigin || data.deferredPackage) switchToShippingLink();
+                  if (data.deferredDestination || data.deferredOrigin || data.deferredPackage) switchToShippingLink();
                   else tryAdvance(14);
                 }}
                 onBack={goBack}

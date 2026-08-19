@@ -28,6 +28,7 @@ export interface RecipientFlowState {
    * RecipientFlowData — the flow state is that object plus currentStep, and
    * these decide both the product type and what gets carried onto the link.
    */
+  deferredDestination: boolean;
   deferredOrigin: boolean;
   deferredPackage: boolean;
 
@@ -81,9 +82,14 @@ export function getValidationErrors(state: RecipientFlowState, step: number): st
   const errors: string[] = [];
 
   if (step === 1) {
-    if (!state.destinationAddress.verified) errors.push("Destination address is required");
-    else if (!state.destinationAddress.street) errors.push("Destination address is missing a street — please re-select it from the dropdown");
-    if (!isUsablePhone(state.destinationAddress.phone)) errors.push("Add a phone number — the shipping carriers require it");
+    // Destination deferred (Phase 3): the sender enters it in the sender flow,
+    // so the address half of this step is answered. Email is NOT deferrable —
+    // the creator still needs an account and a card.
+    if (!state.deferredDestination) {
+      if (!state.destinationAddress.verified) errors.push("Destination address is required");
+      else if (!state.destinationAddress.street) errors.push("Destination address is missing a street — please re-select it from the dropdown");
+      if (!isUsablePhone(state.destinationAddress.phone)) errors.push("Add a phone number — the shipping carriers require it");
+    }
     if (!state.email.trim()) errors.push("Email is required");
     else if (!/^.+@.+\..+$/.test(state.email.trim())) errors.push("Enter a valid email address");
   }

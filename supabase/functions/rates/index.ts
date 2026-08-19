@@ -100,6 +100,9 @@ Deno.serve(async (req: Request) => {
         // required-fields check runs AFTER link resolution below.
         let from_address = body.from_address;
         let to_address = body.to_address;
+        // Set when a flexible link deferred its destination (Phase 3): the
+        // shipment gets reference = link.id so labels/ can trust its to_address.
+        let deferredDestLinkId: string | null = null;
         let parcel = body.parcel;
         let preferred_carrier = body.preferred_carrier;
         let preferred_speed = body.preferred_speed;
@@ -149,7 +152,23 @@ Deno.serve(async (req: Request) => {
                         city: string; state: string; zip: string; country: string | null;
                         phone: string | null;
                     } | null;
-                    if (!addr?.street1) {
+                    if (addr == null) {
+                        // Phase 3 (migration 042): the creator DEFERRED the
+                        // destination — the sender supplies it, so the body's
+                        // to_address is authoritative here, exactly like the
+                        // seller-link leg where the buyer supplies it. Validate
+                        // it is complete, and stamp reference = link.id below so
+                        // labels/ can trust-resolve the destination from this
+                        // shipment instead of the (absent) link address.
+                        if (!to_address?.street1 || !to_address?.city || !to_address?.state || !to_address?.zip) {
+                            return new Response(
+                                JSON.stringify({ error: "This link needs a delivery address — please enter where the package is going." }),
+                                { status: 422, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                            );
+                        }
+                        deferredDestLinkId = (link as unknown as { id: string }).id;
+                        linkIsTest = link.is_test === true;
+                    } else if (!addr.street1) {
                         // The link was created with an incomplete address (no street).
                         // Return a clear error so the sender sees it immediately rather
                         // than getting a cryptic EasyPost/FedEx rejection.
@@ -160,20 +179,21 @@ Deno.serve(async (req: Request) => {
                             JSON.stringify({ error: "This link's delivery address is incomplete — it's missing a street. The person who set up this link needs to update their delivery address before you can ship." }),
                             { status: 422, headers: { ...corsHeaders, "Content-Type": "application/json" } }
                         );
+                    } else {
+                        to_address = {
+                            name: addr.name,
+                            street1: addr.street1,
+                            street2: addr.street2 ?? undefined,
+                            city: addr.city,
+                            state: addr.state,
+                            zip: addr.zip,
+                            country: addr.country ?? "US",
+                            // Phone required for FedEx/UPS (2026-05-19). Pulled from the
+                            // recipient address row so the rate call carries it.
+                            phone: addr.phone ?? undefined,
+                        };
+                        linkIsTest = link.is_test === true;
                     }
-                    to_address = {
-                        name: addr.name,
-                        street1: addr.street1,
-                        street2: addr.street2 ?? undefined,
-                        city: addr.city,
-                        state: addr.state,
-                        zip: addr.zip,
-                        country: addr.country ?? "US",
-                        // Phone required for FedEx/UPS (2026-05-19). Pulled from the
-                        // recipient address row so the rate call carries it.
-                        phone: addr.phone ?? undefined,
-                    };
-                    linkIsTest = link.is_test === true;
                 } else if (link && link.status === "active" && link.link_type === "seller_link") {
                     // Seller link — the INVERSE of flex: the SELLER's ship-from
                     // origin + package + carrier constraints come from the link;
@@ -317,10 +337,14 @@ Deno.serve(async (req: Request) => {
                 body: JSON.stringify({
                     shipment: {
                         // Seller-link binding: stamp reference = link.id so
-                        // seller-checkout + labels can verify this shipment was
-                        // minted from the link (blocker fix). Only set on the
-                        // seller path; null/omitted for flex + full-label.
-                        ...(sellerLinkId ? { reference: sellerLinkId } : {}),
+                        // Link binding: stamp reference = link.id so downstream
+                        // functions can verify this shipment was minted from the
+                        // link (seller blocker fix; extended to
+                        // destination-deferred flex links in Phase 3, where
+                        // labels/ trust-resolves to_address from this shipment).
+                        // Omitted for ordinary flex + full-label.
+                        ...(sellerLinkId ? { reference: sellerLinkId }
+                            : deferredDestLinkId ? { reference: deferredDestLinkId } : {}),
                         from_address: builtFrom,
                         to_address: builtTo,
                         parcel: {

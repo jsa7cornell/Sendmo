@@ -237,6 +237,7 @@ There is no step 0. `/onboarding` shows the resume-offer interstitial when an un
 | "I'm the sender — it ships from my address" | origin step | `'self'` (provider prefill effect fills origin) |
 | Deferring any question | steps 10/14 | `'other'` — "the sender will fill this in" is itself the claim |
 
+- **Every question is skippable, including the destination (Phase 3, decision B — any combination).** Step 1 offers "The sender picks the destination": the address half is deferred (email is NOT — it gates the account), the link stores no recipient address (migration 042), GET returns `needs_destination`, and the sender flow collects the delivery address (full validation), quotes it via `rates/` (shipment stamped `reference = link.id`), and `labels/` trust-resolves the destination from that reference-bound shipment — never from the client. The skip banner shows from the moment of any skip, on steps 10 and 14.
 - **Nothing prefills while `sender` is null.** `prefillSlotFor(null)` returns `null` and both prefill sites gate on it; the destination step fetches the saved address but *holds* it for the chip. Silently guessing a slot puts the wrong party's address on a label (2026-08-16 class).
 - Who-pays is unchanged on every branch: the creator pays.
 - The seller link-out (gated by `SELLER_LINK_MODE`) lives in the destination step footer; the Dashboard and homepage carry the other seller doors.

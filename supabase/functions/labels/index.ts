@@ -318,22 +318,70 @@ Deno.serve(async (req: Request) => {
                     city: string; state: string; zip: string; country: string | null;
                     phone: string | null;
                 } | null;
-                if (!recipientAddr || !recipientAddr.street1) {
+                if (recipientAddr == null) {
+                    // Phase 3 (migration 042): the creator DEFERRED the
+                    // destination, so the link deliberately carries none. The
+                    // sender's destination lives on the EasyPost shipment that
+                    // rates/ built — and rates/ stamped reference = link.id on
+                    // exactly these shipments, so resolve it the same
+                    // never-trust-the-client way the seller branch does: fetch
+                    // the shipment, verify the binding, take ITS to_address.
+                    const dIsLive = link.is_test !== true;
+                    const dKey = Deno.env.get(dIsLive ? "EASYPOST_API_KEY" : "EASYPOST_TEST_API_KEY");
+                    const dResp = await fetch(
+                        `https://api.easypost.com/v2/shipments/${easypost_shipment_id}`,
+                        { headers: { Authorization: "Basic " + btoa(dKey + ":") } },
+                    );
+                    if (!dResp.ok) {
+                        return new Response(
+                            JSON.stringify({ error: "Could not resolve the destination address" }),
+                            { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                        );
+                    }
+                    const dData = await dResp.json();
+                    if (dData.reference !== link.id) {
+                        // Same class as the seller-link binding backstop: a
+                        // mismatch means the shipment wasn't minted from this
+                        // link by rates/. Reject; never auto-refund here.
+                        return new Response(
+                            JSON.stringify({ error: "This shipment does not belong to this link." }),
+                            { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                        );
+                    }
+                    const dt = dData.to_address;
+                    if (!dt?.street1) {
+                        return new Response(
+                            JSON.stringify({ error: "Shipment has no destination address" }),
+                            { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                        );
+                    }
+                    to_address = {
+                        name: dt.name,
+                        street1: dt.street1,
+                        street2: dt.street2 ?? undefined,
+                        city: dt.city,
+                        state: dt.state,
+                        zip: dt.zip,
+                        country: dt.country ?? "US",
+                        phone: dt.phone ?? undefined,
+                    };
+                } else if (!recipientAddr.street1) {
                     return new Response(
                         JSON.stringify({ error: "Link has no resolvable destination address" }),
                         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
                     );
+                } else {
+                    to_address = {
+                        name: recipientAddr.name,
+                        street1: recipientAddr.street1,
+                        street2: recipientAddr.street2 ?? undefined,
+                        city: recipientAddr.city,
+                        state: recipientAddr.state,
+                        zip: recipientAddr.zip,
+                        country: recipientAddr.country ?? "US",
+                        phone: recipientAddr.phone ?? undefined,
+                    };
                 }
-                to_address = {
-                    name: recipientAddr.name,
-                    street1: recipientAddr.street1,
-                    street2: recipientAddr.street2 ?? undefined,
-                    city: recipientAddr.city,
-                    state: recipientAddr.state,
-                    zip: recipientAddr.zip,
-                    country: recipientAddr.country ?? "US",
-                    phone: recipientAddr.phone ?? undefined,
-                };
                 // Resolve recipient_email server-side (never returned to client).
                 const { data: prof } = await supabase
                     .from("profiles")

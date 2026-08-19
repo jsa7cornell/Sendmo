@@ -12,6 +12,25 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-18] Skippable destination — "the sender picks where it goes" (unified-onboarding Phase 3)
+
+**Category:** ship | Onboarding + SenderFlow + Edge Functions
+**Deploy:** In PR — branch `feat/skippable-destination-phase3`, not merged, not deployed at entry time (update on merge). **Migration 042 IS applied to production** (verified live before and after: `flexible → TRUE` in the per-type CHECK; seller/full-label invariants unchanged). Safe order: the DB accepts recipient-less flexible links, but nothing creates them until this merges.
+**Cross-link:** [proposals/2026-08-18_unified-onboarding-every-question-skippable.md](proposals/2026-08-18_unified-onboarding-every-question-skippable.md) §4, decision B (John: any combination of skips; price cap is the bound)
+**Browser-verified:** spec: tests/e2e/onboarding.spec.ts + tests/e2e/sender-origin-prefill.spec.ts · variants-covered: [defer destination keeps email required + banner on origin step + reaches link path, needs_destination link asks the sender where it's going with named intro, ordinary link never shows the destination card]
+
+**The shape:** the creator answers "the sender picks the destination" on step 1 — the link stores NO recipient address (`recipient_address_id IS NULL`, a deliberate state distinct from corruption), and the link user enters the delivery address in the sender flow. The creator still pays; nothing about this may ever read as the seller flow.
+
+**Mechanics, end to end:**
+- **Onboarding:** `deferredDestination` flag. Deferring does NOT auto-advance — email is not deferrable (it's how the creator gets an account and card); step-1 validation drops only the address half. The skip banner now shows on steps 10 AND 14 for any deferral; banner-undo lands on the earliest skipped question. Any deferral → link at step 14's exit.
+- **Link create (`links/`):** `recipient_address` optional; validated exactly as before when present. GET returns `needs_destination` (flexible + no recipient row) and no longer reports a deferred destination as `recipient_address_complete: false` — that flag now means corruption only.
+- **Rates (`rates/`):** for a deferred link the body's full `to_address` (sender-typed) is authoritative — same stance as the seller leg where the buyer supplies it — and the EasyPost shipment is stamped `reference = link.id`.
+- **Labels (`labels/`):** never trusts a client destination. For a deferred link it fetches the EasyPost shipment, verifies `reference === link.id` (the seller-branch binding pattern; reject, never auto-refund on mismatch), and takes the shipment's own `to_address`. Payer email routing unchanged (creator gets notifications).
+- **Sender flow:** `needs_destination` renders a delivery-address card (full validation + carrier phone) above the origin card; intro reads "you choose where it goes"; review's To line shows the sender-entered destination.
+
+**Gotcha — `recipient_address_complete` was about to lie.** SenderFlow hard-errors on that flag, and a NULL recipient would have read as false → every deferred link dead on arrival. The server now answers it as "is the address that EXISTS complete", with `needs_destination` carrying the new state.
+
+
 ### [2026-08-18] The who's-sending step is gone — sender is derived in-flow (unified-onboarding Phase 2)
 
 **Category:** ship | Onboarding

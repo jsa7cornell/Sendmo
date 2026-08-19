@@ -30,12 +30,17 @@ interface Props {
    * your own address IS the answer step 0 used to ask for.
    */
   onSenderResolved: (sender: SenderKind) => void;
+  /** Phase 3: "the sender picks the destination" — skippable like every question. */
+  deferredDestination: boolean;
+  onDeferDestination: () => void;
+  onUndoDeferDestination: () => void;
   onContinue: () => void;
 }
 
 export default function RecipientStepAddress({
   address, email, path, sender, errors, tried,
-  onAddressChange, onEmailChange, onSenderResolved, onContinue,
+  onAddressChange, onEmailChange, onSenderResolved,
+  deferredDestination, onDeferDestination, onUndoDeferDestination, onContinue,
 }: Props) {
   const navigate = useNavigate();
   const showErrors = tried && errors.length > 0;
@@ -235,13 +240,53 @@ export default function RecipientStepAddress({
         </button>
       )}
 
-      {/* Destination address */}
-      <AddressForm
-        value={address}
-        tried={tried}
-        onChange={onAddressChange}
-        destinationIsSelf={destinationIsSelf}
-      />
+      {/* Destination address — or the deferred state (Phase 3): the sender
+          picks it when they use the link. Email below is NOT deferrable. */}
+      {deferredDestination ? (
+        <div className="bg-card rounded-2xl border border-border shadow-sm p-5 space-y-3">
+          <p className="text-sm font-medium text-foreground">
+            The sender picks the destination
+          </p>
+          <p className="text-sm text-muted-foreground">
+            They enter the delivery address when they use your shipping link — you just
+            set a spending cap and pay when they ship.
+          </p>
+          <button
+            type="button"
+            onClick={onUndoDeferDestination}
+            className="text-sm font-medium text-primary hover:underline"
+          >
+            I have the address — enter it now
+          </button>
+        </div>
+      ) : (
+        <>
+          <AddressForm
+            value={address}
+            tried={tried}
+            onChange={onAddressChange}
+            destinationIsSelf={destinationIsSelf}
+          />
+          {/* The same first-class skip every question gets (2026-08-18,
+              decision B: any combination). Hidden on the 'self' branch — if
+              YOU are the sender there is no link user to pick it. */}
+          {sender !== "self" && (
+            <button
+              type="button"
+              onClick={onDeferDestination}
+              className="w-full flex items-start gap-3 rounded-xl border border-border bg-card p-3.5 text-left transition-all hover:border-muted-foreground/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            >
+              <span className="w-4 h-4 rounded-full border-2 border-muted-foreground/40 shrink-0 mt-0.5" />
+              <span className="min-w-0">
+                <span className="block text-sm font-medium text-foreground">The sender picks the destination</span>
+                <span className="block text-xs text-muted-foreground mt-0.5">
+                  They'll enter the delivery address when they use your link
+                </span>
+              </span>
+            </button>
+          )}
+        </>
+      )}
 
       {/* Identity / auth card. Google leads — if the user picks it, email
           auto-fills from OAuth and the verify step is skipped entirely. */}

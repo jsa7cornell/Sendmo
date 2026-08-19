@@ -35,15 +35,21 @@ export default function RecipientStepFlexPayment({
       : null;
 
   const input: FlexPaymentInput = {
-    recipient_address: {
-      name: state.destinationAddress.name,
-      street1: state.destinationAddress.street,
-      city: state.destinationAddress.city,
-      state: state.destinationAddress.state,
-      zip: state.destinationAddress.zip,
-      phone: state.destinationAddress.phone,
-      verified: state.destinationAddress.verified,
-    },
+    // Destination deferred (Phase 3): the sender enters it — the link carries
+    // no recipient address (migration 042 permits this for flexible).
+    ...(state.deferredDestination
+      ? {}
+      : {
+          recipient_address: {
+            name: state.destinationAddress.name,
+            street1: state.destinationAddress.street,
+            city: state.destinationAddress.city,
+            state: state.destinationAddress.state,
+            zip: state.destinationAddress.zip,
+            phone: state.destinationAddress.phone,
+            verified: state.destinationAddress.verified,
+          },
+        }),
     speed_preference: state.speed_preference,
     preferred_carrier: state.preferred_carrier,
     price_cap_dollars: state.price_cap,

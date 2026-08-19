@@ -364,18 +364,25 @@ export default function FlexPaymentStep({
               </button>
             )}
           </div>
-          <div className="text-sm space-y-0.5">
-            {input.recipient_address.name && (
-              <p className="font-medium text-foreground">{input.recipient_address.name}</p>
-            )}
-            <p className="text-muted-foreground">{input.recipient_address.street1}</p>
-            <p className="text-muted-foreground">
-              {input.recipient_address.city}, {input.recipient_address.state} {input.recipient_address.zip}
+          {input.recipient_address ? (
+            <div className="text-sm space-y-0.5">
+              {input.recipient_address.name && (
+                <p className="font-medium text-foreground">{input.recipient_address.name}</p>
+              )}
+              <p className="text-muted-foreground">{input.recipient_address.street1}</p>
+              <p className="text-muted-foreground">
+                {input.recipient_address.city}, {input.recipient_address.state} {input.recipient_address.zip}
+              </p>
+              {input.recipient_address.phone && (
+                <p className="text-muted-foreground">{input.recipient_address.phone}</p>
+              )}
+            </div>
+          ) : (
+            /* Destination deferred (Phase 3): the sender picks it. */
+            <p className="text-sm text-muted-foreground">
+              The sender chooses the delivery address when they use your link.
             </p>
-            {input.recipient_address.phone && (
-              <p className="text-muted-foreground">{input.recipient_address.phone}</p>
-            )}
-          </div>
+          )}
         </div>
       )}
 
