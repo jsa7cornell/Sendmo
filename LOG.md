@@ -12,6 +12,35 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-19] CI's cost was never the tests — it was `apt` inside the Playwright install
+
+**Category:** fix | CI
+**Cross-link:** [PR #75](https://github.com/jsa7cornell/Sendmo/pull/75) | [test.yml](.github/workflows/test.yml) | follows the 2026-08-18 e2e de-rot
+
+**Browser-verified:** n/a-category: `ci-only` — n/a-reason: workflow configuration; no product surface touched.
+
+**Symptom.** `main` could not complete CI. Run `32216842692` hung and was cancelled at GitHub's 6-hour default, leaving HEAD `c0c5177` with **no conclusive run** — not a failure, an absence. A re-run hung the same way and was cancelled at ~32 min. Successful runs before that ranged 6m–20m49s with no obvious cause.
+
+**Measured, not guessed.** Step durations across the last 8 successful runs:
+
+| install | 37s | 131s | 147s | 202s | 310s | 341s | 432s | **1025s** |
+|---|---|---|---|---|---|---|---|---|
+| **e2e** | 121s | 124s | 130s | 127s | 126s | 129s | 126s | 126s |
+
+**The suite is flat at ~126s in every run.** All variance, and both hangs, were `Install Playwright Browsers` — 82% of wall-clock on the 20m49s run.
+
+**Root cause, from the log.** `--with-deps` runs `apt-get update`. The Azure Ubuntu mirror stopped answering mid-run (`Ign:` against every noble index), apt fell back to `archive.ubuntu.com`, then emitted **nothing for 30 minutes** until cancellation. No timeout, no retry, no error — a stall.
+
+**Fix.** Cache `~/.cache/ms-playwright` keyed on the Playwright version, and **drop `--with-deps`**. The second half is what actually fixes it: apt packages are per-runner and uncacheable, so caching alone would still have gone through apt. `ubuntu-latest` already ships the libraries Chromium needs. Plus `timeout-minutes` 45 (job) and 8 (install) as backstops.
+
+**Result:** install 1025s → **10s**; full run → **3m57s**, verified green on `main` at `ba0cce1` with 95 tests / 89 passed / 0 failed from the artifact. The 10s install was on a cache *miss*, so the ~150 MB download was never the problem either — apt was the entire cost.
+
+**Tradeoff accepted:** if a future runner image drops a Chromium dependency, e2e goes red immediately. A loud one-line-revert failure beats a silent multi-hour stall, especially now that e2e blocks merges.
+
+**Gotcha — do not size a threshold from a number quoted in prose.** The 20-minute job ceiling in the first draft of #75 came from "a green run is ~3.5 min", written into PLAYBOOK the day before from a single measurement. By the time it was reused, successful runs reached 20m49s — the ceiling would have cancelled a genuine pass. Caught by self-review before merge. Rule 21 now carries the measured range, its date, an explicit re-measure instruction, and the `gh api … /jobs` command to get real step durations. Same failure shape as the `retryN` bug in #62: a mechanism understood correctly, applied from a snapshot that had moved.
+
+**Pattern across 2026-08-18/19 — absence of signal read as success.** Four mechanisms, one symptom: suppressed steps reporting `success` (A1); an artifact overwritten before upload (A2); a conflicting PR producing no run at all (A6); and now a step that never failed because it never finished. In every case the surface said "no red X" and the honest answer was "no answer."
+
 ### [2026-08-19] `main` is gated — and the gate found CI wedged on the way in
 
 **Category:** ship | CI / Repo policy

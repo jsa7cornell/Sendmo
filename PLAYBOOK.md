@@ -339,7 +339,15 @@ No production-path stubs remain. (Minor non-production leftovers: `src/pages/Sen
 21. **ALWAYS verify the deploy after pushing to `main`.** Every push to `main` triggers a production deploy (Vercel) and CI workflows. A push is **not "done"** until those are confirmed green — a red deploy is a production failure, not a finished task. After any push to `main`:
     - **Vercel** — confirm the production build at https://sendmo.co went live. Vercel's result is mirrored as a GitHub commit status (context `Vercel`) on the pushed SHA, so it shows up in the checks below.
     - **GitHub Actions** — run `gh run list --branch main --limit 5` and confirm the workflows for *your* commit are green: **"Provide Tests"** (lint / `tsc -b` / unit / e2e — note a `tsc -b` failure also breaks the Vercel build) and **"Deploy Supabase Edge Functions"** (only runs when `supabase/functions/**` changed).
-    - CI takes **~4 min** (run `32101768480`, 3m31s). It was 35–37 min before the 2026-08-18 e2e de-rot: `workers: 1` + `retries: 2` re-ran 28 failing specs at a 30s timeout each, so almost the entire wall-clock was spent retrying tests that could never pass. Wait for a **conclusive** result — `gh run watch <run-id>` or re-check — rather than ending the session on a still-running run. A pending run is not a green run.
+    - CI takes **~4 min** (measured 2026-08-19 across runs `32307157395` and `32307493176`: 4m04s and 3m57s). **Re-measure before sizing anything from this number** — a timeout, a retry budget, an alert threshold. On 2026-08-19 a `timeout-minutes: 20` was derived from a stale quote of this line and would have cancelled a genuinely green 20m49s run; the figure had been written from a single measurement and never re-checked. Read the step durations from a real run instead:
+
+      ```bash
+      gh api repos/jsa7cornell/Sendmo/actions/runs/<id>/jobs \
+        --jq '.jobs[].steps[] | select(.started_at and .completed_at) |
+              "\(((.completed_at|fromdateiso8601)-(.started_at|fromdateiso8601)))s \(.name)"'
+      ```
+
+      History, because the shape matters more than the number: 35–37 min before the 2026-08-18 e2e de-rot (`workers: 1` + `retries: 2` re-running 28 failing specs at a 30s timeout each); then 6–21 min, which looked like a growing suite but was **entirely** the browser-install step — the suite itself was a flat ~126s throughout. Wait for a **conclusive** result — `gh run watch <run-id>` or re-check — rather than ending the session on a still-running run. A pending run is not a green run.
     - If anything is red — a `tsc -b` error, a failed edge-function deploy, a red Vercel build — the work is **not** done. Fix forward immediately. Do not end the session on a red `main`.
 
     **Reference incident:** 2026-05-21 — a `tsc -b` error sat red on Vercel + CI for ~18h across 5 pushes because no agent verified the deploy after pushing.
