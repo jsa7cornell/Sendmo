@@ -8,9 +8,8 @@ on:
 
 # Without this, a push to an open PR leaves the superseded run burning a runner
 # alongside its replacement — two were in flight simultaneously during the #63
-# merge, when a run still took ~35 min (it is ~3.5 min since the 2026-08-18 e2e
-# de-rot). main is excluded: every push there deploys, and each commit's run is
-# its own record.
+# merge, when a run still took ~35 min. main is excluded: every push there
+# deploys, and each commit's run is its own record.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
@@ -19,12 +18,18 @@ jobs:
   test:
     name: Lint, Unit, and E2E Tests
     runs-on: ubuntu-latest
-    # A green run is ~3.5 min. With no explicit ceiling GitHub applies its
-    # 6-hour default, and on 2026-08-19 a hung "Install Playwright Browsers"
-    # burned all six before being cancelled — leaving main HEAD with no
-    # conclusive run at all (run 32216842692). A hang should fail fast and
-    # visibly, not quietly occupy a runner for a working day.
-    timeout-minutes: 20
+    # Backstop against a hung step, not a performance target. With no explicit
+    # ceiling GitHub applies its 6-hour default, and on 2026-08-19 a hung
+    # "Install Playwright Browsers" burned all six before being cancelled,
+    # leaving main HEAD with no conclusive run at all (run 32216842692).
+    #
+    # Sized ABOVE the legitimate maximum on purpose: successful runs measured
+    # 6m–20m49s over the last 40 (2026-08-19), the longest being 32209871982 on
+    # main. A ceiling near that maximum would cancel green runs on a slow
+    # runner — an earlier draft of this file set 20 and would have killed that
+    # very run. Expect the range to creep upward as specs are added; re-measure
+    # before tightening this, and do not size it from a figure quoted in prose.
+    timeout-minutes: 45
 
     steps:
     - name: Checkout repository
