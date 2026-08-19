@@ -15,6 +15,15 @@ export default defineConfig({
     __APP_RELEASE__: JSON.stringify(process.env.VERCEL_GIT_COMMIT_SHA ?? ""),
     __APP_ENV__: JSON.stringify(process.env.VERCEL_ENV ?? ""),
   },
+  // Pre-transform the whole app graph on dev-server boot. Without this the
+  // first page a Playwright worker requests pays every module transform
+  // on-demand — under full-suite parallelism that cold start took 35s+ and
+  // blew a test timeout (2026-08-18).
+  server: {
+    warmup: {
+      clientFiles: ["./src/main.tsx"],
+    },
+  },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),

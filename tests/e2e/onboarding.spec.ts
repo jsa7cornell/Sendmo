@@ -606,7 +606,10 @@ test.describe("Seller entry points — coming-soon mode", () => {
   // working builder and could share a link whose buyer's card is declined.
   test("/sell is closed to non-admins while the seller flow is not live", async ({ page }) => {
     await page.goto("/sell");
-    await expect(page.getByText(/Coming soon/i).first()).toBeVisible();
+    // 15s: first paint can absorb cold Vite transforms when this test is the
+    // first to hit a fresh dev server under full-suite parallelism (35s+
+    // observed 2026-08-18). Suite convention for first-paint-under-load.
+    await expect(page.getByText(/Coming soon/i).first()).toBeVisible({ timeout: 15_000 });
     // The builder itself must not render — no origin address form.
     await expect(page.locator("#origin-address")).toHaveCount(0);
   });
