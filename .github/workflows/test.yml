@@ -54,12 +54,34 @@ jobs:
     - name: Run Unit & Component Tests
       run: npm run test:unit
 
+    # Browser binaries are ~150 MB and identical for a given Playwright
+    # version, so re-downloading them every run is pure waste. Keyed on the
+    # version so a bump invalidates it automatically.
+    - name: Resolve Playwright version
+      id: pw
+      run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+
+    - name: Cache Playwright browsers
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/ms-playwright
+        key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
+
     - name: Install Playwright Browsers
-      # `--with-deps` shells out to apt, which stalls indefinitely on a bad
-      # mirror rather than failing. This is the step that hung on 2026-08-19;
-      # it normally finishes well under a minute.
+      # Deliberately NOT `--with-deps`. That flag runs `apt-get update`, and on
+      # 2026-08-19 the Azure Ubuntu mirror stopped answering mid-run: apt logged
+      # `Ign:` against every noble index, fell back to archive.ubuntu.com, then
+      # produced no output for 30 minutes until the job was cancelled. It did
+      # this twice — run 32216842692 and its re-run — after an earlier attempt
+      # burned GitHub's full 6-hour default. apt is uncacheable (packages are
+      # per-runner), so caching alone would not have avoided it.
+      #
+      # ubuntu-latest already ships the shared libraries Chromium needs. If a
+      # future runner image drops one, Chromium fails to launch and the e2e
+      # step goes red immediately — a loud, one-line-to-revert failure, which
+      # is strictly better than a silent multi-hour stall.
       timeout-minutes: 8
-      run: npx playwright install --with-deps chromium
+      run: npx playwright install chromium
 
     # BLOCKING as of 2026-08-18. Fully mocked, deterministic, and green in CI
     # (run 32101768480: 81 total, 75 passed, 0 failed) — a red result here now
