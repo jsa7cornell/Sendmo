@@ -67,32 +67,57 @@ behind=$(git rev-list --count "HEAD..$REF" 2>/dev/null) || exit 0
 ahead=$(git rev-list --count "$REF..HEAD" 2>/dev/null) || exit 0
 
 branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
-[ "$branch" = "HEAD" ] && branch="a detached HEAD"
+[ "$branch" = "HEAD" ] && branch="detached HEAD"
 
-# ── Fetch age ──────────────────────────────────────────────────────────────
-# GNU coreutils and BSD/macOS disagree on stat's flags, and getting the order
-# wrong is silent: GNU's `-f` is --file-system and takes no argument, so
-# `stat -f %m FILE` treats %m as a filename, prints a filesystem block on
-# stdout and exits non-zero. Try the GNU form FIRST, then BSD, then insist the
-# result is actually a number — a non-numeric value would otherwise reach
-# $(( )), fail, leave the variable unset, and abort the script under `set -u`.
+# ── Fetch age ─────────────────────────────────────────────────────────────
+# FETCH_HEAD is PER-WORKTREE, not a common-dir file — it is absent from git's
+# common_list[], so `git fetch` writes it under .git/worktrees/<name>/. An
+# earlier version read --git-common-dir and was therefore reading a file git
+# never writes for that worktree: it reported another worktree's fetch time,
+# and in the worst shape its own remediation could not clear its own warning
+# (fetch here, the nag reads the other worktree's stale mtime, repeat forever).
+# This repo has nine worktrees, so that was the common case, not an edge one.
+# `--git-path` is the canonical resolver and is correct in both layouts.
+#
+# KNOWN LIMIT, deliberately accepted: any fetch rewrites FETCH_HEAD, including
+# one that never touched main (`gh pr checkout` fetches refs/pull/N/head), so
+# this age can read fresher than origin/main really is. The reflog of
+# refs/remotes/origin/main was evaluated as an alternative and is worse — it
+# only records when the ref MOVED, so a repo fetched hourly whose main has not
+# moved in three days reports three days, and it is empty in a fresh clone.
+# This line is a hint; the behind-count above it is the real signal.
+fetch_head=$(git rev-parse --git-path FETCH_HEAD 2>/dev/null)
 mtime=""
-if [ -f .git/FETCH_HEAD ] || [ -f "$(git rev-parse --git-common-dir 2>/dev/null)/FETCH_HEAD" ]; then
-  # FETCH_HEAD lives in the COMMON git dir; in a linked worktree `.git` is a
-  # file, not a directory, so the naive relative path misses.
-  fetch_head="$(git rev-parse --git-common-dir 2>/dev/null)/FETCH_HEAD"
-  if [ -f "$fetch_head" ]; then
-    mtime=$(stat -c %Y "$fetch_head" 2>/dev/null) || mtime=$(stat -f %m "$fetch_head" 2>/dev/null) || mtime=""
-  fi
+if [ -n "$fetch_head" ] && [ -f "$fetch_head" ]; then
+  # GNU and BSD disagree on stat's flags and getting the order wrong is silent:
+  # GNU's -f is --file-system and takes no argument, so `stat -f %m FILE` reads
+  # %m as a filename, prints a filesystem block and exits non-zero. GNU form
+  # first, BSD second, both muted.
+  mtime=$(stat -c %Y "$fetch_head" 2>/dev/null) || mtime=$(stat -f %m "$fetch_head" 2>/dev/null) || mtime=""
 fi
+
+now=$(date +%s 2>/dev/null)
+# `date` is the one external call whose failure could otherwise be swallowed by
+# the skew clamp below and rendered as a reassuring "0h ago" — an unreadable
+# clock must read as unknown, not as just-fetched.
+case "${now:-x}" in *[!0-9]*|'') now="" ;; esac
+
+fetch_age_h=-1
+fetch_label="unknown"
 case "${mtime:-x}" in
-  ''|*[!0-9]*) fetch_age_h=-1; fetch_label="unknown" ;;
+  *[!0-9]*) : ;;                     # non-numeric (incl. empty via the :-x) → unknown
   *)
-    fetch_age_h=$(( ( $(date +%s) - mtime ) / 3600 ))
-    # A future-dated FETCH_HEAD (clock skew after a VM resume, a restored
-    # backup, a drifting container clock) must not render as "-3238h ago".
-    [ "$fetch_age_h" -lt 0 ] && fetch_age_h=0
-    fetch_label="${fetch_age_h}h ago"
+    if [ -n "$now" ]; then
+      # 10# forces base 10. An all-digit value is NOT automatically safe for
+      # $(( )): a leading zero is parsed as octal, and 8/9 are invalid octal
+      # digits, which errors mid-branch and leaves these variables unset —
+      # fatal under `set -u`.
+      fetch_age_h=$(( (10#$now - 10#$mtime) / 3600 ))
+      # Clock skew (VM resume, restored backup, drifting container clock) must
+      # never render as a negative hour count.
+      [ "$fetch_age_h" -lt 0 ] && fetch_age_h=0
+      fetch_label="${fetch_age_h}h ago"
+    fi
     ;;
 esac
 
@@ -109,9 +134,13 @@ if [ "$behind" -eq 0 ]; then
 fi
 
 # ── Behind, but plausibly an active branch ─────────────────────────────────
-# Quiet at 1-4 so ordinary in-flight work does not train you to ignore this.
+# Silent at 1-4. Twelve PRs merged in ~22h on 2026-08-18, so any live feature
+# branch is a few commits behind within minutes — printing here would fire on
+# nearly every session start, which is precisely how a warning becomes
+# wallpaper. An earlier version printed a one-liner and was observed doing
+# exactly that on a real worktree. The incident this hook exists for was 44
+# behind; 5 is the threshold where "behind" stops being ordinary.
 if [ "$behind" -lt 5 ]; then
-  echo "ℹ '${branch}' is ${behind} behind origin/main (${ahead} ahead). Last fetch: ${fetch_label}."
   exit 0
 fi
 

@@ -40,6 +40,42 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 **Gotcha — do not size a threshold from a number quoted in prose.** The 20-minute job ceiling in the first draft of #75 came from "a green run is ~3.5 min", written into PLAYBOOK the day before from a single measurement. By the time it was reused, successful runs reached 20m49s — the ceiling would have cancelled a genuine pass. Caught by self-review before merge. Rule 21 now carries the measured range, its date, an explicit re-measure instruction, and the `gh api … /jobs` command to get real step durations. Same failure shape as the `retryN` bug in #62: a mechanism understood correctly, applied from a snapshot that had moved.
 
 **Pattern across 2026-08-18/19 — absence of signal read as success.** Four mechanisms, one symptom: suppressed steps reporting `success` (A1); an artifact overwritten before upload (A2); a conflicting PR producing no run at all (A6); and now a step that never failed because it never finished. In every case the surface said "no red X" and the honest answer was "no answer."
+### [2026-08-19] Re-review of the stale-tree hook — FETCH_HEAD is per-worktree, not common-dir
+
+**Category:** fix | Tooling / Session hygiene
+**Cross-link:** [PR #74](https://github.com/jsa7cornell/Sendmo/pull/74) (original) | follows the [2026-08-19] stale-tree hook entry below
+
+**Browser-verified:**
+  n/a-category: infra
+  n/a-reason: Shell hook only. No src/, no Edge Function, no rendered surface. Verified by running both the merged and fixed scripts against each reproduction below and diffing the behavior.
+
+**Why re-reviewed.** #74 was reviewed at high effort, then **~80% of the script was rewritten in response to that review** (75 insertions / 44 deletions on 148 lines) and merged on the author's own verification. What shipped was not what had been reviewed. The re-review broke the contract twice with **no shims**.
+
+**The bug that mattered: `FETCH_HEAD` is a per-worktree file.** It is absent from git's `common_list[]`, so `git fetch` writes it to `--git-dir`, never `--git-common-dir`. The script's comment asserted the opposite and its code read `--git-common-dir`, so **in any linked worktree it read a path git never writes for that worktree**. Measured here: from a linked worktree, `--git-common-dir` gives `/Users/ja/AI-Brain/sendmo/.git` while `--git-path FETCH_HEAD` gives `.../.git/worktrees/<name>/FETCH_HEAD`. **This repo has nine worktrees**, and the hook's own Fix line tells you to create more — so this was the common case, not an edge one.
+
+Three reproduced consequences, all fixed:
+
+| Shape | Merged behavior | Fixed |
+|---|---|---|
+| Worktree 100d stale, another fresh | **silent** — the 24h nag never fired | warns `2655h ago` |
+| Worktree fetched 1s ago, another 80d stale | `Last fetch: 2655h ago` — a false fact | `0h ago` |
+| **Its own remediation could not clear its own warning** | fetch here → nag persists forever, reading the other worktree's mtime | clears |
+
+The third is the worst shape: a warning that survives doing exactly what it tells you to do is one a reader learns to ignore, which is the failure the whole "silence means correct" design exists to prevent.
+
+**Rejected alternative, recorded so it is not re-proposed.** The reflog of `refs/remotes/origin/main` looks like a better source — it answers "when did we last learn about origin/main" rather than "did any fetch happen." It is worse: reflog entries are written only when the ref **moves**, so a repo fetched hourly whose main has not moved in three days reports three days (falsely alarming), and `git clone` writes no reflog entry at all, so every fresh clone reads as unknown. Verified both. `--git-path FETCH_HEAD` is the right primitive.
+
+**Known limit, accepted deliberately:** any fetch rewrites FETCH_HEAD, including one that never touched main — `gh pr checkout` fetches `refs/pull/N/head` and refreshes the timestamp while `origin/main` stays stale. The age line can therefore read fresher than reality. It is a hint; **the behind-count is the real signal** and is unaffected.
+
+**Gotcha — an all-digit string is not safe for `$(( ))`.** A leading zero is parsed as octal and `8`/`9` are invalid octal digits, so `0177099` errors *mid-branch*, leaving `fetch_age_h` and `fetch_label` unset and killing the script under `set -u`: rc 1, a half-printed warning with the entire missing-files list lost, plus two bash errors. Latent (real `stat` emits unpadded epoch seconds) but the guard was documented as making the value arithmetic-safe and did not. `10#` forces base 10.
+
+**Gotcha — a clamp can swallow an error and fail toward reassurance.** `date +%s` was the one external call without `2>/dev/null`. When it fails the expression becomes `(( ( - mtime ) / 3600 ))`, a large negative, which the skew clamp rewrote to `0` — so a total failure to read the clock rendered as **"0h ago", i.e. just fetched**, while `date`'s stderr leaked to the user. An unreadable clock now reads `unknown`. The clamp still does its real job: a FETCH_HEAD dated a year ahead yields `0h ago`, not a negative.
+
+**Wallpaper, measured.** The 1–4-behind branch printed a one-liner while its own comment said "quiet at 1-4 so ordinary in-flight work does not train you to ignore this." With twelve PRs merged in ~22h, any live feature branch is a few behind within minutes — it was observed firing on a real worktree. Now silent below 5; the incident this exists for was 44 behind.
+
+**Verified:** all three worktree shapes above, octal (rc 0, no shell errors, was rc 1 + 2 errors), `date` failure (`unknown`, no stderr leak, was `0h ago` + leak), 2-behind (silent, was printing), plus the full prior suite — 44-behind incident tree with evidence list intact, fresh clone from GitHub silent, shadowing local `origin/main` branch still detected, unborn HEAD, truncation markers, detached-HEAD label, subdir project dir, non-git dir. 274ms, zero network.
+
+---
 
 ### [2026-08-19] `main` is gated — and the gate found CI wedged on the way in
 
