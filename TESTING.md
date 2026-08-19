@@ -47,7 +47,7 @@ you mean to.
 
 ## Continuous integration
 
-`.github/workflows/test.yml` ("Provide Tests") runs on every push and PR to `main`: ESLint (non-blocking), `tsc -b`, unit tests, the mocked e2e suite, and a scoped authed-e2e step (real Supabase — the `/links/new` phone-gate spec). `tsc` + unit are **blocking**. The **e2e steps are currently non-blocking** (`continue-on-error`) — a deliberate state while the suite is stabilised; once it's reliably green they should be made blocking.
+`.github/workflows/test.yml` ("Provide Tests") runs on every push and PR to `main`: ESLint (non-blocking), `tsc -b`, unit tests, the mocked e2e suite, and a scoped authed-e2e step (real Supabase — the `/links/new` phone-gate spec). `tsc`, unit, **and the mocked e2e suite** are blocking — the e2e step became blocking on 2026-08-18 once the host-mismatch bug was fixed and it ran deterministically green, and since 2026-08-19 a branch ruleset makes it a required check on `main`. The **authed** e2e step stays non-blocking (`continue-on-error`) on purpose: it hits live Supabase, so gating merges on it would couple every merge to a third party's uptime. A green run therefore certifies the mocked suite but not the authed step — check the run's annotations for that one.
 
 ## Helper skills (slash commands, in `.claude/commands/`)
 
