@@ -12,6 +12,39 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-19] Stale-tree hook — three incidents, one memory file, zero machines checking
+
+**Category:** ship | Tooling / Session hygiene
+**Cross-link:** [PR #74](https://github.com/jsa7cornell/Sendmo/pull/74) | [proposals/2026-08-19_shipping-process-and-stale-branch-rca_reviewed-2026-08-19.md](proposals/2026-08-19_shipping-process-and-stale-branch-rca_reviewed-2026-08-19.md) (F1 + review blocker B1) | recurrence of the 2026-07-06 duplicate-arc incident
+
+**Browser-verified:**
+  n/a-category: infra
+  n/a-reason: Shell hook + `.gitignore` + agent command docs. No `src/`, no `supabase/functions/`, no rendered surface and no wire shape. Verified instead by executing the hook against 14 real repository states — see below.
+
+**What happened.** A session read the whole repo from `fix/e2e-infra-audit`, merged as [#64](https://github.com/jsa7cornell/Sendmo/pull/64) on 2026-08-17 and left checked out — **44 commits behind `origin/main`**. It proposed a deferral-mask migration for constraints [041](supabase/migrations/041_flexible_link_may_carry_origin.sql)/[042](supabase/migrations/042_flexible_link_may_defer_destination.sql) had already relaxed, recommended deleting a step `e05d840` had already deleted, and re-opened decision B of the unified-onboarding proposal, which John had decided the day before.
+
+**No fetch was missing — that is the whole point.** The local `origin/main` ref was already current, so `git rev-list --count HEAD..origin/main` returns `44` in ~25ms with no network. The commands normally reached for structurally cannot show it: `git log --oneline` shows the history you are standing on, and `git status` compares against the branch's **own** upstream (`origin/fix/e2e-infra-audit`), which was in sync — so git correctly reported everything was fine.
+
+**Why a hook and not a rule.** Guidance for exactly this existed in the project memory before the incident and did not hold. Three occurrences, one written rule, nothing mechanical. The rule's trigger was also scoped to "before starting a PRE-LAUNCH item," so a session asked only to read a handoff and write a proposal followed its instructions as written and still failed — prose triggers rot at the edges; only unconditional mechanisms survive.
+
+**`.claude/` was gitignored, which is the half that would have made this a no-op.** Caught in review (B1). The hook would have lived only in whichever checkout happened to hold it locally — and a worktree, which this project's own conventions tell agents to use, got nothing. The two existing Stop hooks and the `/runtest`, `/buildtest`, `/verifyfix` commands TESTING.md documents had the same gap the whole time. `.gitignore` now tracks `settings.json` + `commands/` and still ignores `settings.local.json`, `launch.json`, `worktrees/`.
+
+**Gotcha — promoting untracked scratch to tracked truth promotes its rot too.** Code review found the three command files, unread for months while nobody depended on them, carried: a dead pre-rename path (`/Users/ja/AI Brain/sendmo/`, same class as the broken `core.hookspath`), a spec directory that does not exist (`sendmo/tests/e2e/` — a spec written there falls outside `testDir` and is **silently never collected**), a reference to `full-label-flow.spec.ts` deleted 2026-05-20, an instruction to pre-boot a dev server that `playwright.config.ts` already manages (the A4c orphan-server trap), and — worst — *"~14 e2e tests fail on a missing `VITE_GOOGLE_MAPS_API_KEY`, don't treat them as new regressions."* That last one is obsolete since the 2026-08-18 de-rot (77–82 passed / **0 failed**) and the suite is now **merge-blocking**, so shipping it would have told every agent in every clone to wave real failures through — reintroducing the false-green this project fixed one day earlier. All corrected in this PR.
+
+**Gotcha — `stat` flag order is a silent portability trap.** GNU coreutils' `-f` is `--file-system` and takes no argument, so `stat -f %m FILE` treats `%m` as a filename, prints a filesystem block to stdout and exits non-zero. Writing the BSD form first means the value that reaches `$(( ))` is junk, the arithmetic fails, the variable stays unset, and `set -u` aborts the script — **exit 1 plus two bash errors, on Linux, on a tree that is perfectly current.** Every Claude Code cloud session is Linux. Try `stat -c %Y` first, then `stat -f %m`, then insist the result is numeric.
+
+**Gotcha — the bare `origin/main` shorthand resolves `refs/heads/` first.** A local branch literally named `origin/main` shadows the remote, every count comes back `0`, and the hook goes silent on exactly the tree it exists to flag. Guard and compare against the fully-qualified `refs/remotes/origin/main`.
+
+**Design.** Never fetches (a network call at session start is a latency and failure surface, and the incident proves it is unnecessary). Always exits 0. Silence means correct, and *unknown* is silent too — a fresh clone has no `FETCH_HEAD`, and nagging the freshest possible state is how a warning becomes wallpaper by week two. Tiered: quiet one-liner at 1–4 behind (twelve PRs merged in ~22h on 2026-08-18, so a few behind is healthy), full damage report at 5+, plus an explicit note when the branch is already an ancestor of `main`. `matcher: startup|resume` so compaction does not reprint it mid-session.
+
+**Verified** against 14 real repository states, not simulations: the actual 44-behind incident tree (prints the exact damage list); current tree and fresh clone (both silent); 2-behind (one line); detached HEAD; merged-ancestor; linked worktree `FETCH_HEAD` via `--git-common-dir`; a subdirectory `CLAUDE_PROJECT_DIR` (pathspecs anchored at toplevel, else the evidence silently vanishes); unborn HEAD with `origin/main` present (was silent at maximum staleness, now warns); a shadowing local `origin/main` branch; future-dated `FETCH_HEAD` (clamped, was rendering `-29530h ago`); >8 missing files (`…and 10 more`, no silent cap); non-git directory; GNU-`stat` semantics under a shim. **117ms, zero network.**
+
+**Heads-up for anyone merging this.** Because `.claude/` is still ignored on `main`, merging replaces any local untracked `settings.json` or `commands/*.md` with **no** "would be overwritten" error. Verified against a decoy clone. Byte-identical to John's copies today, so harmless now — but it is a one-way door.
+
+**Not in this PR:** branch protection (F2 — note every agent authenticates as `jsa7cornell`, so a bypass for John is a bypass for every agent), `scripts/new-session.sh` (F3), the `core.hookspath` repair (F5 — currently `/Users/ja/AI Brain/sendmo/.git/hooks`, which does not exist, so **every git hook in this repo silently no-ops**), the two stale CI claims in PLAYBOOK/TESTING (F6), and the rescue of two decided proposals stranded on dead branches (F7).
+
+---
+
 ### [2026-08-19] Design brief for the onboarding UX refresh — handed to Claude design
 
 **Category:** docs | Onboarding
