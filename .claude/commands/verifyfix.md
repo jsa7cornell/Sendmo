@@ -13,7 +13,7 @@ Per SendMo PLAYBOOK Rule 19, verify it in a real browser before writing the LOG 
    - Auth/link types: `{authed, anonymous-with-cancel-token, anonymous}`
    - Name the axis explicitly before proceeding. If you can't, the fix is broader than you've modeled — stop and trace.
 
-2. **If a Playwright spec already covers the axis:** run `npm run test:e2e:browser` from `sendmo/` (with `npm run dev` running on :5173) and confirm pass for the relevant variants. Note any variants the existing spec doesn't cover. Known-flaky context: per WISHLIST, ~14 specs fail on missing `VITE_GOOGLE_MAPS_API_KEY` — distinguish those from new regressions.
+2. **If a Playwright spec already covers the axis:** run `npm run test:e2e:browser` from `sendmo/` (Playwright starts its own dev server — do not pre-boot one) and confirm pass for the relevant variants. Note any variants the existing spec doesn't cover. The baseline is **0 failures** and the mocked suite is merge-blocking, so treat any failure as a real regression.
 
 3. **If no spec covers the axis:** drive the variants live via the Playwright MCP — `browser_navigate` → `browser_snapshot` → assert on the DOM. Exercise each variant cell your fix changes the behavior of. Capture the snapshot artifact path for each.
 

@@ -12,7 +12,7 @@ Read SendMo PLAYBOOK Rule 19 first for variant-axis discipline. Then:
    - Shipment lifecycle → `{label_created, in_use, cancelled, completed, expired}`
    - Cancel/change auth shape → `{authed, anonymous-with-cancel-token, anonymous}`
 
-2. **Author the spec** under `sendmo/tests/e2e/<descriptive-name>.spec.ts`. Exercise each variant cell your fix changes the behavior of (not just the one named in the bug report). Follow the patterns in existing specs like `tests/e2e/full-label-flow.spec.ts`.
+2. **Author the spec** under `tests/e2e/<descriptive-name>.spec.ts` (this repo's root IS sendmo; `playwright.config.ts` sets `testDir: './tests/e2e'`, so a spec written anywhere else is silently never collected). Exercise each variant cell your fix changes the behavior of (not just the one named in the bug report). Follow the patterns in existing specs — `tests/e2e/onboarding.spec.ts` for flow coverage, `tests/e2e/phone-gate.spec.ts` for the `mockEdgeFunctions` pattern. Derive the mock target from `tests/e2e/supabase-env.ts`, never a hardcoded project URL (2026-08-18: 11 hardcoded literals made 28 failures invisible).
 
 3. **Server-trusted state.** SendMo's payments + mode resolution are server-derived (PLAYBOOK Rule 14). Set up scenario state via real Edge Function calls (`signInWithOtp`, `payments`, `payment-methods`, `cancel-label`, etc.) with appropriate JWT auth — don't reach into the DB directly. If a scenario needs state no Edge Function can produce, that's signal to either add a test-only endpoint or fixture-test instead.
 
@@ -20,7 +20,7 @@ Read SendMo PLAYBOOK Rule 19 first for variant-axis discipline. Then:
 
 5. **Validate the spec actually catches the bug.** On a scratch branch, revert the fix. Run the spec — it MUST fail with a clear assertion. Restore the fix. Re-run — it MUST pass. A spec that doesn't fail on the reverted state is a spec that doesn't catch the regression.
 
-6. **Run `npm run test:e2e:browser`** from `sendmo/` to confirm the new spec passes alongside existing ones. Watch for the known-flaky Maps-API-key failures per WISHLIST; the new spec should not depend on Maps autocomplete unless absolutely necessary.
+6. **Run `npm run test:e2e:browser`** from the checkout you are working in to confirm the new spec passes alongside existing ones. The baseline is 0 failures and the suite is merge-blocking — any failure is a real regression. The new spec should not depend on Maps autocomplete unless absolutely necessary.
 
 7. **Update the LOG entry's `Browser-verified:` block** citing the new spec:
    ```
@@ -29,4 +29,4 @@ Read SendMo PLAYBOOK Rule 19 first for variant-axis discipline. Then:
      variants-covered: [<list of variants>]
    ```
 
-Cross-project sibling: AgentEnvoy uses Rule 29 + identical command shape; the verification proposal that spawned both rules is `agentenvoy/proposals/2026-05-13_claude-production-verification-infra_reviewed-2026-05-13_decided-2026-05-13.md`.
+Cross-project sibling: AgentEnvoy uses Rule 29 + identical command shape; the verification proposal that spawned both rules is `agentenvoy/scheduler/proposals/2026-05-13_claude-production-verification-infra_reviewed-2026-05-13_decided-2026-05-13.md`.
