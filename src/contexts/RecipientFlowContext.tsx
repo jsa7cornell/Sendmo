@@ -1,7 +1,7 @@
 import { createContext, useContext, useCallback, useEffect, useState, useRef } from "react";
 import { flushSync } from "react-dom";
-import { useLocation, useNavigate, useParams } from "react-router-dom";
-import type { RecipientPath, SenderKind } from "@/lib/types";
+import { useNavigate, useParams } from "react-router-dom";
+import type { RecipientPath } from "@/lib/types";
 import {
   INITIAL_DATA,
   loadPersisted,
@@ -50,19 +50,10 @@ const RecipientFlowContext = createContext<RecipientFlowContextValue | null>(nul
 // ─── Provider ───────────────────────────────────────────────
 
 export function RecipientFlowProvider({ children }: { children: React.ReactNode }) {
-  const location = useLocation();
-  // Step 0's answer travels two ways: sessionStorage (survives the OAuth
-  // roundtrip and refreshes) and React Router state (survives a sessionStorage
-  // write that silently failed — private-mode, disabled storage, quota).
-  // `persist` swallows write errors by design, so without this backstop a user
-  // who answered "I am" could arrive with sender=null, be treated as 'other',
-  // and get their OWN address prefilled into the destination slot — the exact
-  // wrong-party bug the sender split exists to prevent.
-  const navSender = (location.state as { sender?: SenderKind } | null)?.sender ?? null;
-  const [data, setData] = useState<RecipientFlowData>(() => {
-    const base = loadPersisted() ?? INITIAL_DATA;
-    return base.sender ? base : { ...base, sender: navSender };
-  });
+  // sender starts null (2026-08-18: the who's-sending step is gone) and is
+  // resolved in-flow — by a "use my address" chip or by deferring. A persisted
+  // draft may carry an already-resolved value; nothing else seeds it.
+  const [data, setData] = useState<RecipientFlowData>(() => loadPersisted() ?? INITIAL_DATA);
   const navigate = useNavigate();
   const params = useParams<{ pathSlug?: string; stepSlug?: string }>();
   const directionRef = useRef<NavDirection>("forward");
@@ -123,16 +114,22 @@ export function RecipientFlowProvider({ children }: { children: React.ReactNode 
   useEffect(() => {
     if (prefillRan.current) return;
     if (!user) return;
-    // No "wait for step 0" guard here on purpose: `sender` is seeded
-    // synchronously at mount from sessionStorage or router state, so by the time
-    // this runs it is either known or genuinely absent. Absent means a deep link
-    // that never passed step 0, and prefillSlotFor's documented fallback for
-    // that case ('destination') is the correct, pre-existing shape.
-    const fillsOrigin = prefillSlotFor(data.sender) === "origin";
+    // Runs only once `sender` is RESOLVED (2026-08-18: the who's-sending step
+    // is gone, so sender starts null and is derived from the "use my address"
+    // chips or from deferring). Unresolved means we don't know which party the
+    // account holder is, and guessing a slot is the wrong-party bug. The
+    // origin-step chip relies on this effect re-running when the chip resolves
+    // sender to 'self' — it fires updateData({sender:'self'}) and this fills.
+    const slot = prefillSlotFor(data.sender);
+    if (!slot) return;
+    const fillsOrigin = slot === "origin";
+    // Guard on the TARGET SLOT only. The old `|| data.email` bail predates the
+    // chips: by the origin step the email is always filled, so it would make
+    // the 'self' chip a silent no-op. Typed email is preserved below instead.
     const targetTouched = fillsOrigin
       ? data.originAddress.street
       : data.destinationAddress.street;
-    if (targetTouched || data.email) return;
+    if (targetTouched) return;
     prefillRan.current = true;
 
     let cancelled = false;
@@ -155,7 +152,7 @@ export function RecipientFlowProvider({ children }: { children: React.ReactNode 
       setData((prev) => {
         // Bail out if the user has typed anything in the meantime
         const prevTarget = fillsOrigin ? prev.originAddress : prev.destinationAddress;
-        if (prevTarget.street || prev.email) return prev;
+        if (prevTarget.street) return prev;
 
         const filled = recentComplete
           ? {
@@ -175,7 +172,7 @@ export function RecipientFlowProvider({ children }: { children: React.ReactNode 
           ...prev,
           // Only the slot the account holder actually owns in this branch.
           ...(fillsOrigin ? { originAddress: filled } : { destinationAddress: filled }),
-          email: profile?.email ?? user.email ?? prev.email,
+          email: prev.email || (profile?.email ?? user.email ?? ""),
         };
       });
     })();
@@ -220,6 +217,12 @@ export function RecipientFlowProvider({ children }: { children: React.ReactNode 
       flushSync(() => {
         setData((prev) => ({
           ...prev,
+          // Passing a step's validation IS answering it — so answering clears
+          // its deferral. Without this, defer-then-undo-then-fill left the
+          // stale flag set and step 14's exit still turned the flow into a
+          // link even though every question had been answered.
+          ...(step === 10 ? { deferredOrigin: false } : {}),
+          ...(step === 14 ? { deferredPackage: false } : {}),
           completedSteps: prev.completedSteps.includes(step)
             ? (next === 12 && !prev.completedSteps.includes(11)
                 ? [...prev.completedSteps, 11]
@@ -308,6 +311,11 @@ export function RecipientFlowProvider({ children }: { children: React.ReactNode 
       setData((prev) => ({
         ...prev,
         ...(field === "origin" ? { deferredOrigin: true } : { deferredPackage: true }),
+        // Deferring IS an identity claim: "the sender will fill this in" only
+        // makes sense when someone else is the sender. Resolves a still-null
+        // sender the same way the address chips do (never overrides 'self' —
+        // the defer buttons are hidden on that branch anyway).
+        sender: prev.sender ?? "other",
         completedSteps: prev.completedSteps.includes(step)
           ? prev.completedSteps
           : [...prev.completedSteps, step],
@@ -327,6 +335,17 @@ export function RecipientFlowProvider({ children }: { children: React.ReactNode 
   }, [navigate]);
 
   const undoShippingLinkSwitch = useCallback(() => {
+    // Undo reverses the deferral decision itself, not just the location:
+    // flags cleared AND steps 10/14 un-completed. Leaving them in
+    // completedSteps let the progress bar jump defer→undo users forward past
+    // an empty origin on the label path (review finding 5) — deferral was how
+    // those steps got "completed", so undoing it un-completes them.
+    setData((prev) => ({
+      ...prev,
+      deferredOrigin: false,
+      deferredPackage: false,
+      completedSteps: prev.completedSteps.filter((s) => s !== 10 && s !== 14),
+    }));
     directionRef.current = "backward";
     navigate(stepUrl("full_label", 10));
   }, [navigate]);

@@ -40,7 +40,8 @@ async function mockEdgeFunctions(page: Page) {
 
 async function reachOriginStep(page: Page) {
   await page.goto("/onboarding");
-  await page.getByRole("button", { name: /Someone else/ }).click();
+  // /onboarding resolves straight to the destination step (no picker, 2026-08-18)
+  await expect(page).toHaveURL(/\/full-label\/destination$/);
   await page.locator("#destination-name").fill("Jane Doe");
   const input = page.locator("#destination-address");
   await input.fill("149 New Montgomery");

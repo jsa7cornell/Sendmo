@@ -250,7 +250,8 @@ async function gotoPackageStep(page: Page) {
 /** Drive Step 0 → Step 1 → Step 10, leaving the page on the ship-from address step. */
 async function gotoStep10(page: Page) {
   await page.goto("/onboarding");
-  await page.getByRole("button", { name: /Someone else/ }).click();
+  // /onboarding resolves straight to the destination step (no picker, 2026-08-18)
+  await expect(page).toHaveURL(/\/full-label\/destination$/);
   await page.locator("#destination-name").fill("Jane Doe");
   await fillSmartAddress(page, "destination");
   await page.locator("#recipient-email").fill("test@example.com");
@@ -263,60 +264,62 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
     await mockAllEdgeFunctions(page);
   });
 
-  test("Step 0: receiving is the primary card, mailing out is a secondary link", async ({ page }) => {
+  test("/onboarding is the destination step — the who's-sending picker is gone", async ({ page }) => {
     await page.goto("/onboarding");
 
-    await expect(
-      page.getByRole("heading", { name: /Who's sending the package/i })
-    ).toBeVisible();
-    // Both answers reachable, but deliberately not equal weight (John,
-    // 2026-08-18): receiving is the card, mailing out is a text link.
-    await expect(page.getByRole("button", { name: /Someone else/ })).toBeVisible();
-    await expect(
-      page.getByRole("button", { name: /mailing something out myself/i })
-    ).toBeVisible();
-    // Who-pays is stated once, not badged on each option.
-    await expect(page.getByText(/you're the one paying for shipping/i)).toBeVisible();
-  });
-
-  test("Step 0: the secondary link starts an outbound label — the case that had no door", async ({ page }) => {
-    await page.goto("/onboarding");
-    await page.getByRole("button", { name: /mailing something out myself/i }).click();
-
-    // Same link_type and same first step as every other full-label flow; only
-    // which party owns which address differs.
-    await expect(page).toHaveURL(/\/onboarding\/full-label\/destination/);
+    // 2026-08-18 (unified-onboarding Phase 2): no picker. The flow itself
+    // resolves who's sending — via the "use my address" chips, or by
+    // deferring. Entry lands straight on the first real question.
+    await expect(page).toHaveURL(/\/onboarding\/full-label\/destination$/);
+    // Neutral heading: with sender unresolved, the copy must be true
+    // whichever party the account holder turns out to be.
     await expect(page.getByRole("heading", { name: /Where's it going/i })).toBeVisible();
   });
 
-  test("the outbound branch survives a sessionStorage write failure", async ({ page }) => {
-    // Regression: startFlowAs writes sessionStorage, and persist() swallows
-    // write errors by design. When storage is unavailable the answer used to be
-    // lost, sender fell back to 'other', and the user's OWN saved address would
-    // be prefilled into the DESTINATION slot — the wrong-party bug the sender
-    // split exists to prevent. App.tsx now also carries it in router state.
+  test("a finished draft is cleared at entry — never silently rehydrated", async ({ page }) => {
+    // Review finding 1 (2026-08-18): a finished/expired draft is not offerable
+    // (loadResumable → null) but WAS still hydrated by the provider after the
+    // redirect — last shipment's addresses prefilling a "new" flow. Entry must
+    // clear what it will not offer.
     await page.addInitScript(() => {
-      const store = new Map<string, string>();
-      Object.defineProperty(window, "sessionStorage", {
-        configurable: true,
-        value: {
-          getItem: (k: string) => (store.has(k) ? store.get(k)! : null),
-          setItem: () => { throw new DOMException("QuotaExceededError"); },
-          removeItem: (k: string) => { store.delete(k); },
-          clear: () => { store.clear(); },
-          key: () => null,
-          get length() { return store.size; },
+      localStorage.setItem("sendmo:recipient_flow:v1", JSON.stringify({
+        savedAt: Date.now(),
+        data: {
+          sender: "other", path: "full_label", completedSteps: [1, 10, 14],
+          short_code: "OLD123", // finished → not offerable
+          email: "old@example.com",
+          destinationAddress: {
+            name: "Old Friend", street: "9 Stale St", city: "San Francisco",
+            state: "CA", zip: "94107", phone: "4155550100", verified: true,
+          },
         },
-      });
+      }));
     });
 
     await page.goto("/onboarding");
-    await page.getByRole("button", { name: /mailing something out myself/i }).click();
+    await expect(page).toHaveURL(/\/full-label\/destination$/);
+    // No resume banner, and a genuinely blank flow.
+    await expect(page.getByText(/shipment in progress/i)).toHaveCount(0);
+    await expect(page.locator("#destination-name")).toHaveValue("");
+    await expect(page.locator("#recipient-email")).toHaveValue("");
+  });
 
-    // The 'self' branch must still be in force: step 1 collects the OTHER
-    // party's address, so it asks "Where's it going?", not "delivered to you".
-    await expect(page).toHaveURL(/\/onboarding\/full-label\/destination/);
-    await expect(page.getByRole("heading", { name: /Where's it going/i })).toBeVisible();
+  test("deferring resolves the sender — the skip banner appears the moment it happens", async ({ page }) => {
+    await gotoStep10(page);
+
+    // Skip the origin. The product change is announced NOW, on step 14 — not
+    // at the end of the flow (John's point 3, 2026-08-18).
+    await page.getByRole("button", { name: /The sender will fill this in/i }).click();
+    await expect(page.locator("#origin-name")).toHaveCount(0);
+    await expect(page).toHaveURL(/\/full-label\/package$/);
+    await expect(page.getByText(/This will be a shipping link, not a label/i)).toBeVisible();
+
+    // Undo reverses the deferral itself: back on step 10, and after answering
+    // every question the flow must produce a LABEL again — the stale-flag bug
+    // where defer→undo→fill still produced a link.
+    await page.getByRole("button", { name: /Undo skip/i }).click();
+    await expect(page).toHaveURL(/\/full-label\/shipping$/);
+    await expect(page.getByText(/This will be a shipping link/i)).toHaveCount(0);
   });
 
   test("the shipping link is a named, visible choice — not an escape from a failed form", async ({ page }) => {
@@ -405,12 +408,13 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
     await page.goto("/onboarding");
 
     // ── Step 0: Select "Full prepaid label" ──────────────────
-    await page.getByRole("button", { name: /Someone else/ }).click();
+    // /onboarding resolves straight to the destination step (no picker, 2026-08-18)
+    await expect(page).toHaveURL(/\/full-label\/destination$/);
 
     // ── Step 1: Address + Email ──────────────────────────────
     await expect(
       page.getByRole("heading", {
-        name: /Where should the package be delivered/i,
+        name: /Where's it going/i,
       })
     ).toBeVisible();
 
@@ -485,7 +489,8 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
     page,
   }) => {
     await page.goto("/onboarding");
-    await page.getByRole("button", { name: /Someone else/ }).click();
+    // /onboarding resolves straight to the destination step (no picker, 2026-08-18)
+    await expect(page).toHaveURL(/\/full-label\/destination$/);
 
     // Continue with nothing filled in.
     await page
@@ -501,7 +506,8 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
 
   test("Step 1: an invalid email is rejected", async ({ page }) => {
     await page.goto("/onboarding");
-    await page.getByRole("button", { name: /Someone else/ }).click();
+    // /onboarding resolves straight to the destination step (no picker, 2026-08-18)
+    await expect(page).toHaveURL(/\/full-label\/destination$/);
 
     await page.locator("#recipient-email").fill("notanemail");
     await page
@@ -569,7 +575,7 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
     // Back on Step 1, with the verified destination address still in place.
     await expect(
       page.getByRole("heading", {
-        name: /Where should the package be delivered/i,
+        name: /Where's it going/i,
       }),
     ).toBeVisible();
     await expect(page.getByText("Verified").first()).toBeVisible();

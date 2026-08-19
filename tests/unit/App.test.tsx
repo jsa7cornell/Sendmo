@@ -38,13 +38,15 @@ describe("App Routing", () => {
         }, { timeout: 5000 });
     });
 
-    it("renders the Onboarding on /onboarding", async () => {
+    it("resolves /onboarding straight to the destination step (no picker)", async () => {
         window.history.pushState({}, "Test page", "/onboarding");
         render(<App />);
-        // Role + accessible name, not an incidental copy match — step 0's
-        // wording is expected to keep moving.
+        // The who's-sending picker is gone (2026-08-18): with no resumable
+        // draft, /onboarding redirects to the destination step.
         await waitFor(() => {
-            expect(screen.getByRole("heading", { name: /who's sending/i })).toBeInTheDocument();
+            // Exact neutral heading: sender is unresolved at entry, so the
+            // 'other'-branch "delivered to you" copy must NOT render.
+            expect(screen.getByRole("heading", { name: /where's it going/i })).toBeInTheDocument();
         });
     });
 

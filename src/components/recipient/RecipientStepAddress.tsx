@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { AlertCircle, CheckCircle2, Loader2 } from "lucide-react";
+import { AlertCircle, ArrowRight, CheckCircle2, Home, Loader2, Tag } from "lucide-react";
+import { SELLER_LINK_VISIBLE, SELLER_LINK_LIVE } from "@/lib/featureFlags";
 import AddressForm from "@/components/forms/AddressForm";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -8,6 +10,10 @@ import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
 import type { AddressInput, RecipientPath, SenderKind } from "@/lib/types";
 import { prefillSlotFor } from "@/lib/recipientFlowStorage";
+
+// Set immediately before redirecting to Google; its presence on return is
+// what authorizes the post-OAuth auto-advance.
+const OAUTH_PENDING_KEY = "sendmo:oauth_pending";
 
 interface Props {
   address: AddressInput;
@@ -18,14 +24,20 @@ interface Props {
   tried: boolean;
   onAddressChange: (addr: AddressInput) => void;
   onEmailChange: (email: string) => void;
+  /**
+   * Resolves the still-null `sender` (2026-08-18: the who's-sending step is
+   * gone). Fired by the "deliver to me" chip — claiming the destination as
+   * your own address IS the answer step 0 used to ask for.
+   */
+  onSenderResolved: (sender: SenderKind) => void;
   onContinue: () => void;
-  onBack: () => void;
 }
 
 export default function RecipientStepAddress({
   address, email, path, sender, errors, tried,
-  onAddressChange, onEmailChange, onContinue, onBack,
+  onAddressChange, onEmailChange, onSenderResolved, onContinue,
 }: Props) {
+  const navigate = useNavigate();
   const showErrors = tried && errors.length > 0;
   // On the 'self' branch this screen collects the OTHER party's address, so the
   // account holder's own saved address must not be prefilled into it.
@@ -36,13 +48,28 @@ export default function RecipientStepAddress({
   // avoids burning through Supabase's 60s OTP rate limit.
   const lastPrimedEmail = useRef<string | null>(null);
   const lastPrimedAt = useRef<number>(0);
-  // Detect the null→non-null user transition so we only auto-advance for a
-  // fresh OAuth return, not for users who were already signed in on mount.
-  const wasNullOnMount = useRef(!user);
+  // Auto-advance is for a fresh OAuth RETURN only. "User was null at mount"
+  // stopped implying that on 2026-08-18: /onboarding now redirects straight
+  // here, so this step mounts before auth finishes loading and EVERY signed-in
+  // visitor briefly looks like a fresh sign-in — which made the form
+  // auto-submit 2s after becoming valid. The discriminator is now explicit: a
+  // flag written just before we leave for OAuth, consumed on return.
+  const oauthReturnRef = useRef(false);
+  useEffect(() => {
+    try {
+      if (sessionStorage.getItem(OAUTH_PENDING_KEY) === "1") {
+        oauthReturnRef.current = true;
+        sessionStorage.removeItem(OAUTH_PENDING_KEY);
+      }
+    } catch { /* storage unavailable — no auto-advance, which is the safe side */ }
+  }, []);
   const autoAdvanceFiredRef = useRef(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [autoAdvancing, setAutoAdvancing] = useState(false);
+  // Saved address held for the "deliver to me" chip when `sender` is still
+  // unresolved — never applied silently (that guess is the wrong-party bug).
+  const [savedAddr, setSavedAddr] = useState<AddressInput | null>(null);
 
   const maybePrimeOtp = useCallback((candidate: string) => {
     const cleaned = candidate.trim().toLowerCase();
@@ -63,6 +90,9 @@ export default function RecipientStepAddress({
   async function handleGoogle() {
     setAuthError(null);
     setGoogleLoading(true);
+    try {
+      sessionStorage.setItem(OAUTH_PENDING_KEY, "1");
+    } catch { /* best-effort; only the auto-advance nicety is lost */ }
     // Redirect back to this exact step so flow state (stored in sessionStorage)
     // is restored automatically and the rest of the flow proceeds with a session.
     const { error: oauthErr } = await supabase.auth.signInWithOAuth({
@@ -70,6 +100,9 @@ export default function RecipientStepAddress({
       options: { redirectTo: window.location.href },
     });
     if (oauthErr) {
+      // No redirect happened, so the pending flag must not survive to
+      // authorize an auto-advance on some later ordinary visit.
+      try { sessionStorage.removeItem(OAUTH_PENDING_KEY); } catch { /* noop */ }
       setGoogleLoading(false);
       setAuthError(oauthErr.message || "Google sign-in failed");
     }
@@ -109,16 +142,24 @@ export default function RecipientStepAddress({
           .maybeSingle(),
       ]);
 
-      if (recentAddr && destinationIsSelf) {
-        onAddressChange({
-          name: recentAddr.name || profile?.full_name || "",
-          street: recentAddr.street1 || "",
-          city: recentAddr.city,
-          state: recentAddr.state,
-          zip: recentAddr.zip,
-          phone: recentAddr.phone || profile?.phone || "",
-          verified: !!recentAddr.is_verified,
-        });
+      const fetched = recentAddr?.street1
+        ? {
+            name: recentAddr.name || profile?.full_name || "",
+            street: recentAddr.street1,
+            city: recentAddr.city,
+            state: recentAddr.state,
+            zip: recentAddr.zip,
+            phone: recentAddr.phone || profile?.phone || "",
+            verified: !!recentAddr.is_verified,
+          }
+        : null;
+      if (fetched && destinationIsSelf) {
+        // sender='other' is already resolved — the destination is known to be
+        // the account holder's, so the silent prefill is safe.
+        onAddressChange(fetched);
+      } else if (fetched) {
+        // Unresolved: hold it for the chip below instead.
+        setSavedAddr(fetched);
       }
 
       const fillEmail = profile?.email ?? user.email ?? "";
@@ -130,7 +171,7 @@ export default function RecipientStepAddress({
   // Fires only for fresh OAuth returns (wasNullOnMount=true), not for users
   // who were already signed in when this step mounted.
   useEffect(() => {
-    if (!user || !wasNullOnMount.current || autoAdvanceFiredRef.current) return;
+    if (!user || !oauthReturnRef.current || autoAdvanceFiredRef.current) return;
     // Gate on the FULL step-1 validation, not a hand-picked subset of address
     // fields. `errors` is the same getValidationErrors output tryAdvance
     // checks — so the auto-advance only fires when tryAdvance will actually
@@ -157,12 +198,42 @@ export default function RecipientStepAddress({
         <p className="text-muted-foreground text-sm mt-1">
           {destinationIsSelf
             ? "Enter the destination address and your email"
-            : // Carriers reject label buys with no phone on the delivery address
-              // (FedEx/UPS PHONENUMBER.EMPTY), and on this branch it's someone
-              // else's — say so before they're stuck mid-form without it.
-              "The address you're mailing to, plus your email. Carriers need a phone number for the delivery address, so have theirs handy."}
+            : sender === "self"
+              ? // Carriers reject label buys with no phone on the delivery address
+                // (FedEx/UPS PHONENUMBER.EMPTY), and on this branch it's someone
+                // else's — say so before they're stuck mid-form without it.
+                "The address you're mailing to, plus your email. Carriers need a phone number for the delivery address, so have theirs handy."
+              : // Unresolved sender: neutral phrasing that is true whichever
+                // party the account holder turns out to be.
+                "Where the package should be delivered, plus your email. Carriers need a phone number for the delivery address."}
         </p>
       </div>
+
+      {/* "Deliver to me" chip — the identity claim that replaces the deleted
+          who's-sending step. Tapping it both fills the destination AND
+          resolves sender='other' (someone else ships to the account holder).
+          Never applied automatically: an unresolved sender means we don't
+          know which party the saved address belongs to. */}
+      {sender === null && savedAddr && !address.street && (
+        <button
+          type="button"
+          onClick={() => {
+            onAddressChange(savedAddr);
+            onSenderResolved("other");
+          }}
+          className="w-full flex items-start gap-3 rounded-xl border border-border bg-card p-3.5 text-left transition-all hover:border-primary/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+        >
+          <Home className="w-4 h-4 text-primary shrink-0 mt-0.5" aria-hidden="true" />
+          <span className="min-w-0">
+            <span className="block text-sm font-medium text-foreground">
+              Deliver to me — use my saved address
+            </span>
+            <span className="block text-xs text-muted-foreground mt-0.5 truncate">
+              {savedAddr.street}, {savedAddr.city}, {savedAddr.state} {savedAddr.zip}
+            </span>
+          </span>
+        </button>
+      )}
 
       {/* Destination address */}
       <AddressForm
@@ -296,15 +367,39 @@ export default function RecipientStepAddress({
         )}
       </AnimatePresence>
 
-      {/* Buttons */}
-      <div className="flex gap-3">
-        <Button variant="outline" onClick={onBack} className="rounded-xl">
-          Back
-        </Button>
-        <Button onClick={onContinue} disabled={autoAdvancing} className="flex-1 rounded-xl shadow-sm">
-          {path === "full_label" ? "Continue to shipment details" : "Continue to shipping preferences"}
-        </Button>
-      </div>
+      {/* Buttons. No Back: this is the flow's first step (2026-08-18 — the
+          who's-sending picker it used to return to is gone). */}
+      <Button onClick={onContinue} disabled={autoAdvancing} className="w-full rounded-xl shadow-sm">
+        {path === "full_label" ? "Continue to shipment details" : "Continue to shipping preferences"}
+      </Button>
+
+      {/* Seller link-out. Lived on the deleted who's-sending step; this is the
+          only onboarding surface a signed-in seller still passes through (the
+          other doors are the homepage and Dashboard CTAs). Inert while the
+          buyer checkout is test-mode — see SELLER_LINK_MODE. */}
+      {SELLER_LINK_VISIBLE && (
+        <div className="text-center border-t border-border pt-5">
+          {SELLER_LINK_LIVE ? (
+            <button
+              type="button"
+              onClick={() => navigate("/sell")}
+              className="inline-flex items-center gap-1.5 text-sm text-muted-foreground rounded-xl px-3 py-2 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            >
+              <Tag className="w-3.5 h-3.5" aria-hidden="true" />
+              Selling something? Create a link the buyer pays for
+              <ArrowRight className="w-3.5 h-3.5" aria-hidden="true" />
+            </button>
+          ) : (
+            <p className="inline-flex items-center gap-2 text-sm text-muted-foreground px-3 py-2">
+              <Tag className="w-3.5 h-3.5" aria-hidden="true" />
+              Selling something? A link the buyer pays for
+              <span className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground bg-muted border border-border rounded-full px-2 py-0.5">
+                Coming soon
+              </span>
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 }
