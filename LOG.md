@@ -12,6 +12,19 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-18] Two parallelism-only e2e flakes — auto-advance timer reset by unstable callback + cold Vite transform
+
+**Category:** fix | Onboarding / test-infra
+**Deploy:** In PR — not merged, not deployed.
+**Cross-link:** gotcha classes: "URL flips before unmount" (2026-08-17/18), auto-advance timers (2026-05-19)
+**Browser-verified:** spec: tests/e2e/auth-section-and-flex-otp.spec.ts + tests/e2e/onboarding.spec.ts · variants-covered: [full suite ×4 at default parallelism all green (87 passed), targeted --repeat-each=3 on both formerly-flaky specs green, unit suite green (710)]
+
+**Flake 1 — "session arrival marks email_verified and auto-advances to step 22" (auth-section-and-flex-otp.spec.ts:319).** Real app bug, not a test bug. Both verify components (`RecipientStepEmailVerifyFlex`, `RecipientStepEmailVerifySupabase`) armed their 1s auto-advance in a `useEffect` depending on `onContinue` — which the parent recreates every render (`onContinue={() => tryAdvance(21)}`). Every re-render after `email_verified` flips (auth INITIAL_SESSION, `profileLoaded` from deferred `ensureProfile`, the `?confirmed=1` strip, the info toast) cleared and restarted the timer. Idle, those renders land within ms and the timer survives; under CPU contention they spread out and each one inside the 1s window resets the clock — the advance slips past the spec's 4s assertion, and a real user's advance can be delayed the same way. **Fix:** read `onContinue` through a ref; the effect depends only on `state.email_verified`, so the timer arms exactly once per verification.
+
+**Generalizable rule:** a delayed auto-advance effect must not list a parent-supplied callback in its deps — inline callbacks change identity every render and turn "fire after N ms" into "fire after N ms of render silence". Callback goes in a ref; the dep list holds only the triggering state.
+
+**Flake 2 — "/sell is closed to non-admins" (onboarding.spec.ts:607).** Nothing timed in the test; all routes are eagerly imported, so the first test to hit a freshly-started Vite dev server pays on-demand transform of the whole module graph while ~10 workers pile on. This test lost that lottery once (35s vs 6s alone, past the 30s test timeout). **Fixes:** (a) `server.warmup: { clientFiles: ["./src/main.tsx"] }` in `vite.config.ts` so the graph pre-transforms on boot; (b) the first-paint assertion gets the suite's standing 15s first-paint-under-load timeout (same convention as admin-reconciliation.spec.ts). Assertions unchanged otherwise — nothing loosened to vacuity.
+
 ### [2026-08-18] The who's-sending step is gone — sender is derived in-flow (unified-onboarding Phase 2)
 
 **Category:** ship | Onboarding
