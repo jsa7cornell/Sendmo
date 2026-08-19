@@ -37,8 +37,16 @@ supabase/.temp/
 
 # Per-developer agent/tool state
 .agents/
-.claude/
 .playwright-mcp/
+
+# .claude/ is mostly per-developer, but the shared agent config is tracked so
+# it reaches worktrees. Before 2026-08-19 the whole directory was ignored, so
+# the Stop hooks and the /runtest,/buildtest,/verifyfix commands TESTING.md
+# documents existed only in whichever checkout happened to have them locally —
+# and a worktree, the conventional place to work here, got none of them.
+.claude/*
+!.claude/settings.json
+!.claude/commands/
 
 # Business documents
 *.docx
