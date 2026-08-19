@@ -211,7 +211,6 @@ export default function RecipientOnboarding() {
                 onEmailChange={(email) => updateData({ email })}
                 onSenderResolved={(sender) => updateData({ sender })}
                 onContinue={() => tryAdvance(1)}
-                onBack={goBack}
               />
             )}
 

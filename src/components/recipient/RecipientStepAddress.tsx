@@ -31,7 +31,6 @@ interface Props {
    */
   onSenderResolved: (sender: SenderKind) => void;
   onContinue: () => void;
-  onBack: () => void;
 }
 
 export default function RecipientStepAddress({
@@ -101,6 +100,9 @@ export default function RecipientStepAddress({
       options: { redirectTo: window.location.href },
     });
     if (oauthErr) {
+      // No redirect happened, so the pending flag must not survive to
+      // authorize an auto-advance on some later ordinary visit.
+      try { sessionStorage.removeItem(OAUTH_PENDING_KEY); } catch { /* noop */ }
       setGoogleLoading(false);
       setAuthError(oauthErr.message || "Google sign-in failed");
     }

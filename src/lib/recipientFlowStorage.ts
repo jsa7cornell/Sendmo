@@ -15,9 +15,11 @@ import type {
 export interface RecipientFlowData {
   path: RecipientPath | null;
   /**
-   * Step 0's answer. Decides which party owns which address slot, so it gates
-   * every saved-address prefill. Null only for flows entered by deep link
-   * before step 0 ran — those are treated as 'other' (today's shape).
+   * Who's sending — 'self' (account holder mails out) or 'other' (someone
+   * ships to them). Starts null and is resolved IN-FLOW (2026-08-18): by the
+   * "deliver to me" chip, the "I'm the sender" claim, or by deferring. While
+   * null, NOTHING prefills (prefillSlotFor(null) → null) — null is never
+   * treated as 'other'.
    */
   sender: SenderKind | null;
   completedSteps: number[];
@@ -113,10 +115,10 @@ export const INITIAL_DATA: RecipientFlowData = {
 // Holds flow data so the Google OAuth roundtrip in
 // RecipientStepEmailVerifySupabase preserves user-entered destination, email,
 // shipping selection, etc. across the redirect to accounts.google.com and back.
-// It is also how step 0's answer reaches the provider: `/onboarding` renders
-// OUTSIDE RecipientFlowProvider (the provider sits at `/onboarding/:pathSlug`
-// so its useParams can read the slugs), so the who-sending step writes here and
-// the provider hydrates from it on the next route.
+// `/onboarding` (OnboardingEntry) renders OUTSIDE RecipientFlowProvider (the
+// provider sits at `/onboarding/:pathSlug` so its useParams can read the
+// slugs); its Start-fresh / stale-draft clears write here and the provider
+// hydrates from it on the next route.
 //
 // **localStorage, not sessionStorage** (2026-08-18). sessionStorage dies with
 // the tab, so closing it — or a phone evicting it — lost every field the user
@@ -127,8 +129,10 @@ export const INITIAL_DATA: RecipientFlowData = {
 // how the wrong party's address ends up on a label. Three guards, all required:
 //   1. `startFreshFlow` still RESETS on an explicit fresh start — it is
 //      never contaminated by an old draft.
-//   2. Resuming is OFFERED, never automatic (see `loadResumable`): step 0 shows
-//      a banner the user must accept.
+//   2. Resuming is OFFERED, never automatic (see `loadResumable`):
+//      OnboardingEntry shows a banner the user must accept, and clears any
+//      draft that is NOT offerable (finished / expired) so the provider can't
+//      silently rehydrate it.
 //   3. Drafts expire. An address typed weeks ago is more likely wrong than
 //      useful, and this is shared-computer data.
 
@@ -265,5 +269,9 @@ export function prefillSlotFor(sender: SenderKind | null): "origin" | "destinati
  * how the wrong party's address ends up on a label.
  */
 export function startFreshFlow(): void {
+  // Clear BOTH stores first: persist writes localStorage only and swallows
+  // failures, so on a failed write the legacy sessionStorage copy would be
+  // the first readable draft — resurrecting exactly what the user declined.
+  clearFlow();
   persist({ ...INITIAL_DATA });
 }

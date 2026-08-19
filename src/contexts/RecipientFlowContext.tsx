@@ -335,10 +335,17 @@ export function RecipientFlowProvider({ children }: { children: React.ReactNode 
   }, [navigate]);
 
   const undoShippingLinkSwitch = useCallback(() => {
-    // Undo reverses the deferral decision itself, not just the location —
-    // leaving the flags set meant a user who came back and filled everything
-    // in was still routed to the link at step 14's exit.
-    setData((prev) => ({ ...prev, deferredOrigin: false, deferredPackage: false }));
+    // Undo reverses the deferral decision itself, not just the location:
+    // flags cleared AND steps 10/14 un-completed. Leaving them in
+    // completedSteps let the progress bar jump defer→undo users forward past
+    // an empty origin on the label path (review finding 5) — deferral was how
+    // those steps got "completed", so undoing it un-completes them.
+    setData((prev) => ({
+      ...prev,
+      deferredOrigin: false,
+      deferredPackage: false,
+      completedSteps: prev.completedSteps.filter((s) => s !== 10 && s !== 14),
+    }));
     directionRef.current = "backward";
     navigate(stepUrl("full_label", 10));
   }, [navigate]);

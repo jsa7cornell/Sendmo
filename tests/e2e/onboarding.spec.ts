@@ -276,6 +276,34 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
     await expect(page.getByRole("heading", { name: /Where's it going/i })).toBeVisible();
   });
 
+  test("a finished draft is cleared at entry — never silently rehydrated", async ({ page }) => {
+    // Review finding 1 (2026-08-18): a finished/expired draft is not offerable
+    // (loadResumable → null) but WAS still hydrated by the provider after the
+    // redirect — last shipment's addresses prefilling a "new" flow. Entry must
+    // clear what it will not offer.
+    await page.addInitScript(() => {
+      localStorage.setItem("sendmo:recipient_flow:v1", JSON.stringify({
+        savedAt: Date.now(),
+        data: {
+          sender: "other", path: "full_label", completedSteps: [1, 10, 14],
+          short_code: "OLD123", // finished → not offerable
+          email: "old@example.com",
+          destinationAddress: {
+            name: "Old Friend", street: "9 Stale St", city: "San Francisco",
+            state: "CA", zip: "94107", phone: "4155550100", verified: true,
+          },
+        },
+      }));
+    });
+
+    await page.goto("/onboarding");
+    await expect(page).toHaveURL(/\/full-label\/destination$/);
+    // No resume banner, and a genuinely blank flow.
+    await expect(page.getByText(/shipment in progress/i)).toHaveCount(0);
+    await expect(page.locator("#destination-name")).toHaveValue("");
+    await expect(page.locator("#recipient-email")).toHaveValue("");
+  });
+
   test("deferring resolves the sender — the skip banner appears the moment it happens", async ({ page }) => {
     await gotoStep10(page);
 

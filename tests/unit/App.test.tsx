@@ -44,7 +44,9 @@ describe("App Routing", () => {
         // The who's-sending picker is gone (2026-08-18): with no resumable
         // draft, /onboarding redirects to the destination step.
         await waitFor(() => {
-            expect(screen.getByRole("heading", { name: /where's it going|delivered/i })).toBeInTheDocument();
+            // Exact neutral heading: sender is unresolved at entry, so the
+            // 'other'-branch "delivered to you" copy must NOT render.
+            expect(screen.getByRole("heading", { name: /where's it going/i })).toBeInTheDocument();
         });
     });
 

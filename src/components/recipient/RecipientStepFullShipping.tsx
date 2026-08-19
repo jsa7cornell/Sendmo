@@ -274,10 +274,13 @@ export default function RecipientStepFullShipping({
 
               {/* The third answer, while `sender` is unresolved: the account
                   holder is the sender (2026-08-18 — this claim replaces the
-                  deleted who's-sending step). Setting sender='self' is enough:
-                  the provider's prefill effect re-runs on it and fills the
-                  origin from the saved address; the fieldset collapses to the
-                  confirmable "Shipping from" row. */}
+                  deleted who's-sending step). Setting sender='self' is what
+                  matters: the provider's prefill effect re-runs on it and
+                  fills the origin from the saved address IF one exists and the
+                  field is untouched — otherwise the form simply stays open for
+                  typing (the copy promises nothing more). The fieldset hides on
+                  the next visit to this step, not mid-visit:
+                  originWasCompleteOnOpen is latched at mount. */}
               {sender === null && user && (
                 <button
                   type="button"
@@ -294,9 +297,9 @@ export default function RecipientStepFullShipping({
 
                   </span>
                   <span className="min-w-0">
-                    <span className="block text-sm font-medium text-foreground">I'm the sender — it ships from my address</span>
+                    <span className="block text-sm font-medium text-foreground">I'm the sender — I'm mailing this out myself</span>
                     <span className="block text-xs text-muted-foreground mt-0.5">
-                      You're mailing this out yourself; we'll use your saved address
+                      It ships from your address — we'll fill in your saved one if you have it
                     </span>
                   </span>
                 </button>

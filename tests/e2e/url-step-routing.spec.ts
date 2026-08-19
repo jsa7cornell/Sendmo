@@ -343,10 +343,16 @@ test.describe("URL-based step routing", () => {
   });
 
   test("/onboarding redirects to the destination step, replacing history", async ({ page }) => {
+    // Two entries: a real page first, so Back has somewhere legitimate to go.
+    await page.goto("/");
     await page.goto("/onboarding");
     await expect(page).toHaveURL(/\/onboarding\/full-label\/destination$/);
-    // The redirect uses replace, so Back does not bounce through /onboarding
-    // (which would immediately redirect forward again — a trap).
+
+    // The redirect must REPLACE /onboarding in history: Back returns to the
+    // page before it. Without replace, Back lands on /onboarding, which
+    // redirects forward again — a trap where Back never escapes the flow.
+    await page.goBack();
+    await expect(page).not.toHaveURL(/\/onboarding/);
   });
 
   // ── Step guards (direct URL access) ────────────────────────

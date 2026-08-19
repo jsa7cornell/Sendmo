@@ -4,7 +4,7 @@ import type { RecipientPath } from "@/lib/types";
 //
 // All routes are path-scoped and self-describing:
 //
-//   /onboarding                          → path picker (step 0)
+//   /onboarding                          → resume offer if a draft exists, else redirects to full-label/destination
 //   /onboarding/full-label/destination   → step 1 (recipient + email)
 //   /onboarding/full-label/shipping      → step 10  (ship-from address)
 //   /onboarding/full-label/package       → step 14  (shipment details + carrier)

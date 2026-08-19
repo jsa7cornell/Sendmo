@@ -2,7 +2,7 @@ import { BrowserRouter, Routes, Route, Outlet, Navigate, useNavigate } from "rea
 import * as Sentry from "@sentry/react";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { RecipientFlowProvider } from "@/contexts/RecipientFlowContext";
-import { startFreshFlow, loadResumable } from "@/lib/recipientFlowStorage";
+import { startFreshFlow, loadResumable, clearFlow } from "@/lib/recipientFlowStorage";
 import { firstIncompleteUrl } from "@/lib/stepRouting";
 import { useState } from "react";
 import ProtectedRoute from "@/components/ProtectedRoute";
@@ -48,6 +48,13 @@ function OnboardingEntry() {
   const navigate = useNavigate();
   const [draft] = useState(() => loadResumable());
   if (!draft) {
+    // A draft can exist and NOT be offerable — finished (labelResult /
+    // short_code set) or past the 7-day TTL. The provider hydrates whatever
+    // loadPersisted returns, so redirecting with it still in storage silently
+    // rehydrates last shipment's addresses and resolved sender into a "new"
+    // flow (review finding 1, 2026-08-18). The mandatory step-0 door used to
+    // reset storage on every entry; this clear is that reset's replacement.
+    clearFlow();
     return <Navigate to="/onboarding/full-label/destination" replace />;
   }
   return (
