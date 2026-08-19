@@ -103,6 +103,9 @@ Deno.serve(async (req: Request) => {
         // Set when a flexible link deferred its destination (Phase 3): the
         // shipment gets reference = link.id so labels/ can trust its to_address.
         let deferredDestLinkId: string | null = null;
+        // Set for ORDINARY flex links (review finding 3): same reference stamp,
+        // so labels/ can verify shipment↔link binding on every flex buy.
+        let flexLinkId: string | null = null;
         let parcel = body.parcel;
         let preferred_carrier = body.preferred_carrier;
         let preferred_speed = body.preferred_speed;
@@ -193,6 +196,11 @@ Deno.serve(async (req: Request) => {
                             phone: addr.phone ?? undefined,
                         };
                         linkIsTest = link.is_test === true;
+                        // Bind ordinary flex shipments to their link too
+                        // (Phase 3 review finding 3): labels/ can then verify
+                        // the shipment it is asked to buy was minted from THIS
+                        // link, closing the swap-in-an-unbound-shipment hole.
+                        flexLinkId = (link as unknown as { id: string }).id;
                     }
                 } else if (link && link.status === "active" && link.link_type === "seller_link") {
                     // Seller link — the INVERSE of flex: the SELLER's ship-from
@@ -277,7 +285,9 @@ Deno.serve(async (req: Request) => {
             // delivery address — so a missing phone is the link owner's to fix.
             // On a SELLER link the to_address is the BUYER's own address, and for
             // non-link callers it's the caller's — both get the generic wording.
-            const linkCase = linkType === "flexible";
+            // On a destination-DEFERRED link the to_address is the sender's own
+            // entry — telling them to contact the creator about it is backwards.
+            const linkCase = linkType === "flexible" && !deferredDestLinkId;
             const msg = linkCase
                 ? "This shipping link's delivery address doesn't have a phone number, which the carriers require. The person who created this link needs to add one (from their SendMo dashboard) before you can ship."
                 : "The delivery address is missing a phone number — shipping carriers require one to generate a label.";
@@ -344,7 +354,8 @@ Deno.serve(async (req: Request) => {
                         // labels/ trust-resolves to_address from this shipment).
                         // Omitted for ordinary flex + full-label.
                         ...(sellerLinkId ? { reference: sellerLinkId }
-                            : deferredDestLinkId ? { reference: deferredDestLinkId } : {}),
+                            : deferredDestLinkId ? { reference: deferredDestLinkId }
+                            : flexLinkId ? { reference: flexLinkId } : {}),
                         from_address: builtFrom,
                         to_address: builtTo,
                         parcel: {

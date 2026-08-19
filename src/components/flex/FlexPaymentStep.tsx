@@ -276,7 +276,11 @@ export default function FlexPaymentStep({
     updateFlexLink(
       initialLinkId,
       {
-        recipient_address: input.recipient_address,
+        // Explicit null when the creator deferred the destination after this
+        // draft was created with one — undefined would be dropped by
+        // JSON.stringify and the PATCH would leave the abandoned address on
+        // the link (review finding 1, Phase 3).
+        recipient_address: input.recipient_address ?? null,
         speed_preference: input.speed_preference,
         preferred_carrier: input.preferred_carrier,
         price_cap_dollars: input.price_cap_dollars,

@@ -342,7 +342,19 @@ Deno.serve(async (req: Request) => {
                     if (dData.reference !== link.id) {
                         // Same class as the seller-link binding backstop: a
                         // mismatch means the shipment wasn't minted from this
-                        // link by rates/. Reject; never auto-refund here.
+                        // link by rates/. Reject; never auto-refund here. Alert
+                        // like the seller branch does — same tampering signal.
+                        await sendAdminAlert({
+                            subject: "Deferred-destination binding mismatch at buy time — label refused",
+                            heading: "Flex-Link Binding Mismatch (deferred destination)",
+                            intro: "labels/ refused to buy a shipment whose EasyPost reference did not match the destination-deferred flexible link. Investigate tampering or a rates/ bypass. No auto-refund was issued.",
+                            rows: [
+                                { label: "EasyPost shipment", value: easypost_shipment_id },
+                                { label: "Flex link", value: link.id },
+                                { label: "Shipment reference", value: String(dData.reference ?? "none") },
+                            ],
+                            source: "labels deferred-destination binding backstop",
+                        });
                         return new Response(
                             JSON.stringify({ error: "This shipment does not belong to this link." }),
                             { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -381,6 +393,54 @@ Deno.serve(async (req: Request) => {
                         country: recipientAddr.country ?? "US",
                         phone: recipientAddr.phone ?? undefined,
                     };
+                    // ── Ordinary-flex binding check (Phase 3 review finding 3) ──
+                    // The buy uses the CLIENT-supplied easypost_shipment_id, and
+                    // nothing verified it was minted from this link — an
+                    // attacker could mint a shipment to an arbitrary address via
+                    // the no-link rates path and swap it in here, charging the
+                    // creator's card off-session for a label to themselves.
+                    // rates/ now stamps reference = link.id on every flex
+                    // shipment; verify it. Transition tolerance: a shipment
+                    // minted BEFORE that deploy has no reference — accept it
+                    // only when its to_address matches the link's stored
+                    // destination (which is where rates/ has always pointed
+                    // link-minted shipments; the attacker can't know the street,
+                    // it is never exposed in the GET payload).
+                    const bIsLive = link.is_test !== true;
+                    const bKey = Deno.env.get(bIsLive ? "EASYPOST_API_KEY" : "EASYPOST_TEST_API_KEY");
+                    const bResp = await fetch(
+                        `https://api.easypost.com/v2/shipments/${easypost_shipment_id}`,
+                        { headers: { Authorization: "Basic " + btoa(bKey + ":") } },
+                    );
+                    if (!bResp.ok) {
+                        return new Response(
+                            JSON.stringify({ error: "Could not verify the shipment" }),
+                            { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                        );
+                    }
+                    const bData = await bResp.json();
+                    const normB = (v: unknown) => (typeof v === "string" ? v.toLowerCase().replace(/[^a-z0-9]/g, "") : "");
+                    const boundByReference = bData.reference === link.id;
+                    const boundByAddress = !bData.reference
+                        && normB(bData.to_address?.street1) === normB(recipientAddr.street1)
+                        && String(bData.to_address?.zip ?? "").slice(0, 5) === String(recipientAddr.zip ?? "").slice(0, 5);
+                    if (!boundByReference && !boundByAddress) {
+                        await sendAdminAlert({
+                            subject: "Flex-link binding mismatch at buy time — label refused",
+                            heading: "Flex-Link Binding Mismatch",
+                            intro: "labels/ refused to buy a shipment that was not minted from the flexible link it was submitted with (reference mismatch, and its destination does not match the link's stored address). Investigate tampering. No auto-refund was issued.",
+                            rows: [
+                                { label: "EasyPost shipment", value: easypost_shipment_id },
+                                { label: "Flex link", value: link.id },
+                                { label: "Shipment reference", value: String(bData.reference ?? "none") },
+                            ],
+                            source: "labels ordinary-flex binding backstop",
+                        });
+                        return new Response(
+                            JSON.stringify({ error: "This shipment does not belong to this link." }),
+                            { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                        );
+                    }
                 }
                 // Resolve recipient_email server-side (never returned to client).
                 const { data: prof } = await supabase

@@ -1034,7 +1034,18 @@ Deno.serve(async (req: Request) => {
         let previousAddressId: string | null = null;
         let newAddressId: string | null = null;
 
-        if ("recipient_address" in payload && payload.recipient_address) {
+        if ("recipient_address" in payload && payload.recipient_address === null) {
+            // Explicit CLEAR (Phase 3): the creator chose "the sender picks the
+            // destination" after a draft link had already stored an address.
+            // Absent-vs-null matters — absent means "don't touch", null means
+            // "remove". Migration 042 permits a recipient-less flexible link
+            // (this handler already rejects non-flexible links above).
+            if (existing.recipient_address_id !== null) {
+                previousAddressId = existing.recipient_address_id;
+                updates.recipient_address_id = null;
+                changedFields.push("recipient_address");
+            }
+        } else if ("recipient_address" in payload && payload.recipient_address) {
             const addr = payload.recipient_address as Record<string, unknown>;
             const street1 = typeof addr.street1 === "string" ? addr.street1 : "";
             const city = typeof addr.city === "string" ? addr.city : "";

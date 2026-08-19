@@ -637,7 +637,11 @@ export interface LinkData {
 }
 
 export interface UpdateLinkParams {
-  recipient_address?: {
+  /**
+   * Absent = don't touch. `null` = CLEAR the destination (Phase 3 — the
+   * creator deferred it after a draft had stored one). Object = replace.
+   */
+  recipient_address?: null | {
     name: string;
     street1: string;
     street2?: string;

@@ -20,6 +20,8 @@ export interface OgLinkPayload {
   recipient_city: string | null;
   recipient_state: string | null;
   link_type?: string | null;
+  /** Phase 3: the creator deferred the destination — the sender picks it. */
+  needs_destination?: boolean | null;
 }
 
 export interface OgStrings {
@@ -49,6 +51,16 @@ export function buildOgStrings(link: OgLinkPayload | null): OgStrings {
   // prepaid postage. Revisit when that flow launches.
   if (link?.link_type === "seller_link") {
     return { title: DEFAULT_TITLE, description: DEFAULT_DESC };
+  }
+
+  // Destination-deferred link (Phase 3): "prepaid label to X" would be wrong —
+  // there is deliberately no X, and the sender chooses it.
+  if (link?.needs_destination) {
+    return {
+      title: "You've been sent prepaid shipping",
+      description:
+        "The postage is covered — you choose where it goes. Tap to enter the delivery address, describe your package, and print the label.",
+    };
   }
 
   const fullName = link?.recipient_name?.trim()

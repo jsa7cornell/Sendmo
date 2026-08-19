@@ -150,3 +150,22 @@ describe("injectOgTags", () => {
     expect(evil).toContain("d &amp; d");
   });
 });
+
+describe("destination-deferred links (Phase 3)", () => {
+  it("names the shape instead of promising a destination that doesn't exist", () => {
+    const og = buildOgStrings({
+      recipient_name: null, recipient_city: null, recipient_state: null,
+      link_type: "flexible", needs_destination: true,
+    });
+    expect(og.title).toMatch(/prepaid shipping/i);
+    expect(og.description).toMatch(/you choose where it goes/i);
+  });
+
+  it("seller links still win the neutral copy even if flags are weird", () => {
+    const og = buildOgStrings({
+      recipient_name: "Pat", recipient_city: "Oakland", recipient_state: "CA",
+      link_type: "seller_link", needs_destination: true,
+    });
+    expect(og.title).toBe(DEFAULT_TITLE);
+  });
+});
