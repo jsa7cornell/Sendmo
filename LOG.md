@@ -12,6 +12,43 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-19] `main` is gated — and the gate found CI wedged on the way in
+
+**Category:** ship | CI / Repo policy
+**Cross-link:** [PR #74](https://github.com/jsa7cornell/Sendmo/pull/74) (F1) | [PR #76](https://github.com/jsa7cornell/Sendmo/pull/76) (proposals) | [proposals/2026-08-19_shipping-process-and-stale-branch-rca_reviewed-2026-08-19.md](proposals/2026-08-19_shipping-process-and-stale-branch-rca_reviewed-2026-08-19.md) F2 | related open [PR #75](https://github.com/jsa7cornell/Sendmo/pull/75)
+
+**Browser-verified:**
+  n/a-category: infra
+  n/a-reason: Repo policy + a CI-queue cancellation. No code, no rendered surface, no wire shape. Verified by attempting a real direct push to `main` and reading the remote's rejection.
+
+**`main` had no protection at all** — `rulesets` returned `[]` and the branch-protection endpoint 404'd. "Blocking CI" (2026-08-18) only ever meant the run turned red; nothing refused the merge. Ruleset `21062139` "main protection" is now active: PR required, force-push blocked, deletion blocked, **zero bypass actors**, required check `Lint, Unit, and E2E Tests`.
+
+**Why zero bypass actors.** Every agent session authenticates as `jsa7cornell` (`gh auth status`). GitHub bypass actors are accounts, roles, or apps — there is no platform-visible difference between John at the keyboard and an agent running as John. A bypass for the account is a bypass for every agent, which restores the honour system for exactly the sessions the gate exists to catch.
+
+**Why `required_approving_review_count: 0`.** John is the only human and GitHub forbids approving your own PR. Setting it to 1 freezes the repo permanently with no route out but deleting the rule. Zero still forces the PR flow; it just does not demand a second person who does not exist.
+
+**The required check is the half that closes A6.** A conflicting PR gets no check-suite at all — `gh pr checks` shows only Vercel passing, which reads exactly like "checks are fine." A required status check treats *never reported* as *not passed*, so the absence now fails loudly. Verified by direct push, which was refused with both reasons:
+
+```
+- Changes must be made through a pull request.
+- Required status check "Lint, Unit, and E2E Tests" is expected.
+```
+
+**Gotcha — `cancel-in-progress: false` on `main` turns one hung run into an indefinite queue.** Found while checking whether it was safe to gate: run `32216842692` (sha `c0c5177`) had been `in_progress` for **~17 hours**, hung on step 8 "Install Playwright Browsers" with no step timeout. `test.yml`'s concurrency group is `${{ github.workflow }}-${{ github.ref }}` with `cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}` — deliberate, so main's runs never cancel each other, but it means a hang blocks **every** later main run rather than just its own. The post-#74 run sat `pending` behind it and would never have started. Cancelling the hung run drained the queue immediately.
+
+**This is why the gate went on second.** Required status checks plus a wedged queue is a frozen repository: the required check can never report, so nothing can merge. Sequence matters — unwedge, then gate. The durable fix is [#75](https://github.com/jsa7cornell/Sendmo/pull/75), open from a parallel session, which bounds both the job and the Playwright install so a hang fails fast instead of hanging forever. **Until #75 lands, a hang has no ceiling and the queue behind it has no drain but a manual `gh run cancel`.**
+
+**If the gate ever blocks real work**, it is one call to relax and the ruleset id is above:
+```
+gh api -X DELETE repos/jsa7cornell/Sendmo/rulesets/21062139
+```
+
+**Verified end to end:** direct push to `main` refused; PR flow (`gh pr create` → CI → `gh pr merge --squash`) still works — this entry reached `main` through it. Both merges today confirmed green by reading the Playwright report's own numbers rather than the step colour: **95 total / 89 passed / 0 failed / 0 flaky / 6 skipped** on each.
+
+**Still open from the RCA:** `core.hookspath` still points at `/Users/ja/AI Brain/sendmo/.git/hooks` (pre-rename, with a space) which does not exist, so **every git hook in this repo silently no-ops** — `git config --unset core.hookspath` fixes it, and sendmo is the only affected repo of John's. Also open: the two stale CI claims in PLAYBOOK/TESTING (F6), `scripts/new-session.sh` (F3), and two decided proposals stranded on dead branches (F7).
+
+---
+
 ### [2026-08-19] Stale-tree hook — three incidents, one memory file, zero machines checking
 
 **Category:** ship | Tooling / Session hygiene
