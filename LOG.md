@@ -12,6 +12,39 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-19] Three decided proposals were cited from `main` but did not exist on it
+
+**Category:** fix | Docs / Institutional memory
+**Cross-link:** F7 of [proposals/2026-08-19_shipping-process-and-stale-branch-rca_reviewed-2026-08-19.md](proposals/2026-08-19_shipping-process-and-stale-branch-rca_reviewed-2026-08-19.md)
+
+**Browser-verified:**
+  n/a-category: infra
+  n/a-reason: Recovered three markdown files and repaired link targets. No code. Verified by hashing each rescued file against its source blob and re-running a repo-wide link sweep.
+
+**What was lost.** Three proposals lived only on dead branches. Their absence was not silent — `main` actively cited all three:
+
+| Proposal | Status | Cited from `main` by |
+|---|---|---|
+| `2026-08-18_session-durability-and-auth-architecture` | **decided**, Phase 0+1 shipped ([#69](https://github.com/jsa7cornell/Sendmo/pull/69)) | `SPEC.md:1052` as "[decided proposal]", plus LOG |
+| `2026-07-15_h2-carrier-adjustment-repair` | **decided**, work shipped ([#52](https://github.com/jsa7cornell/Sendmo/pull/52)) | LOG (25 mentions of the work) |
+| `2026-08-18_link-first-onboarding-handoff` | draft, superseded — work shipped ([#67](https://github.com/jsa7cornell/Sendmo/pull/67)) | `2026-08-18_pr68-code-review-handoff.md` |
+
+So `SPEC.md` linked to a decided proposal a reader could not open, and the H2 implementation sat on `main` since July while the rationale for it did not. **The RCA that prompted this found two; the sweep found three** — a by-slug diff of every ref against `main` is what surfaced the third.
+
+**Method — and the trap in it.** A naive "files on some branch but not on `main`" diff returns **seven** proposals, four of which are *correctly* absent: they are pre-decision filenames superseded by a `_decided-` suffixed version that `main` does have. Comparing raw filenames flags those as lost. Comparing by **slug** — stripping `_reviewed-*` / `_decided-*` before matching — separates real loss from an ordinary rename. Rescuing all seven would have restored four duplicate proposals under stale names, which is worse than the gap.
+
+**Recovered byte-identical**, each verified by `shasum` against its source blob rather than assumed.
+
+**Second finding, same root cause: nine dangling links.** The filename convention renames a proposal at each milestone, and citing documents were not updated to follow. `main` carried five distinct broken targets referenced from seven files — including `proposals/README.md` itself, `LOG.md`, and one in a proposal written earlier today. All now resolve; a repo-wide sweep reports **0 dangling proposal links**.
+
+**Worth internalizing:** the filename convention is load-bearing for `ls`-at-a-glance status, and it silently breaks every inbound link each time it fires. Renaming a proposal is a two-part operation — rename, then re-point its citations. A one-line sweep catches the rest:
+
+```bash
+grep -oh '](\(2026-[^)]*\.md\))' proposals/*.md *.md | tr -d '](' | tr -d ')' | sort -u | while read t; do [ -f "proposals/$(basename "$t")" ] || echo "DANGLING: $t"; done
+```
+
+---
+
 ### [2026-08-19] The CI docs told every agent that a red e2e suite doesn't block
 
 **Category:** fix | Docs / CI
@@ -503,7 +536,7 @@ Both new e2e regressions were confirmed to **fail without their fix** before bei
 
 **Category:** review | Onboarding
 **Deploy:** None — docs only (proposal review; no code touched).
-**Cross-link:** [proposals/2026-08-17_onboarding-who-is-sending_reviewed-2026-08-17.md](proposals/2026-08-17_onboarding-who-is-sending_reviewed-2026-08-17.md) | reviews divergence from [proposals/2026-07-17_seller-link-buyer-pays_reviewed-2026-07-17_decided-2026-07-17.md](proposals/2026-07-17_seller-link-buyer-pays_reviewed-2026-07-17_decided-2026-07-17.md)
+**Cross-link:** [proposals/2026-08-17_onboarding-who-is-sending_reviewed-2026-08-17_decided-2026-08-17.md](proposals/2026-08-17_onboarding-who-is-sending_reviewed-2026-08-17_decided-2026-08-17.md) | reviews divergence from [proposals/2026-07-17_seller-link-buyer-pays_reviewed-2026-07-17_decided-2026-07-17.md](proposals/2026-07-17_seller-link-buyer-pays_reviewed-2026-07-17_decided-2026-07-17.md)
 
 **What:** fresh-eyes review of the proposal to delete the `/onboarding` path picker and replace it with "Who's sending the package?". Verdict **approve-with-changes** — direction endorsed, divergence from the decided seller-link OQ1 justified in principle but incomplete as specified. Two blockers, both file-plan fixes rather than architecture changes:
 
@@ -1038,7 +1071,7 @@ Connection was the session pooler as `postgres.fkxykvzsqdjzhurntgah` with `PGPAS
 > Same decision as recorded in the T2-1 entry above ("fully deferred") — this entry adds the proposal-level follow-through: the merged inert layer is now slated for **removal** (not just left inert) via the rewritten GA4 proposal, pending its review/decision.
 
 **Category:** docs | Launch | Monitoring | Analytics | decision
-**Cross-link:** resolves the T1-3 flip-hold entry below | reversal addendum in [proposals/2026-07-06_sentry-posthog-frontend-monitoring_reviewed-2026-07-06_decided-2026-07-06.md](proposals/2026-07-06_sentry-posthog-frontend-monitoring_reviewed-2026-07-06_decided-2026-07-06.md) | rewritten in-review [proposals/2026-07-06_ga4-acquisition-analytics.md](proposals/2026-07-06_ga4-acquisition-analytics.md) | unaffected sibling [proposals/2026-07-06_seo-crawl-hygiene-and-discovery.md](proposals/2026-07-06_seo-crawl-hygiene-and-discovery.md) | PRE-LAUNCH T1-3
+**Cross-link:** resolves the T1-3 flip-hold entry below | reversal addendum in [proposals/2026-07-06_sentry-posthog-frontend-monitoring_reviewed-2026-07-06_decided-2026-07-06.md](proposals/2026-07-06_sentry-posthog-frontend-monitoring_reviewed-2026-07-06_decided-2026-07-06.md) | rewritten in-review [proposals/2026-07-06_ga4-acquisition-analytics_reviewed-2026-07-06_decided-2026-07-06.md](proposals/2026-07-06_ga4-acquisition-analytics_reviewed-2026-07-06_decided-2026-07-06.md) | unaffected sibling [proposals/2026-07-06_seo-crawl-hygiene-and-discovery_reviewed-2026-07-06.md](proposals/2026-07-06_seo-crawl-hygiene-and-discovery_reviewed-2026-07-06.md) | PRE-LAUNCH T1-3
 
 **Decision (John, 2026-07-06):** SendMo will **not** use Sentry or PostHog — the flip hold (entry below) resolved as its option 3 in the strongest form. No vendor accounts were ever created and no env vars were ever set, so the merged frontend layer (`364462a`) was inert for its entire life; nothing external needs unwinding. **Standing instruction for all future agents: never create Sentry/PostHog accounts or set `VITE_SENTRY_DSN`/`VITE_POSTHOG_KEY`.**
 
@@ -1083,7 +1116,7 @@ Connection was the session pooler as `postgres.fkxykvzsqdjzhurntgah` with `PGPAS
 ### [2026-07-06] T1-3 flip ON HOLD (John) — no existing Sentry/PostHog accounts; paused before account creation
 
 **Category:** docs | Launch | Monitoring | decision
-**Cross-link:** T1-3 ship entry below (`364462a`) | PRE-LAUNCH T1-3 | in-review [proposals/2026-07-06_ga4-acquisition-analytics.md](proposals/2026-07-06_ga4-acquisition-analytics.md) (overlapping analytics-stack surface — see note)
+**Cross-link:** T1-3 ship entry below (`364462a`) | PRE-LAUNCH T1-3 | in-review [proposals/2026-07-06_ga4-acquisition-analytics_reviewed-2026-07-06_decided-2026-07-06.md](proposals/2026-07-06_ga4-acquisition-analytics_reviewed-2026-07-06_decided-2026-07-06.md) (overlapping analytics-stack surface — see note)
 
 **What happened:** after the T1-3 code merge, the agent attempted John's 👤 flip steps directly (Vercel CLI: authenticated ✓; Sentry/PostHog dashboards: via browser). Both dead-ended at the same discovery: **neither sentry.io nor us.posthog.com has any account for jsa7cornell@gmail.com** — the Google-SSO flows land on "create a new organization" (Sentry "New Identity" screen; PostHog org-creation form with ToS acceptance). Account creation is agent-prohibited, so it was handed to John — who **paused the whole flip** rather than create the accounts ("retrench and hold", 2026-07-06).
 
