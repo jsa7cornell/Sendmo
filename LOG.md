@@ -15,7 +15,7 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 ### [2026-08-18] The who's-sending step is gone — sender is derived in-flow (unified-onboarding Phase 2)
 
 **Category:** ship | Onboarding
-**Deploy:** In PR — branch `feat/unified-onboarding-phase2`, not merged, not deployed at entry time (update on merge).
+**Deploy:** **DEPLOYED.** Merged via [PR #71](https://github.com/jsa7cornell/Sendmo/pull/71) (merge commit `e216ad7`), 2026-08-18, after CI run 32204698868 went green on the review-fixes commit. Verified live: bundle `/assets/index-D69ptPdm.js` on sendmo.co contains the in-flow sender claims.
 **Cross-link:** [proposals/2026-08-18_unified-onboarding-every-question-skippable.md](proposals/2026-08-18_unified-onboarding-every-question-skippable.md) §3, Phase 2
 **Browser-verified:** spec: tests/e2e/onboarding.spec.ts + tests/e2e/url-step-routing.spec.ts · variants-covered: [/onboarding resolves to destination with neutral heading, defer origin → banner on step 14 at the moment of skip, undo-skip clears deferral and restores the label path, full signed-in flow destination→shipping→verify→payment, back-nav data preserved, step guards on deep links]
 
