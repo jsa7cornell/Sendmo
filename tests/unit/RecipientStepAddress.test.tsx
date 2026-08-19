@@ -66,10 +66,12 @@ function renderStep(errors: string[], onContinue: () => void) {
     address: completeAddress,
     email: "pat@example.com",
     path: "flexible" as const,
+    sender: null,
     errors,
     tried: false,
     onAddressChange: () => {},
     onEmailChange: () => {},
+    onSenderResolved: () => {},
     onContinue,
     onBack: () => {},
   };
@@ -88,10 +90,17 @@ function renderStep(errors: string[], onContinue: () => void) {
 
 describe("RecipientStepAddress — OAuth auto-advance", () => {
   beforeEach(() => {
-    mockUser = null; // null at mount → wasNullOnMount = true → auto-advance eligible
+    mockUser = null;
+    // 2026-08-18: "user was null at mount" stopped being the discriminator —
+    // the /onboarding entry redirect mounts this step before auth settles, so
+    // EVERY visitor matches it. Auto-advance is now authorized only by the
+    // sendmo:oauth_pending flag set just before the Google redirect.
+    try { window.sessionStorage.removeItem("sendmo:oauth_pending"); } catch { /* noop */ }
   });
 
-  it("auto-advances after OAuth sign-in when validation passes (errors empty)", async () => {
+  it("auto-advances after OAuth return (flag set) when validation passes", async () => {
+    // The component wrote this flag on its way OUT to Google.
+    window.sessionStorage.setItem("sendmo:oauth_pending", "1");
     const onContinue = vi.fn();
     const { rerender, makeUi } = renderStep([], onContinue);
 
@@ -104,9 +113,25 @@ describe("RecipientStepAddress — OAuth auto-advance", () => {
     await waitFor(() => expect(onContinue).toHaveBeenCalledTimes(1), { timeout: 4000 });
   });
 
+  it("does NOT auto-advance without the flag, even on a null→present transition", async () => {
+    // The Phase 2 regression: the entry redirect makes every signed-in
+    // visitor's auth arrive after mount. Without the OAuth flag that must NOT
+    // auto-submit the form.
+    const onContinue = vi.fn();
+    const { rerender, makeUi } = renderStep([], onContinue);
+
+    mockUser = { email: "pat@example.com", user_metadata: {} };
+    rerender(makeUi());
+
+    expect(screen.queryByText(/Continuing…/i)).not.toBeInTheDocument();
+    await new Promise((r) => setTimeout(r, 2500));
+    expect(onContinue).not.toHaveBeenCalled();
+  });
+
   it("does NOT auto-advance when validation fails — no 'Continuing…' spinner", async () => {
     // errors non-empty (e.g. missing phone). Before the fix this still fired
     // the auto-advance and left "Continuing…" spinning forever.
+    window.sessionStorage.setItem("sendmo:oauth_pending", "1");
     const onContinue = vi.fn();
     const { rerender, makeUi } = renderStep(
       ["Add a phone number — the shipping carriers require it"],
@@ -123,9 +148,7 @@ describe("RecipientStepAddress — OAuth auto-advance", () => {
     expect(screen.queryByText(/Continuing…/i)).not.toBeInTheDocument();
   });
 
-  it("does not auto-advance for a user already signed in at mount", async () => {
-    // wasNullOnMount guard: only a fresh null→present transition triggers the
-    // auto-advance, not a page load where the user is already authenticated.
+  it("does not auto-advance for a user already signed in at mount (no flag)", async () => {
     const onContinue = vi.fn();
     mockUser = { email: "pat@example.com", user_metadata: {} };
     renderStep([], onContinue);
