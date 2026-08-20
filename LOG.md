@@ -12,6 +12,72 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-19] `scripts/ci-wait.sh` — a bounded CI wait; never hand-roll the poll loop
+
+**Category:** chore | CI
+**Cross-link:** PLAYBOOK Rule 21 (§CI-wait guidance) | `scripts/claude-hooks/check-deploy-green.sh`
+
+**Browser-verified:**
+  n/a-category: infra
+  n/a-reason: A shell wrapper around `gh`; no rendered surface. Verified by running it against real PRs — see **Verified** below. The tighter alternative considered was a bats/shunit2 suite; rejected because every branch depends on live GitHub check state, so the fixtures would assert against mocks of the exact API behavior the script exists to handle correctly.
+
+**What happened.** A "wait for CI" background task ran **6h23m** against a run that had
+finished in **3m45s**. CI was never slow — the watcher was. The loop was:
+
+```bash
+until [ "$(gh run view $RID --json status --jq .status)" = "completed" ]; do sleep 25; done
+```
+
+It compares a command substitution against a literal, so **any** `gh` failure — an empty
+run id from querying before the run existed, a 404, a rate limit — yields `""`, which
+never equals `completed`. It sleeps 25s and retries forever. No iteration cap, no error
+check, no deadline. It survived six hours because it was launched as a **background**
+Bash task, which is exempt from the agent tool's 10-minute ceiling. That exemption is
+the reason a bad loop is unbounded in practice, not just in theory.
+
+**Measured, so the record is straight** (2026-08-19). `main` run 32326122862 = 3m41s;
+PR #87 = 3m21s; last 15 runs all 2-3 min — consistent with PLAYBOOK's ~4 min. Steps of
+the 3m41s run: e2e 131s, unit 35s, eslint 12s, `npm ci` 10s (cache hit), `tsc -b` 9s,
+Playwright browsers 1s (cache hit). Install and browser caching are working; **e2e is
+60% of the run** and the only remaining target. Note `test.yml`'s "6m-20m49s" comment is
+**not** stale — it deliberately records pre-cache history to justify sizing
+`timeout-minutes: 45` above the legitimate maximum. Do not "correct" it downward.
+
+**Fix.** `scripts/ci-wait.sh` wraps `gh pr checks --watch --fail-fast` — the supported
+scripted waiter — and closes the three gaps it has on its own:
+
+1. **Queue race.** GitHub takes 30-90s to register checks after a push; called inside
+   that window `gh pr checks` exits 1 with "no checks reported", which a naive caller
+   reads as failure. The script retries for `CI_WAIT_QUEUE_GRACE` (default 120s) and
+   distinguishes that message from a genuine `gh` error.
+2. **No deadline.** Neither `gh pr checks --watch` nor `gh run watch` bounds its own
+   runtime, and **macOS ships no `timeout(1)`** to wrap them with. A background watchdog
+   enforces `CI_WAIT_DEADLINE` (default 900s). Its stdout/stderr must be closed — a
+   watchdog that inherits the caller's pipe holds it open and hangs `ci-wait.sh | tail`
+   for the full deadline. That bug was written and caught during this work.
+3. **Absence is not a pass** (the documented Rule 21 trap). A conflicting PR gets no
+   check-suite at all and `gh pr checks` shows only Vercel green, which reads exactly
+   like "checks are fine". The script refuses `DIRTY`/`CONFLICTING` up front, and after
+   a green result requires a `github-actions` check-suite on the head SHA.
+
+Exit 0 = conclusive green. Exit 1 = red, absent, or timed out.
+
+**Verified.** PR #87 green in 4.2s, both piped and unpiped; nonexistent PR #99999 exits
+1 immediately with the GraphQL reason; timeout path exercised in isolation (watchdog
+fires at the deadline, rc=143 -> exit 1). Dogfooded on its own PR #88: waited the live
+4m05s run and exited 0 on a conclusive green.
+
+**One more thing that dogfooding exposed.** `gh pr checks --watch` reprints the entire
+checks table every interval — on a 4-minute run that is ~24 near-identical blocks in the
+caller's log. The watcher's stdout is now discarded and the script makes one
+authoritative `gh pr checks` re-query at the end, which also renders the pending state
+on the timeout path. `pr checks` has no `--compact`; that flag belongs to `run watch`.
+
+**Also.** `check-deploy-green.sh` said "CI takes ~12 min" while PLAYBOOK said ~4 min.
+The number was **removed** from the hook rather than updated — duplicating a measured
+figure in two places is what let it drift. PLAYBOOK Rule 21 and the hook now both point
+at `scripts/ci-wait.sh`.
+
 ### [2026-08-19] Skip control + dim-in-place — PR 2 of the flow redesign
 
 **Category:** ship | Onboarding
