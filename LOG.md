@@ -12,6 +12,33 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-19] One step map + morph progress bar — PR 1 of the flow redesign
+
+**Category:** ship | Onboarding
+**Cross-link:** [proposals/2026-08-19_shipping-flow-redesign_reviewed-2026-08-19.md](proposals/2026-08-19_shipping-flow-redesign_reviewed-2026-08-19.md) (§2, §3 PR 1, amendment A1–A4) | completes Phase 2 of [proposals/2026-08-18_unified-onboarding-every-question-skippable.md](proposals/2026-08-18_unified-onboarding-every-question-skippable.md)
+
+**Browser-verified:**
+  spec: `tests/e2e/progress-bar.spec.ts` (morph assertions: skipped segment's aria-label + stable labels), `tests/e2e/onboarding.spec.ts` (skip/undo flows), `tests/e2e/url-step-routing.spec.ts` (full walk + retired-slug redirects), `tests/e2e/phone-gate.spec.ts` (relocated rate-fetch gate)
+  variants-covered: [nothing skipped → rates → payment; origin skipped; origin+package skipped; destination deferred; skip→undo→typed input restored; deep-linked undo; retired slugs on both segments]
+
+**What shipped.** `stepRouting.ts` collapsed to ONE sequence `[1, 10, 14, 20, 11, 12, 13]`, slugs `destination/origin/package/shipping/verify/payment/label`. The segment (`full-label ⇄ flexible`) rewrites on the first skip and back on the last undo (`pathForFlags`). `RecipientStepFullShipping` (672 lines) split into Origin / Package / Shipping — the rate fetch moved to the Shipping step with the `fetchRef` stale-guard, `canFetchRates` gate, and `originWasCompleteOnOpen` latch preserved verbatim (amendment A2's three latches). `MorphProgressBar` replaces the two per-path bars: six fixed segments, four states, skipped = dashed + arrow (shape, not amber — B4). Old flex step numbers 21/22/23 migrate to 11/12/13 on draft read (NB5). Retired slugs `preferences/authorize/share` redirect; `verify` stays live for in-flight magic-link emails (B3b).
+
+**The catch of the PR — a latent guard race, exposed rather than introduced.** `undoShippingLinkSwitch` wrote completedSteps with a plain `setData` and then navigated. A render lands with the OLD URL + NEW data; the guard fails `canAccessStep` for the step being left and its `<Navigate replace>` to `firstIncompleteUrl` — computed from the OLD URL's segment — beats the intended navigation. **The pre-existing code had the same race invisibly:** its bounce target coincided with the intended destination, so nothing ever looked wrong. The segment rewrite made them differ (`/flexible/origin` vs `/full-label/origin`) and the e2e caught it on the first run. Fix: `flushSync`, per the 2026-05-19 pattern — which is now load-bearing in BOTH defer and undo, exactly as the review's NB4 predicted a refactor would need.
+
+**Gotcha — a multi-edit script that dies mid-run leaves silently unapplied edits.** One patch script asserted on a stale expectation AFTER two successful replacements and exited without writing; the recovery pass re-applied one edit and missed the other (the banner merge). tsc can't catch a lost JSX edit that leaves valid code behind. The e2e suite caught it. When a patch script aborts, diff what was MEANT against what LANDED before moving on.
+
+**Code review of this PR found two real bugs in it — both on paths the build's own testing had walked and passed.**
+
+1. **A stale-rate short-circuit quoted the pre-edit price (money path).** An "already have rates, skip the fetch" guard, added as an optimisation, is wrong once the fetch has its own step: this component now *unmounts* while the user edits the parcel upstream, so on return it saw the previous fetch's rates in flow state and skipped. Edit 10x10x10 5lb → 30x10x10 40lb and the user is quoted, and charged, the small-package price. Proven by counting requests — the mocked response is identical either way, so only the request count distinguishes the two behaviours: 1 call across the edit before, 2 after. Guard deleted; probe promoted to `tests/e2e/rate-refetch.spec.ts`.
+
+2. **A legacy flex draft silently converted a link into a label.** Renumbering 21/22/23 is not sufficient: the pre-2026-08-18 flex sequence had no steps 10/14, so those drafts carry neither the completions nor the defer flags. They resume at the origin question instead of payment — and since `pathForFlags` derives the product purely from the flags, the shipping link becomes a prepaid label. Exactly review NB5, which required the mapping be stated *and pinned with a test*; the first cut shipped the renumbering with neither. `migrateLegacyFlexDraft` restores the intent (flexible-in-that-era meant the sender supplies origin and parcel) with three unit tests.
+
+**What that says about the testing, not just the bugs:** the full e2e suite passed 90/5/0 with both defects present. Neither is reachable by walking the flow forward — one needs a *backward* edit, the other needs a draft written by an older deploy. A suite that only walks happy paths forward will keep missing this whole class.
+
+**Census correction for the next migration:** the amendment's "24 literals across 4 specs" missed `progress-bar.spec.ts`, which navigates by UI and asserts the old segment sets — greps for URL literals do not find specs that assert *labels*. 5 spec files changed, not 4.
+
+**Measured.** Unit: 728 passing (42 rewritten stepRouting assertions replace the old map's; 3 new migration tests). E2E: 91 passed / 5 skipped / 0 failed locally (was 89/5/0 on main; the suite gained morph coverage). Behavior change on the money path, per amendment A1: prices no longer live-update while dimensions are edited — the rate fetch runs on the Shipping step, downstream of both halves.
+
 ### [2026-08-19] CI's cost was never the tests — it was `apt` inside the Playwright install
 
 **Category:** fix | CI

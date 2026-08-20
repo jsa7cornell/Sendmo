@@ -238,9 +238,9 @@ test.describe("Step 1 auth section — returning signed-in user", () => {
   });
 });
 
-// ─── Flex step 21 — Supabase OTP UI ────────────────────────
+// ─── Flex verify (step 11 since the unified map) — Supabase OTP UI ───
 
-test.describe("Flex step 21 — Supabase OTP verify (not bespoke email_verifications)", () => {
+test.describe("Flex verify — Supabase OTP (not bespoke email_verifications)", () => {
   const filledAddress = {
     name: "Jane Doe",
     street: "149 New Montgomery St",
@@ -264,7 +264,9 @@ test.describe("Flex step 21 — Supabase OTP verify (not bespoke email_verificat
   test("renders Supabase-style confirm-your-email UI with 6-digit input boxes", async ({ page }) => {
     await injectFlowState(page, {
       path: "flexible",
-      completedSteps: [0, 1, 20],
+      completedSteps: [0, 1, 10, 14, 20],
+      deferredOrigin: true,
+      deferredPackage: true,
       email: "test@example.com",
       email_verified: false,
       destinationAddress: filledAddress,
@@ -303,7 +305,9 @@ test.describe("Flex step 21 — Supabase OTP verify (not bespoke email_verificat
 
     await injectFlowState(page, {
       path: "flexible",
-      completedSteps: [0, 1, 20],
+      completedSteps: [0, 1, 10, 14, 20],
+      deferredOrigin: true,
+      deferredPackage: true,
       email: "test@example.com",
       email_verified: false,
       destinationAddress: filledAddress,
@@ -316,7 +320,7 @@ test.describe("Flex step 21 — Supabase OTP verify (not bespoke email_verificat
     expect(supabaseOtpFired).toBe(true);
   });
 
-  test("session arrival marks email_verified and auto-advances to step 22", async ({ page }) => {
+  test("session arrival marks email_verified and auto-advances to the payment step", async ({ page }) => {
     // Simulate the email-link path: user arrives with ?confirmed=1 and a session
     const session = buildMockSession("test@example.com", "Test User");
     await injectSession(page, session);
@@ -324,7 +328,9 @@ test.describe("Flex step 21 — Supabase OTP verify (not bespoke email_verificat
 
     await injectFlowState(page, {
       path: "flexible",
-      completedSteps: [0, 1, 20],
+      completedSteps: [0, 1, 10, 14, 20],
+      deferredOrigin: true,
+      deferredPackage: true,
       email: "test@example.com",
       email_verified: false,
       destinationAddress: filledAddress,
@@ -337,7 +343,7 @@ test.describe("Flex step 21 — Supabase OTP verify (not bespoke email_verificat
     await expect(page.getByRole("heading", { name: /Email verified/i })).toBeVisible({ timeout: 5000 });
 
     // Auto-advances to step 22 (authorize) within ~2s
-    await expect(page).toHaveURL(/\/onboarding\/flexible\/authorize/, { timeout: 4000 });
+    await expect(page).toHaveURL(/\/onboarding\/flexible\/payment/, { timeout: 4000 });
   });
 });
 
@@ -352,7 +358,9 @@ test.describe("Flex step 21 skip — Google-authed user skips verify", () => {
     // email_verified is true (user picked Google at step 1)
     await injectFlowState(page, {
       path: "flexible",
-      completedSteps: [0, 1, 20],
+      completedSteps: [0, 1, 10, 14, 20],
+      deferredOrigin: true,
+      deferredPackage: true,
       email: "john@example.com",
       email_verified: true,
       destinationAddress: {
@@ -365,19 +373,23 @@ test.describe("Flex step 21 skip — Google-authed user skips verify", () => {
       },
     });
 
-    // Start at step 20 (preferences) — already complete, navigate forward
+    // Start at step 20 (shipping — flex mode). The old `preferences` slug is
+    // deliberately used here: it must redirect to `shipping` (retired-slug
+    // table) and keep working.
     await page.goto("/onboarding/flexible/preferences");
+    await expect(page).toHaveURL(/\/onboarding\/flexible\/shipping/, { timeout: 3000 });
 
     // Mock any Edge Function calls preferences might trigger
     await page.route(`${SUPABASE_URL}/functions/v1/**`, (route) =>
       route.fulfill({ status: 200, contentType: "application/json", body: "{}" })
     );
 
-    // Click continue — RecipientFlowContext.tryAdvance should skip step 21
+    // Click continue — RecipientFlowContext.tryAdvance should skip the verify
+    // step (11) because the session email is already confirmed
     await page.getByRole("button", { name: /Continue/i }).first().click();
 
-    // Should land on step 22 (authorize), NOT step 21 (verify)
-    await expect(page).toHaveURL(/\/onboarding\/flexible\/authorize/, { timeout: 3000 });
+    // Should land on the payment step (12 — old flex `authorize`), NOT verify
+    await expect(page).toHaveURL(/\/onboarding\/flexible\/payment/, { timeout: 3000 });
     await expect(page).not.toHaveURL(/\/onboarding\/flexible\/verify/);
   });
 });

@@ -9,7 +9,7 @@ import {
   prefillSlotFor,
   startFreshFlow,
 } from "@/lib/recipientFlowStorage";
-import { canAccessStep, slugToStep, stepUrl } from "@/lib/stepRouting";
+import { canAccessStep, slugToStep, stepUrl, firstIncompleteUrl } from "@/lib/stepRouting";
 
 // jsdom in this project exposes `window.localStorage` as an object with NO
 // methods (setItem/clear are undefined). `persist` swallows storage errors by
@@ -74,34 +74,75 @@ describe("startFreshFlow", () => {
 describe("the address escape — 'I don't have their address'", () => {
   // OQ2 option (c): both branches start on full-label and only the escape moves
   // a flow to the shipping-link path. These lock the assumptions that makes safe.
-  it("lands on a step the flexible path's guard actually admits", () => {
-    // At the escape the user has completed steps 0 and 1 — both shared. If this
-    // ever fails, the escape bounces the user to firstIncompleteUrl instead.
-    expect(canAccessStep(20, [0, 1], "flexible")).toBe(true);
+  it("lands on a step the guard actually admits", () => {
+    // Deferring the origin marks step 10 complete and navigates to the package
+    // question (14) on the flexible segment. If this ever fails, the skip
+    // bounces the user to firstIncompleteUrl instead.
+    expect(canAccessStep(14, [0, 1, 10], "flexible")).toBe(true);
+    // Deferring the package (from 14) lands on the shared shipping step.
+    expect(canAccessStep(20, [0, 1, 10, 14], "flexible")).toBe(true);
   });
 
-  it("does not admit a flexible step the user has not earned", () => {
-    expect(canAccessStep(22, [0, 1], "flexible")).toBe(false);
+  it("does not admit a step the user has not earned", () => {
+    expect(canAccessStep(12, [0, 1], "flexible")).toBe(false);
   });
 
-  it("targets the preferences step", () => {
-    expect(stepUrl("flexible", 20)).toBe("/onboarding/flexible/preferences");
+  it("targets the shared shipping step (slug renamed from preferences, 2026-08-19)", () => {
+    expect(stepUrl("flexible", 20)).toBe("/onboarding/flexible/shipping");
   });
 
   it("returns to the origin step on undo", () => {
-    expect(stepUrl("full_label", 10)).toBe("/onboarding/full-label/shipping");
+    expect(stepUrl("full_label", 10)).toBe("/onboarding/full-label/origin");
   });
 
   it("keeps every pre-existing deep link resolving", () => {
-    // Nothing about the routing shape changed, so URLs minted before this flow
-    // (and the e2e specs that hard-code them) still map to the same steps.
+    // One step map (2026-08-19): retired slugs resolve to the live step that
+    // asks the same question, so URLs minted before the change still land.
     expect(slugToStep("full_label", "destination")).toBe(1);
-    expect(slugToStep("full_label", "shipping")).toBe(10);
+    expect(slugToStep("full_label", "shipping")).toBe(20);
     expect(slugToStep("flexible", "preferences")).toBe(20);
-    expect(slugToStep("flexible", "authorize")).toBe(22);
+    expect(slugToStep("flexible", "authorize")).toBe(12);
+    expect(slugToStep("flexible", "share")).toBe(13);
+    expect(slugToStep("flexible", "verify")).toBe(11);
   });
 });
 
+
+describe("drafts written against the older step map", () => {
+  // NB5 of the 2026-08-19 review: renumbering alone strands mid-air drafts.
+  const write = (data: Record<string, unknown>) =>
+    window.localStorage.setItem(
+      "sendmo:recipient_flow:v1",
+      JSON.stringify({ savedAt: Date.now(), data }),
+    );
+
+  it("renumbers the retired flex steps (21/22/23 → 11/12/13)", () => {
+    write({ path: "flexible", completedSteps: [0, 1, 10, 14, 20, 21], email: "a@b.co",
+            deferredOrigin: true, deferredPackage: true });
+    expect(loadPersisted()?.completedSteps).toEqual([0, 1, 10, 14, 20, 11]);
+  });
+
+  it("a pre-2026-08-18 flex draft keeps its LINK identity — it must not become a label", () => {
+    // That map's flex sequence was [1, 20, 21, 22, 23]: no 10/14, no flags.
+    // Left as-is it reads as "origin and package unanswered", which walks the
+    // user back to origin and flips the product to full_label.
+    write({ path: "flexible", completedSteps: [0, 1, 20, 21], email: "a@b.co" });
+    const d = loadPersisted()!;
+    expect(d.deferredOrigin).toBe(true);
+    expect(d.deferredPackage).toBe(true);
+    expect(d.completedSteps).toEqual(expect.arrayContaining([10, 14]));
+    // Resumes where they actually were — the payment step — not at origin.
+    expect(firstIncompleteUrl(d.completedSteps, "flexible")).toBe("/onboarding/flexible/payment");
+  });
+
+  it("leaves a full-label draft untouched — its numbers never changed", () => {
+    write({ path: "full_label", completedSteps: [0, 1, 10, 14], email: "a@b.co" });
+    const d = loadPersisted()!;
+    expect(d.completedSteps).toEqual([0, 1, 10, 14]);
+    expect(d.deferredOrigin).toBe(false);
+    expect(d.deferredPackage).toBe(false);
+  });
+});
 
 describe("resuming an unfinished flow", () => {
   // The flow moved from sessionStorage to localStorage on 2026-08-18 so closing

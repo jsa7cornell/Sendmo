@@ -7,15 +7,17 @@ import AppHeader from "@/components/AppHeader";
 import {
   stepToProgressIndex,
   progressIndexToStep,
-  stepsForPath,
   canAccessStep,
   firstIncompleteUrl,
   isSlugValidForPath,
   pathSlugToPath,
+  RETIRED_SLUG_REDIRECTS,
 } from "@/lib/stepRouting";
-import ProgressBar from "@/components/recipient/ProgressBar";
+import MorphProgressBar from "@/components/recipient/MorphProgressBar";
 import RecipientStepAddress from "@/components/recipient/RecipientStepAddress";
-import RecipientStepFullShipping from "@/components/recipient/RecipientStepFullShipping";
+import RecipientStepOrigin from "@/components/recipient/RecipientStepOrigin";
+import RecipientStepPackage from "@/components/recipient/RecipientStepPackage";
+import RecipientStepShipping from "@/components/recipient/RecipientStepShipping";
 import RecipientStepPayment from "@/components/recipient/RecipientStepPayment";
 import RecipientStepFlexPreferences from "@/components/recipient/RecipientStepFlexPreferences";
 import RecipientStepEmailVerifyFlex from "@/components/recipient/RecipientStepEmailVerifyFlex";
@@ -54,7 +56,6 @@ export default function RecipientOnboarding() {
     goBack,
     tryAdvance,
     getErrors,
-    switchToShippingLink,
     deferToSender,
     undoShippingLinkSwitch,
   } = useRecipientFlowContext();
@@ -69,7 +70,14 @@ export default function RecipientOnboarding() {
     return <Navigate to="/onboarding" replace />;
   }
 
-  // Slug doesn't belong to this path (e.g. /onboarding/full-label/preferences) → bounce to picker
+  // Retired slugs (preferences / authorize / share) canonicalize to the live
+  // slug that asks the same question — every URL that ever circulated keeps
+  // resolving (decided 2026-08-17 OQ2). `replace` so Back doesn't replay it.
+  if (stepSlug && RETIRED_SLUG_REDIRECTS[stepSlug]) {
+    return <Navigate to={`/onboarding/${params.pathSlug}/${RETIRED_SLUG_REDIRECTS[stepSlug]}`} replace />;
+  }
+
+  // Unknown slug → bounce to picker
   if (stepSlug && !isSlugValidForPath(stepSlug, urlPath)) {
     return <Navigate to="/onboarding" replace />;
   }
@@ -92,15 +100,18 @@ export default function RecipientOnboarding() {
   // ── Progress bar ──────────────────────────────────────────
 
   const currentProgressIndex = stepToProgressIndex(currentStep);
-  // Only steps belonging to the active path may light its segments: a flow
-  // that deferred origin/package arrives on flexible with steps 10 + 14 in
-  // completedSteps, and their indexes (1, 2) would otherwise mark the flex
-  // bar's Preferences + Save Card complete — segments the user has never seen.
-  const pathSteps = stepsForPath(data.path);
+  // One step map (2026-08-19): every completed step lights its own fixed
+  // segment — the per-path filtering that guarded against cross-path index
+  // collisions is gone because there are no longer two step sets to collide.
   const completedProgressIndexes = data.completedSteps
-    .filter((s) => pathSteps.includes(s))
     .map((s) => stepToProgressIndex(s))
     .filter((i): i is number => i !== undefined && i >= 0);
+  // A skip turns its segment's state in place — the morph (brief point 2).
+  const skippedProgressIndexes = [
+    ...(data.deferredDestination ? [0] : []),
+    ...(data.deferredOrigin ? [1] : []),
+    ...(data.deferredPackage ? [2] : []),
+  ];
 
   function handleProgressClick(index: number) {
     const targetStep = progressIndexToStep(index, data.path);
@@ -133,10 +144,10 @@ export default function RecipientOnboarding() {
 
         {/* Progress bar (hidden on Step 0) */}
         {currentStep !== 0 && (
-          <ProgressBar
-            path={data.path}
+          <MorphProgressBar
             activeIndex={currentProgressIndex}
             completedIndexes={completedProgressIndexes}
+            skippedIndexes={skippedProgressIndexes}
             onClickIndex={handleProgressClick}
           />
         )}
@@ -145,7 +156,7 @@ export default function RecipientOnboarding() {
             branch decision itself, and the typed origin address is still in
             flow state, so coming back restores it. */}
         {/* Mirrors the escape's own condition (`!isSelfSender` in
-            RecipientStepFullShipping). Gating this on === "other" while the
+            RecipientStepOrigin / RecipientStepPackage). Gating this on === "other" while the
             escape is offered to null-sender users too — existing deep links,
             and sessions persisted before this shipped — let those users convert
             to a shipping link with no rendered way back. */}
@@ -153,7 +164,7 @@ export default function RecipientOnboarding() {
             not at the end (unified-onboarding proposal, John's point 3). Same
             banner on step 14 (after deferring the origin) and step 20. Undo
             reverses the deferral itself (flags + location). */}
-        {(currentStep === 10 || currentStep === 14) &&
+        {[10, 14, 20].includes(currentStep) &&
           (data.deferredDestination || data.deferredOrigin || data.deferredPackage) && (
           <div className="mb-5 flex items-center justify-between gap-3 rounded-xl bg-muted px-4 py-3">
             <p className="text-sm text-muted-foreground">
@@ -167,24 +178,6 @@ export default function RecipientOnboarding() {
             >
               <Undo2 className="w-3.5 h-3.5" aria-hidden="true" />
               Undo skip
-            </button>
-          </div>
-        )}
-
-        {currentStep === 20 && data.sender !== "self" && (
-          <div className="mb-5 flex items-center justify-between gap-3 rounded-xl bg-muted px-4 py-3">
-            <p className="text-sm text-muted-foreground">
-              <span className="font-medium text-foreground">This is a shipping link.</span>{" "}
-              They fill in their address and print the label — you'll be charged each time
-              someone uses it.
-            </p>
-            <button
-              type="button"
-              onClick={undoShippingLinkSwitch}
-              className="shrink-0 inline-flex items-center gap-1.5 text-sm font-medium text-primary rounded-lg px-2 py-1 transition-colors hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-            >
-              <Undo2 className="w-3.5 h-3.5" aria-hidden="true" />
-              I do have it
             </button>
           </div>
         )}
@@ -221,11 +214,10 @@ export default function RecipientOnboarding() {
               />
             )}
 
-            {/* Step 10: Full Label — Shipment Details */}
+            {/* Step 10 (origin): the ship-from address. */}
             {currentStep === 10 && (
-              <RecipientStepFullShipping
+              <RecipientStepOrigin
                 state={state}
-                mode="address"
                 sender={data.sender}
                 errors={getErrors(10)}
                 tried={!!state.tried[10]}
@@ -233,45 +225,71 @@ export default function RecipientOnboarding() {
                 onContinue={() => tryAdvance(10)}
                 onBack={goBack}
                 onNoAddress={() => deferToSender("origin")}
-                liveMode={liveMode}
               />
             )}
 
-            {/* Step 14: Shipment details + carrier. Split out of step 10 on
-                2026-08-18 so the two questions can be deferred independently —
-                skipping the ship-from address used to skip this one too. */}
+            {/* Step 14 (package): the parcel. Carrier choice moved to step 20
+                when the maps unified (2026-08-19). */}
             {currentStep === 14 && (
-              <RecipientStepFullShipping
+              <RecipientStepPackage
                 state={state}
-                mode="package"
                 sender={data.sender}
                 errors={getErrors(14)}
                 tried={!!state.tried[14]}
                 onUpdate={updateData}
-                // Leaving step 14: if either question was handed to the sender
-                // the price isn't knowable, so the flow becomes a shipping link.
-                onContinue={() => {
-                  if (data.deferredDestination || data.deferredOrigin || data.deferredPackage) switchToShippingLink();
-                  else tryAdvance(14);
-                }}
+                onContinue={() => tryAdvance(14)}
                 onBack={goBack}
                 onNoAddress={() => deferToSender("package")}
-                liveMode={liveMode}
               />
             )}
 
-            {/* Step 11: Full Label — Supabase OTP verify (proposal 2026-05-11_account-creation-timing) */}
-            {currentStep === 11 && data.path === "full_label" && (
+            {/* Step 20 (shipping) — one step, two modes (§2.2): rate cards
+                when everything is known; speed + carrier preference + cap
+                when anything was skipped. data.path carries the mode — the
+                URL segment rewrites on the first skip / last undo. */}
+            {currentStep === 20 && (data.path === "flexible" ? (
+              <RecipientStepFlexPreferences
+                state={state}
+                errors={getErrors(20)}
+                tried={!!state.tried[20]}
+                onUpdate={updateData}
+                onContinue={() => tryAdvance(20)}
+                onBack={goBack}
+              />
+            ) : (
+              <RecipientStepShipping
+                state={state}
+                errors={getErrors(20)}
+                tried={!!state.tried[20]}
+                onUpdate={updateData}
+                onContinue={() => tryAdvance(20)}
+                onBack={goBack}
+                liveMode={liveMode}
+              />
+            ))}
+
+            {/* Step 11 (verify — the Contact step): Supabase OTP, one step for
+                both paths since the maps unified; the components differ only
+                in copy and stay per-path until PR 2 consolidates them. */}
+            {currentStep === 11 && (data.path === "flexible" ? (
+              <RecipientStepEmailVerifyFlex
+                state={state}
+                onUpdate={updateData}
+                onContinue={() => tryAdvance(11)}
+                onBack={goBack}
+              />
+            ) : (
               <RecipientStepEmailVerifySupabase
                 state={state}
                 onUpdate={updateData}
                 onContinue={() => tryAdvance(11)}
                 onBack={goBack}
               />
-            )}
+            ))}
 
-            {/* Step 12/13: Payment + Label Ready */}
-            {(currentStep === 12 || currentStep === 13) && data.path === "full_label" && (
+            {/* Steps 12/13 (payment / done), label path: RecipientStepPayment
+                internally owns both — charge, then label-ready. */}
+            {(currentStep === 12 || currentStep === 13) && data.path !== "flexible" && (
               <RecipientStepPayment
                 state={state}
                 onUpdate={updateData}
@@ -281,42 +299,20 @@ export default function RecipientOnboarding() {
               />
             )}
 
-            {/* Step 20: Flex — Shipping Preferences */}
-            {currentStep === 20 && (
-              <RecipientStepFlexPreferences
-                state={state}
-                errors={getErrors(20)}
-                tried={!!state.tried[20]}
-                onUpdate={updateData}
-                onContinue={() => tryAdvance(20)}
-                onBack={goBack}
-              />
-            )}
-
-            {/* Step 21: Flex — Email Verification (Supabase Auth — proposal 2026-05-11_account-creation-timing) */}
-            {currentStep === 21 && (
-              <RecipientStepEmailVerifyFlex
-                state={state}
-                onUpdate={updateData}
-                onContinue={() => tryAdvance(21)}
-                onBack={goBack}
-              />
-            )}
-
-            {/* Step 22: Flex — Payment Authorization */}
-            {currentStep === 22 && (
+            {/* Step 12 (payment), link path: save the card (Pattern D). */}
+            {currentStep === 12 && data.path === "flexible" && (
               <RecipientStepFlexPayment
                 state={state}
                 onUpdate={updateData}
-                onContinue={() => tryAdvance(22)}
+                onContinue={() => tryAdvance(12)}
                 onBack={goBack}
                 onEditDestination={() => goToStep(1)}
                 onEditShipping={() => goToStep(20)}
               />
             )}
 
-            {/* Step 23: Flex — Link Ready */}
-            {currentStep === 23 && (
+            {/* Step 13 (done), link path: the link, ready to share. */}
+            {currentStep === 13 && data.path === "flexible" && (
               <RecipientStepLinkReady
                 state={state}
                 onUpdate={updateData}

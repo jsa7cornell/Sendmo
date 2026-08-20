@@ -2,20 +2,27 @@ import type { RecipientPath } from "@/lib/types";
 
 // ─── URL Structure ──────────────────────────────────────────
 //
-// All routes are path-scoped and self-describing:
+// ONE step map (2026-08-19, flow-redesign proposal — completes Phase 2 of the
+// unified-onboarding proposal, whose scope line reads "unify /onboarding/*
+// routes into one step map with link_type computed at the end"). Both path
+// segments walk the SAME sequence; the segment (`full-label` ⇄ `flexible`)
+// only names the product the flow is currently heading toward, and rewrites
+// when the first skip lands or the last one is undone.
 //
 //   /onboarding                          → resume offer if a draft exists, else redirects to full-label/destination
-//   /onboarding/full-label/destination   → step 1 (recipient + email)
-//   /onboarding/full-label/shipping      → step 10  (ship-from address)
-//   /onboarding/full-label/package       → step 14  (shipment details + carrier)
-//   /onboarding/full-label/verify        → step 11  (Supabase OTP — proposal 2026-05-11_account-creation-timing)
-//   /onboarding/full-label/payment       → step 12
-//   /onboarding/full-label/label         → step 13
-//   /onboarding/flexible/destination     → step 1
-//   /onboarding/flexible/preferences     → step 20
-//   /onboarding/flexible/verify          → step 21
-//   /onboarding/flexible/authorize       → step 22
-//   /onboarding/flexible/share           → step 23
+//   /onboarding/<path>/destination       → step 1   (recipient + email)
+//   /onboarding/<path>/origin            → step 10  (ship-from address)
+//   /onboarding/<path>/package           → step 14  (parcel details)
+//   /onboarding/<path>/shipping          → step 20  (rates when everything is known; speed/cap preferences when anything was skipped)
+//   /onboarding/<path>/verify            → step 11  (Supabase OTP — the design's "Contact" step; slug stays `verify`
+//                                                    because magic-link emails already in inboxes carry it as redirectTo)
+//   /onboarding/<path>/payment           → step 12  (charge now, or save card)
+//   /onboarding/<path>/label             → step 13  (done — label to print, or link to share)
+//
+// Step numbers are HISTORICAL, not ordinal — sequence comes from STEPS below.
+// They are kept (1/10/14/20/11/12/13) so persisted drafts' completedSteps stay
+// meaningful: every full-label number survives unchanged, and old flex numbers
+// (21/22/23) are migrated in recipientFlowStorage.readStored.
 //
 // `path` (full-label | flexible) is the URL segment; `RecipientPath` enum
 // uses `full_label` (underscore) — convert at the boundary.
@@ -23,18 +30,12 @@ import type { RecipientPath } from "@/lib/types";
 export type PathSlug = "full-label" | "flexible";
 export type StepSlug =
   | "destination"
-  | "shipping"
+  | "origin"
   | "package"
-  | "payment"
-  | "label"
-  | "preferences"
+  | "shipping"
   | "verify"
-  | "authorize"
-  | "share";
-
-// Verify slug is shared between full-label (step 11) and flex (step 21) —
-// both now use Supabase Auth OTP (RecipientStepEmailVerifySupabase /
-// RecipientStepEmailVerifyFlex respectively).
+  | "payment"
+  | "label";
 
 export function pathSlugToPath(slug: string): RecipientPath | null {
   if (slug === "full-label") return "full_label";
@@ -46,57 +47,63 @@ export function pathToPathSlug(path: RecipientPath): PathSlug {
   return path === "full_label" ? "full-label" : "flexible";
 }
 
-// ─── Step Maps (per path) ───────────────────────────────────
+// ─── The Step Map ───────────────────────────────────────────
 
-// `shipping` keeps step 10 so every existing /full-label/shipping deep link
-// still resolves — it just asks a narrower question now (the ship-from address
-// only). `package` (14) carries what used to sit below it: the parcel details
-// and the carrier choice. Numbers need not be ordered; sequence comes from
-// FULL_LABEL_STEPS below.
-const FULL_LABEL_STEP_BY_SLUG: Record<string, number> = {
+const STEP_BY_SLUG: Record<string, number> = {
   destination: 1,
-  shipping: 10,
+  origin: 10,
   package: 14,
+  shipping: 20,
   verify: 11,
   payment: 12,
   label: 13,
 };
 
-const FULL_LABEL_SLUG_BY_STEP: Record<number, StepSlug> = {
+const SLUG_BY_STEP: Record<number, StepSlug> = {
   1: "destination",
-  10: "shipping",
+  10: "origin",
   14: "package",
+  20: "shipping",
   11: "verify",
   12: "payment",
   13: "label",
 };
 
-const FLEX_STEP_BY_SLUG: Record<string, number> = {
-  destination: 1,
-  preferences: 20,
-  verify: 21,
-  authorize: 22,
-  share: 23,
+// Retired slugs → the live slug that asks the same question now. Every URL
+// that ever circulated must keep resolving (decided 2026-08-17 OQ2; PR #68
+// preserved the same property through the step-10 split):
+//   preferences (old flex step 20) → shipping — the same screen, now one step
+//     both paths share (rates when everything is known, preferences when not).
+//   authorize   (old flex step 22) → payment — save-card IS the payment step.
+//   share       (old flex step 23) → label   — the done screen.
+// `verify` never retires — see the URL-structure comment. Old
+// /full-label/shipping URLs resolve without an entry here because `shipping`
+// is still a live slug; the access guard walks any deep link to the first
+// incomplete step regardless, so position — not slug survival — is what the
+// guard already normalizes.
+export const RETIRED_SLUG_REDIRECTS: Record<string, StepSlug> = {
+  preferences: "shipping",
+  authorize: "payment",
+  share: "label",
 };
 
-const FLEX_SLUG_BY_STEP: Record<number, StepSlug> = {
-  1: "destination",
-  20: "preferences",
-  21: "verify",
-  22: "authorize",
-  23: "share",
-};
-
+// Signature keeps the path argument for call-site stability (4 importers +
+// the specs); one map means it no longer affects the answer.
 export function slugToStep(path: RecipientPath | null, slug: string | null | undefined): number {
+  void path;
   if (!slug) return 0;
-  const map = path === "flexible" ? FLEX_STEP_BY_SLUG : FULL_LABEL_STEP_BY_SLUG;
-  return map[slug] ?? 0;
+  const live = STEP_BY_SLUG[slug];
+  if (live !== undefined) return live;
+  // Retired slugs resolve to their replacement's step so the guard can reason
+  // about the redirect target before the URL is rewritten.
+  const retired = RETIRED_SLUG_REDIRECTS[slug];
+  return retired ? STEP_BY_SLUG[retired] : 0;
 }
 
 export function stepToSlug(path: RecipientPath | null, step: number): StepSlug | null {
+  void path;
   if (step === 0) return null;
-  const map = path === "flexible" ? FLEX_SLUG_BY_STEP : FULL_LABEL_SLUG_BY_STEP;
-  return map[step] ?? null;
+  return SLUG_BY_STEP[step] ?? null;
 }
 
 export function stepUrl(path: RecipientPath | null, step: number): string {
@@ -112,11 +119,11 @@ export function stepUrl(path: RecipientPath | null, step: number): string {
 // resolves straight to the destination step. Step 0 survives only as the
 // "no step" value in stepUrl/canAccessStep and as inert entries in old
 // persisted drafts' completedSteps.
-const FULL_LABEL_STEPS = [1, 10, 14, 11, 12, 13];
-const FLEX_LINK_STEPS = [1, 20, 21, 22, 23];
+const STEPS = [1, 10, 14, 20, 11, 12, 13];
 
 export function stepsForPath(path: RecipientPath | null): number[] {
-  return path === "flexible" ? FLEX_LINK_STEPS : FULL_LABEL_STEPS;
+  void path;
+  return STEPS;
 }
 
 export function nextStep(current: number, path: RecipientPath | null): number | null {
@@ -135,28 +142,41 @@ export function stepIndex(step: number, path: RecipientPath | null): number {
   return stepsForPath(path).indexOf(step);
 }
 
+// ─── Path Derivation ────────────────────────────────────────
+
+// The product is a pure function of the three skip flags: anything handed to
+// the sender means the price is unknowable, so the flow is a shipping link.
+// The URL segment tracks this on every navigation — it rewrites when the
+// first skip lands and rewrites back when the last one is undone (§2.2 of the
+// 2026-08-19 flow-redesign proposal). ONE definition so the context's
+// navigation calls and any future caller cannot disagree about the fork.
+export function pathForFlags(flags: {
+  deferredDestination: boolean;
+  deferredOrigin: boolean;
+  deferredPackage: boolean;
+}): RecipientPath {
+  return flags.deferredDestination || flags.deferredOrigin || flags.deferredPackage
+    ? "flexible"
+    : "full_label";
+}
+
 // ─── Progress Bar Mapping ───────────────────────────────────
 
-// One segment per question the user answers (John, 2026-08-18 — the bar must
-// represent where you ARE, and 10 + 14 sharing a segment meant completing the
-// origin advanced it by nothing). Full-label: 5 segments — Destination /
-// Origin / Package & Shipping / Payment / Label (verify 11 folds into the
-// Payment segment it opens, as before). Flexible: 4 — Destination /
-// Preferences / Save Card / Share (its shape is unchanged; only labels moved
-// into ProgressBar's per-path sets). Step numbers are disjoint across paths,
-// so one lookup serves both.
+// SIX fixed segments, both paths (the morph bar): Destination / Origin /
+// Package / Shipping / Contact / Payment. A skip turns a segment amber-state
+// ("skipped") IN PLACE — nothing is added or removed, which is what makes the
+// label↔link transformation legible (design brief point 2). Verify (11) folds
+// into the Payment-adjacent Contact segment; label (13) keeps Payment's index
+// so the bar reads complete on the done screen.
 const STEP_TO_PROGRESS: Record<number, number> = {
   0: -1,
   1: 0,
   10: 1,
   14: 2,
-  11: 3,
-  12: 3,
-  13: 4,
-  20: 1,
-  21: 2,
-  22: 2,
-  23: 3,
+  20: 3,
+  11: 4,
+  12: 5,
+  13: 5,
 };
 
 export function stepToProgressIndex(step: number): number {
@@ -164,11 +184,8 @@ export function stepToProgressIndex(step: number): number {
 }
 
 export function progressIndexToStep(index: number, path: RecipientPath | null): number {
-  if (path === "flexible") {
-    return [1, 20, 21, 23][index] ?? 1;
-  }
-  // Index 3 routes to verify (11) — payment (12) follows immediately after.
-  return [1, 10, 14, 11, 13][index] ?? 1;
+  void path;
+  return [1, 10, 14, 20, 11, 12][index] ?? 1;
 }
 
 // ─── Slug Validation ────────────────────────────────────────

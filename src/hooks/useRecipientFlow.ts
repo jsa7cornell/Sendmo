@@ -64,6 +64,10 @@ export interface RecipientFlowState {
   // attach to it. linkId + short_code populate together when the link lands.
   linkId: string;
 
+  // Whether the parcel fields came from the Magic Guestimator (persisted —
+  // the Shipping step downstream shows the beta disclaimer beside the price).
+  usedGuestimator: boolean;
+
   // Validation
   tried: Record<number, boolean>;
 }
@@ -94,24 +98,28 @@ export function getValidationErrors(state: RecipientFlowState, step: number): st
     else if (!/^.+@.+\..+$/.test(state.email.trim())) errors.push("Enter a valid email address");
   }
 
+  // Step 20 is the shared Shipping step (one map, 2026-08-19). Two modes:
+  // everything known → the user picks a concrete rate; anything skipped →
+  // they set speed/cap preferences instead, because no rate is computable.
+  // The mode is the path, which pathForFlags derives from the skip flags.
   if (step === 20) {
-    if (state.price_cap <= 0) errors.push("Price cap must be greater than $0");
-    if (state.price_cap > 500) errors.push("Price cap cannot exceed $500");
+    if (state.path === "flexible") {
+      if (state.price_cap <= 0) errors.push("Price cap must be greater than $0");
+      if (state.price_cap > 500) errors.push("Price cap cannot exceed $500");
+    } else {
+      if (!state.selectedRate) errors.push("Select a shipping method");
+    }
   }
 
-  if (step === 21) {
-    if (!state.email_verified) errors.push("Email must be verified to continue");
-  }
-
-  // Full-label verify step (proposal 2026-05-11_account-creation-timing).
-  // Same shape as flex step 21 but a separate component fires Supabase OTP.
-  if (step === 11 && state.path === "full_label") {
+  // The Contact step (slug `verify`) — one step for both paths since the map
+  // unified; the old flex step 21 migrated onto 11 (recipientFlowStorage).
+  if (step === 11) {
     if (!state.email_verified) errors.push("Verify your email to continue");
   }
 
-  // Step 10 is the ship-from address only; step 14 is the parcel + carrier.
-  // Split 2026-08-18 so each can be skipped independently — deferring the
-  // address must not also skip the package question.
+  // Step 10 is the ship-from address only (slug `origin` since 2026-08-19).
+  // Split from the parcel 2026-08-18 so each can be skipped independently —
+  // deferring the address must not also skip the package question.
   if (step === 10) {
     if (!state.originAddress.name) errors.push("Sender name is required");
     if (!state.originAddress.verified) errors.push("Origin address is required");
@@ -119,6 +127,9 @@ export function getValidationErrors(state: RecipientFlowState, step: number): st
     if (!isUsablePhone(state.originAddress.phone)) errors.push("Add a phone number — the shipping carriers require it");
   }
 
+  // Step 14 is the parcel only. The carrier/rate choice moved to the shared
+  // Shipping step (20) when the maps unified — the design's Package screen
+  // shows no prices, so the fetch runs downstream of both halves.
   if (step === 14) {
     const l = parseFloat(state.dimensions.length);
     const w = parseFloat(state.dimensions.width);
@@ -130,8 +141,6 @@ export function getValidationErrors(state: RecipientFlowState, step: number): st
     const lbs = parseFloat(state.weight.lbs) || 0;
     const oz = parseFloat(state.weight.oz) || 0;
     if (lbs + oz <= 0) errors.push("Weight is required");
-
-    if (!state.selectedRate) errors.push("Select a shipping method");
   }
 
   return errors;
