@@ -31,6 +31,12 @@
 # call errored" as "no tests ran". Both are the same mistake. Anything this
 # script cannot determine exits 2, never 0 or 1.
 #
+# Two modes. With a PR (the usual case) it waits on that PR's checks. With no
+# PR — pushes to `main`, which is where PLAYBOOK Rule 21 actually applies — it
+# falls back to waiting on the checks for the current commit. The first cut had
+# no fallback, so the Rule 21 Stop hook, which fires ONLY on main, recommended a
+# command that could only ever exit 2 there.
+#
 # Usage:  scripts/ci-wait.sh [<pr-number>|<branch>]     # defaults to current branch
 # Exit:   0 = conclusive green
 #         1 = conclusive bad — red, or confirmed no tests ran
@@ -52,19 +58,82 @@ gh auth status >/dev/null 2>&1 || { echo "ci-wait: gh not authenticated" >&2; ex
 # out adds a dependency that is not otherwise required and was not checked for.
 pr_field() { gh pr view ${TARGET:+"$TARGET"} --json "$1" -q ".$1" 2>/dev/null; }
 
-PR=$(pr_field number)
-SHA=$(pr_field headRefOid)
-if [ -z "$PR" ] || [ -z "$SHA" ]; then
-  echo "ci-wait: could not resolve a PR for '${TARGET:-current branch}'" >&2
-  gh pr view ${TARGET:+"$TARGET"} --json number 2>&1 | sed 's/^/  /' >&2
-  exit 2
-fi
-
 SLUG=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null)
 if [ -z "$SLUG" ]; then
   echo "ci-wait: could not determine the repository (gh repo view failed)." >&2
   exit 2
 fi
+
+PR=$(pr_field number)
+SHA=$(pr_field headRefOid)
+
+# ---------------------------------------------------------------- commit mode
+# No PR for this ref. Wait on the current commit's checks instead of refusing.
+# Queries check-runs (GitHub Actions) and the commit status (Vercel) — the same
+# two surfaces a push to `main` triggers, and the same pair
+# scripts/claude-hooks/check-deploy-green.sh already reads, rather than a second
+# way of asking the same question.
+if [ -z "$PR" ] || [ -z "$SHA" ]; then
+  SHA=$(git rev-parse HEAD 2>/dev/null)
+  if [ -z "$SHA" ]; then
+    echo "ci-wait: no PR for '${TARGET:-current branch}' and no git HEAD to fall back to." >&2
+    exit 2
+  fi
+  echo "ci-wait: no PR for '${TARGET:-current branch}' — waiting on commit ${SHA:0:7} (deadline ${DEADLINE}s)"
+
+  commit_rows() {
+    gh api "repos/$SLUG/commits/$SHA/check-runs" \
+      --jq '.check_runs[] | .name + "\t" + (
+        if .status != "completed" then "PENDING"
+        elif (.conclusion // "") | test("^(success|neutral|skipped)$") then "GREEN"
+        else "RED" end)' 2>/dev/null
+    gh api "repos/$SLUG/commits/$SHA/status" \
+      --jq '.statuses[] | .context + "\t" + (
+        if .state == "success" then "GREEN"
+        elif .state == "pending" then "PENDING"
+        else "RED" end)' 2>/dev/null
+  }
+
+  START=$SECONDS
+  DEADLINE_AT=$((SECONDS + DEADLINE))
+  while true; do
+    ROWS=$(commit_rows)
+    if [ -z "$ROWS" ]; then
+      # Same queue race as PR mode, same rule: no checks yet is not a verdict.
+      if [ $((SECONDS - START)) -ge "$QUEUE_GRACE" ]; then
+        echo "ci-wait: no checks registered on ${SHA:0:7} after ${QUEUE_GRACE}s." >&2
+        echo "         Absence of a run is not a pass. Was this commit pushed?" >&2
+        exit 1
+      fi
+      sleep 5; continue
+    fi
+    echo "$ROWS" | grep -q "PENDING" || break
+    if [ "$SECONDS" -ge "$DEADLINE_AT" ]; then
+      echo "$ROWS" | sed 's/^/  /'
+      echo "ci-wait: still pending after ${DEADLINE}s — no verdict." >&2
+      exit 2
+    fi
+    sleep 10
+  done
+
+  echo "$ROWS" | sed 's/^/  /'
+  if echo "$ROWS" | grep -q "RED"; then
+    echo "ci-wait: commit ${SHA:0:7} is RED." >&2
+    exit 1
+  fi
+  # Same suite requirement as PR mode: Vercel green alone is not tests passing.
+  # This matches the job name from .github/workflows/test.yml. Renaming that job
+  # without updating this string fails LOUDLY ("NO TESTS RAN") rather than
+  # silently passing — the safe direction for a check whose whole purpose is to
+  # refuse to call an unverified commit green.
+  if ! echo "$ROWS" | grep -q "Lint, Unit, and E2E Tests"; then
+    echo "ci-wait: no \"Lint, Unit, and E2E Tests\" run on ${SHA:0:7} — NO TESTS RAN." >&2
+    exit 1
+  fi
+  echo "ci-wait: commit ${SHA:0:7} is green and the test workflow reported. Conclusive."
+  exit 0
+fi
+# ------------------------------------------------------------------- PR mode
 
 echo "ci-wait: PR #$PR @ ${SHA:0:7} (deadline ${DEADLINE}s)"
 
