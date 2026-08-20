@@ -31,7 +31,12 @@ export default defineConfig({
     // (vite.config.ts server.warmup). Measured 2026-08-19, locally on 10
     // cores: 137s at 1 worker, 72s at 2, 60s at 4 — and both parallel runs
     // were clean while the serial run flaked.
-    workers: undefined,
+    // EXPERIMENT (2026-08-19): explicit 4 on CI's 4-vCPU runner. Playwright's
+    // cpus/2 default resolves to 2 there, but the preview server is a static
+    // file server using almost no CPU — unlike the dev server, whose transform
+    // work is what made oversubscription risky. Measuring whether the extra
+    // two workers pay. Reverted if it does not help or if anything flakes.
+    workers: process.env.CI ? 4 : undefined,
     reporter: 'html',
     timeout: 30_000,
     use: {
