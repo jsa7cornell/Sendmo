@@ -268,7 +268,6 @@ export default function RecipientStepAddress({
               setExplainerVariant(seenSkipExplainer ? "subsequent" : "first");
               onDeferDestination();
             }}
-            unansweredCaption="Enter their name, address, and phone — or send a shipping link and let them fill it in."
             keptCaption="Enter their name, address, and phone."
             deferredCaption="They'll enter the delivery address when they use your link — you set a cap and pay when they ship."
           />

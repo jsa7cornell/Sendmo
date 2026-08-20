@@ -108,7 +108,6 @@ export default function RecipientStepOrigin({
                 onSeenExplainer();
                 onNoAddress();
               }}
-              unansweredCaption="Enter their name, address, and phone for an exact price now — or send a shipping link and let them fill it in."
             keptCaption="Enter their name, address, and phone — you'll get an exact price now."
               deferredCaption="They'll add the ship-from address when they use your link."
             />

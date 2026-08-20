@@ -103,7 +103,6 @@ export default function RecipientStepPackage({
               onSeenExplainer();
               onNoAddress();
             }}
-            unansweredCaption="Describe the package for an exact price now — or send a shipping link and let them describe it."
             keptCaption="Describe the package — we'll size it and price it exactly."
             deferredCaption="They describe the package when they use your link — you set a spending cap instead."
           />

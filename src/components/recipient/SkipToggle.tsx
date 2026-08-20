@@ -53,22 +53,22 @@ interface Props {
   /**
    * Copy under the control; changes with the answer (handoff §1).
    *
-   * `unansweredCaption` is the resting state a first-time creator actually
-   * reads, and it MUST name the shipping link. Compacting the old two-card
-   * control into this toggle removed the per-option descriptions, and with
-   * them the only place the product was named before the user committed —
-   * the exact regression the 2026-08-18 work fixed ("first-class means named,
-   * weighted and visible before the user can fail"). Naming it here keeps
-   * that property at the handoff's smaller size.
+   * The unanswered state shows `keptCaption` — John's decision, 2026-08-19,
+   * from a side-by-side. An earlier cut added a third caption naming the
+   * shipping link at rest, on the reasoning that compacting the old two-card
+   * control removed the only place the product was named before the user
+   * committed (the 2026-08-18 "named, weighted and visible before the user
+   * can fail" property). John chose the handoff's tighter copy: the product
+   * is named by the "Sender fills this in" option itself and by the caption
+   * the moment it is chosen, which he judged sufficient. Recorded because a
+   * later reader will find the 2026-08-18 note and think this drifted.
    */
-  unansweredCaption: string;
   keptCaption: string;
   deferredCaption: string;
 }
 
 export default function SkipToggle({
-  legend, showLegend = true, choice, onKeepIt, onDefer,
-  unansweredCaption, keptCaption, deferredCaption,
+  legend, showLegend = true, choice, onKeepIt, onDefer, keptCaption, deferredCaption,
 }: Props) {
   return (
     <div className="mb-4">
@@ -108,7 +108,7 @@ export default function SkipToggle({
         </button>
       </div>
       <p className="text-xs text-muted-foreground mt-2 leading-relaxed">
-        {choice === "deferred" ? deferredCaption : choice === "kept" ? keptCaption : unansweredCaption}
+        {choice === "deferred" ? deferredCaption : keptCaption}
       </p>
     </div>
   );

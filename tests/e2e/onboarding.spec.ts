@@ -361,6 +361,10 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
     // point 9 — the label path must not gain a click).
     await expect(page.getByRole("radio", { name: "I have it" })).toHaveAttribute("aria-checked", "false");
     await expect(page.getByRole("radio", { name: "Sender fills this in" })).toHaveAttribute("aria-checked", "false");
+    // The product is named by the option label and by the caption once the
+    // option is taken — not in the resting caption (John, 2026-08-19; the
+    // 2026-08-18 version of this assertion required it at rest).
+    await page.getByRole("radio", { name: "Sender fills this in" }).click();
     await expect(page.getByText(/shipping link/i).first()).toBeVisible();
 
     // And the label path is NOT taxed for it: the origin form is open by

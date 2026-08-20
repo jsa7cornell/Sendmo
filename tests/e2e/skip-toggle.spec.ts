@@ -38,7 +38,14 @@ test.describe("skip toggle", () => {
     await expect(page.getByRole("radio", { name: "I have it" })).toHaveAttribute("aria-checked", "true");
   });
 
-  test("the resting state NAMES the shipping link — first-class means named before you can fail", async ({ page }) => {
+  test("the link is named by the option itself, and by the caption once chosen", async ({ page }) => {
+    // John's decision, 2026-08-19: the handoff's tighter copy. The resting
+    // caption does NOT name the shipping link; the option label carries it,
+    // and the caption states it the moment the option is taken. This replaces
+    // the 2026-08-18 property that the product be named before the user
+    // commits — narrowed deliberately, not dropped by drift.
+    await expect(page.getByRole("radio", { name: "Sender fills this in" })).toBeVisible();
+    await page.getByRole("radio", { name: "Sender fills this in" }).click();
     await expect(page.getByText(/shipping link/i).first()).toBeVisible();
   });
 
