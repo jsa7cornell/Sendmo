@@ -92,9 +92,9 @@ fi
     echo "     the work is NOT done. Fix forward immediately (Rule 21)."
   fi
   if [ -n "$PENDING" ]; then
-    echo "  ⏳ A check is still running. CI takes ~12 min — wait for a"
+    echo "  ⏳ A check is still running. Wait for a"
     echo "     conclusive result before calling the work done:"
-    echo "       gh run watch \$(gh run list --branch main --limit 1 --json databaseId -q '.[0].databaseId')"
+    echo "       scripts/ci-wait.sh   # bounded wait; never hand-roll the poll loop"
   fi
   echo ""
   echo "This is advisory — hook exits 0. Satisfying Rule 21 is agent duty."
