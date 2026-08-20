@@ -40,6 +40,73 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 **Gotcha — do not size a threshold from a number quoted in prose.** The 20-minute job ceiling in the first draft of #75 came from "a green run is ~3.5 min", written into PLAYBOOK the day before from a single measurement. By the time it was reused, successful runs reached 20m49s — the ceiling would have cancelled a genuine pass. Caught by self-review before merge. Rule 21 now carries the measured range, its date, an explicit re-measure instruction, and the `gh api … /jobs` command to get real step durations. Same failure shape as the `retryN` bug in #62: a mechanism understood correctly, applied from a snapshot that had moved.
 
 **Pattern across 2026-08-18/19 — absence of signal read as success.** Four mechanisms, one symptom: suppressed steps reporting `success` (A1); an artifact overwritten before upload (A2); a conflicting PR producing no run at all (A6); and now a step that never failed because it never finished. In every case the surface said "no red X" and the honest answer was "no answer."
+### [2026-08-19] Three decided proposals were cited from `main` but did not exist on it
+
+**Category:** fix | Docs / Institutional memory
+**Cross-link:** F7 of [proposals/2026-08-19_shipping-process-and-stale-branch-rca_reviewed-2026-08-19.md](proposals/2026-08-19_shipping-process-and-stale-branch-rca_reviewed-2026-08-19.md)
+
+**Browser-verified:**
+  n/a-category: infra
+  n/a-reason: Recovered three markdown files and repaired link targets. No code. Verified by hashing each rescued file against its source blob and re-running a repo-wide link sweep.
+
+**What was lost.** Three proposals lived only on dead branches. Their absence was not silent — `main` actively cited all three:
+
+| Proposal | Status | Cited from `main` by |
+|---|---|---|
+| `2026-08-18_session-durability-and-auth-architecture` | **decided**, Phase 0+1 shipped ([#69](https://github.com/jsa7cornell/Sendmo/pull/69)) | `SPEC.md:1052` as "[decided proposal]", plus LOG |
+| `2026-07-15_h2-carrier-adjustment-repair` | **decided**, work shipped ([#52](https://github.com/jsa7cornell/Sendmo/pull/52)) | LOG (25 mentions of the work) |
+| `2026-08-18_link-first-onboarding-handoff` | draft, superseded — work shipped ([#67](https://github.com/jsa7cornell/Sendmo/pull/67)) | `2026-08-18_pr68-code-review-handoff.md` |
+
+So `SPEC.md` linked to a decided proposal a reader could not open, and the H2 implementation sat on `main` since July while the rationale for it did not. **The RCA that prompted this found two; the sweep found three** — a by-slug diff of every ref against `main` is what surfaced the third.
+
+**Method — and the trap in it.** A naive "files on some branch but not on `main`" diff returns **seven** proposals, four of which are *correctly* absent: they are pre-decision filenames superseded by a `_decided-` suffixed version that `main` does have. Comparing raw filenames flags those as lost. Comparing by **slug** — stripping `_reviewed-*` / `_decided-*` before matching — separates real loss from an ordinary rename. Rescuing all seven would have restored four duplicate proposals under stale names, which is worse than the gap.
+
+**Recovered byte-identical**, each verified by `shasum` against its source blob rather than assumed.
+
+**Second finding, same root cause: nine dangling links.** The filename convention renames a proposal at each milestone, and citing documents were not updated to follow. `main` carried five distinct broken targets referenced from seven files — including `proposals/README.md` itself, `LOG.md`, and one in a proposal written earlier today. All now resolve; a repo-wide sweep reports **0 dangling proposal links**.
+
+**Worth internalizing:** the filename convention is load-bearing for `ls`-at-a-glance status, and it silently breaks every inbound link each time it fires. Renaming a proposal is a two-part operation — rename, then re-point its citations. A one-line sweep catches the rest:
+
+```bash
+grep -oh '](\(2026-[^)]*\.md\))' proposals/*.md *.md | tr -d '](' | tr -d ')' | sort -u | while read t; do [ -f "proposals/$(basename "$t")" ] || echo "DANGLING: $t"; done
+```
+
+---
+
+### [2026-08-19] The CI docs told every agent that a red e2e suite doesn't block
+
+**Category:** fix | Docs / CI
+**Cross-link:** F6 of [proposals/2026-08-19_shipping-process-and-stale-branch-rca_reviewed-2026-08-19.md](proposals/2026-08-19_shipping-process-and-stale-branch-rca_reviewed-2026-08-19.md) | corrects PLAYBOOK Rule 21 and TESTING.md §CI
+
+**Browser-verified:**
+  n/a-category: copy-only
+  n/a-reason: Two prose corrections. No code, no config, no rendered surface. Every replacement claim was checked line-by-line against `.github/workflows/test.yml` on `main` — table below.
+
+**What was wrong.** Both docs described the pre-2026-08-18 workflow:
+
+- **PLAYBOOK Rule 21** — *"The ESLint and both Playwright steps run `|| true` and `continue-on-error: true`, so they report `success` no matter what."* The mocked e2e step has been bare `npm run test:e2e` since `d2a28db`, and the authed step lost its `|| true` in the same commit.
+- **TESTING.md** — *"The e2e steps are currently non-blocking (`continue-on-error`) — a deliberate state while the suite is stabilised; once it's reliably green they should be made blocking."* They were made blocking on 2026-08-18. The sentence described its own completed to-do as pending.
+
+**Why this one mattered more than an ordinary stale doc.** PLAYBOOK is the first thing every agent reads, and it was telling them a red e2e result does not stop a merge. That became actively dangerous on 2026-08-19 when ruleset `21062139` made the run a **required status check** — an agent trusting the doc would read a red suite as advisory and keep pushing at a gate that will never open. Stale docs are usually a nuisance; this one inverted a hard gate.
+
+**Ground truth now recorded as a table**, because the previous prose form is what allowed one clause to rot invisibly:
+
+| Step | Config on `main` | Blocking? |
+|---|---|---|
+| ESLint | `\|\| true` + `continue-on-error` | No — always green, 27 known errors |
+| `tsc -b` | bare | **Yes** |
+| Unit | bare | **Yes** |
+| Playwright e2e (mocked) | bare `npm run test:e2e` | **Yes** |
+| Authed e2e (real Supabase) | `continue-on-error`, no `\|\| true` | No — visible warning |
+
+**Rewritten, not deleted.** Half the old paragraph was still true and deleting it would have created the inverse false assurance: a green run genuinely does **not** certify the authed step, which stays non-blocking on purpose so merges are not coupled to a third party's uptime. Both docs now say which half is certified and point at the run's annotations for the other.
+
+**Gotcha — grepping a workflow for `|| true` finds its own documentation.** The authed step's comment contains the sentence *"`|| true` is gone"*, so a naive `grep -n "|| true" test.yml` returns two hits and reads as if the step still has it. Only line 48 (ESLint) is code; line 113 is prose. Check the `run:` line specifically, not the block.
+
+**Verified:** every claim in both replacements checked against `test.yml` at `158104e` — ESLint `|| true` present, mocked e2e bare, authed `continue-on-error: true` with no `|| true` on its `run:` line, and the ruleset id in the doc matches the live ruleset.
+
+---
+
 ### [2026-08-19] Re-review of the stale-tree hook — FETCH_HEAD is per-worktree, not common-dir
 
 **Category:** fix | Tooling / Session hygiene
@@ -497,7 +564,7 @@ Both new e2e regressions were confirmed to **fail without their fix** before bei
 
 **Category:** review | Onboarding
 **Deploy:** None — docs only (proposal review; no code touched).
-**Cross-link:** [proposals/2026-08-17_onboarding-who-is-sending_reviewed-2026-08-17.md](proposals/2026-08-17_onboarding-who-is-sending_reviewed-2026-08-17.md) | reviews divergence from [proposals/2026-07-17_seller-link-buyer-pays_reviewed-2026-07-17_decided-2026-07-17.md](proposals/2026-07-17_seller-link-buyer-pays_reviewed-2026-07-17_decided-2026-07-17.md)
+**Cross-link:** [proposals/2026-08-17_onboarding-who-is-sending_reviewed-2026-08-17_decided-2026-08-17.md](proposals/2026-08-17_onboarding-who-is-sending_reviewed-2026-08-17_decided-2026-08-17.md) | reviews divergence from [proposals/2026-07-17_seller-link-buyer-pays_reviewed-2026-07-17_decided-2026-07-17.md](proposals/2026-07-17_seller-link-buyer-pays_reviewed-2026-07-17_decided-2026-07-17.md)
 
 **What:** fresh-eyes review of the proposal to delete the `/onboarding` path picker and replace it with "Who's sending the package?". Verdict **approve-with-changes** — direction endorsed, divergence from the decided seller-link OQ1 justified in principle but incomplete as specified. Two blockers, both file-plan fixes rather than architecture changes:
 
@@ -1032,7 +1099,7 @@ Connection was the session pooler as `postgres.fkxykvzsqdjzhurntgah` with `PGPAS
 > Same decision as recorded in the T2-1 entry above ("fully deferred") — this entry adds the proposal-level follow-through: the merged inert layer is now slated for **removal** (not just left inert) via the rewritten GA4 proposal, pending its review/decision.
 
 **Category:** docs | Launch | Monitoring | Analytics | decision
-**Cross-link:** resolves the T1-3 flip-hold entry below | reversal addendum in [proposals/2026-07-06_sentry-posthog-frontend-monitoring_reviewed-2026-07-06_decided-2026-07-06.md](proposals/2026-07-06_sentry-posthog-frontend-monitoring_reviewed-2026-07-06_decided-2026-07-06.md) | rewritten in-review [proposals/2026-07-06_ga4-acquisition-analytics.md](proposals/2026-07-06_ga4-acquisition-analytics.md) | unaffected sibling [proposals/2026-07-06_seo-crawl-hygiene-and-discovery.md](proposals/2026-07-06_seo-crawl-hygiene-and-discovery.md) | PRE-LAUNCH T1-3
+**Cross-link:** resolves the T1-3 flip-hold entry below | reversal addendum in [proposals/2026-07-06_sentry-posthog-frontend-monitoring_reviewed-2026-07-06_decided-2026-07-06.md](proposals/2026-07-06_sentry-posthog-frontend-monitoring_reviewed-2026-07-06_decided-2026-07-06.md) | rewritten in-review [proposals/2026-07-06_ga4-acquisition-analytics_reviewed-2026-07-06_decided-2026-07-06.md](proposals/2026-07-06_ga4-acquisition-analytics_reviewed-2026-07-06_decided-2026-07-06.md) | unaffected sibling [proposals/2026-07-06_seo-crawl-hygiene-and-discovery_reviewed-2026-07-06.md](proposals/2026-07-06_seo-crawl-hygiene-and-discovery_reviewed-2026-07-06.md) | PRE-LAUNCH T1-3
 
 **Decision (John, 2026-07-06):** SendMo will **not** use Sentry or PostHog — the flip hold (entry below) resolved as its option 3 in the strongest form. No vendor accounts were ever created and no env vars were ever set, so the merged frontend layer (`364462a`) was inert for its entire life; nothing external needs unwinding. **Standing instruction for all future agents: never create Sentry/PostHog accounts or set `VITE_SENTRY_DSN`/`VITE_POSTHOG_KEY`.**
 
@@ -1077,7 +1144,7 @@ Connection was the session pooler as `postgres.fkxykvzsqdjzhurntgah` with `PGPAS
 ### [2026-07-06] T1-3 flip ON HOLD (John) — no existing Sentry/PostHog accounts; paused before account creation
 
 **Category:** docs | Launch | Monitoring | decision
-**Cross-link:** T1-3 ship entry below (`364462a`) | PRE-LAUNCH T1-3 | in-review [proposals/2026-07-06_ga4-acquisition-analytics.md](proposals/2026-07-06_ga4-acquisition-analytics.md) (overlapping analytics-stack surface — see note)
+**Cross-link:** T1-3 ship entry below (`364462a`) | PRE-LAUNCH T1-3 | in-review [proposals/2026-07-06_ga4-acquisition-analytics_reviewed-2026-07-06_decided-2026-07-06.md](proposals/2026-07-06_ga4-acquisition-analytics_reviewed-2026-07-06_decided-2026-07-06.md) (overlapping analytics-stack surface — see note)
 
 **What happened:** after the T1-3 code merge, the agent attempted John's 👤 flip steps directly (Vercel CLI: authenticated ✓; Sentry/PostHog dashboards: via browser). Both dead-ended at the same discovery: **neither sentry.io nor us.posthog.com has any account for jsa7cornell@gmail.com** — the Google-SSO flows land on "create a new organization" (Sentry "New Identity" screen; PostHog org-creation form with ToS acceptance). Account creation is agent-prohibited, so it was handed to John — who **paused the whole flip** rather than create the accounts ("retrench and hold", 2026-07-06).
 

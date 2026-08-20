@@ -5,7 +5,7 @@ project: sendmo
 status: revised
 blocked_on: null
 created: 2026-08-19
-last_updated: 2026-08-19 (T1 decided: option B — handoff order kept)
+last_updated: 2026-08-19 (amended — PR 1 reconnaissance; supersedes a documented in-code decision)
 reviewed: 2026-08-19
 decided: null
 author: Claude Opus 5 — implementation plan for the design handoff in `Handoffs/design_handoff_shipping_flow/`, which was commissioned by the design brief merged at `c0c5177`. Verified against `origin/main` at `c0c5177`. An earlier draft of this file was written against a 44-commit-stale working tree and is fully superseded; §1.2 records what that cost, because the correction is load-bearing for anyone reading the git history.
@@ -39,7 +39,7 @@ All three questions are skippable today. [`useRecipientFlow.ts:31-33`](../src/ho
 
 The first version of this proposal was written against branch `fix/e2e-infra-audit`, 44 commits behind `origin/main`. It proposed a deferral-mask migration to fix two CHECK-constraint blockers (already fixed by migrations 041 and 042), recommended deleting step 0 (already deleted in `e05d840`), and raised as an open question whether links with no address at all should ship — which **John had already decided** on 2026-08-18 as decision B of the [unified-onboarding proposal](2026-08-18_unified-onboarding-every-question-skippable.md): *"any combination… the abuse surface is accepted and bounded by the cap."*
 
-Recorded because the protocol treats re-deciding a decided question as the most common way a proposal wastes reviewer time, and because a future reader finding both versions in the history deserves to know which one describes reality. The root cause of the stale baseline is being investigated separately in [`2026-08-19_shipping-process-and-stale-branch-rca.md`](2026-08-19_shipping-process-and-stale-branch-rca.md).
+Recorded because the protocol treats re-deciding a decided question as the most common way a proposal wastes reviewer time, and because a future reader finding both versions in the history deserves to know which one describes reality. The root cause of the stale baseline is being investigated separately in [`2026-08-19_shipping-process-and-stale-branch-rca_reviewed-2026-08-19.md`](2026-08-19_shipping-process-and-stale-branch-rca_reviewed-2026-08-19.md).
 
 ### 1.3 What the handoff is
 
@@ -451,4 +451,49 @@ Rationale, recorded because the body argues the other way and a later reader nee
 1. **§2.3** — the control renders **"I have it" first, "Sender fills this in" second**, on all three question steps. Everything else in §2.3 stands unchanged: the control sits above the fields, neither option is pre-selected, and the address fields stay live and focusable on arrival so a creator who simply types has answered without touching the control.
 2. **Appendix** — "Neither toggle option pre-selected — softened to skip-first prominence" is **withdrawn as a departure**. The handoff's within-control order is kept as designed, so the only surviving intent is prominence-by-position. The reviewer's OQ3 catch — that the proposal had inverted the handoff's order without listing it — is resolved by conforming to the handoff rather than by documenting the divergence.
 
-**Still open on this proposal:** John has not yet given the overall go. Per his sequencing call (2026-08-19), the process fixes in [`2026-08-19_shipping-process-and-stale-branch-rca.md`](2026-08-19_shipping-process-and-stale-branch-rca.md) land **before** PR 1 of this proposal begins.
+**Still open on this proposal:** John has not yet given the overall go. Per his sequencing call (2026-08-19), the process fixes in [`2026-08-19_shipping-process-and-stale-branch-rca_reviewed-2026-08-19.md`](2026-08-19_shipping-process-and-stale-branch-rca_reviewed-2026-08-19.md) land **before** PR 1 of this proposal begins.
+
+---
+
+## Amendment — 2026-08-19, from reconnaissance on `origin/main`
+
+Written before any implementation, after reading the real code at `08954be`. Two findings change §3's PR 1, and the scope numbers below are measured rather than estimated.
+
+### A1 — PR 1 contradicts a documented in-code decision that this proposal never cited
+
+[`RecipientStepFullShipping.tsx:55-58`](../src/components/recipient/RecipientStepFullShipping.tsx) carries a deliberate choice from PR #68:
+
+> *"One component rather than an extraction: the rate fetch needs both halves' values and lives here either way."*
+
+§3 plans to split that file into `RecipientStepOrigin` / `RecipientStepPackage` / `RecipientStepShipping`. **That is a direct reversal of a decision recorded in the code, and this proposal argued for it without naming it** — because §3 was drafted against a tree where step 14 and the `mode` prop did not yet exist. Per the protocol this is drift, and it needs stating as such rather than being discovered mid-implementation.
+
+**The decision still supersedes, and here is the honest reasoning.** The comment's rationale is specific to today's two-step shape: the rate fetch is debounced 600ms and re-fires as the user types, so prices update live while dimensions are edited *on the same screen*. Under the six-step design, Package and Shipping are separate steps and the handoff's Package screen deliberately shows **no prices** — so the fetch moves to the Shipping step, downstream of both halves, and the co-location the comment protects is no longer required.
+
+**The consequence to record, because it is a real behavior change on the money path and not a pure refactor:** live-updating prices while editing dimensions **go away**. The user sets the package, continues, and sees rates on the next screen. That is what the design intends, and it is arguably calmer, but it is a change users on the current flow would notice. The 600ms debounce and stale-response guard (`fetchRef` / `id !== fetchRef.current`) become a simpler fetch-on-entry — the debounce exists to survive keystrokes, and there are no keystrokes on the Shipping step.
+
+### A2 — the split is three components, not a lift-and-shift
+
+The file is **672 lines** and the rate-fetch effect reads the entire flow state through `stateRef.current` rather than props, so it is not coupled to either form's markup — it is coupled to `RecipientFlowContext`. That makes the extraction cleaner than the line count suggests, but three pieces of latched behavior must survive verbatim, each of which exists because of a specific bug:
+
+- `originWasCompleteOnOpen` — latched at mount, never re-derived. Deriving it live unmounted `SmartAddressInput` mid-keystroke and destroyed focus. Common trigger: a saved address with no phone (predating the 2026-05-19 phone requirement).
+- The stale-response guard on `fetchRef` — concurrent rate fetches must not clobber a newer result.
+- `canFetchRates(s)` gating — the only thing preventing a fetch with an incomplete parcel.
+
+### A3 — measured scope of PR 1
+
+| Surface | Size |
+|---|---|
+| `stepRouting.ts` | 216 lines, **90 unit assertions** in `tests/unit/stepRouting.test.ts` |
+| `RecipientFlowContext.tsx` | 400 lines |
+| `RecipientOnboarding.tsx` | 331 lines |
+| `RecipientStepFullShipping.tsx` | 672 lines → 3 components |
+| e2e | **24** hardcoded `/onboarding/<path>/<slug>` literals across 4 specs |
+| `src/` importing `stepRouting` | 4 files |
+
+The slugs that must keep resolving, by frequency in the specs: `full-label/destination` (6), `full-label/shipping` (3), `flexible/verify` (3), `flexible/preferences` (3), `flexible/destination` (3), `full-label/preferences` (2), `full-label/payment` (2), `full-label/label` (2).
+
+**Sequencing consequence.** The e2e suite has been merge-blocking since 2026-08-18 and, since 2026-08-19, is a required status check on `main` — so the redirect table and the spec updates must land in the *same commit* as the map change. There is no window in which a half-migrated map can sit on a branch and still merge.
+
+### A4 — recommended first move for the implementing session
+
+Land the redirect table and the six-slug map **with** its 90 rewritten assertions and the 24 spec literals in one commit, before touching any component. That change is independently verifiable (`npm run test:unit` plus the e2e suite), reversible on its own, and it is the piece every other part of PR 1 depends on. Splitting `RecipientStepFullShipping` second, against a map that is already green, keeps the money-path extraction from being debugged simultaneously with a routing change.

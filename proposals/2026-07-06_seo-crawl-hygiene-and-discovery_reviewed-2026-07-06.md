@@ -229,7 +229,7 @@ implementation time):
   Console shows the four public pages failing to index (§6 step 5 checks exactly this).
 - **OG image / favicon redesign** — tracked as PRE-LAUNCH T3-3, not re-decided here.
 - **Google Analytics** — sibling proposal
-  [2026-07-06_ga4-acquisition-analytics.md](2026-07-06_ga4-acquisition-analytics.md).
+  [2026-07-06_ga4-acquisition-analytics_reviewed-2026-07-06_decided-2026-07-06.md](2026-07-06_ga4-acquisition-analytics_reviewed-2026-07-06_decided-2026-07-06.md).
 - **Bing beyond registration** (John may add Bing Webmaster Tools in §6; imports from
   Search Console in one click).
 
@@ -338,7 +338,7 @@ that is itself stale. Fix the copy and the verification pointer and this ships.
 
 ### Nits
 
-- §5's sibling link `2026-07-06_ga4-acquisition-analytics.md` is a dead relative link — the file was renamed `..._reviewed-2026-07-06_decided-2026-07-06.md` the same day.
+- §5's sibling link `2026-07-06_ga4-acquisition-analytics_reviewed-2026-07-06_decided-2026-07-06.md` is a dead relative link — the file was renamed `..._reviewed-2026-07-06_decided-2026-07-06.md` the same day.
 - "(Rule 6)" in §2 is ambiguous: PLAYBOOK Rule 6 is "ALWAYS use Stripe Elements"; the intended citation is the global CLAUDE.md rule 6 (prefer extending over new constructs). Cite it as "global rule 6" to save the next reader the same double-take.
 - Q1's "like Venmo for shipping costs" — third-party trademark in public product copy; fine if John wants it, but it's a brand call, fold into OQ3.
 - Q11 names "Poshmark off-platform" deals — most marketplaces' ToS prohibit off-platform transactions; publicly courting that segment by name is a small brand/partner-risk call for John.
