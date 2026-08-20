@@ -139,7 +139,7 @@ describe("Step 10 validation", () => {
     expect(errors).toContain("Weight is required");
   });
 
-  it("errors when no rate selected", () => {
+  it("does NOT require a rate at step 14 — the carrier choice moved to step 20 (2026-08-19)", () => {
     const errors = getValidationErrors(
       makeState({
         originAddress: verifiedAddr(),
@@ -148,7 +148,30 @@ describe("Step 10 validation", () => {
       }),
       14,
     );
+    expect(errors).not.toContain("Select a shipping method");
+    expect(errors).toEqual([]);
+  });
+
+  it("errors when no rate selected at step 20 on the label path", () => {
+    const errors = getValidationErrors(
+      makeState({
+        path: "full_label",
+        originAddress: verifiedAddr(),
+        dimensions: { length: "10", width: "10", height: "10" },
+        weight: { lbs: "5", oz: "0" },
+      }),
+      20,
+    );
     expect(errors).toContain("Select a shipping method");
+  });
+
+  it("step 20 on the link path validates the cap, never the rate", () => {
+    const errors = getValidationErrors(
+      makeState({ path: "flexible", price_cap: 0 }),
+      20,
+    );
+    expect(errors).toContain("Price cap must be greater than $0");
+    expect(errors).not.toContain("Select a shipping method");
   });
 
   it("errors when origin phone is missing", () => {

@@ -234,7 +234,7 @@ test.describe("URL-based step routing", () => {
     await expect(page).toHaveURL(/\/onboarding\/full-label\/destination$/);
   });
 
-  test("URL updates to /onboarding/full-label/shipping when advancing from destination step", async ({ page }) => {
+  test("URL updates to /onboarding/full-label/origin when advancing from destination step", async ({ page }) => {
     await page.goto("/onboarding");
     // /onboarding resolves straight to the destination step (no picker, 2026-08-18)
     await expect(page).toHaveURL(/\/full-label\/destination$/);
@@ -246,7 +246,9 @@ test.describe("URL-based step routing", () => {
     await page.locator("#recipient-email").fill("test@example.com");
     await page.getByRole("button", { name: /Continue to shipment details/i }).click();
 
-    await expect(page).toHaveURL(/\/onboarding\/full-label\/shipping$/);
+    // One step map (2026-08-19): the ship-from step's slug is `origin`;
+    // `shipping` now names the shared rates/preferences step (20).
+    await expect(page).toHaveURL(/\/onboarding\/full-label\/origin$/);
   });
 
   test("URL updates through full flow: destination → shipping → verify → payment", async ({ page }) => {
@@ -279,17 +281,23 @@ test.describe("URL-based step routing", () => {
     await fillSmartAddress(page, "destination");
     await page.getByRole("button", { name: /Continue to shipment details/i }).click();
 
-    // Step 10: shipping
-    await expect(page).toHaveURL(/\/onboarding\/full-label\/shipping$/);
+    // Step 10: origin (ship-from address)
+    await expect(page).toHaveURL(/\/onboarding\/full-label\/origin$/);
     await page.locator("#origin-name").fill("John Smith");
     await fillSmartAddress(page, "origin");
-    // Parcel fields moved to their own step (14) on 2026-08-18.
     await page.getByRole("button", { name: /Continue to package details/i }).click();
+
+    // Step 14: package (parcel only — the carrier choice moved to step 20)
+    await expect(page).toHaveURL(/\/onboarding\/full-label\/package$/);
     await expect(page.getByRole("textbox", { name: "L", exact: true })).toBeVisible({ timeout: 5000 });
     await page.getByRole("textbox", { name: "L", exact: true }).fill("10");
     await page.getByRole("textbox", { name: "W", exact: true }).fill("10");
     await page.getByRole("textbox", { name: "H", exact: true }).fill("10");
     await page.getByRole("textbox", { name: "lbs" }).fill("5");
+    await page.getByRole("button", { name: /Continue to shipping/i }).click();
+
+    // Step 20: shipping — rates fetch on entry; pick is auto-applied.
+    await expect(page).toHaveURL(/\/onboarding\/full-label\/shipping$/);
     await expect(page.getByText("$9.20").first()).toBeVisible({ timeout: 8000 });
     await page.getByRole("button", { name: /Continue to payment/i }).click();
 
@@ -324,8 +332,8 @@ test.describe("URL-based step routing", () => {
     await page.locator("#recipient-email").fill("test@example.com");
     await page.getByRole("button", { name: /Continue to shipment details/i }).click();
 
-    // Now on step 10
-    await expect(page).toHaveURL(/\/onboarding\/full-label\/shipping$/);
+    // Now on step 10 (slug `origin` since 2026-08-19)
+    await expect(page).toHaveURL(/\/onboarding\/full-label\/origin$/);
     // Step-10 landmark. The "Origin address" heading was removed 2026-08-18 —
     // the card is now headed by the "Where's it shipping from?" fieldset legend,
     // which is the more accurate landmark for the same step.
@@ -358,9 +366,9 @@ test.describe("URL-based step routing", () => {
   // ── Step guards (direct URL access) ────────────────────────
 
   test("direct navigation to /onboarding/full-label/shipping redirects when no steps completed", async ({ page }) => {
+    // `shipping` is step 20 now (the shared rates/preferences step) — deeper
+    // in the sequence, so the guard walks an unearned deep link back harder.
     await page.goto("/onboarding/full-label/shipping");
-
-    // Should redirect — either to /onboarding (no path selected) or /onboarding/full-label/destination
     await expect(page).not.toHaveURL(/\/onboarding\/full-label\/shipping$/);
   });
 
@@ -374,26 +382,28 @@ test.describe("URL-based step routing", () => {
     await expect(page).not.toHaveURL(/\/onboarding\/full-label\/label$/);
   });
 
-  test("direct navigation to flex slug /onboarding/flexible/preferences redirects when no path selected", async ({ page }) => {
+  test("retired slug /onboarding/flexible/preferences resolves — redirects, never 404s", async ({ page }) => {
+    // `preferences` retired when the maps unified (2026-08-19): it redirects
+    // to `shipping`, then the access guard walks an unearned link back to the
+    // first incomplete step. Either way the old URL keeps resolving.
     await page.goto("/onboarding/flexible/preferences");
     await expect(page).not.toHaveURL(/\/onboarding\/flexible\/preferences$/);
+    await expect(page).toHaveURL(/\/onboarding/);
   });
 
-  // ── Cross-path slug rejection ──────────────────────────────
+  // ── Retired slugs on either segment ────────────────────────
 
-  test("flex slug rejected when full_label path is active", async ({ page }) => {
+  test("retired slug under the full-label segment resolves too (one map, no invalid combinations)", async ({ page }) => {
     await page.goto("/onboarding");
-    // Select full label path first
     // /onboarding resolves straight to the destination step (no picker, 2026-08-18)
     await expect(page).toHaveURL(/\/full-label\/destination$/);
-    await expect(page).toHaveURL(/\/onboarding\/full-label\/destination$/);
 
-    // Try navigating to a flex-only slug under the full-label path prefix.
-    // The router's slug-validation guard rejects /onboarding/full-label/preferences
-    // because "preferences" is not a valid slug for the full_label path.
+    // Pre-2026-08-19 this combination was REJECTED (preferences was flex-only).
+    // With one step map there are no cross-path combinations: the retired slug
+    // canonicalizes to `shipping`, and the guard then walks the user to the
+    // first incomplete step. It must never 404 or bounce to a dead end.
     await page.goto("/onboarding/full-label/preferences");
-
-    // Should redirect away from this invalid combination
     await expect(page).not.toHaveURL(/\/onboarding\/full-label\/preferences$/);
+    await expect(page).toHaveURL(/\/onboarding/);
   });
 });

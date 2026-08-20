@@ -243,16 +243,22 @@ There is no step 0. `/onboarding` shows the resume-offer interstitial when an un
 - The seller link-out (gated by `SELLER_LINK_MODE`) lives in the destination step footer; the Dashboard and homepage carry the other seller doors.
 - **OAuth auto-advance gotcha:** step 1's post-Google auto-advance is authorized by the `sendmo:oauth_pending` sessionStorage flag set just before the redirect — NOT by "user was null at mount", which every visitor matches now that the entry redirect mounts the step before auth settles (it made forms auto-submit; see LOG 2026-08-18).
 
-### Steps 10 + 14: two independently skippable questions (split 2026-08-18, PR #68)
+### One step map (2026-08-19 — completes the unified-onboarding proposal's Phase 2)
 
-The old combined step 10 was split: **10 = ship-from address** (`/full-label/shipping` — slug and step number kept so existing deep links resolve), **14 = shipment details + carrier** (`/full-label/package`). `FULL_LABEL_STEPS = [0, 1, 10, 14, 11, 12, 13]` — order comes from the array, not the numbers ([`src/lib/stepRouting.ts`](src/lib/stepRouting.ts)).
+Both URL segments walk the SAME seven-step sequence — `STEPS = [1, 10, 14, 20, 11, 12, 13]` with slugs `destination / origin / package / shipping / verify / payment / label` ([`src/lib/stepRouting.ts`](src/lib/stepRouting.ts)). Step numbers are historical, not ordinal: they survive so persisted drafts stay meaningful (old flex numbers 21/22/23 migrate to 11/12/13 on read). The `full-label ⇄ flexible` URL segment only names the product the flow is heading toward — it rewrites when the first skip lands and rewrites back when the last one is undone.
+
+Step 20 (`shipping`) is one step with two modes: carrier rate cards when everything is known (the rate fetch moved here from the old step 14 — the Package screen shows no prices, and prices no longer live-update while dimensions are edited); speed/carrier preference + cap when anything was skipped. Retired slugs redirect (`preferences → shipping`, `authorize → payment`, `share → label`); `verify` never retires because magic-link emails in flight carry it as `redirectTo`.
+
+The progress bar is six fixed segments (Destination/Origin/Package/Shipping/Contact/Payment) with four states — upcoming, current, done (check), **skipped (dashed + arrow, by shape not hue: amber already means Express, §6)**. A skip morphs one segment in place; nothing is added, removed, or relabeled.
+
+Steps **10 = ship-from address** (`origin`) and **14 = parcel** (`package`) remain independently skippable (split 2026-08-18, PR #68).
 
 On the `sender: 'other'` branch, **each** step offers "The sender will fill this in" as a first-class answer:
 
 | Deferred | Result |
 |---|---|
 | *nothing* | Ordinary prepaid label. Stays `link_type = 'full_label'`. |
-| address, package, or both | Becomes `link_type = 'flexible'` **on leaving step 14** — deferring the address still advances to the package question (deferring one must not silently defer the other; that was the bug). |
+| address, package, or both | Becomes `link_type = 'flexible'` **from the first skip** — the URL segment rewrites immediately (2026-08-19), and deferring the address still advances to the package question (deferring one must not silently defer the other; that was the bug). |
 
 Skipping *is* answering: the step is marked complete (`deferredOrigin` / `deferredPackage` on flow state) and the flow advances normally. **Whatever the creator did answer is carried onto the link** (`origin_address` / dims on link create; requires migration 041, applied to prod 2026-08-18) and prefilled for the sender — deferring one question never discards the other's typing.
 
@@ -260,7 +266,7 @@ Skipping *is* answering: the step is marked complete (`deferredOrigin` / `deferr
 
 "I have their address" is pre-selected deliberately: the label path has produced every shipment to date and must not gain a click to advertise the link path. First-class means named, weighted and visible before the user can fail — not unavoidable.
 
-An undo bar on step 20 returns to step 10 with the typed origin intact (it is never cleared).
+An undo bar on steps 10/14/20 returns to the earliest reopened question with the typed origin intact (it is never cleared). The undo's completedSteps write is wrapped in `flushSync` — the guard-race class (LOG 2026-05-19) was latent here and surfaced when the segment rewrite made the bounce target differ from the intended one.
 
 This is why there is no "flexible" door at step 0: the fork is a *fact about what the user can answer*, not a preference, and it's surfaced at the moment they discover it.
 

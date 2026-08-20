@@ -74,31 +74,36 @@ describe("startFreshFlow", () => {
 describe("the address escape — 'I don't have their address'", () => {
   // OQ2 option (c): both branches start on full-label and only the escape moves
   // a flow to the shipping-link path. These lock the assumptions that makes safe.
-  it("lands on a step the flexible path's guard actually admits", () => {
-    // At the escape the user has completed steps 0 and 1 — both shared. If this
-    // ever fails, the escape bounces the user to firstIncompleteUrl instead.
-    expect(canAccessStep(20, [0, 1], "flexible")).toBe(true);
+  it("lands on a step the guard actually admits", () => {
+    // Deferring the origin marks step 10 complete and navigates to the package
+    // question (14) on the flexible segment. If this ever fails, the skip
+    // bounces the user to firstIncompleteUrl instead.
+    expect(canAccessStep(14, [0, 1, 10], "flexible")).toBe(true);
+    // Deferring the package (from 14) lands on the shared shipping step.
+    expect(canAccessStep(20, [0, 1, 10, 14], "flexible")).toBe(true);
   });
 
-  it("does not admit a flexible step the user has not earned", () => {
-    expect(canAccessStep(22, [0, 1], "flexible")).toBe(false);
+  it("does not admit a step the user has not earned", () => {
+    expect(canAccessStep(12, [0, 1], "flexible")).toBe(false);
   });
 
-  it("targets the preferences step", () => {
-    expect(stepUrl("flexible", 20)).toBe("/onboarding/flexible/preferences");
+  it("targets the shared shipping step (slug renamed from preferences, 2026-08-19)", () => {
+    expect(stepUrl("flexible", 20)).toBe("/onboarding/flexible/shipping");
   });
 
   it("returns to the origin step on undo", () => {
-    expect(stepUrl("full_label", 10)).toBe("/onboarding/full-label/shipping");
+    expect(stepUrl("full_label", 10)).toBe("/onboarding/full-label/origin");
   });
 
   it("keeps every pre-existing deep link resolving", () => {
-    // Nothing about the routing shape changed, so URLs minted before this flow
-    // (and the e2e specs that hard-code them) still map to the same steps.
+    // One step map (2026-08-19): retired slugs resolve to the live step that
+    // asks the same question, so URLs minted before the change still land.
     expect(slugToStep("full_label", "destination")).toBe(1);
-    expect(slugToStep("full_label", "shipping")).toBe(10);
+    expect(slugToStep("full_label", "shipping")).toBe(20);
     expect(slugToStep("flexible", "preferences")).toBe(20);
-    expect(slugToStep("flexible", "authorize")).toBe(22);
+    expect(slugToStep("flexible", "authorize")).toBe(12);
+    expect(slugToStep("flexible", "share")).toBe(13);
+    expect(slugToStep("flexible", "verify")).toBe(11);
   });
 });
 

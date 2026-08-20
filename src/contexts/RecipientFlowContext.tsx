@@ -11,6 +11,7 @@ import {
 } from "@/lib/recipientFlowStorage";
 import {
   pathSlugToPath,
+  pathForFlags,
   slugToStep,
   stepUrl,
   nextStep,
@@ -37,8 +38,7 @@ interface RecipientFlowContextValue {
   goBack: () => void;
   goToStep: (step: number) => void;
   selectPath: (path: RecipientPath) => void;
-  switchToShippingLink: () => void;
-  deferToSender: (field: "origin" | "package") => void;
+  deferToSender: (field: "destination" | "origin" | "package") => void;
   undoShippingLinkSwitch: () => void;
   markStepComplete: (step: number) => void;
   getErrors: (step: number) => string[];
@@ -197,14 +197,12 @@ export function RecipientFlowProvider({ children }: { children: React.ReactNode 
     }
 
     let next = nextStep(step, data.path);
-    // Skip verify steps when email is already confirmed (Google OAuth session).
-    // Without these jumps the verify screen flashes for ~1s before its own
-    // auto-advance fires; skipping is the same outcome with no flicker.
-    if (next === 11 && data.email_verified && data.path === "full_label") {
+    // Skip the verify step when email is already confirmed (Google OAuth
+    // session). Without the jump the verify screen flashes for ~1s before its
+    // own auto-advance fires; skipping is the same outcome with no flicker.
+    // One case since the maps unified — verify is step 11 on both paths.
+    if (next === 11 && data.email_verified) {
       next = nextStep(11, data.path);
-    }
-    if (next === 21 && data.email_verified && data.path === "flexible") {
-      next = nextStep(21, data.path);
     }
     if (next !== null) {
       // flushSync forces React to commit the completedSteps update BEFORE we
@@ -219,25 +217,31 @@ export function RecipientFlowProvider({ children }: { children: React.ReactNode 
           ...prev,
           // Passing a step's validation IS answering it — so answering clears
           // its deferral. Without this, defer-then-undo-then-fill left the
-          // stale flag set and step 14's exit still turned the flow into a
-          // link even though every question had been answered.
+          // stale flag set and the flow still turned into a link even though
+          // every question had been answered.
           ...(step === 10 ? { deferredOrigin: false } : {}),
           ...(step === 14 ? { deferredPackage: false } : {}),
           completedSteps: prev.completedSteps.includes(step)
             ? (next === 12 && !prev.completedSteps.includes(11)
                 ? [...prev.completedSteps, 11]
-                : next === 22 && !prev.completedSteps.includes(21)
-                  ? [...prev.completedSteps, 21]
-                  : prev.completedSteps)
+                : prev.completedSteps)
             : (next === 12
                 ? [...prev.completedSteps, step, 11]
-                : next === 22
-                  ? [...prev.completedSteps, step, 21]
-                  : [...prev.completedSteps, step]),
+                : [...prev.completedSteps, step]),
         }));
       });
       directionRef.current = "forward";
-      navigate(stepUrl(data.path, next));
+      // The segment is derived from the skip flags on every navigation — this
+      // is where the full-label ⇄ flexible rewrite happens (§2.2). The flags
+      // read here account for the clear above: passing 10/14 un-defers it.
+      navigate(stepUrl(
+        pathForFlags({
+          deferredDestination: data.deferredDestination,
+          deferredOrigin: step === 10 ? false : data.deferredOrigin,
+          deferredPackage: step === 14 ? false : data.deferredPackage,
+        }),
+        next,
+      ));
     }
     return true;
   }, [data, navigate]);
@@ -249,26 +253,23 @@ export function RecipientFlowProvider({ children }: { children: React.ReactNode 
     // confirmed — symmetric with the forward skip in tryAdvance. Landing on
     // the verify screen would just show its "Email verified" state and
     // auto-advance the user straight back here, making Back a dead-end.
-    if (prev === 21 && data.email_verified && data.path === "flexible") {
-      prev = prevStep(21, data.path);
-    }
-    if (prev === 11 && data.email_verified && data.path === "full_label") {
+    if (prev === 11 && data.email_verified) {
       prev = prevStep(11, data.path);
     }
     if (prev !== null) {
-      navigate(stepUrl(data.path, prev));
+      navigate(stepUrl(pathForFlags(data), prev));
     } else {
       navigate("/onboarding");
     }
-  }, [navigate, currentStep, data.path, data.email_verified]);
+  }, [navigate, currentStep, data]);
 
   const goToStep = useCallback((step: number) => {
     if (!canAccessStep(step, data.completedSteps, data.path) && step !== currentStep) return;
     const targetIdx = stepIndex(step, data.path);
     const currentIdx = stepIndex(currentStep, data.path);
     directionRef.current = targetIdx < currentIdx ? "backward" : "forward";
-    navigate(stepUrl(data.path, step));
-  }, [data.completedSteps, data.path, currentStep, navigate]);
+    navigate(stepUrl(pathForFlags(data), step));
+  }, [data, currentStep, navigate]);
 
   const selectPath = useCallback((path: RecipientPath) => {
     setData((prev) => ({
@@ -301,11 +302,29 @@ export function RecipientFlowProvider({ children }: { children: React.ReactNode 
   // here as well would only add a redundant write plus one render where
   // data.path and the URL disagree. Let the URL stay the single source of truth
   // for path, exactly as it is for every other entry into a path.
-  // "The sender will fill this in" — an ANSWER, not an escape. Skipping marks
-  // the step complete (the question was answered) and advances normally, so
-  // deferring the ship-from address no longer leaps past the package question.
-  // The product is decided when leaving step 14, not here.
-  const deferToSender = useCallback((field: "origin" | "package") => {
+  // "The sender will fill this in" — an ANSWER, not an escape. All three
+  // skips flow through here (2026-08-19, one map): the flag is set, the step
+  // is marked complete (the question was answered), and the flow advances to
+  // the NEXT question with the URL segment rewritten to `flexible` — the
+  // first skip is what makes the product a shipping link, and the segment
+  // says so immediately (§2.2).
+  //
+  // "destination" is the exception on two counts, both deliberate: the flag
+  // is set but step 1 is NOT marked complete (its email half is never
+  // deferrable — the creator still needs an account), and there is no
+  // navigation (tryAdvance(1) still validates the email and advances). The
+  // flushSync below exists because the guard reads completedSteps in the same
+  // tick as the navigate — the 2026-05-19 race (PLAYBOOK Rule 20); it must
+  // survive any refactor of this function.
+  const deferToSender = useCallback((field: "destination" | "origin" | "package") => {
+    if (field === "destination") {
+      setData((prev) => ({
+        ...prev,
+        deferredDestination: true,
+        sender: prev.sender ?? "other",
+      }));
+      return;
+    }
     const step = field === "origin" ? 10 : 14;
     flushSync(() => {
       setData((prev) => ({
@@ -322,37 +341,48 @@ export function RecipientFlowProvider({ children }: { children: React.ReactNode 
       }));
     });
     directionRef.current = "forward";
-    // Deferring the origin still owes the user the package question (step 14).
-    // Deferring the package is the last question, and anything deferred means
-    // the price isn't knowable — the flow becomes a shipping link.
-    if (step === 10) navigate(stepUrl("full_label", 14));
-    else navigate(stepUrl("flexible", 20));
-  }, [navigate]);
-
-  const switchToShippingLink = useCallback(() => {
-    directionRef.current = "forward";
-    navigate(stepUrl("flexible", 20));
+    // One sequence: origin's next question is the package (14); the package's
+    // is shipping (20), which renders preferences+cap because something was
+    // skipped. Segment is `flexible` from the first skip onward.
+    navigate(stepUrl("flexible", step === 10 ? 14 : 20));
   }, [navigate]);
 
   const undoShippingLinkSwitch = useCallback(() => {
     // Undo reverses the deferral decision itself, not just the location:
-    // flags cleared AND steps 10/14 un-completed. Leaving them in
-    // completedSteps let the progress bar jump defer→undo users forward past
-    // an empty origin on the label path (review finding 5) — deferral was how
+    // flags cleared AND the steps deferral completed un-completed. Leaving
+    // them in completedSteps let the progress bar jump defer→undo users
+    // forward past an empty origin (review finding 5) — deferral was how
     // those steps got "completed", so undoing it un-completes them.
+    // Step 20 un-completes too: its flex-mode answer (speed/cap preferences)
+    // is void once every question is answered — the label path needs a
+    // concrete rate picked there instead.
     // (Step 1 is different: deferring the DESTINATION never marked it
     // complete — email validation still had to pass — so there is nothing to
     // un-complete for it; the user just gets the address form back.)
     const hadDeferredDestination = data.deferredDestination;
-    setData((prev) => ({
-      ...prev,
-      deferredDestination: false,
-      deferredOrigin: false,
-      deferredPackage: false,
-      completedSteps: prev.completedSteps.filter((s) => s !== 10 && s !== 14),
-    }));
+    // flushSync is LOAD-BEARING here (PLAYBOOK Rule 20 / LOG 2026-05-19).
+    // Without it a render lands with the OLD URL and the NEW completedSteps:
+    // the guard fails canAccessStep for the step being left and its
+    // <Navigate replace> to firstIncompleteUrl — computed from the OLD URL's
+    // segment — wins over this function's navigate. The pre-2026-08-19 code
+    // had the same race, invisibly: its bounce target happened to coincide
+    // with the intended destination. The segment rewrite made them differ,
+    // which is how the race was finally caught (e2e: undo landed on
+    // /flexible/origin instead of /full-label/origin).
+    flushSync(() => {
+      setData((prev) => ({
+        ...prev,
+        deferredDestination: false,
+        deferredOrigin: false,
+        deferredPackage: false,
+        completedSteps: prev.completedSteps.filter((s) => s !== 10 && s !== 14 && s !== 20),
+      }));
+    });
     directionRef.current = "backward";
-    // Land on the earliest question that was skipped.
+    // Land on the earliest question the undo re-opens, back on the label
+    // segment — the last undo is the other direction of the §2.2 rewrite.
+    // (10 rather than "earliest deferred": 10 was just un-completed above, so
+    // any deeper target would bounce off the guard back to it anyway.)
     navigate(stepUrl("full_label", hadDeferredDestination ? 1 : 10));
   }, [navigate, data.deferredDestination]);
 
@@ -378,7 +408,6 @@ export function RecipientFlowProvider({ children }: { children: React.ReactNode 
         goBack,
         goToStep,
         selectPath,
-        switchToShippingLink,
         deferToSender,
         undoShippingLinkSwitch,
         markStepComplete,

@@ -132,9 +132,14 @@ describe("RecipientFlowContext", () => {
     expect(screen.getByTestId("current-step").textContent).toBe("1");
   });
 
-  it("maps shipping slug to step 10", () => {
-    renderWithRouter(["/onboarding/full-label/shipping"]);
+  it("maps origin slug to step 10 (shipping moved to step 20 with the unified map)", () => {
+    renderWithRouter(["/onboarding/full-label/origin"]);
     expect(screen.getByTestId("current-step").textContent).toBe("10");
+  });
+
+  it("maps shipping slug to step 20 — the shared rates/preferences step", () => {
+    renderWithRouter(["/onboarding/full-label/shipping"]);
+    expect(screen.getByTestId("current-step").textContent).toBe("20");
   });
 
   it("maps verify slug to step 11 (full-label)", () => {

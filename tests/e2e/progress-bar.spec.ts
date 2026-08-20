@@ -1,10 +1,13 @@
 import { test, expect, type Page } from "@playwright/test";
 import { SUPABASE_URL } from "./supabase-env";
 
-// One segment per question (2026-08-18). The regression these pin: origin (10)
-// and package (14) shared a "Shipment Details" segment, so completing the
-// origin step advanced the bar by NOTHING — the exact complaint that produced
-// the change. The bar's active segment is asserted via aria-current="step".
+// The morph bar (2026-08-19, one step map): SIX fixed segments for every
+// flow — Destination / Origin / Package / Shipping / Contact / Payment — and
+// a skip turns ONE segment's state in place (aria-label gains "— the sender
+// fills this in") while every label and position survives. These pin both the
+// 2026-08-18 regression (origin and package must advance the bar separately)
+// and the 2026-08-19 one (a skip must morph the bar, not swap segment sets).
+// The active segment is asserted via aria-current="step".
 
 const MOCK_AUTOCOMPLETE = {
   predictions: [
@@ -50,7 +53,7 @@ async function reachOriginStep(page: Page) {
   await page.locator("#destination-phone").fill("4155551234");
   await page.locator("#recipient-email").fill("test@example.com");
   await page.getByRole("button", { name: /Continue to shipment details/i }).click();
-  await expect(page).toHaveURL(/\/full-label\/shipping$/);
+  await expect(page).toHaveURL(/\/full-label\/origin$/);
 }
 
 test.describe("progress bar — one segment per question", () => {
@@ -58,43 +61,51 @@ test.describe("progress bar — one segment per question", () => {
     await mockEdgeFunctions(page);
   });
 
-  test("full-label shows 5 segments and Origin is active on the shipping step", async ({ page }) => {
+  test("six fixed segments; Origin is active on the origin step", async ({ page }) => {
     await reachOriginStep(page);
-    for (const label of ["Destination", "Origin", "Package & Shipping", "Payment", "Label"]) {
+    for (const label of ["Destination", "Origin", "Package", "Shipping", "Contact", "Payment"]) {
       await expect(page.getByRole("button", { name: label, exact: true })).toBeVisible();
     }
     await expect(page.getByRole("button", { name: "Origin", exact: true }))
       .toHaveAttribute("aria-current", "step");
   });
 
-  test("advancing origin → package advances the bar — the regression", async ({ page }) => {
+  test("skipping the origin morphs its segment in place — the bar never swaps sets", async ({ page }) => {
     await reachOriginStep(page);
     await page.getByRole("button", { name: /The sender will fill this in/ }).click();
     // Stale-DOM rule: the URL flips before the outgoing step unmounts — wait
     // for the origin step's field to be GONE before reading the bar.
     await expect(page.locator("#origin-name")).toHaveCount(0);
-    await expect(page).toHaveURL(/\/full-label\/package$/);
-    await expect(page.getByRole("button", { name: "Package & Shipping", exact: true }))
+    // First skip rewrites the segment to flexible (§2.2).
+    await expect(page).toHaveURL(/\/flexible\/package$/);
+    await expect(page.getByRole("button", { name: "Package", exact: true }))
       .toHaveAttribute("aria-current", "step");
-    // And the origin segment now reads completed (clickable to go back).
-    await expect(page.getByRole("button", { name: "Origin", exact: true })).toBeEnabled();
+    // The origin segment reads SKIPPED — new aria-label, same position — and
+    // stays clickable (skipping is an answer; clicking it is the way back).
+    const skippedOrigin = page.getByRole("button", { name: "Origin — the sender fills this in" });
+    await expect(skippedOrigin).toBeVisible();
+    await expect(skippedOrigin).toBeEnabled();
+    // Every other label survives untouched — nothing added, nothing removed.
+    for (const label of ["Destination", "Shipping", "Contact", "Payment"]) {
+      await expect(page.getByRole("button", { name: label, exact: true })).toBeVisible();
+    }
   });
 
-  test("flex path shows its own 4 segments, none falsely completed after deferrals", async ({ page }) => {
+  test("skipping everything: same six segments, two marked skipped, none falsely completed", async ({ page }) => {
     await reachOriginStep(page);
     await page.getByRole("button", { name: /The sender will fill this in/ }).click();
     await expect(page.locator("#origin-name")).toHaveCount(0);
-    // Defer the package too → flexible path, preferences step.
+    // Defer the package too → the shared shipping step, flex mode.
     await page.getByRole("button", { name: /The sender will fill this in/ }).click();
-    await expect(page).toHaveURL(/\/flexible\/preferences$/);
-    for (const label of ["Destination", "Preferences", "Save Card", "Share Link"]) {
-      await expect(page.getByRole("button", { name: label, exact: true })).toBeVisible();
-    }
-    await expect(page.getByRole("button", { name: "Preferences", exact: true }))
+    await expect(page).toHaveURL(/\/flexible\/shipping$/);
+    // The SAME six labels — the morph, not a swap (the 2026-08-19 regression:
+    // the old bar rendered a different 4-segment set here).
+    await expect(page.getByRole("button", { name: "Shipping", exact: true }))
       .toHaveAttribute("aria-current", "step");
-    // Steps 10 + 14 are complete in flow state, but they are NOT flex steps —
-    // their indexes must not light flex segments the user has never seen.
-    await expect(page.getByRole("button", { name: "Save Card", exact: true })).toBeDisabled();
-    await expect(page.getByRole("button", { name: "Share Link", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Origin — the sender fills this in" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Package — the sender fills this in" })).toBeVisible();
+    // Steps ahead are untouched: not completed, not skipped, not clickable.
+    await expect(page.getByRole("button", { name: "Contact", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Payment", exact: true })).toBeDisabled();
   });
 });

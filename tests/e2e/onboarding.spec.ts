@@ -317,7 +317,9 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
     // With an email, the step passes.
     await page.locator("#recipient-email").fill("test@example.com");
     await page.getByRole("button", { name: /Continue to shipment details/i }).click();
-    await expect(page).toHaveURL(/\/full-label\/shipping$/);
+    // First skip rewrites the segment (§2.2, 2026-08-19): the flow heads to a
+    // link now, and the URL says so from the very next navigation.
+    await expect(page).toHaveURL(/\/flexible\/origin$/);
     // The product change is announced immediately, on the origin step.
     await expect(page.getByText(/This will be a shipping link, not a label/i)).toBeVisible();
   });
@@ -329,14 +331,17 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
     // at the end of the flow (John's point 3, 2026-08-18).
     await page.getByRole("button", { name: /The sender will fill this in/i }).click();
     await expect(page.locator("#origin-name")).toHaveCount(0);
-    await expect(page).toHaveURL(/\/full-label\/package$/);
+    // The first skip rewrites the segment to flexible (§2.2), and the next
+    // question — the package — is still asked.
+    await expect(page).toHaveURL(/\/flexible\/package$/);
     await expect(page.getByText(/This will be a shipping link, not a label/i)).toBeVisible();
 
-    // Undo reverses the deferral itself: back on step 10, and after answering
-    // every question the flow must produce a LABEL again — the stale-flag bug
-    // where defer→undo→fill still produced a link.
+    // Undo reverses the deferral itself: back on step 10 (slug `origin`) on
+    // the label segment, and after answering every question the flow must
+    // produce a LABEL again — the stale-flag bug where defer→undo→fill still
+    // produced a link.
     await page.getByRole("button", { name: /Undo skip/i }).click();
-    await expect(page).toHaveURL(/\/full-label\/shipping$/);
+    await expect(page).toHaveURL(/\/full-label\/origin$/);
     await expect(page.getByText(/This will be a shipping link/i)).toHaveCount(0);
   });
 
@@ -368,19 +373,20 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
     await expect(page.locator("#origin-name")).toBeVisible({ timeout: 5000 });
 
     await page.getByRole("button", { name: /The sender will fill this in/i }).click();
-    // Deferring the address advances to the PACKAGE question — it must not skip
-    // it (that was the 2026-08-18 bug). Only deferring both makes it a link.
-    await expect(page).toHaveURL(/\/onboarding\/full-label\/package/);
+    // Deferring the address advances to the PACKAGE question — it must not
+    // skip it (that was the 2026-08-18 bug) — on the flexible segment, which
+    // the first skip rewrites (§2.2).
+    await expect(page).toHaveURL(/\/onboarding\/flexible\/package/);
     // Wait for the step to actually MOUNT before clicking again. The URL flips
     // before the outgoing step unmounts, so clicking on the URL alone re-hits
     // the address step's button and silently re-runs the same defer.
     await expect(page.locator("#origin-name")).toHaveCount(0);
     await page.getByRole("button", { name: /The sender will fill this in/i }).click();
-    await expect(page).toHaveURL(/\/onboarding\/flexible\/preferences/);
+    await expect(page).toHaveURL(/\/onboarding\/flexible\/shipping/);
 
     // The way back must be rendered for this user too.
-    await page.getByRole("button", { name: /I do have it/i }).click();
-    await expect(page).toHaveURL(/\/onboarding\/full-label\/shipping/);
+    await page.getByRole("button", { name: /Undo skip/i }).click();
+    await expect(page).toHaveURL(/\/onboarding\/full-label\/origin/);
   });
 
   test("the address escape converts to a shipping link, and undo restores what was typed", async ({
@@ -395,14 +401,14 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
 
     // The package question is still asked — deferring the address no longer
     // leaps past it. Defer that too and the flow becomes a shipping link.
-    await expect(page).toHaveURL(/\/onboarding\/full-label\/package/);
+    await expect(page).toHaveURL(/\/onboarding\/flexible\/package/);
     await expect(page.locator("#origin-name")).toHaveCount(0);
     await page.getByRole("button", { name: /The sender will fill this in/i }).click();
 
-    // Moves to the shipping-link path. Guard must admit step 20 off the shared
-    // steps 0+1 — if it doesn't, the user gets bounced to firstIncompleteUrl
-    // (the 2026-05-19 navigate-vs-setData race).
-    await expect(page).toHaveURL(/\/onboarding\/flexible\/preferences/);
+    // Lands on the shared shipping step in flex mode. The guard must admit
+    // step 20 — deferring marked 10 and 14 complete — or the user gets
+    // bounced to firstIncompleteUrl (the 2026-05-19 navigate-vs-setData race).
+    await expect(page).toHaveURL(/\/onboarding\/flexible\/shipping/);
 
     // The step must actually SWAP, not just the URL. An earlier cut of this
     // change left step 10 frozen mid-exit under a correct /flexible/preferences
@@ -414,9 +420,9 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
     ).toBeVisible();
 
     // Undo is reachable and returns the flow — with the typed origin intact,
-    // because the escape never clears it.
-    await page.getByRole("button", { name: /I do have it/i }).click();
-    await expect(page).toHaveURL(/\/onboarding\/full-label\/shipping/);
+    // because the skip never clears it.
+    await page.getByRole("button", { name: /Undo skip/i }).click();
+    await expect(page).toHaveURL(/\/onboarding\/full-label\/origin/);
     await expect(page.locator("#origin-name")).toHaveValue("Sarah Smith");
   });
 
@@ -477,7 +483,9 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
     // Weight
     await page.getByRole("textbox", { name: "lbs" }).fill("5");
 
-    // Wait for rates to load (debounced 600ms + mock response)
+    // ── Step 20: shipping — rates fetch on entry ─────────────
+    await page.getByRole("button", { name: /Continue to shipping/i }).click();
+    await expect(page).toHaveURL(/\/full-label\/shipping/);
     await expect(
       page.getByText(/USPS/i).first()
     ).toBeVisible({ timeout: 8000 });
@@ -554,7 +562,7 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
     await gotoStep10(page);
     await gotoPackageStep(page);
 
-    await page.getByRole("button", { name: /Continue to payment/i }).click();
+    await page.getByRole("button", { name: /Continue to shipping/i }).click();
 
     await expect(page.getByText("Please fix the following:")).toBeVisible();
     await expect(page.getByText("Length is required")).toBeVisible();

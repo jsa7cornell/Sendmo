@@ -148,9 +148,15 @@ test.describe("phone gate — onboarding", () => {
     await page.getByRole("textbox", { name: "W", exact: true }).fill("10");
     await page.getByRole("textbox", { name: "H", exact: true }).fill("10");
     await page.getByRole("textbox", { name: "lbs" }).fill("5");
+    // The parcel step no longer fetches rates at all (2026-08-19: the fetch
+    // moved to the shipping step, downstream of both halves). The 4×-regressed
+    // invariant survives relocation: still zero calls until here…
+    expect(ratesCalls, "the package step itself must not fetch rates").toBe(0);
+    await page.getByRole("button", { name: /Continue to shipping/i }).click();
+    // …and the fetch fires on the shipping step, where every input is known.
     await expect
       .poll(() => ratesCalls, {
-        message: "rates should be fetched once the origin phone is present",
+        message: "rates should be fetched on the shipping step once the origin phone is present",
         timeout: 8000,
       })
       .toBeGreaterThan(0);

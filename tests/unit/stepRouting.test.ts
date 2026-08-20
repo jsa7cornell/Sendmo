@@ -12,14 +12,18 @@ import {
   isSlugValidForPath,
   pathSlugToPath,
   pathToPathSlug,
+  pathForFlags,
   stepUrl,
+  RETIRED_SLUG_REDIRECTS,
 } from "@/lib/stepRouting";
 
-// The stepRouting API moved from flat single-arg helpers to a path-aware
-// two-arg shape in late 2026-04. These tests exercise the current shape:
-//   slugToStep(path, slug) → number
-//   stepToSlug(path, step) → slug | null
-//   firstIncompleteUrl(completedSteps, path) → "/onboarding/{slug}/{slug}"
+// ONE step map since 2026-08-19 (flow-redesign proposal — completes the
+// unified-onboarding proposal's Phase 2). Both path segments walk the same
+// sequence [1, 10, 14, 20, 11, 12, 13]; the segment only names the product
+// the flow is heading toward. Step numbers are historical, not ordinal —
+// they survive so persisted drafts stay meaningful.
+
+const SEQUENCE = [1, 10, 14, 20, 11, 12, 13];
 
 describe("pathSlugToPath / pathToPathSlug", () => {
   it("converts URL path-slug to RecipientPath", () => {
@@ -34,167 +38,276 @@ describe("pathSlugToPath / pathToPathSlug", () => {
   });
 });
 
-describe("slugToStep", () => {
-  it("maps full-label slugs to step numbers", () => {
-    expect(slugToStep("full_label", "destination")).toBe(1);
-    expect(slugToStep("full_label", "shipping")).toBe(10);
-    expect(slugToStep("full_label", "verify")).toBe(11);
-    expect(slugToStep("full_label", "payment")).toBe(12);
-    expect(slugToStep("full_label", "label")).toBe(13);
+describe("slugToStep — one map, any segment", () => {
+  it("maps every live slug to its step, identically on both segments", () => {
+    for (const path of ["full_label", "flexible"] as const) {
+      expect(slugToStep(path, "destination")).toBe(1);
+      expect(slugToStep(path, "origin")).toBe(10);
+      expect(slugToStep(path, "package")).toBe(14);
+      expect(slugToStep(path, "shipping")).toBe(20);
+      expect(slugToStep(path, "verify")).toBe(11);
+      expect(slugToStep(path, "payment")).toBe(12);
+      expect(slugToStep(path, "label")).toBe(13);
+    }
   });
 
-  it("maps flexible slugs to step numbers", () => {
-    expect(slugToStep("flexible", "destination")).toBe(1);
+  it("resolves retired slugs to their replacement's step (guard can reason pre-redirect)", () => {
     expect(slugToStep("flexible", "preferences")).toBe(20);
-    expect(slugToStep("flexible", "verify")).toBe(21);
-    expect(slugToStep("flexible", "authorize")).toBe(22);
-    expect(slugToStep("flexible", "share")).toBe(23);
+    expect(slugToStep("flexible", "authorize")).toBe(12);
+    expect(slugToStep("flexible", "share")).toBe(13);
+    // The retired slugs resolve on the full-label segment too — the old
+    // "invalid combination" rejection inverted when the maps unified.
+    expect(slugToStep("full_label", "preferences")).toBe(20);
   });
 
   it("returns 0 for unknown slugs or empty slug", () => {
     expect(slugToStep("full_label", "unknown")).toBe(0);
     expect(slugToStep("full_label", "")).toBe(0);
     expect(slugToStep(null, null)).toBe(0);
+    expect(slugToStep(null, undefined)).toBe(0);
   });
 
-  it("falls back to the full-label map when path is null (matches stepsForPath default)", () => {
-    // Source defaults to FULL_LABEL_STEP_BY_SLUG when path is null/unknown.
+  it("is path-independent (null path behaves like either segment)", () => {
     expect(slugToStep(null, "destination")).toBe(1);
-    expect(slugToStep(null, "shipping")).toBe(10);
+    expect(slugToStep(null, "shipping")).toBe(20);
+    expect(slugToStep(null, "verify")).toBe(11);
+  });
+});
+
+describe("RETIRED_SLUG_REDIRECTS", () => {
+  it("covers exactly the three retired slugs", () => {
+    expect(Object.keys(RETIRED_SLUG_REDIRECTS).sort()).toEqual(["authorize", "preferences", "share"]);
+  });
+
+  it("every redirect target is a live slug", () => {
+    for (const target of Object.values(RETIRED_SLUG_REDIRECTS)) {
+      expect(slugToStep(null, target)).toBeGreaterThan(0);
+      expect(RETIRED_SLUG_REDIRECTS[target]).toBeUndefined();
+    }
+  });
+
+  it("verify is NOT retired — magic-link emails in flight carry it as redirectTo", () => {
+    expect(RETIRED_SLUG_REDIRECTS["verify"]).toBeUndefined();
+    expect(slugToStep(null, "verify")).toBe(11);
   });
 });
 
 describe("stepToSlug", () => {
-  it("maps step numbers to full-label slugs", () => {
-    expect(stepToSlug("full_label", 1)).toBe("destination");
-    expect(stepToSlug("full_label", 10)).toBe("shipping");
-    expect(stepToSlug("full_label", 11)).toBe("verify");
-    expect(stepToSlug("full_label", 12)).toBe("payment");
-    expect(stepToSlug("full_label", 13)).toBe("label");
+  it("maps every step to its slug, identically on both segments", () => {
+    for (const path of ["full_label", "flexible"] as const) {
+      expect(stepToSlug(path, 1)).toBe("destination");
+      expect(stepToSlug(path, 10)).toBe("origin");
+      expect(stepToSlug(path, 14)).toBe("package");
+      expect(stepToSlug(path, 20)).toBe("shipping");
+      expect(stepToSlug(path, 11)).toBe("verify");
+      expect(stepToSlug(path, 12)).toBe("payment");
+      expect(stepToSlug(path, 13)).toBe("label");
+    }
   });
 
-  it("returns null for step 0 (path picker has no slug)", () => {
+  it("returns null for step 0 (no-step value) and out-of-range steps", () => {
     expect(stepToSlug("full_label", 0)).toBeNull();
-    expect(stepToSlug("flexible", 0)).toBeNull();
+    expect(stepToSlug("full_label", 99)).toBeNull();
+    // The old flex numbers no longer exist — drafts carrying them are
+    // migrated on read (recipientFlowStorage LEGACY_STEP_MAP).
+    expect(stepToSlug("flexible", 21)).toBeNull();
+    expect(stepToSlug("flexible", 22)).toBeNull();
+    expect(stepToSlug("flexible", 23)).toBeNull();
   });
 
-  it("returns null for out-of-range steps", () => {
-    expect(stepToSlug("full_label", 99)).toBeNull();
-    expect(stepToSlug("flexible", 11)).toBeNull(); // 11 is full-label only
+  it("round-trips with slugToStep for every step in the sequence", () => {
+    for (const step of SEQUENCE) {
+      const slug = stepToSlug(null, step);
+      expect(slug).not.toBeNull();
+      expect(slugToStep(null, slug)).toBe(step);
+    }
   });
 });
 
-describe("stepsForPath", () => {
-  // No step 0 (2026-08-18): the who's-sending picker is gone; the destination
-  // step is first. Step 14 (package) split out of 10 on 2026-08-18 so the
-  // ship-from address and the parcel can be deferred independently.
-  it("returns full-label steps starting at destination, no step 0", () => {
-    expect(stepsForPath("full_label")).toEqual([1, 10, 14, 11, 12, 13]);
+describe("stepsForPath — one sequence", () => {
+  it("returns the unified sequence for both paths and for null", () => {
+    expect(stepsForPath("full_label")).toEqual(SEQUENCE);
+    expect(stepsForPath("flexible")).toEqual(SEQUENCE);
+    expect(stepsForPath(null)).toEqual(SEQUENCE);
   });
 
-  it("returns flex steps starting at destination, no step 0", () => {
-    expect(stepsForPath("flexible")).toEqual([1, 20, 21, 22, 23]);
-  });
-
-  it("defaults to full-label when path is null", () => {
-    expect(stepsForPath(null)).toEqual([1, 10, 14, 11, 12, 13]);
+  it("has no step 0 and seven steps", () => {
+    expect(stepsForPath(null)).not.toContain(0);
+    expect(stepsForPath(null)).toHaveLength(7);
   });
 });
 
 describe("nextStep / prevStep", () => {
-  it("next walks the full-label sequence including verify", () => {
+  it("next walks the whole sequence in order", () => {
     expect(nextStep(1, "full_label")).toBe(10);
     expect(nextStep(10, "full_label")).toBe(14);
-    expect(nextStep(14, "full_label")).toBe(11);
+    expect(nextStep(14, "full_label")).toBe(20);
+    expect(nextStep(20, "full_label")).toBe(11);
     expect(nextStep(11, "full_label")).toBe(12);
     expect(nextStep(12, "full_label")).toBe(13);
     expect(nextStep(13, "full_label")).toBeNull();
   });
 
-  it("prev walks the flex sequence backward, ending at the first step", () => {
-    expect(prevStep(23, "flexible")).toBe(22);
-    expect(prevStep(20, "flexible")).toBe(1);
-    // Step 1 is the first step now — there is no picker behind it.
+  it("walks identically on the flexible segment", () => {
+    expect(nextStep(1, "flexible")).toBe(10);
+    expect(nextStep(14, "flexible")).toBe(20);
+    expect(nextStep(20, "flexible")).toBe(11);
+    expect(nextStep(12, "flexible")).toBe(13);
+  });
+
+  it("prev walks the sequence backward, ending at the first step", () => {
+    expect(prevStep(13, "flexible")).toBe(12);
+    expect(prevStep(12, "flexible")).toBe(11);
+    expect(prevStep(11, "flexible")).toBe(20);
+    expect(prevStep(20, "flexible")).toBe(14);
+    expect(prevStep(14, "flexible")).toBe(10);
+    expect(prevStep(10, "flexible")).toBe(1);
     expect(prevStep(1, "flexible")).toBeNull();
+  });
+
+  it("returns null for steps not in the sequence", () => {
+    expect(nextStep(21, "flexible")).toBeNull();
+    expect(prevStep(0, "full_label")).toBeNull();
   });
 });
 
-describe("stepToProgressIndex", () => {
-  // One segment per question (2026-08-18): origin (10) and package (14) no
-  // longer share a segment — completing the origin must visibly advance the
-  // bar. Full-label is 5 segments; verify (11) folds into Payment.
-  it("maps full-label steps onto a 5-segment bar, origin and package distinct", () => {
-    expect(stepToProgressIndex(0)).toBe(-1);
+describe("pathForFlags — the product is a function of the skips", () => {
+  it("no skips → full_label", () => {
+    expect(pathForFlags({ deferredDestination: false, deferredOrigin: false, deferredPackage: false })).toBe("full_label");
+  });
+
+  it("any single skip → flexible", () => {
+    expect(pathForFlags({ deferredDestination: true, deferredOrigin: false, deferredPackage: false })).toBe("flexible");
+    expect(pathForFlags({ deferredDestination: false, deferredOrigin: true, deferredPackage: false })).toBe("flexible");
+    expect(pathForFlags({ deferredDestination: false, deferredOrigin: false, deferredPackage: true })).toBe("flexible");
+  });
+
+  it("every multi-skip combination → flexible (all 2^3 checked)", () => {
+    for (const d of [true, false]) for (const o of [true, false]) for (const p of [true, false]) {
+      const expected = d || o || p ? "flexible" : "full_label";
+      expect(pathForFlags({ deferredDestination: d, deferredOrigin: o, deferredPackage: p })).toBe(expected);
+    }
+  });
+});
+
+describe("stepToProgressIndex — six fixed segments", () => {
+  it("maps the sequence onto six segments: Destination/Origin/Package/Shipping/Contact/Payment", () => {
     expect(stepToProgressIndex(1)).toBe(0);
     expect(stepToProgressIndex(10)).toBe(1);
     expect(stepToProgressIndex(14)).toBe(2);
-    expect(stepToProgressIndex(11)).toBe(3);
-    expect(stepToProgressIndex(12)).toBe(3);
-    expect(stepToProgressIndex(13)).toBe(4);
+    expect(stepToProgressIndex(20)).toBe(3);
+    expect(stepToProgressIndex(11)).toBe(4);
+    expect(stepToProgressIndex(12)).toBe(5);
   });
 
-  it("maps flex steps onto a 4-segment bar", () => {
-    expect(stepToProgressIndex(20)).toBe(1);
-    expect(stepToProgressIndex(21)).toBe(2);
-    expect(stepToProgressIndex(22)).toBe(2);
-    expect(stepToProgressIndex(23)).toBe(3);
+  it("the done screen (13) keeps Payment's segment — the bar reads complete", () => {
+    expect(stepToProgressIndex(13)).toBe(5);
+  });
+
+  it("returns -1 for step 0 and unknown steps", () => {
+    expect(stepToProgressIndex(0)).toBe(-1);
+    expect(stepToProgressIndex(21)).toBe(-1);
+    expect(stepToProgressIndex(99)).toBe(-1);
   });
 });
 
-describe("progressIndexToStep", () => {
-  it("maps progress index back to step for full-label (segment 3 → verify)", () => {
-    expect(progressIndexToStep(0, "full_label")).toBe(1);
-    expect(progressIndexToStep(1, "full_label")).toBe(10);
-    expect(progressIndexToStep(2, "full_label")).toBe(14);
-    expect(progressIndexToStep(3, "full_label")).toBe(11);
-    expect(progressIndexToStep(4, "full_label")).toBe(13);
+describe("progressIndexToStep — segment clicks", () => {
+  it("maps each of the six segments to its step, path-independently", () => {
+    const expected = [1, 10, 14, 20, 11, 12];
+    for (const path of ["full_label", "flexible", null] as const) {
+      expected.forEach((step, i) => {
+        expect(progressIndexToStep(i, path)).toBe(step);
+      });
+    }
   });
 
-  it("maps progress index back to step for flexible", () => {
-    expect(progressIndexToStep(0, "flexible")).toBe(1);
-    expect(progressIndexToStep(1, "flexible")).toBe(20);
-    expect(progressIndexToStep(3, "flexible")).toBe(23);
+  it("clamps out-of-range indexes to the first step", () => {
+    expect(progressIndexToStep(6, "full_label")).toBe(1);
+    expect(progressIndexToStep(-1, "flexible")).toBe(1);
   });
 });
 
 describe("stepUrl", () => {
-  it("builds the path-scoped URL for any step", () => {
-    expect(stepUrl("full_label", 0)).toBe("/onboarding");
+  it("builds the segment-scoped URL for any step", () => {
     expect(stepUrl("full_label", 1)).toBe("/onboarding/full-label/destination");
-    expect(stepUrl("full_label", 11)).toBe("/onboarding/full-label/verify");
-    expect(stepUrl("full_label", 12)).toBe("/onboarding/full-label/payment");
-    expect(stepUrl("flexible", 21)).toBe("/onboarding/flexible/verify");
+    expect(stepUrl("full_label", 10)).toBe("/onboarding/full-label/origin");
+    expect(stepUrl("full_label", 14)).toBe("/onboarding/full-label/package");
+    expect(stepUrl("full_label", 20)).toBe("/onboarding/full-label/shipping");
+    expect(stepUrl("flexible", 20)).toBe("/onboarding/flexible/shipping");
+    expect(stepUrl("flexible", 11)).toBe("/onboarding/flexible/verify");
+    expect(stepUrl("flexible", 12)).toBe("/onboarding/flexible/payment");
+    expect(stepUrl("flexible", 13)).toBe("/onboarding/flexible/label");
+  });
+
+  it("falls back to /onboarding for step 0, null path, or unknown steps", () => {
+    expect(stepUrl("full_label", 0)).toBe("/onboarding");
     expect(stepUrl(null, 1)).toBe("/onboarding");
+    expect(stepUrl("flexible", 99)).toBe("/onboarding");
   });
 });
 
-describe("canAccessStep", () => {
+describe("isSlugValidForPath", () => {
+  it("accepts every live slug on both segments", () => {
+    for (const path of ["full_label", "flexible"] as const) {
+      for (const slug of ["destination", "origin", "package", "shipping", "verify", "payment", "label"]) {
+        expect(isSlugValidForPath(slug, path)).toBe(true);
+      }
+    }
+  });
+
+  it("accepts retired slugs (they resolve via redirect, not a bounce)", () => {
+    expect(isSlugValidForPath("preferences", "flexible")).toBe(true);
+    expect(isSlugValidForPath("authorize", "flexible")).toBe(true);
+    expect(isSlugValidForPath("share", "flexible")).toBe(true);
+  });
+
+  it("rejects unknown slugs and null path", () => {
+    expect(isSlugValidForPath("unknown", "full_label")).toBe(false);
+    expect(isSlugValidForPath("destination", null)).toBe(false);
+  });
+});
+
+describe("canAccessStep — sequential gate over one sequence", () => {
   it("always allows step 0", () => {
-    expect(canAccessStep(0, [], null)).toBe(true);
+    expect(canAccessStep(0, [], "full_label")).toBe(true);
   });
 
-  it("always allows step 1 — it is the first step (no picker behind it)", () => {
+  it("always allows step 1 — it is the first step", () => {
     expect(canAccessStep(1, [], "full_label")).toBe(true);
-    // Old drafts may still carry an inert 0 in completedSteps — harmless.
-    expect(canAccessStep(1, [0], "full_label")).toBe(true);
+    expect(canAccessStep(1, [], "flexible")).toBe(true);
   });
 
-  it("allows step 10 when 0 and 1 are completed", () => {
+  it("allows each step exactly when every prior step is complete", () => {
+    expect(canAccessStep(10, [1], "full_label")).toBe(true);
+    expect(canAccessStep(14, [1, 10], "full_label")).toBe(true);
+    expect(canAccessStep(20, [1, 10, 14], "flexible")).toBe(true);
+    expect(canAccessStep(11, [1, 10, 14, 20], "flexible")).toBe(true);
+    expect(canAccessStep(12, [1, 10, 14, 20, 11], "full_label")).toBe(true);
+    expect(canAccessStep(13, [1, 10, 14, 20, 11, 12], "flexible")).toBe(true);
+  });
+
+  it("blocks any step with an incomplete predecessor", () => {
+    expect(canAccessStep(10, [], "full_label")).toBe(false);
+    expect(canAccessStep(14, [1], "full_label")).toBe(false);
+    expect(canAccessStep(20, [1, 10], "flexible")).toBe(false);
+    expect(canAccessStep(11, [1, 10, 14], "full_label")).toBe(false);
+    expect(canAccessStep(12, [1, 10, 14, 20], "flexible")).toBe(false);
+    expect(canAccessStep(13, [1, 10, 14, 20, 11], "full_label")).toBe(false);
+  });
+
+  it("a deferred flow reaches shipping the same way — skips mark 10/14 complete", () => {
+    // deferToSender marks the skipped step complete; the guard neither knows
+    // nor cares that the completion came from a skip.
+    expect(canAccessStep(20, [1, 10, 14], "flexible")).toBe(true);
+  });
+
+  it("blocks steps not in the sequence (old flex numbers)", () => {
+    expect(canAccessStep(21, [1, 10, 14, 20], "flexible")).toBe(false);
+    expect(canAccessStep(23, [1, 10, 14, 20, 11, 12], "flexible")).toBe(false);
+  });
+
+  it("tolerates inert extras in completedSteps (step 0 from old drafts)", () => {
     expect(canAccessStep(10, [0, 1], "full_label")).toBe(true);
-  });
-
-  it("blocks step 11 (verify) when shipping (10) is not completed", () => {
-    expect(canAccessStep(11, [0, 1], "full_label")).toBe(false);
-  });
-
-  it("allows step 11 when 0, 1, 10 are completed", () => {
-    expect(canAccessStep(11, [0, 1, 10, 14], "full_label")).toBe(true);
-    // …and 14 is now genuinely required in between.
-    expect(canAccessStep(11, [0, 1, 10], "full_label")).toBe(false);
-  });
-
-  it("blocks steps not in the path", () => {
-    expect(canAccessStep(20, [0, 1], "full_label")).toBe(false);
   });
 });
 
@@ -203,49 +316,20 @@ describe("firstIncompleteUrl", () => {
     expect(firstIncompleteUrl([], null)).toBe("/onboarding");
   });
 
-  it("returns the destination URL when only step 0 is completed", () => {
-    expect(firstIncompleteUrl([0], "full_label")).toBe("/onboarding/full-label/destination");
+  it("walks the sequence to the first gap", () => {
+    expect(firstIncompleteUrl([], "full_label")).toBe("/onboarding/full-label/destination");
+    expect(firstIncompleteUrl([1], "full_label")).toBe("/onboarding/full-label/origin");
+    expect(firstIncompleteUrl([1, 10], "full_label")).toBe("/onboarding/full-label/package");
+    expect(firstIncompleteUrl([1, 10, 14], "flexible")).toBe("/onboarding/flexible/shipping");
+    expect(firstIncompleteUrl([1, 10, 14, 20], "flexible")).toBe("/onboarding/flexible/verify");
+    expect(firstIncompleteUrl([1, 10, 14, 20, 11], "full_label")).toBe("/onboarding/full-label/payment");
   });
 
-  it("returns the shipping URL when steps 0 and 1 are completed", () => {
-    expect(firstIncompleteUrl([0, 1], "full_label")).toBe("/onboarding/full-label/shipping");
+  it("lands on the last step when everything is complete", () => {
+    expect(firstIncompleteUrl([1, 10, 14, 20, 11, 12, 13], "flexible")).toBe("/onboarding/flexible/label");
   });
 
-  it("returns the verify URL when through shipping is completed", () => {
-    expect(firstIncompleteUrl([0, 1, 10], "full_label")).toBe("/onboarding/full-label/package");
-    expect(firstIncompleteUrl([0, 1, 10, 14], "full_label")).toBe("/onboarding/full-label/verify");
-  });
-
-  it("returns the last step URL when everything is completed", () => {
-    expect(firstIncompleteUrl([0, 1, 10, 14, 11, 12, 13], "full_label")).toBe(
-      "/onboarding/full-label/label",
-    );
-  });
-});
-
-describe("isSlugValidForPath", () => {
-  it("destination is valid for both paths", () => {
-    expect(isSlugValidForPath("destination", "full_label")).toBe(true);
-    expect(isSlugValidForPath("destination", "flexible")).toBe(true);
-  });
-
-  it("shipping is only valid for full_label", () => {
-    expect(isSlugValidForPath("shipping", "full_label")).toBe(true);
-    expect(isSlugValidForPath("shipping", "flexible")).toBe(false);
-  });
-
-  it("preferences is only valid for flexible", () => {
-    expect(isSlugValidForPath("preferences", "flexible")).toBe(true);
-    expect(isSlugValidForPath("preferences", "full_label")).toBe(false);
-  });
-
-  it("verify is valid for both paths (full-label step 11 + flex step 21)", () => {
-    expect(isSlugValidForPath("verify", "full_label")).toBe(true);
-    expect(isSlugValidForPath("verify", "flexible")).toBe(true);
-  });
-
-  it("any slug is invalid when no path is selected", () => {
-    expect(isSlugValidForPath("destination", null)).toBe(false);
-    expect(isSlugValidForPath("shipping", null)).toBe(false);
+  it("ignores inert old-draft entries (0 and unmigrated 21-23 don't advance it)", () => {
+    expect(firstIncompleteUrl([0, 1, 21], "flexible")).toBe("/onboarding/flexible/origin");
   });
 });

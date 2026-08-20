@@ -68,6 +68,12 @@ export interface RecipientFlowData {
   // Phase E: populated together with short_code when the flex link is created at step 22
   linkId: string;
 
+  // Whether the parcel fields were filled by the Magic Guestimator — drives
+  // the beta disclaimer beside the estimated cost. Lived as component-local
+  // state while price and parcel shared one screen; persisted once the rate
+  // step (20) moved downstream of the package step (14).
+  usedGuestimator: boolean;
+
   // Validation
   tried: Record<number, boolean>;
 }
@@ -108,6 +114,8 @@ export const INITIAL_DATA: RecipientFlowData = {
   email_verified: false,
   short_code: "",
   linkId: "",
+
+  usedGuestimator: false,
 
   tried: {},
 };
@@ -179,10 +187,25 @@ function readStored(now: number): StoredFlow | null {
   return null;
 }
 
+// Old flex step numbers → their unified-map equivalents (2026-08-19, one step
+// map). Full-label numbers survive unchanged; only the flex tail renumbered:
+// verify 21→11, save-card 22→12, share 23→13. Preferences kept 20. Applied on
+// READ so a draft persisted before the deploy resumes on the right step —
+// PR #68's mid-deploy draft-recovery precedent (LOG 2026-08-18).
+const LEGACY_STEP_MAP: Record<number, number> = { 21: 11, 22: 12, 23: 13 };
+
+function migrateSteps(steps: number[] | undefined): number[] | undefined {
+  if (!steps) return steps;
+  const mapped = steps.map((s) => LEGACY_STEP_MAP[s] ?? s);
+  return [...new Set(mapped)];
+}
+
 export function loadPersisted(): RecipientFlowData | null {
   const stored = readStored(Date.now());
   if (!stored) return null;
-  return { ...INITIAL_DATA, ...stored.data };
+  const data = { ...INITIAL_DATA, ...stored.data };
+  data.completedSteps = migrateSteps(data.completedSteps) ?? [];
+  return data;
 }
 
 export function persist(data: RecipientFlowData): void {
@@ -222,6 +245,7 @@ export function loadResumable(now: number = Date.now()): RecipientFlowData | nul
   if (now - stored.savedAt > DRAFT_TTL_MS) return null;
 
   const data: RecipientFlowData = { ...INITIAL_DATA, ...stored.data };
+  data.completedSteps = migrateSteps(data.completedSteps) ?? [];
   // Finished flows are not drafts.
   if (data.labelResult || data.short_code) return null;
   // "Progress" is any typed field, not just a completed step. Someone who
