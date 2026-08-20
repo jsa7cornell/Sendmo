@@ -68,6 +68,13 @@ export interface RecipientFlowState {
   // the Shipping step downstream shows the beta disclaimer beside the price).
   usedGuestimator: boolean;
 
+  /**
+   * Whether the one-time "this is a shipping link now" explainer has been
+   * shown. Flow state, not component state: the skip that triggers the bubble
+   * also navigates, unmounting the step that would have rendered it.
+   */
+  seenSkipExplainer: boolean;
+
   // Validation
   tried: Record<number, boolean>;
 }

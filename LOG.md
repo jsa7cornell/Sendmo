@@ -12,6 +12,31 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-19] Skip control + dim-in-place — PR 2 of the flow redesign
+
+**Category:** ship | Onboarding
+**Cross-link:** [proposals/2026-08-19_shipping-flow-redesign_reviewed-2026-08-19.md](proposals/2026-08-19_shipping-flow-redesign_reviewed-2026-08-19.md) (§3 PR 2, brief points 1/4/9, T1 decision) | follows PR 1 (#86)
+
+**Browser-verified:**
+  spec: `tests/e2e/skip-toggle.spec.ts` (6 new: no pre-selection, product named at rest, dim-not-remove, genuine inertness, one-time explainer, undo-in-place)
+  variants-covered: [destination unanswered / kept / deferred; origin + package deferred; first skip vs subsequent; undo restoring typed input]
+
+**What shipped.** Three shared components replace per-step bespoke UI: `SkipToggle` (one control on all three question steps, "I have it" first per John's T1 decision, a real `radiogroup`), `DimmedWhenDeferred` (fields dim in place instead of being swapped for a panel — the swap changed card height and moved the Continue button out from under the cursor), and `FirstSkipExplainer` (one-time dark bubble, quiet undo link thereafter).
+
+**Gotcha — `inert=""` is silently dropped by React 19.** The dim wrapper passed `inert: "" as unknown as boolean`, a workaround for older typings. React 19 takes `inert` as a real boolean and ignores the empty string, so the deferred field group was **faded but fully reachable by keyboard and screen reader** — exactly the failure the component exists to prevent. It survived typecheck, lint, and a 91-test green e2e run; only a spec that asked the DOM `closest("[inert]")` caught it. **On React 19 write `inert={bool}`.**
+
+**Gotcha — a boolean cannot express "not yet answered".** The toggle's first cut used `aria-checked={deferred === false}`, which renders "I have it" as chosen on arrival — the default change brief point 9 explicitly warned against, and the opposite of the component's own comment. Now a three-state `choice: "kept" | "deferred" | null`, derived per step from whether that field group has content, so typing answers the question without touching the control and the resting state selects nothing.
+
+**Gotcha — do not mark a one-time UI "seen" in the handler that triggers it.** The defer handler called `onSeenExplainer()` before the render that would have shown the bubble, so `seen` was already true and the quiet variant rendered — the one-time explainer never appeared at all. The variant is captured in local state at click time. Related scoping correction: origin/package skips NAVIGATE, so an explainer on those steps unmounts in the same tick it appears; it belongs to the destination step alone, and the navigating skips are announced by the page-level banner on the step they land on.
+
+**Content regression caught by an existing test.** Compacting the two description cards into the handoff's toggle removed the only place the shipping link was *named* before the user commits — the property the 2026-08-18 work fixed ("first-class means named, weighted and visible before the user can fail"). Restored via a third caption for the unanswered state, which is what a first-time creator actually reads.
+
+**Departures from the handoff, both deliberate.** (1) Guestimator defaults (10x7x4 in, 2lb 3oz) render as **placeholders, not values** — prefilling dimensions the user never described is the wrong-party-autofill class, and a carrier reweigh corrects it at the customer's expense. (2) "I'm the sender" is a separate chip, not a third option inside a two-option question: it is an identity claim driving prefill, not an answer about who supplies the address.
+
+**Measured.** Unit 728 passing; e2e 97 passed / 5 skipped / 0 failed (was 91 — six new). tsc clean, eslint at baseline (5 pre-existing, none added).
+
+**Pattern across PR 1 and PR 2 — five self-review bugs, four found by tests asserting intent.** Every one lived in a dimension the forward-walking suite does not exercise: a backward edit (stale rates), a draft from a previous deploy (legacy flex), the accessibility tree (inert), and render ordering (the explainer). A suite that only walks the happy path forward will keep missing this class regardless of how many tests it has.
+
 ### [2026-08-19] One step map + morph progress bar — PR 1 of the flow redesign
 
 **Category:** ship | Onboarding

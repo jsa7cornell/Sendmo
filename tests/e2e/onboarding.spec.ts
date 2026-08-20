@@ -308,9 +308,13 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
     // Phase 3, decision B: every question is skippable. Deferring the
     // destination answers the address half only — email still gates step 1.
     await page.goto("/onboarding");
-    await page.getByRole("button", { name: /The sender picks the destination/i }).click();
-    // Address form replaced by the deferred state, with an inline undo.
-    await expect(page.getByText(/I have the address — enter it now/i)).toBeVisible();
+    await page.getByRole("radio", { name: "Sender fills this in" }).click();
+    // Dim-in-place, not a panel swap: the fields stay mounted (so the layout
+    // never shifts) and become inert. The one-time explainer states the
+    // product change with an inline undo.
+    await expect(page.locator("#destination-name")).toBeVisible();
+    await expect(page.getByText(/This is a shipping link now/i)).toBeVisible();
+    await expect(page.getByRole("button", { name: /Undo — answer it yourself/i })).toBeVisible();
     // Continue without an email → blocked by validation.
     await page.getByRole("button", { name: /Continue to shipment details/i }).click();
     await expect(page.getByText(/Email is required/i)).toBeVisible();
@@ -329,7 +333,7 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
 
     // Skip the origin. The product change is announced NOW, on step 14 — not
     // at the end of the flow (John's point 3, 2026-08-18).
-    await page.getByRole("button", { name: /The sender will fill this in/i }).click();
+    await page.getByRole("radio", { name: "Sender fills this in" }).click();
     await expect(page.locator("#origin-name")).toHaveCount(0);
     // The first skip rewrites the segment to flexible (§2.2), and the next
     // question — the package — is still asked.
@@ -351,8 +355,12 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
     // Both answers are present, weighted the same, and named as products —
     // the regression this fixes was the link existing only as muted help-text
     // called "I don't have their address", below a form the user can't complete.
-    await expect(page.getByRole("button", { name: /I have their address/i })).toBeVisible();
-    await expect(page.getByRole("button", { name: /The sender will fill this in/i })).toBeVisible();
+    await expect(page.getByRole("radio", { name: "I have it" })).toBeVisible();
+    await expect(page.getByRole("radio", { name: "Sender fills this in" })).toBeVisible();
+    // Neither is pre-selected: prominence moved, the default did not (brief
+    // point 9 — the label path must not gain a click).
+    await expect(page.getByRole("radio", { name: "I have it" })).toHaveAttribute("aria-checked", "false");
+    await expect(page.getByRole("radio", { name: "Sender fills this in" })).toHaveAttribute("aria-checked", "false");
     await expect(page.getByText(/shipping link/i).first()).toBeVisible();
 
     // And the label path is NOT taxed for it: the origin form is open by
@@ -372,7 +380,7 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
     await page.getByRole("button", { name: /Continue to shipment details/i }).click();
     await expect(page.locator("#origin-name")).toBeVisible({ timeout: 5000 });
 
-    await page.getByRole("button", { name: /The sender will fill this in/i }).click();
+    await page.getByRole("radio", { name: "Sender fills this in" }).click();
     // Deferring the address advances to the PACKAGE question — it must not
     // skip it (that was the 2026-08-18 bug) — on the flexible segment, which
     // the first skip rewrites (§2.2).
@@ -381,7 +389,7 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
     // before the outgoing step unmounts, so clicking on the URL alone re-hits
     // the address step's button and silently re-runs the same defer.
     await expect(page.locator("#origin-name")).toHaveCount(0);
-    await page.getByRole("button", { name: /The sender will fill this in/i }).click();
+    await page.getByRole("radio", { name: "Sender fills this in" }).click();
     await expect(page).toHaveURL(/\/onboarding\/flexible\/shipping/);
 
     // The way back must be rendered for this user too.
@@ -397,13 +405,13 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
     // The user starts filling in the other party's address, then realises they
     // don't have it — the exact moment the link product becomes the answer.
     await page.locator("#origin-name").fill("Sarah Smith");
-    await page.getByRole("button", { name: /The sender will fill this in/i }).click();
+    await page.getByRole("radio", { name: "Sender fills this in" }).click();
 
     // The package question is still asked — deferring the address no longer
     // leaps past it. Defer that too and the flow becomes a shipping link.
     await expect(page).toHaveURL(/\/onboarding\/flexible\/package/);
     await expect(page.locator("#origin-name")).toHaveCount(0);
-    await page.getByRole("button", { name: /The sender will fill this in/i }).click();
+    await page.getByRole("radio", { name: "Sender fills this in" }).click();
 
     // Lands on the shared shipping step in flex mode. The guard must admit
     // step 20 — deferring marked 10 and 14 complete — or the user gets

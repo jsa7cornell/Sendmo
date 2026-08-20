@@ -39,6 +39,9 @@ interface RecipientFlowContextValue {
   goToStep: (step: number) => void;
   selectPath: (path: RecipientPath) => void;
   deferToSender: (field: "destination" | "origin" | "package") => void;
+  /** Clears one deferral IN PLACE — the toggle's "I have it", no navigation. */
+  keepIt: (field: "destination" | "origin" | "package") => void;
+  markSkipExplainerSeen: () => void;
   undoShippingLinkSwitch: () => void;
   markStepComplete: (step: number) => void;
   getErrors: (step: number) => string[];
@@ -347,6 +350,31 @@ export function RecipientFlowProvider({ children }: { children: React.ReactNode 
     navigate(stepUrl("flexible", step === 10 ? 14 : 20));
   }, [navigate]);
 
+  // The toggle's "I have it" — the inverse of deferToSender for ONE field,
+  // and deliberately NOT a navigation. `undoShippingLinkSwitch` reverses the
+  // whole decision and moves the user; this just reopens the field group the
+  // user is already looking at, so the layout stays put (the dim-in-place
+  // requirement is about not moving things under the user's cursor).
+  //
+  // The step's completion is withdrawn with the flag: the deferral is what
+  // marked it complete, so keeping the completion would let the guard admit a
+  // step whose question is now unanswered.
+  const keepIt = useCallback((field: "destination" | "origin" | "package") => {
+    setData((prev) => {
+      if (field === "destination") return { ...prev, deferredDestination: false };
+      const step = field === "origin" ? 10 : 14;
+      return {
+        ...prev,
+        ...(field === "origin" ? { deferredOrigin: false } : { deferredPackage: false }),
+        completedSteps: prev.completedSteps.filter((s) => s !== step),
+      };
+    });
+  }, []);
+
+  const markSkipExplainerSeen = useCallback(() => {
+    setData((prev) => (prev.seenSkipExplainer ? prev : { ...prev, seenSkipExplainer: true }));
+  }, []);
+
   const undoShippingLinkSwitch = useCallback(() => {
     // Undo reverses the deferral decision itself, not just the location:
     // flags cleared AND the steps deferral completed un-completed. Leaving
@@ -409,6 +437,8 @@ export function RecipientFlowProvider({ children }: { children: React.ReactNode 
         goToStep,
         selectPath,
         deferToSender,
+        keepIt,
+        markSkipExplainerSeen,
         undoShippingLinkSwitch,
         markStepComplete,
         getErrors,

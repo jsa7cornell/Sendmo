@@ -4,6 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import PriceSummaryCard from "./PriceSummaryCard";
 import MagicGuestimator from "./MagicGuestimator";
+import SkipToggle from "./SkipToggle";
+import DimmedWhenDeferred from "./DimmedWhenDeferred";
 import { cn } from "@/lib/utils";
 import { getTotalWeightOz } from "@/hooks/useRecipientFlow";
 import type { RecipientFlowState } from "@/hooks/useRecipientFlow";
@@ -42,12 +44,14 @@ interface Props {
   onUpdate: (partial: Partial<RecipientFlowState>) => void;
   onContinue: () => void;
   onBack: () => void;
-  /** "The sender will fill this in" — defers the parcel to the sender. */
+  /** "Sender fills this in" — defers the parcel to the sender. */
   onNoAddress: () => void;
+  onKeepIt: () => void;
+  onSeenExplainer: () => void;
 }
 
 export default function RecipientStepPackage({
-  state, sender, errors, tried, onUpdate, onContinue, onBack, onNoAddress,
+  state, sender, errors, tried, onUpdate, onContinue, onBack, onNoAddress, onKeepIt, onSeenExplainer,
 }: Props) {
   const isSelfSender = sender === "self";
   const showErrors = tried && errors.length > 0;
@@ -81,6 +85,33 @@ export default function RecipientStepPackage({
         estimatedDays={null}
       />
 
+      {/* The question's answer control sits ABOVE the fields (brief point 1). */}
+      {!isSelfSender && (
+        <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
+          <SkipToggle
+            legend="What's being shipped?"
+            choice={
+              state.deferredPackage
+                ? "deferred"
+                : (state.dimensions.length || state.weight.lbs || state.itemDescription ? "kept" : null)
+            }
+            onKeepIt={onKeepIt}
+            onDefer={() => {
+              // Marks the explainer seen for the destination step: this skip
+              // navigates, and the step it lands on carries the page-level
+              // banner, so the user has already been told.
+              onSeenExplainer();
+              onNoAddress();
+            }}
+            unansweredCaption="Describe the package for an exact price now — or send a shipping link and let them describe it."
+            keptCaption="Describe the package — we'll size it and price it exactly."
+            deferredCaption="They describe the package when they use your link — you set a spending cap instead."
+          />
+        </div>
+      )}
+
+      <DimmedWhenDeferred deferred={state.deferredPackage}>
+      <div className="space-y-5">
       {/* Magic Guestimator — primary input */}
       <MagicGuestimator onResult={handleGuestimation} />
 
@@ -195,24 +226,8 @@ export default function RecipientStepPackage({
         </div>
       </div>
 
-      {/* The same answer, for the parcel. Present on its own step so deferring
-          the address doesn't skip this question — that was the bug the
-          2026-08-18 split fixed. */}
-      {!isSelfSender && (
-        <button
-          type="button"
-          onClick={onNoAddress}
-          className="w-full flex items-start gap-3 rounded-xl border border-border bg-card p-3.5 text-left transition-all hover:border-muted-foreground/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-        >
-          <span className="w-4 h-4 rounded-full border-2 border-muted-foreground/40 shrink-0 mt-0.5" />
-          <span className="min-w-0">
-            <span className="block text-sm font-medium text-foreground">The sender will fill this in</span>
-            <span className="block text-xs text-muted-foreground mt-0.5">
-              They describe the package when they use your link — you'll set a spending cap instead
-            </span>
-          </span>
-        </button>
-      )}
+      </div>
+      </DimmedWhenDeferred>
 
       {/* Validation summary */}
       <AnimatePresence>

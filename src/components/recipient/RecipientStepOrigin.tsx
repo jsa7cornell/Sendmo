@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { AlertCircle, MapPin } from "lucide-react";
+import { AlertCircle, MapPin, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import SmartAddressInput from "@/components/ui/SmartAddressInput";
 import PriceSummaryCard from "./PriceSummaryCard";
-import { cn } from "@/lib/utils";
+import SkipToggle from "./SkipToggle";
+import DimmedWhenDeferred from "./DimmedWhenDeferred";
 import { useAuth } from "@/contexts/AuthContext";
 import type { RecipientFlowState } from "@/hooks/useRecipientFlow";
 import type { AddressInput, SenderKind } from "@/lib/types";
@@ -40,12 +41,15 @@ interface Props {
   onUpdate: (partial: Partial<RecipientFlowState>) => void;
   onContinue: () => void;
   onBack: () => void;
-  /** "The sender will fill this in" — defers the origin to the sender. */
+  /** "Sender fills this in" — defers the origin to the sender. */
   onNoAddress: () => void;
+  /** Clears the deferral without leaving the step ("I have it"). */
+  onKeepIt: () => void;
+  onSeenExplainer: () => void;
 }
 
 export default function RecipientStepOrigin({
-  state, sender, errors, tried, onUpdate, onContinue, onBack, onNoAddress,
+  state, sender, errors, tried, onUpdate, onContinue, onBack, onNoAddress, onKeepIt, onSeenExplainer,
 }: Props) {
   const { user } = useAuth();
   // 'self' → this address is the account holder's own; it was prefilled from
@@ -88,87 +92,46 @@ export default function RecipientStepOrigin({
             advertise the link path. First-class means named, weighted and
             visible before the user can fail — not unavoidable. */}
         {!isSelfSender && (
-          <fieldset className="mb-4">
-            <legend className="text-sm font-semibold text-foreground mb-3">
-              Where's it shipping from?
-            </legend>
-            <div className="space-y-2">
-              <button
-                type="button"
-                onClick={() => { /* already the current answer */ }}
-                className={cn(
-                  "w-full flex items-start gap-3 rounded-xl border p-3.5 text-left transition-all",
-                  "border-primary bg-primary/5",
-                )}
-              >
-                <span className={cn(
-                  "w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 mt-0.5",
-                  "border-primary",
-                )}>
-                  <span className="w-2 h-2 rounded-full bg-primary" />
-                </span>
-                <span className="min-w-0">
-                  <span className="block text-sm font-medium text-foreground">I have their address</span>
-                  <span className="block text-xs text-muted-foreground mt-0.5">You enter it and get an exact price now</span>
-                </span>
-              </button>
+          <>
+            <SkipToggle
+              legend="Where's it shipping from?"
+              choice={
+                state.deferredOrigin
+                  ? "deferred"
+                  : (state.originAddress.street || state.originAddress.name ? "kept" : null)
+              }
+              onKeepIt={onKeepIt}
+              onDefer={() => {
+                // Marks the explainer seen for the destination step: this skip
+                // navigates, and the step it lands on carries the page-level
+                // banner, so the user has already been told.
+                onSeenExplainer();
+                onNoAddress();
+              }}
+              unansweredCaption="Enter their name, address, and phone for an exact price now — or send a shipping link and let them fill it in."
+            keptCaption="Enter their name, address, and phone — you'll get an exact price now."
+              deferredCaption="They'll add the ship-from address when they use your link."
+            />
+          </>
+        )}
 
-              <button
-                type="button"
-                onClick={onNoAddress}
-                className={cn(
-                  "w-full flex items-start gap-3 rounded-xl border p-3.5 text-left transition-all",
-                  "border-border hover:border-muted-foreground/30",
-                )}
-              >
-                <span className={cn(
-                  "w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 mt-0.5",
-                  "border-muted-foreground/40",
-                )}>
-
-                </span>
-                <span className="min-w-0">
-                  <span className="block text-sm font-medium text-foreground">The sender will fill this in</span>
-                  <span className="block text-xs text-muted-foreground mt-0.5">
-                    We'll send them a shipping link — they add their address and print the label
-                  </span>
-                </span>
-              </button>
-
-              {/* The third answer, while `sender` is unresolved: the account
-                  holder is the sender (2026-08-18 — this claim replaces the
-                  deleted who's-sending step). Setting sender='self' is what
-                  matters: the provider's prefill effect re-runs on it and
-                  fills the origin from the saved address IF one exists and the
-                  field is untouched — otherwise the form simply stays open for
-                  typing (the copy promises nothing more). The fieldset hides on
-                  the next visit to this step, not mid-visit:
-                  originWasCompleteOnOpen is latched at mount. */}
-              {sender === null && user && (
-                <button
-                  type="button"
-                  onClick={() => onUpdate({ sender: "self" })}
-                  className={cn(
-                    "w-full flex items-start gap-3 rounded-xl border p-3.5 text-left transition-all",
-                    "border-border hover:border-muted-foreground/30",
-                  )}
-                >
-                  <span className={cn(
-                    "w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 mt-0.5",
-                    "border-muted-foreground/40",
-                  )}>
-
-                  </span>
-                  <span className="min-w-0">
-                    <span className="block text-sm font-medium text-foreground">I'm the sender — I'm mailing this out myself</span>
-                    <span className="block text-xs text-muted-foreground mt-0.5">
-                      It ships from your address — we'll fill in your saved one if you have it
-                    </span>
-                  </span>
-                </button>
-              )}
-            </div>
-          </fieldset>
+        {/* The account holder claiming the sender role. Not a third answer to
+            the toggle — it is a prefill affordance, and conflating the two put
+            an identity claim inside a question about who supplies data. */}
+        {!isSelfSender && sender === null && user && !state.deferredOrigin && (
+          <button
+            type="button"
+            onClick={() => onUpdate({ sender: "self" })}
+            className="w-full flex items-start gap-3 rounded-xl border border-border bg-card p-3.5 text-left transition-all hover:border-muted-foreground/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 mb-4"
+          >
+            <Send className="w-4 h-4 text-primary shrink-0 mt-0.5" aria-hidden="true" />
+            <span className="min-w-0">
+              <span className="block text-sm font-medium text-foreground">I'm the sender — I'm mailing this out myself</span>
+              <span className="block text-xs text-muted-foreground mt-0.5">
+                It ships from your address — we'll fill in your saved one if you have it
+              </span>
+            </span>
+          </button>
         )}
 
         <div className="flex items-center justify-between mb-3">
@@ -191,6 +154,7 @@ export default function RecipientStepOrigin({
           )}
         </div>
 
+        <DimmedWhenDeferred deferred={state.deferredOrigin}>
         {originConfirmable ? (
           /* Confirm row — the generic outbound case is faster than a form when
              we already know the account holder's address. Only rendered when
@@ -244,6 +208,7 @@ export default function RecipientStepOrigin({
             />
           </div>
         )}
+        </DimmedWhenDeferred>
       </div>
 
       {/* Validation summary */}

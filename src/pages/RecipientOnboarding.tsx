@@ -57,6 +57,8 @@ export default function RecipientOnboarding() {
     tryAdvance,
     getErrors,
     deferToSender,
+    keepIt,
+    markSkipExplainerSeen,
     undoShippingLinkSwitch,
   } = useRecipientFlowContext();
 
@@ -208,8 +210,9 @@ export default function RecipientOnboarding() {
                 // Deferring the destination is an identity claim like every
                 // other defer: someone else is the sender. It does NOT
                 // auto-advance — email verification below is not deferrable.
-                onDeferDestination={() => updateData({ deferredDestination: true, sender: data.sender ?? "other" })}
-                onUndoDeferDestination={() => updateData({ deferredDestination: false })}
+                onDeferDestination={() => { deferToSender("destination"); markSkipExplainerSeen(); }}
+                onUndoDeferDestination={() => keepIt("destination")}
+                seenSkipExplainer={data.seenSkipExplainer}
                 onContinue={() => tryAdvance(1)}
               />
             )}
@@ -225,6 +228,8 @@ export default function RecipientOnboarding() {
                 onContinue={() => tryAdvance(10)}
                 onBack={goBack}
                 onNoAddress={() => deferToSender("origin")}
+                onKeepIt={() => keepIt("origin")}
+                onSeenExplainer={markSkipExplainerSeen}
               />
             )}
 
@@ -240,6 +245,8 @@ export default function RecipientOnboarding() {
                 onContinue={() => tryAdvance(14)}
                 onBack={goBack}
                 onNoAddress={() => deferToSender("package")}
+                onKeepIt={() => keepIt("package")}
+                onSeenExplainer={markSkipExplainerSeen}
               />
             )}
 
