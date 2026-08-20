@@ -12,6 +12,55 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-20] e2e in CI: 140s -> 52s by undoing scaffolding and serving what actually ships
+
+**Category:** perf | test-infra
+**Cross-link:** [PR #91](https://github.com/jsa7cornell/Sendmo/pull/91) | PLAYBOOK Rule 21 (CI timing) | the 2026-08-18 parallelism-flake entry below
+
+**Browser-verified:**
+  n/a-category: infra
+  n/a-reason: Test-harness configuration; no product surface changed. The e2e suite is itself the verification — 96 passed with `--retries=0` across three local runs and three consecutive green CI runs.
+
+**Two levers, both stacking, neither exotic.**
+
+**1. `workers: 1` on CI was never a flake guard.** `git log -L` puts it in the original
+`chore: setup test framework and CI pipeline` commit — scaffolding, carried forward for
+months. It made CI the **only** place the suite ran serially, paying ~2x for a constraint
+nothing needed. The two parallelism-only flakes from 2026-08-18 had already been fixed at
+the source (the auto-advance timer reset — a real app bug — and `server.warmup` in
+`vite.config.ts`), and that entry records the suite green x4 at default parallelism.
+
+**2. CI now serves the production build, not the Vite dev server.** Ordered by what
+matters: it is what actually ships, so a build-only breakage fails in CI instead of on
+Vercel; and it removes Vite's on-demand transform from every navigation. Local keeps
+`npm run dev` for HMR. Uses `npx vite build`, **not** `npm run build` — that script is
+`tsc -b && vite build` and CI already runs `npx tsc -b` as its own step, so calling it
+here would typecheck twice and hand back a chunk of the savings.
+
+**Measured on CI, the e2e step alone:**
+
+| config | e2e step |
+|---|---|
+| dev server, 1 worker (before) | **140s** |
+| built bundle, 2 workers (Playwright default on 4 vCPU) | 69s |
+| built bundle, 4 workers (shipped) | **52s** |
+
+Total job: 3m52s -> 2m54s. Held at 52/53/53s across three consecutive green runs, so 52s
+is the stable figure rather than one lucky sample. Local numbers on 10 cores agreed on
+shape but not magnitude (137s -> 45s), which is the usual reason to measure on the runner
+rather than on the laptop.
+
+**The serial config was the flaky one.** Both local `workers=1` runs flaked on
+`progress-bar.spec.ts`; every parallel run, local and CI, was clean. Worth remembering
+next time serial execution is proposed as a stability measure — here it bought slowness
+and nothing else.
+
+**Left alone deliberately.** `retries: 2` on CI stays: it costs nothing on a green run and
+the suite is green. `timeout-minutes: 45` in `test.yml` stays — it is sized above the
+pre-cache historical maximum on purpose, and tightening it toward the new number would
+recreate the 2026-08-19 near-miss where a stale quote nearly cancelled a green 20m49s run.
+Anything above 4 workers is untested.
+
 ### [2026-08-19] `ci-wait.sh` commit mode — the Rule 21 hook was recommending a command that could not work
 
 **Category:** fix | CI

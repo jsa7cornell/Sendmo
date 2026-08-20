@@ -17,7 +17,30 @@ export default defineConfig({
     fullyParallel: true,
     forbidOnly: !!process.env.CI,
     retries: process.env.CI ? 2 : 0,
-    workers: process.env.CI ? 1 : undefined,
+    // No CI override. `workers: 1` here was scaffolding from the original
+    // "setup test framework and CI pipeline" commit, never an anti-flake
+    // decision — and it made CI the ONLY place the suite ran serially, so it
+    // paid ~2x for a constraint nothing needed. Playwright's default is
+    // cpus/2, which self-adjusts if runner sizes change; the PLAYBOOK's
+    // standing warning about sizing anything from a quoted number applies
+    // here too, so this deliberately hardcodes nothing.
+    //
+    // The two parallelism-only flakes found on 2026-08-18 are fixed at the
+    // source, not papered over: the auto-advance timer reset (a real app bug
+    // — inline callback in a useEffect dep list) and the cold Vite transform
+    // (vite.config.ts server.warmup). Measured 2026-08-19, locally on 10
+    // cores: 137s at 1 worker, 72s at 2, 60s at 4 — and both parallel runs
+    // were clean while the serial run flaked.
+    // Explicit 4 on CI's 4-vCPU runner, which beats Playwright's cpus/2
+    // default (= 2 there). Oversubscription was risky while the dev server was
+    // doing on-demand transform work; the preview server is a static file
+    // server using almost no CPU, so the browsers get the machine.
+    //
+    // Measured on CI, e2e step only: 140s serial -> 69s at 2 workers -> 52s at
+    // 4. Held at 52/53/53s across three consecutive green runs, so this is the
+    // stable figure and not one lucky sample. Anything above 4 is untested;
+    // re-measure before changing it rather than reasoning from this comment.
+    workers: process.env.CI ? 4 : undefined,
     reporter: 'html',
     timeout: 30_000,
     use: {
@@ -32,8 +55,25 @@ export default defineConfig({
         },
     ],
     webServer: {
-        command: 'npm run dev',
+        // CI serves the production build; local keeps the dev server for HMR.
+        //
+        // Two reasons, in this order. It is what actually ships, so a
+        // build-only breakage fails here instead of on Vercel. And it drops
+        // Vite's on-demand transform from every navigation: measured 137s ->
+        // 114s at one worker, a win that stacks with parallelism (60s -> 45s
+        // at four). The build costs ~5s.
+        //
+        // `vite build`, not `npm run build`: that script is `tsc -b && vite
+        // build`, and CI already runs `npx tsc -b` as its own step. Calling it
+        // here would typecheck the project twice and hand back a chunk of what
+        // this change just saved.
+        command: process.env.CI
+            ? 'npx vite build && npx vite preview --port 5173'
+            : 'npm run dev',
         url: 'http://localhost:5173',
         reuseExistingServer: !process.env.CI,
+        // Default is 60s. The build runs inside this window on CI's slower
+        // runner, so the ceiling covers build + server boot, not boot alone.
+        timeout: 120_000,
     },
 });
