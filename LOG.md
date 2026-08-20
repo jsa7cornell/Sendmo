@@ -12,6 +12,45 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-19] `ci-wait.sh` commit mode — the Rule 21 hook was recommending a command that could not work
+
+**Category:** fix | CI
+**Cross-link:** follows PR #88 | `scripts/claude-hooks/check-deploy-green.sh` | PLAYBOOK Rule 21
+
+**Browser-verified:**
+  n/a-category: infra
+  n/a-reason: Shell wrapper around `gh`; no rendered surface. Verified by running both modes against real commits and the three refusal branches against harnesses — see **Verified** below.
+
+**The defect I shipped in #88.** `ci-wait.sh` resolved a PR and exited 2 when there was
+none. But `check-deploy-green.sh` — which #88 pointed at the script — fires **only when
+the branch is `main`**, and `main` has no PR. So the Rule 21 hook was recommending a
+command that could only ever exit 2 in the one situation it fires. Caught by noticing I
+had reached for `gh run watch` by hand to verify the merge, rather than using the script
+I had just merged for exactly that job. Rule 21 is entirely about `main`; a CI-wait
+helper that cannot handle `main` is half a tool.
+
+**Commit mode.** With no PR, the script now waits on the current commit's checks. It
+reads the same two surfaces a push to `main` triggers — check-runs for GitHub Actions,
+commit status for Vercel — using the same query shape `check-deploy-green.sh` already
+uses, rather than inventing a second way to ask the same question.
+
+The refusals carry over unchanged from PR mode, because they are the point:
+
+- no checks after `QUEUE_GRACE` -> **exit 1**, "absence of a run is not a pass"
+- any RED -> **exit 1**
+- Vercel green but no `Lint, Unit, and E2E Tests` -> **exit 1**, "NO TESTS RAN" (the exact
+  2026-08-18 shape)
+- still pending at the deadline -> **exit 2**, indeterminate
+
+The job-name string couples to `.github/workflows/test.yml`. Renaming that job without
+updating it fails loudly rather than silently passing — the safe direction for a check
+whose purpose is refusing to call an unverified commit green.
+
+**Verified.** Commit mode on `main` @ db01978 (green) exits 0 and names both surfaces; PR
+mode on #88 still exits 0; and the empty-checks, RED, and Vercel-green-only branches each
+exit 1 against harnesses, since no commit in recent history is bare enough to test the
+first against live data.
+
 ### [2026-08-19] `scripts/ci-wait.sh` — a bounded CI wait; never hand-roll the poll loop
 
 **Category:** chore | CI
