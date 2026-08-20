@@ -110,11 +110,21 @@ async function mockOtp(page: Page) {
   );
 }
 
-// ─── Auth section — unauthenticated variants ────────────────
+// ─── Step 1 carries no identity ─────────────────────────────
+//
+// This block replaces two describes that asserted the OPPOSITE — a Google
+// button, an email field, an identity pill, and an OTP primed on email blur,
+// all on the destination step. All of it moved to the Contact step (11) on
+// 2026-08-19. These tests are the Rule 19 inverse: they fail if step 1 ever
+// grows an identity affordance back.
+//
+// The reason it matters beyond tidiness: step 1's OAuth return path used to
+// auto-advance the flow. A user who signed in mid-address found themselves a
+// step further along than they left. Step 1 is now structurally unable to do
+// that — it has no auth surface to return from.
 
-test.describe("Step 1 auth section — unauthenticated", () => {
+test.describe("Step 1 — identity lives at the Contact step, not here", () => {
   test.beforeEach(async ({ page }) => {
-    // No auth mocks — user is signed out
     await page.route(`${SUPABASE_URL}/auth/v1/**`, (route) =>
       route.fulfill({
         status: 200,
@@ -125,116 +135,44 @@ test.describe("Step 1 auth section — unauthenticated", () => {
     await mockOtp(page);
   });
 
-  test("full_label destination — Google button leads, email input secondary, no 'Your email' label", async ({ page }) => {
+  for (const path of ["full_label", "flexible"] as const) {
+    const slug = path === "full_label" ? "full-label" : "flexible";
+
+    test(`${path}: no Google button, no email field, and no OTP is spent`, async ({ page }) => {
+      let otpFired = false;
+      await page.route(`${SUPABASE_URL}/auth/v1/otp**`, (route) => {
+        otpFired = true;
+        return route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
+      });
+
+      await injectFlowState(page, { path, completedSteps: [0] });
+      await page.goto(`/onboarding/${slug}/destination`);
+
+      await expect(page.locator("#destination-name")).toBeVisible();
+      await expect(page.getByRole("button", { name: /Continue with Google/i })).toHaveCount(0);
+      await expect(page.getByPlaceholder("Email address")).toHaveCount(0);
+      await expect(page.getByText(/or use your email/i)).toHaveCount(0);
+
+      // Filling the address must not send a verification email. Priming an OTP
+      // from step 1 burned a send on an address the user might still be
+      // editing, and on a flow most users abandon before step 11.
+      await page.locator("#destination-name").fill("Jane Doe");
+      await page.locator("#destination-name").blur();
+      await page.waitForTimeout(300);
+      expect(otpFired).toBe(false);
+    });
+  }
+
+  test("a signed-in user is offered a sign-in prompt, not an identity pill", async ({ page }) => {
     await injectFlowState(page, { path: "full_label", completedSteps: [0] });
     await page.goto("/onboarding/full-label/destination");
 
-    // Google button is present and primary (before the email input in DOM order)
-    await expect(page.getByRole("button", { name: /Continue with Google/i })).toBeVisible();
-
-    // "or use your email" divider (not "or type your email" — previous copy)
-    await expect(page.getByText(/or use your email/i)).toBeVisible();
-
-    // Email input with new placeholder
-    await expect(page.getByPlaceholder("Email address")).toBeVisible();
-
-    // NO old-style "Your email" section heading
-    await expect(page.getByText(/^Your email$/i)).not.toBeVisible();
-
-    // No identity pill (not signed in)
-    await expect(page.getByText(/We'll send shipping updates to this address/i)).not.toBeVisible();
-  });
-
-  test("flexible destination — Google button ALSO present (was previously hidden for flex)", async ({ page }) => {
-    await injectFlowState(page, { path: "flexible", completedSteps: [0] });
-    await page.goto("/onboarding/flexible/destination");
-
-    // Google button must be visible for flex too — this is the fix
-    await expect(page.getByRole("button", { name: /Continue with Google/i })).toBeVisible();
-    await expect(page.getByText(/or use your email/i)).toBeVisible();
-    await expect(page.getByPlaceholder("Email address")).toBeVisible();
-  });
-
-  test("email blur primes OTP for full_label path", async ({ page }) => {
-    let otpFired = false;
-    await page.route(`${SUPABASE_URL}/auth/v1/otp**`, (route) => {
-      otpFired = true;
-      return route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
-    });
-
-    await injectFlowState(page, { path: "full_label", completedSteps: [0] });
-    await page.goto("/onboarding/full-label/destination");
-
-    const emailInput = page.getByPlaceholder("Email address");
-    await emailInput.fill("test@example.com");
-    await emailInput.blur();
-
-    await page.waitForTimeout(300);
-    expect(otpFired).toBe(true);
-  });
-
-  test("email blur primes OTP for flexible path (was previously skipped)", async ({ page }) => {
-    let otpFired = false;
-    await page.route(`${SUPABASE_URL}/auth/v1/otp**`, (route) => {
-      otpFired = true;
-      return route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
-    });
-
-    await injectFlowState(page, { path: "flexible", completedSteps: [0] });
-    await page.goto("/onboarding/flexible/destination");
-
-    const emailInput = page.getByPlaceholder("Email address");
-    await emailInput.fill("test@example.com");
-    await emailInput.blur();
-
-    await page.waitForTimeout(300);
-    expect(otpFired).toBe(true);
-  });
-});
-
-// ─── Auth section — returning signed-in user ────────────────
-
-test.describe("Step 1 auth section — returning signed-in user", () => {
-  test("full_label: identity pill shown, no Google button, no email input", async ({ page }) => {
-    const session = buildMockSession("john@example.com", "John Anderson");
-    await injectSession(page, session);
-    await mockAuth(page, session);
-    await injectFlowState(page, { path: "full_label", completedSteps: [0], email: "john@example.com" });
-
-    await page.goto("/onboarding/full-label/destination");
-
-    // Identity pill: avatar initial visible. exact:true so "J" matches only
-    // the single-letter avatar, not every element containing the letter j.
-    await expect(page.getByText("J", { exact: true })).toBeVisible();
-    // Name visible in the pill. A bare getByText("John Anderson") is a
-    // strict-mode violation — it also matches the header identity button.
-    await expect(page.locator("p").filter({ hasText: "John Anderson" })).toBeVisible();
-    // Email visible
-    await expect(page.getByText("john@example.com")).toBeVisible();
-    // Checkmark aria-label
-    await expect(page.getByLabel("Verified")).toBeVisible();
-    // Helper text from pill
-    await expect(page.getByText(/We'll send shipping updates to this address/i)).toBeVisible();
-
-    // Google button hidden when signed in
-    await expect(page.getByRole("button", { name: /Continue with Google/i })).not.toBeVisible();
-    // Email input hidden when signed in
-    await expect(page.getByPlaceholder("Email address")).not.toBeVisible();
-  });
-
-  test("flexible: identity pill shown, no Google button", async ({ page }) => {
-    const session = buildMockSession("john@example.com", "John Anderson");
-    await injectSession(page, session);
-    await mockAuth(page, session);
-    await injectFlowState(page, { path: "flexible", completedSteps: [0], email: "john@example.com" });
-
-    await page.goto("/onboarding/flexible/destination");
-
-    // Name in the pill — scoped to <p> so it doesn't collide with the header
-    // identity button that also reads "John Anderson".
-    await expect(page.locator("p").filter({ hasText: "John Anderson" })).toBeVisible();
-    await expect(page.getByRole("button", { name: /Continue with Google/i })).not.toBeVisible();
-    await expect(page.getByPlaceholder("Email address")).not.toBeVisible();
+    // Signed out: one quiet line, no pill, no avatar, no verified badge.
+    await expect(page.getByText(/Returning\?/i)).toBeVisible();
+    await expect(page.getByRole("link", { name: /Sign in/i })).toBeVisible();
+    await expect(
+      page.getByText(/We'll send shipping updates to this address/i),
+    ).toHaveCount(0);
   });
 });
 
@@ -272,6 +210,12 @@ test.describe("Flex verify — Supabase OTP (not bespoke email_verifications)", 
       destinationAddress: filledAddress,
     });
     await page.goto("/onboarding/flexible/verify");
+
+    // The step opens on the email field since 2026-08-19 — it owns capture as
+    // well as verification. The address is prefilled from the draft; sending
+    // the code is what reveals the digit grid.
+    await expect(page.getByLabel("Email")).toHaveValue("test@example.com");
+    await page.getByRole("button", { name: /Send code/i }).click();
 
     // "Confirm your email" heading — Supabase-style (not "Verify your email" from old bespoke)
     await expect(page.getByRole("heading", { name: /Confirm your email/i })).toBeVisible();
@@ -314,6 +258,12 @@ test.describe("Flex verify — Supabase OTP (not bespoke email_verifications)", 
     });
     await page.goto("/onboarding/flexible/verify");
 
+    // Reach the code phase, then clear the flag so the assertion is about
+    // Resend specifically and not about the initial send.
+    await page.getByRole("button", { name: /Send code/i }).click();
+    await expect(page.getByLabel("Digit 1")).toBeVisible();
+    supabaseOtpFired = false;
+
     await page.getByRole("button", { name: /Resend code/i }).click();
     await page.waitForTimeout(500);
 
@@ -339,11 +289,17 @@ test.describe("Flex verify — Supabase OTP (not bespoke email_verifications)", 
     // Arrive via email link confirmation
     await page.goto("/onboarding/flexible/verify?confirmed=1");
 
-    // "Email verified" success state
-    await expect(page.getByRole("heading", { name: /Email verified/i })).toBeVisible({ timeout: 5000 });
+    // The claim is that arriving with a session verifies the email and moves
+    // the user on. The "Email verified" panel is a TRANSIENT on the way — it
+    // holds for about a second and then auto-advances — so asserting it
+    // directly is a race the test loses whenever the step renders quickly.
+    // (It did, once the Contact step stopped rendering the OTP grid on this
+    // path.) The durable assertion is where the user ends up.
+    await expect(page).toHaveURL(/\/onboarding\/flexible\/payment/, { timeout: 6000 });
 
-    // Auto-advances to step 22 (authorize) within ~2s
-    await expect(page).toHaveURL(/\/onboarding\/flexible\/payment/, { timeout: 4000 });
+    // …and that it got there BY verifying, not by skipping the step: the
+    // payment screen only renders once step 11 is complete.
+    await expect(page.getByRole("heading", { name: /Add your card/i })).toBeVisible();
   });
 });
 

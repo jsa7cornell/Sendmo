@@ -6,9 +6,22 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/contexts/AuthContext";
-import type { RecipientFlowState } from "@/hooks/useRecipientFlow";
+import { isValidEmail, type RecipientFlowState } from "@/hooks/useRecipientFlow";
 
-// "Confirm your email" step for the Full Prepaid Label flow.
+// The Contact step — "Verify your email or account" — for BOTH paths.
+//
+// One component since 2026-08-19 (John: option B). It and
+// RecipientStepEmailVerifyFlex differed by a single word ("taking you to
+// payment" vs "payment authorization"), which is not enough to justify two
+// components that must then be kept in sync — and the word only ever
+// appeared on the path with zero shipments to date.
+//
+// It is also where identity LIVES now (design brief point 3). The Google
+// button and email field moved off the destination step; step 1 no longer
+// collects or requires an email. Consequence, accepted by John 2026-08-19:
+// a flow abandoned before this step leaves NO contact address at all, where
+// previously step 1 captured one. Reversible by restoring the email field
+// and its step-1 validation — see getValidationErrors.
 //
 // Framing: this is email **verification** (the address is real and the user
 // owns it), not account creation. Supabase Auth does create an auth.users
@@ -22,11 +35,8 @@ import type { RecipientFlowState } from "@/hooks/useRecipientFlow";
 //   2. Type the 6-digit code from the email → verifyOtp({type:"email"}) →
 //      same auto-advance path.
 //
-// The Google CTA lives at step 1 (destination), NOT here — if the user
-// picked Google there, they never reach this screen because step-11's
-// validation passes via the auto-skip in RecipientFlowContext.
-//
-// Companion to RecipientStepEmailVerifyFlex (flex path, step 21).
+// A signed-in user never sees this screen: step-11 validation passes and
+// RecipientFlowContext auto-skips it.
 
 interface Props {
   state: RecipientFlowState;
@@ -49,6 +59,15 @@ export default function RecipientStepEmailVerifySupabase({
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [digits, setDigits] = useState(["", "", "", "", "", ""]);
+  // Two phases. "collect" asks for the address; "code" asks for the digits.
+  // Before 2026-08-19 this step only ever had the second phase, because step 1
+  // collected the email AND primed the OTP on blur. Moving identity here
+  // removed both, so the step now has to own the whole exchange — otherwise it
+  // renders a 6-digit grid for a code that was never sent, to an address it
+  // never asked for.
+  const [typedEmail, setTypedEmail] = useState(state.email || "");
+  const [sending, setSending] = useState(false);
+  const [codeSent, setCodeSent] = useState(false);
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
   const oauthLockApplied = useRef(false);
 
@@ -107,11 +126,13 @@ export default function RecipientStepEmailVerifySupabase({
     }
   }, [state.email_verified]);
 
-  // Focus the first digit input on mount
+  // Focus the first digit input when the grid appears. Keyed on codeSent, not
+  // mount: the grid is no longer the step's first render, so a mount-only
+  // effect would fire while the email field is on screen and focus nothing.
   useEffect(() => {
-    if (state.email_verified) return;
+    if (state.email_verified || !codeSent) return;
     setTimeout(() => inputRefs.current[0]?.focus(), 100);
-  }, [state.email_verified]);
+  }, [state.email_verified, codeSent]);
 
   const handleDigitChange = useCallback((index: number, value: string) => {
     if (!/^\d*$/.test(value)) return;
@@ -165,6 +186,20 @@ export default function RecipientStepEmailVerifySupabase({
     onUpdate({ verification_email: email, email_verified: true });
   }
 
+  function sendOtp(to: string) {
+    // The slug MUST follow state.path. This component serves both paths since
+    // the flex twin was deleted; hardcoding `full-label` sent a link creator
+    // back to the full-label URL, and RecipientFlowContext syncs data.path
+    // from the URL slug unconditionally — so tapping the email link rewrote a
+    // flexible draft into a full_label one with the defer flags still set.
+    const slug = state.path === "flexible" ? "flexible" : "full-label";
+    const redirectTo = `${window.location.origin}/onboarding/${slug}/verify?confirmed=1`;
+    return supabase.auth.signInWithOtp({
+      email: to,
+      options: { emailRedirectTo: redirectTo },
+    });
+  }
+
   async function handleResend() {
     if (!email) {
       setError("Missing email — go back and re-enter it");
@@ -173,11 +208,7 @@ export default function RecipientStepEmailVerifySupabase({
     setError(null);
     setInfo(null);
     setResending(true);
-    const redirectTo = `${window.location.origin}/onboarding/full-label/verify?confirmed=1`;
-    const { error: sendErr } = await supabase.auth.signInWithOtp({
-      email,
-      options: { emailRedirectTo: redirectTo },
-    });
+    const { error: sendErr } = await sendOtp(email);
     setResending(false);
     if (sendErr) {
       setError(sendErr.message || "Could not send a new email");
@@ -186,8 +217,35 @@ export default function RecipientStepEmailVerifySupabase({
     setInfo(`We re-sent the link + code to ${email}`);
   }
 
+  // Send the first code. Shares sendOtp with Resend so there is one definition
+  // of the redirect URL and one error surface.
+  async function handleSendCode() {
+    const candidate = typedEmail.trim();
+    if (!isValidEmail(candidate)) {
+      setError("Enter a valid email address");
+      return;
+    }
+    setError(null);
+    setInfo(null);
+    setSending(true);
+    const { error: sendErr } = await sendOtp(candidate);
+    setSending(false);
+    if (sendErr) {
+      setError(sendErr.message || "Could not send the code");
+      return;
+    }
+    onUpdate({ email: candidate, verification_email: candidate });
+    setCodeSent(true);
+  }
+
+  // Returns to the collect phase rather than calling onBack(). onBack() was
+  // correct when step 1 owned the email field; it now lands the user on a step
+  // that has no email input, with no way to change the address.
   function handleEditEmail() {
-    onBack();
+    setCodeSent(false);
+    setDigits(["", "", "", "", "", ""]);
+    setError(null);
+    setInfo(null);
   }
 
   if (state.email_verified) {
@@ -212,6 +270,72 @@ export default function RecipientStepEmailVerifySupabase({
     );
   }
 
+  // Phase 1 — collect. Shown until a code has actually been sent. `email`
+  // being non-empty is NOT sufficient: a hydrated draft can carry an address
+  // from a previous visit with no live code behind it, and rendering the digit
+  // grid then would ask for a code that does not exist.
+  if (!codeSent) {
+    return (
+      <div className="space-y-6">
+        <div className="text-center">
+          <div className="flex items-center justify-center gap-2 mb-2">
+            <Mail className="w-5 h-5 text-primary" />
+            <h1 className="text-2xl font-bold text-foreground">Where should we reach you?</h1>
+          </div>
+          <p className="text-muted-foreground text-sm">
+            We'll email your label and tracking here, and send a code to confirm it's yours.
+          </p>
+        </div>
+
+        <div className="bg-card rounded-2xl border border-border shadow-sm p-5 space-y-3">
+          <label htmlFor="recipient-email" className="text-sm font-medium text-foreground">
+            Email
+          </label>
+          <Input
+            id="recipient-email"
+            type="email"
+            autoComplete="email"
+            inputMode="email"
+            placeholder="Email address"
+            value={typedEmail}
+            onChange={(e) => setTypedEmail(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleSendCode();
+            }}
+            className="rounded-xl"
+          />
+          <Button
+            onClick={handleSendCode}
+            disabled={sending || !typedEmail.trim()}
+            className="w-full rounded-xl shadow-sm"
+          >
+            {sending ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                Sending…
+              </>
+            ) : (
+              "Send code"
+            )}
+          </Button>
+        </div>
+
+        {error && (
+          <p className="text-sm text-destructive text-center">{error}</p>
+        )}
+
+        <button
+          type="button"
+          onClick={onBack}
+          className="text-sm text-muted-foreground hover:underline block mx-auto"
+        >
+          Back
+        </button>
+      </div>
+    );
+  }
+
+  // Phase 2 — the code.
   return (
     <div className="space-y-6">
       <div className="text-center">

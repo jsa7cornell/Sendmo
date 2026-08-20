@@ -199,6 +199,44 @@ The number was **removed** from the hook rather than updated — duplicating a m
 figure in two places is what let it drift. PLAYBOOK Rule 21 and the hook now both point
 at `scripts/ci-wait.sh`.
 
+### [2026-08-19] Identity moves to the Contact step + one payment summary — PR 2 remainder
+
+**Category:** ship | Onboarding
+**Cross-link:** [proposals/2026-08-19_shipping-flow-redesign_reviewed-2026-08-19.md](proposals/2026-08-19_shipping-flow-redesign_reviewed-2026-08-19.md) (brief points 2/3/5) | follows PR 2 (#87) | John's five answers to the design mockup, 2026-08-19
+
+**Browser-verified:**
+  spec: `tests/e2e/auth-section-and-flex-otp.spec.ts` (rewritten: step 1 has no Google button, no email field, and spends no OTP), `tests/e2e/onboarding.spec.ts` (the full walk now types the email at step 11)
+  variants-covered: [full_label / flexible × signed-out / signed-in; Contact step collect / code / send-failed / verified; summary on label path / link path / partially deferred]
+
+**The five items John decided from a side-by-side mockup.** (1) Guestimator: no green result panel, trim the copy. (2) One Contact component for both paths. (3) Payment summary on both paths. (4) Identity off step 1. (5) Prefill only into an empty field.
+
+**What shipped.** `RecipientStepEmailVerifyFlex.tsx` deleted (it differed from the Supabase twin by one word). ~103 lines of identity UI removed from step 1 — Google button, email field, identity pill, `maybePrimeOtp`, `handleGoogle`, and the OAuth auto-advance effect — leaving one quiet "Returning? Sign in to use your saved address" line. Email validation moved from step 1 to step 11. New `RecipientStepPaymentSummary.tsx` renders on both paths; `senderTodo.ts` holds the sentence naming what the other person still owes.
+
+**The removal broke the step it moved TO, and only e2e said so.** Step 11 had never owned email capture — step 1 collected the address and primed the OTP on blur, so the Contact step opened straight onto a 6-digit grid. Deleting step 1's field left that grid asking for a code that was never sent, for an address never collected. tsc, eslint and 743 unit tests were all green on it: every unit test rendered the step with `state.email` already populated, which is precisely the condition that no longer occurs. The step now has two phases, and `codeSent` — not a non-empty `state.email` — gates the grid, because a hydrated draft carries an address with no live code behind it. `handleEditEmail` also had to stop calling `onBack()`: that used to reach the email field and now reaches a step that has none.
+
+**Copy corrections from John, carried into a tested module.** "The person printing the label will…" not "They'll…" — "they" has no antecedent for a creator who skipped the destination and has never named anyone. And "We'll charge your card once they ship." replaces "You're only charged when they ship — up to $100, never more," which was **false**: `links/index.ts` sets neither `expires_at` nor `max_shipments` on a flexible link, so the cap bounds each use, not the link's lifetime — a link used three times bills three times. The cap now appears only in the Total row as "Up to $N per shipment", where the figure is scoped correctly. `senderTodo.test.ts` asserts the note never regains a lifetime-cap claim.
+
+**The summary is not on the link path only.** The handoff specced it there. The label path — 100% of revenue to date — had a bespoke card that had drifted from the link path's (different rows, different order) and stated nothing about what the charge covered. One component now serves both, passed into `FlexPaymentStep` through a new `summary` slot; `/links/new` passes none and keeps its original card, having no `RecipientFlowState` to derive one from. Self-review caught two rows dropped in the swap — parcel dimensions and the insurance line — the second of which is a real +$2.50 on the total, so without it the Total was unexplainable by the rows above it. On a payment screen that is the one thing a summary must not do.
+
+**The charge note is deliberately absent on the label path.** "We'll charge your card once they ship" is true of a link and false of a prepaid label, which is charged on that very screen for the exact amount shown. Rendering it on both would be the more consistent layout and the wrong sentence.
+
+**Gotcha — a passing negative test can be vacuous.** `recipientFlowPrefill.test.tsx` pins item 5 ("only fill it in if nothing's been filled in yet"). Its don't-overwrite case passed on the first run while its does-fill sibling failed — because `AuthContext` establishes the session only through `onAuthStateChange` and never calls `getSession`, so a mock resolving `getSession` left `user` null and the prefill effect never ran at all. The negative assertion was true for the wrong reason. Both halves only became meaningful once the mock fired the auth callback.
+
+**Two e2e races found and fixed, one of them pre-existing on `main`.**
+
+- `progress-bar.spec.ts` was failing ~5 runs in 9 — at base too, so it shipped with PR 2 (#87). `reachOriginStep` waited only on the URL, and `navigate()` calls `history.pushState` synchronously: for a frame the URL reads `/origin` while the **destination** step is still mounted. That step has its own "Sender fills this in" radio wired to `deferToSender("destination")`, which sets a flag and does **not** navigate — so the click hit the outgoing step's control and the flow sat still. The spec's own comment states the stale-DOM rule; it just applied it after the click instead of before. Now it waits for the bar's `Origin` segment to read `aria-current="step"`, which reflects committed state. 12/12 after.
+- `auth-section-and-flex-otp.spec.ts:273` asserted the transient "Email verified" panel, which holds ~1s before auto-advancing. Once the Contact step stopped rendering the OTP grid on the session-arrival path, that window closed faster than the assertion — 4/6 on this branch, 6/6 at base, so this one **was** mine. The assertion now names where the user ends up (`/flexible/payment`, "Add your card") rather than a frame on the way. Asserting a transient is a race by construction.
+
+**Code review after the fact found a path-corruption bug the whole suite missed.** Consolidating the two Contact-step components onto the full-label twin carried its hardcoded `emailRedirectTo` — `/onboarding/full-label/verify?confirmed=1` — for both paths. The deleted flex twin used `/onboarding/flexible/verify`. `RecipientFlowContext` syncs `data.path` **from the URL slug** unconditionally, so a link creator who tapped the link in their email had their draft rewritten from `flexible` to `full_label` with `deferredOrigin`/`deferredPackage` still set: a shipping link silently became a prepaid-label draft for a package nobody had described.
+
+Nothing caught it. Twelve unit tests on that component all mock `signInWithOtp` and none asserted the URL it was called with; e2e never taps a real email link. **A consolidation inherits the survivor's hardcoded values — audit every literal in the file you keep for assumptions that were true only for its own path.** Now pinned by a per-path `it.each`, verified to fail on the reverted fix.
+
+Two more from the same review: the `summary` slot suppressed the block containing `onEditDestination`'s only render site, so the link path lost its Edit-destination control at payment time; and `totalCents` was optional with a `?? 0` fallback, so an omitted total would render a confident "$0.00" directly above the field that charges the real amount — now "—".
+
+**Measured.** Unit 745 passing (69 files; +17 across 3 new files). tsc clean. E2e 186 passed / 10 skipped / 0 failed over two full repeats. The first run after the identity removal was 28 failed / 69 passed — all traceable to specs filling `#recipient-email` on a step that no longer has it.
+
+**Local e2e wall-clock is not CI's.** One full local run took 34.9 minutes and reported 10 failures; re-running the same 10 files reduced it to 1, and that one then passed alone. Nine were bare 30s timeouts with no assertion, on files the diff never touched (`home.spec.ts`, `not-found.spec.ts`) — machine saturation, not regressions. The same suite ran in 38 seconds once the machine was idle. Re-run before believing local failures; equally, do not read a slow green run as proof of anything.
+
 ### [2026-08-19] Skip control + dim-in-place — PR 2 of the flow redesign
 
 **Category:** ship | Onboarding

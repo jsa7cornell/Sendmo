@@ -313,9 +313,12 @@ export function RecipientFlowProvider({ children }: { children: React.ReactNode 
   // says so immediately (§2.2).
   //
   // "destination" is the exception on two counts, both deliberate: the flag
-  // is set but step 1 is NOT marked complete (its email half is never
-  // deferrable — the creator still needs an account), and there is no
-  // navigation (tryAdvance(1) still validates the email and advances). The
+  // is set but step 1 is NOT marked complete, and there is no navigation —
+  // the user still presses Continue, which runs tryAdvance(1) and marks it
+  // there. (Until 2026-08-19 the stated reason was step 1's email half, which
+  // was not deferrable; the email has since moved to step 11 and step 1 asks
+  // only about the address. The behaviour is unchanged: deferring answers the
+  // question, Continue is what advances.) The
   // flushSync below exists because the guard reads completedSteps in the same
   // tick as the navigate — the 2026-05-19 race (PLAYBOOK Rule 20); it must
   // survive any refactor of this function.

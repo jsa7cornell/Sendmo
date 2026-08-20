@@ -98,19 +98,23 @@ describe("RecipientStepAddress — OAuth auto-advance", () => {
     try { window.sessionStorage.removeItem("sendmo:oauth_pending"); } catch { /* noop */ }
   });
 
-  it("auto-advances after OAuth return (flag set) when validation passes", async () => {
-    // The component wrote this flag on its way OUT to Google.
+  it("NEVER auto-advances, even on an OAuth return with the flag set", async () => {
+    // Google moved to the Contact step (2026-08-19), so nothing here starts an
+    // OAuth round trip and the flag this used to consume is never written by
+    // this step. The auto-advance was removed rather than left unreachable —
+    // which makes the guarantee stronger than the flag ever provided: this
+    // step cannot auto-submit at all. The regression it guarded against
+    // (LOG 2026-08-18: every signed-in visitor's form auto-submitting) is
+    // therefore structurally impossible now, not merely gated.
     window.sessionStorage.setItem("sendmo:oauth_pending", "1");
     const onContinue = vi.fn();
     const { rerender, makeUi } = renderStep([], onContinue);
 
-    // Simulate the OAuth return: user transitions null → present.
     mockUser = { email: "pat@example.com", user_metadata: {} };
     rerender(makeUi());
 
-    // "Continuing…" appears immediately; onContinue fires after the 2s timer.
-    expect(screen.getByText(/Continuing…/i)).toBeInTheDocument();
-    await waitFor(() => expect(onContinue).toHaveBeenCalledTimes(1), { timeout: 4000 });
+    await new Promise((r) => setTimeout(r, 2500));
+    expect(onContinue).not.toHaveBeenCalled();
   });
 
   it("does NOT auto-advance without the flag, even on a null→present transition", async () => {

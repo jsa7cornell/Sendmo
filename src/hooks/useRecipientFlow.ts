@@ -89,6 +89,19 @@ export interface RecipientFlowState {
 
 // ─── Validation ─────────────────────────────────────────────
 
+/**
+ * Deliberately permissive: this only has to stop obvious typos before we spend
+ * an OTP send on the address. The authoritative check is whether the code that
+ * lands in the inbox comes back.
+ *
+ * Exported so the Contact step's "Send code" button and this step's validator
+ * cannot disagree about what counts as an address — they did briefly, when the
+ * button had its own inline copy of the regex.
+ */
+export function isValidEmail(value: string): boolean {
+  return /^.+@.+\..+$/.test(value.trim());
+}
+
 export function getValidationErrors(state: RecipientFlowState, step: number): string[] {
   const errors: string[] = [];
 
@@ -101,8 +114,12 @@ export function getValidationErrors(state: RecipientFlowState, step: number): st
       else if (!state.destinationAddress.street) errors.push("Destination address is missing a street — please re-select it from the dropdown");
       if (!isUsablePhone(state.destinationAddress.phone)) errors.push("Add a phone number — the shipping carriers require it");
     }
-    if (!state.email.trim()) errors.push("Email is required");
-    else if (!/^.+@.+\..+$/.test(state.email.trim())) errors.push("Enter a valid email address");
+    // Email is NOT collected here since 2026-08-19: identity moved to its own
+    // step (design brief point 3), so the Contact step (11) both collects and
+    // verifies it. Accepted consequence, John's call: a flow abandoned before
+    // step 11 leaves no contact address, where step 1 used to capture one.
+    // Restoring capture here means re-adding the field in RecipientStepAddress
+    // AND the two rules that used to live on this line.
   }
 
   // Step 20 is the shared Shipping step (one map, 2026-08-19). Two modes:
@@ -120,7 +137,11 @@ export function getValidationErrors(state: RecipientFlowState, step: number): st
 
   // The Contact step (slug `verify`) — one step for both paths since the map
   // unified; the old flex step 21 migrated onto 11 (recipientFlowStorage).
+  // Since 2026-08-19 it owns email CAPTURE as well as verification, so the
+  // format rule that used to gate step 1 lives here.
   if (step === 11) {
+    if (!state.email.trim()) errors.push("Email is required");
+    else if (!isValidEmail(state.email)) errors.push("Enter a valid email address");
     if (!state.email_verified) errors.push("Verify your email to continue");
   }
 

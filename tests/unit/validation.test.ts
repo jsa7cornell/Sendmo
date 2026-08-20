@@ -53,15 +53,25 @@ describe("Step 1 validation", () => {
     expect(errors).toContain("Destination address is required");
   });
 
-  it("errors when email is empty", () => {
+  it("does NOT ask for an email — capture moved to the Contact step (2026-08-19)", () => {
     const errors = getValidationErrors(makeState({ destinationAddress: verifiedAddr() }), 1);
-    expect(errors).toContain("Email is required");
+    expect(errors).not.toContain("Email is required");
+    expect(errors).toEqual([]);
   });
 
-  it("errors when email is invalid", () => {
+  it("the Contact step now owns email capture as well as verification", () => {
+    const empty = getValidationErrors(makeState({}), 11);
+    expect(empty).toContain("Email is required");
+    const bad = getValidationErrors(makeState({ email: "notanemail" }), 11);
+    expect(bad).toContain("Enter a valid email address");
+    const good = getValidationErrors(makeState({ email: "pat@example.com", email_verified: true }), 11);
+    expect(good).toEqual([]);
+  });
+
+  it("rejects an invalid email at the Contact step", () => {
     const errors = getValidationErrors(
       makeState({ destinationAddress: verifiedAddr(), email: "notanemail" }),
-      1,
+      11,
     );
     expect(errors).toContain("Enter a valid email address");
   });
@@ -215,10 +225,12 @@ describe("step 1 — deferred destination (Phase 3)", () => {
     expect(errors).toEqual([]);
   });
 
-  it("still rejects a missing email when the destination is deferred", () => {
+  it("a deferred destination clears step 1 entirely — the email gate is at step 11 now", () => {
     const errors = getValidationErrors(makeState({ deferredDestination: true }), 1);
-    expect(errors).toContain("Email is required");
-    expect(errors).not.toContain("Destination address is required");
+    expect(errors).toEqual([]);
+    // The gate still exists; it moved. A flow cannot reach payment without one.
+    expect(getValidationErrors(makeState({ deferredDestination: true }), 11))
+      .toContain("Email is required");
   });
 
   it("unchanged when not deferred: empty address still fails", () => {

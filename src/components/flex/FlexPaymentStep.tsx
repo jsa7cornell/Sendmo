@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { motion } from "framer-motion";
 import { Elements, PaymentElement, useStripe, useElements } from "@stripe/react-stripe-js";
 import { CreditCard, ArrowLeft, Loader2, Shield, Info, CheckCircle2, MapPin } from "lucide-react";
@@ -88,6 +88,13 @@ interface Props {
   // Onboarding shows this; the dashboard +New Link flow does not (it shows a
   // smaller "See typical costs" disclosure instead).
   showCostEstimate?: boolean;
+  /**
+   * Replaces the built-in "Delivering to" card. The onboarding flow passes
+   * the shared payment summary, which is a superset of it (To/From/Package/
+   * Carrier/Total plus what the sender still owes); /links/new has no
+   * RecipientFlowState and passes nothing, keeping the old card.
+   */
+  summary?: ReactNode;
   onContinue: (linkId: string, shortCode: string) => void;
   onBack: () => void;
   // Onboarding-only: jump back to the destination (step 1) or shipping
@@ -102,6 +109,7 @@ export default function FlexPaymentStep({
   linkId: initialLinkId,
   onLinkCreated,
   showCostEstimate = false,
+  summary,
   onContinue,
   onBack,
   onEditDestination,
@@ -349,7 +357,25 @@ export default function FlexPaymentStep({
         </p>
       </div>
 
-      {showCostEstimate && (
+      {summary && (
+        <div>
+          {summary}
+          {/* The destination card this replaces carried the only Edit control
+              on the screen. Losing it left a creator who spots a wrong city at
+              payment time with no way back to step 1. */}
+          {onEditDestination && (
+            <button
+              type="button"
+              onClick={onEditDestination}
+              className="text-xs text-primary hover:underline mt-2 block ml-auto"
+            >
+              Edit destination
+            </button>
+          )}
+        </div>
+      )}
+
+      {!summary && showCostEstimate && (
         /* Destination summary — lets the recipient confirm and edit where
            their shipments will be delivered before saving a card. */
         <div className="bg-card rounded-2xl border border-border shadow-sm p-5">

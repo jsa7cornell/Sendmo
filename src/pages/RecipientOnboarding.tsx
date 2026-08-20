@@ -20,7 +20,6 @@ import RecipientStepPackage from "@/components/recipient/RecipientStepPackage";
 import RecipientStepShipping from "@/components/recipient/RecipientStepShipping";
 import RecipientStepPayment from "@/components/recipient/RecipientStepPayment";
 import RecipientStepFlexPreferences from "@/components/recipient/RecipientStepFlexPreferences";
-import RecipientStepEmailVerifyFlex from "@/components/recipient/RecipientStepEmailVerifyFlex";
 import RecipientStepEmailVerifySupabase from "@/components/recipient/RecipientStepEmailVerifySupabase";
 import RecipientStepFlexPayment from "@/components/recipient/RecipientStepFlexPayment";
 import RecipientStepLinkReady from "@/components/recipient/RecipientStepLinkReady";
@@ -274,25 +273,14 @@ export default function RecipientOnboarding() {
                 liveMode={liveMode}
               />
             ))}
-
-            {/* Step 11 (verify — the Contact step): Supabase OTP, one step for
-                both paths since the maps unified; the components differ only
-                in copy and stay per-path until PR 2 consolidates them. */}
-            {currentStep === 11 && (data.path === "flexible" ? (
-              <RecipientStepEmailVerifyFlex
-                state={state}
-                onUpdate={updateData}
-                onContinue={() => tryAdvance(11)}
-                onBack={goBack}
-              />
-            ) : (
+            {currentStep === 11 && (
               <RecipientStepEmailVerifySupabase
                 state={state}
                 onUpdate={updateData}
                 onContinue={() => tryAdvance(11)}
                 onBack={goBack}
               />
-            ))}
+            )}
 
             {/* Steps 12/13 (payment / done), label path: RecipientStepPayment
                 internally owns both — charge, then label-ready. */}

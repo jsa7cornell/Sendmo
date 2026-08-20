@@ -208,13 +208,18 @@ The flow uses numeric step IDs for branching:
 
 ```
 src/components/recipient/
-  RecipientStepAddress.tsx                  # Step 1: Address + email + Google CTA (shared)
-  RecipientStepFullShipping.tsx             # Full path: shipment details (Step 10)
-  RecipientStepEmailVerifySupabase.tsx      # Full path: Supabase OTP confirm email (Step 11)
-  RecipientStepFlexPreferences.tsx          # Link path: shipping prefs (Step 20)
-  RecipientStepEmailVerifyFlex.tsx          # Link path: Supabase OTP confirm email (Step 21)
-  RecipientStepPayment.tsx                  # Payment + activated state (Steps 12/13/22/23)
+  RecipientStepAddress.tsx                  # Step 1: destination address only (shared)
+  RecipientStepOrigin.tsx                   # Step 10: ship-from address
+  RecipientStepPackage.tsx                  # Step 14: parcel (Magic Guestimator + fields)
+  RecipientStepShipping.tsx                 # Step 20: rates, or prefs + cap when skipped
+  RecipientStepEmailVerifySupabase.tsx      # Step 11: Contact — email capture + OTP (BOTH paths)
+  RecipientStepPaymentSummary.tsx           # Shared summary above the card field (BOTH paths)
+  RecipientStepPayment.tsx                  # Payment + activated state (Steps 12/13)
+  RecipientStepFlexPayment.tsx              # Link path: wrapper around FlexPaymentStep
 ```
+
+`RecipientStepFullShipping.tsx` (672 lines, steps 10+14+20 in one screen) and
+`RecipientStepEmailVerifyFlex.tsx` were deleted on 2026-08-19.
 
 ### Progress Bar (4 visual steps, varies by path)
 
@@ -274,15 +279,28 @@ This is why there is no "flexible" door at step 0: the fork is a *fact about wha
 
 **User-facing names** (strings only — `link_type` values are unchanged): `full_label` → "Prepaid label", `flexible` → "Shipping link", `seller_link` → "Seller link".
 
-### Step 1: Destination & Email (Shared)
+### Step 1: Destination (Shared)
 **Component**: `RecipientStepAddress.tsx` -- Step ID: `1`
+
+One question per screen: this step asks where the package is going, and nothing else.
 
 - Freeform address input with auto-verification (mock: length > 15 chars; production: EasyPost API)
 - Green verified badge with CheckCircle2 icon
 - **Phone number** -- required (added 2026-05-19). FedEx and UPS reject EasyPost label purchases without a phone on both shipper and recipient addresses (`PHONENUMBER.EMPTY`); USPS doesn't. Collected on every address via `SmartAddressInput`. 10-digit minimum (digits-only count). Server re-validates in the `links` Edge Function — client-side is UX only.
-- Email input for verification in next step
+- **No identity here (2026-08-19).** The email field, the Google button, the identity
+  pill, and the blur-primed OTP all moved to the Contact step (11). Two consequences,
+  both accepted:
+  - A flow abandoned before step 11 leaves **no contact address at all**, where step 1
+    used to capture one. Reversible by restoring the field and its validation.
+  - Step 1 is now structurally unable to auto-advance. The OAuth return path used to
+    move the flow forward on its own, so a user who signed in mid-address came back a
+    step further along than they left.
+  A signed-out visitor gets one quiet line — "Returning? Sign in to use your saved
+  address" — and nothing else.
+- **Skip control**: "I have it" / "Sender fills this in". Deferring answers the whole
+  step; there is nothing else on it to fill.
 - **Validation**: Red borders + "Required" labels + summary block above button
-- **Button**: "Continue to shipping preferences"
+- **Button**: "Continue to shipment details"
 
 ---
 
@@ -313,6 +331,11 @@ The most complex step -- collects all package details to compute an exact shippi
    - Because it resolves size and weight from a sentence, "I don't know the package
      dimensions" is NOT a reason to need a shipping link. The only real fork is
      whether the user knows the other party's address (see Step 10 escape).
+   - **No success banner (2026-08-19, John).** The fields filling in below IS the
+     confirmation; the green "Auto-filled packaging, dimensions & weight" bubble and
+     the button caption restating it were the second and third statements of a fact
+     already on screen. One subhead survives. `onboarding.spec.ts` asserts the
+     populated L value, which was always the real signal.
 
 4. **Item description** -- Optional text input
 
@@ -346,18 +369,45 @@ final = base x carrier_multiplier (1.0-1.8) + insurance ($2.50 if selected)
 
 - Headline: "Confirm your email"
 - Body: "Just making sure {email} is yours so we can send your SendMo shipping label and updates."
+**Two phases (2026-08-19).** This step owns email CAPTURE as well as verification —
+step 1 no longer collects one, and nothing upstream does.
+
+1. **Collect** — headline "Where should we reach you?", one email field, "Send code".
+   The field is prefilled from the draft if a previous visit left an address there.
+   A malformed address is rejected client-side before an OTP send is spent on it
+   (`isValidEmail`, exported from `useRecipientFlow` so the button and the step's
+   validator cannot disagree). A failed send leaves the user in this phase.
+2. **Code** — headline "Confirm your email", the 6-digit grid, "Verify and continue".
+   Reached only once a code has actually been sent. `state.email` being non-empty is
+   deliberately **not** sufficient: a hydrated draft can carry an address with no live
+   code behind it, and showing the grid then asks for a code that does not exist.
+
 - Two ways to confirm — user picks whichever is faster:
   - **6-digit code input** (paste or type) — calls `supabase.auth.verifyOtp({ type: "email" })`
   - **Tap "Confirm email" button in the inbox** — Supabase processes the token and redirects back to `/onboarding/full-label/verify?confirmed=1`; the step's session-detection effect auto-advances
-- Code/link are sent silently at step 1 (email blur) so they're in the inbox by the time the user reaches this screen
-- **Auto-skipped** when the user is already authenticated (Google CTA picked at step 1, or returning user with a live session whose email matches the typed email)
-- Validation: requires `state.email_verified === true` (mirrors the flex flow's step 21 contract)
-- Companion to the flex flow's Supabase OTP at step 21 (`RecipientStepEmailVerifyFlex`)
+- **"Use a different email"** returns to phase 1. It used to call `onBack()`, which since
+  2026-08-19 lands on a step with no email field — leaving no way to change the address.
+- **Auto-skipped** when the user is already authenticated (returning user with a live
+  session); a session whose email differs from the typed one locks to the session email.
+- Validation: requires a valid `state.email` **and** `state.email_verified === true`.
+  The "Email is required" / "Enter a valid email address" errors moved here from step 1.
+- **One component for both paths** (John, option B). `RecipientStepEmailVerifyFlex.tsx`
+  was deleted: it differed from this component by a single word ("taking you to payment"
+  vs "payment authorization"), which does not justify two files that must be kept in
+  sync — and the word only ever appeared on the path with zero shipments to date.
 
 #### Step 12: Payment (Full Label)
 **Component**: `RecipientStepPayment.tsx` -- Step ID: `12` (was `11` pre-2026-05-11)
 
-- **Shipment summary card**: To, From, Service, Est. delivery, Package type + dimensions + weight, Total charge (exact price, large blue text)
+- **Shipment summary card**: `RecipientStepPaymentSummary.tsx` — the SAME component the
+  link path renders (2026-08-19). Rows: To / From / Package / Carrier / Insurance (when
+  taken) / **Total**. Total is a row in the list, not an emphasised block (John). The
+  card it replaced was label-path-only and had drifted from the link path's: different
+  rows, different order, and no statement of what the charge covered.
+  - No "we'll charge once they ship" note on this path — that sentence is true of a link
+    and false of a prepaid label, which is charged on this screen for the exact amount
+    shown. `full_label` implies no deferrals, since `pathForFlags` routes any deferred
+    field to `flexible`.
 - **Payment form** (tabbed: Credit Card / SendMo Balance)
 - **No insurance toggle** here (already selected in Step 10)
 - **CTA**: "Pay & generate label" -- charges card immediately (not a hold)
@@ -425,7 +475,12 @@ interface ShippingConfig {
 ```
 
 #### Step 21: Confirm Your Email (Flexible Link only)
-**Component**: `RecipientStepEmailVerifyFlex.tsx` -- Step ID: `21` (migrated to Supabase Auth 2026-05-15)
+**Component**: `RecipientStepEmailVerifySupabase.tsx` -- Step ID: `21` → renumbered `11`
+
+> **Superseded 2026-08-19.** Both paths walk the same step map and render the same
+> Contact component; `RecipientStepEmailVerifyFlex.tsx` was deleted. See
+> [Step 11](#step-11-confirm-your-email-full-label) for the current two-phase behaviour.
+> The list below is retained only as the pre-2026-08-19 record.
 
 - Headline: "Confirm your email"
 - Body: "Just making sure {email} is yours."
@@ -442,7 +497,17 @@ interface ShippingConfig {
 
 > **NOTE (2026-05-20):** the hold / insurance-toggle / SendMo-Balance content below is pre-Pattern-D and stale — the current step saves a card via a Stripe SetupIntent (no hold) and charges the actual shipping cost per shipment, off-session. The section needs a full Pattern-D rewrite (out of scope for the 2026-05-20 UX pass).
 
-- **Destination summary** ("Delivering to" card): name / street / city-state-zip / phone, with an **Edit** link → step 1
+- **Shipment summary card**: `RecipientStepPaymentSummary.tsx`, passed to
+  `FlexPaymentStep` through its `summary` slot. It supersedes and replaces the built-in
+  "Delivering to" card, being a superset of it — To / From / Package / Carrier / Total,
+  plus a sentence naming what the sender still owes (`senderTodo.ts`) and
+  "We'll charge your card once they ship."
+  - Total reads **"Up to $N per shipment"**. "per shipment" is load-bearing: a flexible
+    link sets neither `expires_at` nor `max_shipments`, so a bare cap next to "Total"
+    would read as a lifetime ceiling that does not exist. A link used three times bills
+    three times.
+  - `/links/new` passes no `summary` and keeps the original "Delivering to" card — it
+    has no `RecipientFlowState` to derive one from.
 - **Estimated cost summary**: per-shipment cost range, low and high shown as captioned columns ("Shorter / smaller package" / "For large, heavy and long shipments"); **Edit** link → step 20 (preferences)
 - **Payment form** (tabbed: Credit Card / SendMo Balance)
 - **Insurance toggle** (3-option segmented: Off / $100 coverage / $300 coverage)

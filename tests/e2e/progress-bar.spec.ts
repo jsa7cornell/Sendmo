@@ -51,9 +51,17 @@ async function reachOriginStep(page: Page) {
   await page.locator("button", { hasText: /Montgomery/i }).first().click();
   await expect(page.getByText("Verified").nth(0)).toBeVisible({ timeout: 5000 });
   await page.locator("#destination-phone").fill("4155551234");
-  await page.locator("#recipient-email").fill("test@example.com");
   await page.getByRole("button", { name: /Continue to shipment details/i }).click();
   await expect(page).toHaveURL(/\/full-label\/origin$/);
+  // The URL is NOT enough to know the step changed. navigate() calls
+  // history.pushState synchronously, so for a frame the URL says `origin`
+  // while the DESTINATION step is still mounted — and that step has its own
+  // "Sender fills this in" radio, wired to deferToSender("destination"),
+  // which sets a flag and does not navigate. A click landing in that window
+  // hits the outgoing step's control and the flow silently stays put.
+  // Waiting on the bar is unambiguous: it reads the committed step.
+  await expect(page.getByRole("button", { name: "Origin", exact: true }))
+    .toHaveAttribute("aria-current", "step");
 }
 
 test.describe("progress bar — one segment per question", () => {
