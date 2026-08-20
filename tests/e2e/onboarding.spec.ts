@@ -254,7 +254,8 @@ async function gotoStep10(page: Page) {
   await expect(page).toHaveURL(/\/full-label\/destination$/);
   await page.locator("#destination-name").fill("Jane Doe");
   await fillSmartAddress(page, "destination");
-  await page.locator("#recipient-email").fill("test@example.com");
+  // Step 1 collects no email since 2026-08-19 — identity moved to the Contact
+  // step (11), which now owns both capture and verification.
   await page.getByRole("button", { name: /Continue to shipment details/i }).click();
   await expect(page.locator("#origin-name")).toBeVisible({ timeout: 5000 });
 }
@@ -262,6 +263,12 @@ async function gotoStep10(page: Page) {
 test.describe("Onboarding — Full Prepaid Label flow", () => {
   test.beforeEach(async ({ page }) => {
     await mockAllEdgeFunctions(page);
+    // The Contact step now sends the OTP itself. Without this the request goes
+    // to whatever project SUPABASE_URL names — a live dependency the suite is
+    // built to avoid, and a real email to a real address in the worst case.
+    await page.route(`${SUPABASE_URL}/auth/v1/otp**`, (route) =>
+      route.fulfill({ status: 200, contentType: "application/json", body: "{}" }),
+    );
   });
 
   test("/onboarding is the destination step — the who's-sending picker is gone", async ({ page }) => {
@@ -301,12 +308,14 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
     // No resume banner, and a genuinely blank flow.
     await expect(page.getByText(/shipment in progress/i)).toHaveCount(0);
     await expect(page.locator("#destination-name")).toHaveValue("");
-    await expect(page.locator("#recipient-email")).toHaveValue("");
+    await expect(page.locator("#destination-address")).toHaveValue("");
+    await expect(page.locator("#destination-phone")).toHaveValue("");
   });
 
-  test("deferring the DESTINATION keeps email required, banners the change, and reaches the link path", async ({ page }) => {
+  test("deferring the DESTINATION needs nothing else on step 1, banners the change, and reaches the link path", async ({ page }) => {
     // Phase 3, decision B: every question is skippable. Deferring the
-    // destination answers the address half only — email still gates step 1.
+    // destination answers the whole of step 1 — since 2026-08-19 the email
+    // moved to step 11, so there is nothing left on this screen to fill.
     await page.goto("/onboarding");
     await page.getByRole("radio", { name: "Sender fills this in" }).click();
     // Dim-in-place, not a panel swap: the fields stay mounted (so the layout
@@ -315,11 +324,7 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
     await expect(page.locator("#destination-name")).toBeVisible();
     await expect(page.getByText(/This is a shipping link now/i)).toBeVisible();
     await expect(page.getByRole("button", { name: /Undo — answer it yourself/i })).toBeVisible();
-    // Continue without an email → blocked by validation.
-    await page.getByRole("button", { name: /Continue to shipment details/i }).click();
-    await expect(page.getByText(/Email is required/i)).toBeVisible();
-    // With an email, the step passes.
-    await page.locator("#recipient-email").fill("test@example.com");
+    // Deferring alone satisfies the step — Continue advances with no email.
     await page.getByRole("button", { name: /Continue to shipment details/i }).click();
     // First skip rewrites the segment (§2.2, 2026-08-19): the flow heads to a
     // link now, and the URL says so from the very next navigation.
@@ -361,15 +366,18 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
     // point 9 — the label path must not gain a click).
     await expect(page.getByRole("radio", { name: "I have it" })).toHaveAttribute("aria-checked", "false");
     await expect(page.getByRole("radio", { name: "Sender fills this in" })).toHaveAttribute("aria-checked", "false");
+    // The label path is NOT taxed for the link's prominence: the origin form is
+    // open and editable at rest, so the path that produced every shipment to
+    // date gains no clicks. Asserted BEFORE the click below — deferring
+    // advances to the package step, so this element is gone afterwards.
+    await expect(page.locator("#origin-name")).toBeVisible();
+    await expect(page.locator("#origin-name")).toBeEditable();
+
     // The product is named by the option label and by the caption once the
     // option is taken — not in the resting caption (John, 2026-08-19; the
     // 2026-08-18 version of this assertion required it at rest).
     await page.getByRole("radio", { name: "Sender fills this in" }).click();
     await expect(page.getByText(/shipping link/i).first()).toBeVisible();
-
-    // And the label path is NOT taxed for it: the origin form is open by
-    // default, so the path that has produced every shipment gains no clicks.
-    await expect(page.locator("#origin-name")).toBeVisible();
   });
 
   test("a deep-linked flow (no step 0) can still undo the address escape", async ({ page }) => {
@@ -380,7 +388,6 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
     await page.goto("/onboarding/full-label/destination");
     await page.locator("#destination-name").fill("Jane Doe");
     await fillSmartAddress(page, "destination");
-    await page.locator("#recipient-email").fill("test@example.com");
     await page.getByRole("button", { name: /Continue to shipment details/i }).click();
     await expect(page.locator("#origin-name")).toBeVisible({ timeout: 5000 });
 
@@ -460,9 +467,6 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
     // Fill destination address using SmartAddressInput
     await fillSmartAddress(page, "destination");
 
-    // Fill email
-    await page.locator("#recipient-email").fill("test@example.com");
-
     // Click continue
     await page
       .getByRole("button", { name: /Continue to shipment details/i })
@@ -510,11 +514,20 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
       .getByRole("button", { name: /Continue to payment/i })
       .click();
 
-    // ── Step 11: email verification ──────────────────────────
-    // The full-label flow gates on a Supabase email OTP here. Driving the
-    // OTP → payment → label tail end-to-end needs OTP interception, tracked
-    // as a known gap (PLAYBOOK → "E2e testing" → Known gaps). This test
-    // proves the flow is correctly wired Step 0 → 1 → 10 → verification.
+    // ── Step 11: Contact ─────────────────────────────────────
+    // Since 2026-08-19 this step opens on the email FIELD — it owns capture as
+    // well as verification, because step 1 no longer asks for an email. The
+    // walk therefore has to type one here; before this change the flow reached
+    // this screen with an address already in hand.
+    await expect(
+      page.getByRole("heading", { name: /Where should we reach you\?/i }),
+    ).toBeVisible({ timeout: 5000 });
+    await page.getByLabel("Email").fill("test@example.com");
+    await page.getByRole("button", { name: /Send code/i }).click();
+
+    // Driving the OTP → payment → label tail end-to-end needs a real code,
+    // tracked as a known gap (PLAYBOOK → "E2e testing" → Known gaps). This
+    // test proves the flow is wired Step 0 → 1 → 10 → 14 → 20 → verification.
     await expect(
       page.getByRole("heading", { name: /Confirm your email/i }),
     ).toBeVisible({ timeout: 5000 });
@@ -538,21 +551,10 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
     // Validation summary + specific errors render; the step does not advance.
     await expect(page.getByText("Please fix the following:")).toBeVisible();
     await expect(page.getByText("Destination address is required")).toBeVisible();
-    await expect(page.getByText("Email is required")).toBeVisible();
+    // "Email is required" no longer fires here — step 1 asks only about the
+    // address. The email gate moved with the field, to step 11.
+    await expect(page.getByText("Email is required")).toHaveCount(0);
     await expect(page.locator("#origin-name")).not.toBeVisible();
-  });
-
-  test("Step 1: an invalid email is rejected", async ({ page }) => {
-    await page.goto("/onboarding");
-    // /onboarding resolves straight to the destination step (no picker, 2026-08-18)
-    await expect(page).toHaveURL(/\/full-label\/destination$/);
-
-    await page.locator("#recipient-email").fill("notanemail");
-    await page
-      .getByRole("button", { name: /Continue to shipment details/i })
-      .click();
-
-    await expect(page.getByText("Enter a valid email address")).toBeVisible();
   });
 
   test("Step 10: an empty Continue is blocked on the address only", async ({
@@ -594,13 +596,11 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
     await page.locator("textarea").fill("a laptop");
     await page.getByRole("button", { name: /I'm Feeling Lucky/i }).click();
 
-    // Success confirmation + the L dimension populated from MOCK_GUESTIMATE.
-    await expect(
-      page.getByText(/Auto-filled packaging, dimensions/i),
-    ).toBeVisible({ timeout: 8000 });
+    // The populated field IS the confirmation — the green "Auto-filled…"
+    // banner was removed as a third restatement of it (John, 2026-08-19).
     await expect(
       page.getByRole("textbox", { name: "L", exact: true }),
-    ).toHaveValue("15");
+    ).toHaveValue("15", { timeout: 8000 });
   });
 
   test("Back navigation: Step 10 → Step 1 keeps the entered data", async ({

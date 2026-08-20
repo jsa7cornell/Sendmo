@@ -243,7 +243,6 @@ test.describe("URL-based step routing", () => {
     // Fill step 1
     await page.locator("#destination-name").fill("Jane Doe");
     await fillSmartAddress(page, "destination");
-    await page.locator("#recipient-email").fill("test@example.com");
     await page.getByRole("button", { name: /Continue to shipment details/i }).click();
 
     // One step map (2026-08-19): the ship-from step's slug is `origin`;
@@ -307,7 +306,11 @@ test.describe("URL-based step routing", () => {
 
     // Step 12: payment — wait for it (auto-advance from verify takes ~1 s)
     await expect(page).toHaveURL(/\/onboarding\/full-label\/payment$/, { timeout: 8000 });
-    await expect(page.getByText("Shipment Summary")).toBeVisible({ timeout: 5000 });
+    // The bespoke "Shipment Summary" card was replaced on 2026-08-19 by the
+    // shared summary both paths render. Its badge names the product, and the
+    // Total row is what the card is actually charged.
+    await expect(page.getByText("Prepaid label")).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText("Total")).toBeVisible();
 
     // NOTE: The post-payment redirect to /t/<code> requires completing the
     // Stripe payment form, which operates inside cross-origin iframes and
@@ -329,7 +332,6 @@ test.describe("URL-based step routing", () => {
     // Fill step 1
     await page.locator("#destination-name").fill("Jane Doe");
     await fillSmartAddress(page, "destination");
-    await page.locator("#recipient-email").fill("test@example.com");
     await page.getByRole("button", { name: /Continue to shipment details/i }).click();
 
     // Now on step 10 (slug `origin` since 2026-08-19)

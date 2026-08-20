@@ -1,4 +1,5 @@
 import FlexPaymentStep, { type FlexPaymentInput } from "@/components/flex/FlexPaymentStep";
+import RecipientStepPaymentSummary from "./RecipientStepPaymentSummary";
 import type { RecipientFlowState } from "@/hooks/useRecipientFlow";
 
 // Pattern D step 22. Thin wrapper around the shared <FlexPaymentStep>; the
@@ -88,6 +89,7 @@ export default function RecipientStepFlexPayment({
       linkId={state.linkId || null}
       onLinkCreated={(id, short_code) => onUpdate({ linkId: id, short_code })}
       showCostEstimate
+      summary={<RecipientStepPaymentSummary state={state} />}
       onContinue={() => {
         onUpdate({ paymentStatus: "succeeded" });
         onContinue();

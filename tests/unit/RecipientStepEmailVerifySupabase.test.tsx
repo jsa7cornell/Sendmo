@@ -96,11 +96,71 @@ function renderStep(props: {
 }
 
 describe("RecipientStepEmailVerifySupabase", () => {
-  it("renders the confirm-your-email UI for the typed email", async () => {
+  // Since 2026-08-19 this step opens on an email field, not the digit grid —
+  // it owns capture as well as verification, because step 1 no longer asks for
+  // an email at all. Every test below that is about the CODE has to send one
+  // first, which is also the honest sequence: a digit grid should never appear
+  // for a code that was never sent.
+  async function sendCode(user: ReturnType<typeof userEvent.setup>) {
+    await waitFor(() => screen.getByRole("button", { name: /Send code/i }));
+    await user.click(screen.getByRole("button", { name: /Send code/i }));
+    await waitFor(() => screen.getByLabelText("Digit 1"));
+  }
+
+  it("opens on the email field, prefilled from the draft", async () => {
     renderStep({});
-    await waitFor(() => expect(screen.getByText(/Confirm your email/i)).toBeInTheDocument());
-    expect(screen.getByText("user@example.com")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Verify and continue/i })).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByText(/Where should we reach you\?/i)).toBeInTheDocument(),
+    );
+    expect(screen.getByLabelText("Email")).toHaveValue("user@example.com");
+    // No code has been sent, so there is nothing to type digits into yet.
+    expect(screen.queryByLabelText("Digit 1")).toBeNull();
+  });
+
+  it("rejects a malformed address before spending an OTP send on it", async () => {
+    const user = userEvent.setup();
+    renderStep({ state: { email: "" } });
+    await waitFor(() => screen.getByLabelText("Email"));
+
+    await user.type(screen.getByLabelText("Email"), "notanemail");
+    await user.click(screen.getByRole("button", { name: /Send code/i }));
+
+    await waitFor(() =>
+      expect(screen.getByText(/Enter a valid email address/i)).toBeInTheDocument(),
+    );
+    expect(mockSignInWithOtp).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText("Digit 1")).toBeNull();
+  });
+
+  it("Send code sends the OTP, records the address, and reveals the digit grid", async () => {
+    const onUpdate = vi.fn();
+    const user = userEvent.setup();
+    renderStep({ onUpdate });
+    await sendCode(user);
+
+    expect(mockSignInWithOtp).toHaveBeenCalledWith({
+      email: "user@example.com",
+      options: {
+        emailRedirectTo: expect.stringContaining("/onboarding/full-label/verify?confirmed=1"),
+      },
+    });
+    // The address has to land in flow state here — nothing upstream captures
+    // it any more, so without this the label would be emailed nowhere.
+    expect(onUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ email: "user@example.com", verification_email: "user@example.com" }),
+    );
+    expect(screen.getByText(/Confirm your email/i)).toBeInTheDocument();
+  });
+
+  it("keeps the digit grid hidden when the send fails", async () => {
+    mockSignInWithOtp.mockResolvedValue({ data: null, error: { message: "Rate limit reached" } });
+    const user = userEvent.setup();
+    renderStep({});
+    await waitFor(() => screen.getByRole("button", { name: /Send code/i }));
+    await user.click(screen.getByRole("button", { name: /Send code/i }));
+
+    await waitFor(() => expect(screen.getByText(/Rate limit reached/i)).toBeInTheDocument());
+    expect(screen.queryByLabelText("Digit 1")).toBeNull();
   });
 
   // Fill all 6 OTP digit inputs. Uses fireEvent.change (synchronous, no
@@ -121,7 +181,7 @@ describe("RecipientStepEmailVerifySupabase", () => {
     const onUpdate = vi.fn();
     const user = userEvent.setup();
     renderStep({ onUpdate });
-    await waitFor(() => screen.getByLabelText("Digit 1"));
+    await sendCode(user);
 
     fillOtp("123456");
     const verifyBtn = screen.getByRole("button", { name: /Verify and continue/i });
@@ -144,7 +204,7 @@ describe("RecipientStepEmailVerifySupabase", () => {
     mockVerifyOtp.mockResolvedValue({ data: null, error: { message: "Token has expired" } });
     const user = userEvent.setup();
     renderStep({});
-    await waitFor(() => screen.getByLabelText("Digit 1"));
+    await sendCode(user);
 
     fillOtp("111111");
     const verifyBtn = screen.getByRole("button", { name: /Verify and continue/i });
@@ -156,7 +216,8 @@ describe("RecipientStepEmailVerifySupabase", () => {
   it("Resend code triggers signInWithOtp for the same email with the verify-step redirect target", async () => {
     const user = userEvent.setup();
     renderStep({});
-    await waitFor(() => screen.getByText(/Resend code/i));
+    await sendCode(user);
+    mockSignInWithOtp.mockClear();
     await user.click(screen.getByText(/Resend code/i));
     await waitFor(() => {
       expect(mockSignInWithOtp).toHaveBeenCalledWith({
@@ -166,19 +227,27 @@ describe("RecipientStepEmailVerifySupabase", () => {
     });
   });
 
-  it("does NOT render a Google CTA — it lives at step 1 in the new design", async () => {
+  it("does NOT render a Google CTA on either phase", async () => {
+    const user = userEvent.setup();
     renderStep({});
-    await waitFor(() => screen.getByRole("button", { name: /Verify and continue/i }));
+    await waitFor(() => screen.getByRole("button", { name: /Send code/i }));
+    expect(screen.queryByRole("button", { name: /Continue with Google/i })).toBeNull();
+    await sendCode(user);
     expect(screen.queryByRole("button", { name: /Continue with Google/i })).toBeNull();
   });
 
-  it("Use a different email calls onBack", async () => {
+  it("Use a different email returns to the email field, NOT to the previous step", async () => {
     const onBack = vi.fn();
     const user = userEvent.setup();
     renderStep({ onBack });
-    await waitFor(() => screen.getByText(/Use a different email/i));
+    await sendCode(user);
+
     await user.click(screen.getByText(/Use a different email/i));
-    expect(onBack).toHaveBeenCalled();
+
+    // onBack() was right when step 1 owned the email field. It now lands on a
+    // step with no email input, leaving the user no way to change the address.
+    expect(onBack).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.getByLabelText("Email")).toBeInTheDocument());
   });
 
   it("renders the verified success state when state.email_verified is true", async () => {
