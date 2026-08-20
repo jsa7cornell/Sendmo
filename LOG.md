@@ -12,6 +12,86 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-20] A test speedup that measured to zero — and the saturated machine that sold it
+
+**Category:** perf | test-infra
+**Cross-link:** follows [PR #91](https://github.com/jsa7cornell/Sendmo/pull/91) | review findings on that PR fixed here | [PR #92](https://github.com/jsa7cornell/Sendmo/pull/92)
+
+**Browser-verified:**
+  n/a-category: infra
+  n/a-reason: One spec's timer strategy plus config comments; no product surface changed. The suite is the verification — 728 unit tests pass — and the converted spec was mutation-tested (below) to prove its assertions still bite.
+
+**The headline this entry almost had was wrong, which is the point of writing it.**
+
+Vitest's breakdown looked damning: `environment 110.72s` against `tests 32.74s`, with 40 of
+66 unit files touching no DOM at all. Splitting those onto the `node` environment (jsdom
+opt-in via a `// @vitest-environment jsdom` docblock) took the local suite from 25.45s to
+7.14s. A 3.5x win, measured, reproduced.
+
+**It was an artifact of a saturated machine.** That laptop had been running full Playwright
+suites for hours; load average later hit **84 on 10 cores**. jsdom construction is
+CPU-heavy, so contention penalises it far out of proportion. On CI — 4 dedicated vCPU, no
+contention — the same aggregate `environment` figure was **29.45s, not 110.72s**.
+
+Measured properly on CI, three samples per side:
+
+| metric | main | with the split |
+|---|---|---|
+| **Duration** | ~23.1s | **~22.8s** |
+| environment | 29.45s | 19.22s |
+| tests | 16.89s | 12.5s |
+| import | 10.17s | 15.2s |
+
+`environment` really does fall. But `import` rises by about as much — splitting 66 files
+across two environments duplicates module-graph work — and **wall clock nets to nothing**.
+The split was reverted: 26 files of docblock churn for no measurable gain does not clear
+the bar in CLAUDE.md rule 6.
+
+**Three ways the local measurement lied, all worth recognising again:**
+1. **The baseline was measured under load the comparison was not.** Contention does not
+   scale costs uniformly; it punishes whichever component is CPU-bound.
+2. **A `git stash -u` on an already-committed tree saves nothing**, so a later "old config"
+   run silently re-ran the NEW config. Identical code produced 44.11s and 9.89s in the same
+   minute — which should have been the tell that the machine, not the config, was the
+   variable.
+3. **A single CI sample proves nothing here.** main's own Duration ranges 23.0s to 36.7s
+   across four consecutive runs. Any "win" smaller than that spread needs repeated samples.
+
+**What actually shipped, because it is real:**
+
+**Fake timers in `RecipientStepAddress.test.tsx` — 9606ms -> 162ms.** Three of its four
+tests assert a NEGATIVE across the component's 2s auto-advance window, each via a real
+`await new Promise(r => setTimeout(r, 2500))`. That is 7.5s of the suite spent literally
+sleeping. `vi.useFakeTimers()` + `vi.advanceTimersByTimeAsync(2500)` is instant AND the
+stronger assertion: a real sleep lets a loaded machine fire the timer late, outside the
+window, so the test passes for the wrong reason. Visible on CI as `tests` 16.89s -> 12.5s,
+the one metric that moved consistently. Note RTL's `waitFor` does not detect vitest's fake
+timers, so the positive case drives the clock explicitly rather than polling a frozen one.
+
+**Mutation-tested, because converting a negative assertion to fake timers is exactly how one
+goes quietly vacuous.** Breaking the flag guard (`sessionStorage.getItem(OAUTH_PENDING_KEY)
+=== "1"` -> `true`) failed 2 of the 3 negatives; the third survived correctly, being guarded
+by validation rather than the flag. Breaking the validation guard (`errors.length > 0` ->
+`false`) failed exactly that third one. Each test catches its own guard and nothing else.
+
+**PR #91 review findings, fixed here.** The `workers` comment had become two stacked
+contradictory blocks — "No CI override" and "hardcodes nothing" sitting directly above a
+hardcoded `workers: 4`, because the follow-up commit added rationale without removing the
+original. Merged into one. `vite preview` gained **`--strictPort`**: without it a taken port
+does not fail — verified that it binds the OTHER IP stack (`[::1]` beside an existing
+`*:5173`) and still reports success, which with two invocations per job building different
+bundles (mock vs real Supabase) could serve the authed step the wrong one. Also corrected
+the "build costs ~5s" note (it is paid twice per job) and the `vite.config.ts` warmup
+comment, which justified itself with a CI path that stopped existing when CI moved to a
+prebuilt bundle.
+
+**Open, not fixed: `progress-bar.spec.ts` is deterministically broken in isolation.** Alone
+at `--workers=1 --retries=0 --repeat-each=5` it fails **10 of 15** — two of three tests fail
+every time. It expects the URL to rewrite to `/flexible/package` after the origin is skipped
+and gets `/onboarding/full-label/origin`. It passes in the full suite, and CI's `retries: 2`
+would absorb it regardless. **Not a flake — a deterministic failure wearing a flake's
+clothes.** Filed rather than fixed: it is a routing question, not a speed one.
+
 ### [2026-08-20] e2e in CI: 140s -> 52s by undoing scaffolding and serving what actually ships
 
 **Category:** perf | test-infra

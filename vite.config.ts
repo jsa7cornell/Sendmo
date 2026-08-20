@@ -16,9 +16,14 @@ export default defineConfig({
     __APP_ENV__: JSON.stringify(process.env.VERCEL_ENV ?? ""),
   },
   // Pre-transform the whole app graph on dev-server boot. Without this the
-  // first page a Playwright worker requests pays every module transform
-  // on-demand — under full-suite parallelism that cold start took 35s+ and
-  // blew a test timeout (2026-08-18).
+  // first page a parallel Playwright worker requests pays every module
+  // transform on-demand — that cold start took 35s+ and blew a test timeout
+  // (2026-08-18).
+  //
+  // This is LOCAL-only as of 2026-08-20: CI serves a prebuilt bundle via
+  // `vite preview` and never starts the dev server, so tuning warmup will not
+  // move CI at all. It still matters for local full-suite runs, which do use
+  // the dev server — do not delete it as "CI does not use it".
   server: {
     warmup: {
       clientFiles: ["./src/main.tsx"],
