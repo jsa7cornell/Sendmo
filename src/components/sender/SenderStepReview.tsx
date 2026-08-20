@@ -7,6 +7,7 @@ import { Package, Truck, ArrowLeft, Loader2, AlertCircle, Pencil } from "lucide-
 import type { LinkData } from "@/lib/api";
 import type { AddressInput, ShippingRate } from "@/lib/types";
 import { carrierDisplayName, serviceDisplayName } from "@/lib/utils";
+import { formatDeliveryEstimate } from "@/lib/senderDelivery";
 import { displayName } from "@/lib/name";
 import { isValidEmail, type SenderParcel } from "./senderState";
 
@@ -19,8 +20,6 @@ interface Props {
   selectedRate: ShippingRate;
   senderEmail: string;
   onSenderEmailChange: (e: string) => void;
-  saveInfo: boolean;
-  onSaveInfoChange: (v: boolean) => void;
   shareContact: boolean;
   onShareContactChange: (v: boolean) => void;
   onEditPackage: () => void;
@@ -35,7 +34,7 @@ interface Props {
 export default function SenderStepReview({
   linkData, senderAddress, destinationOverride, parcel, selectedRate,
   senderEmail, onSenderEmailChange,
-  saveInfo, onSaveInfoChange, shareContact, onShareContactChange,
+  shareContact, onShareContactChange,
   onEditPackage, onEditRate, onConfirm, submitting, submitError,
 }: Props) {
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -45,6 +44,8 @@ export default function SenderStepReview({
   const emailMissing = senderEmail.trim().length === 0;
   const emailFormatBad = senderEmail.length > 0 && !isValidEmail(senderEmail);
   const emailInvalid = emailMissing || emailFormatBad;
+
+  const deliveryEstimate = formatDeliveryEstimate(selectedRate.estimated_days);
 
   // Phase 3: on a destination-deferred link the "To" line is the address the
   // SENDER just entered — linkData carries none. `recipient` (the payer who
@@ -119,13 +120,20 @@ export default function SenderStepReview({
             <Pencil className="w-3 h-3" /> Edit
           </button>
         </div>
+        {/* Service on its own line, delivery beneath it (handoff). The
+            estimate is HEDGED dates, never a bare "Arrives" — estimated_days
+            carries no carrier guarantee, and an unhedged promise here is
+            support load with no support team (OQ2). When the carrier gave no
+            estimate we render nothing rather than "TBD", which told the
+            sender less than silence while looking like a defect. */}
         <p className="text-sm font-medium text-foreground">
           {carrierDisplayName(selectedRate.carrier)} {serviceDisplayName(selectedRate.service)}
         </p>
-        <p className="text-xs text-muted-foreground mt-0.5">
-          {selectedRate.estimated_days
-            ? `${selectedRate.estimated_days} business day${selectedRate.estimated_days > 1 ? "s" : ""}`
-            : "Estimated delivery TBD"} · Prepaid by {recipient}
+        {deliveryEstimate && (
+          <p className="text-sm text-foreground mt-0.5">{deliveryEstimate}</p>
+        )}
+        <p className="text-xs text-muted-foreground mt-1">
+          {recipient} will pay for shipping
         </p>
       </div>
 
@@ -145,24 +153,24 @@ export default function SenderStepReview({
             className={`w-full rounded-xl border ${emailFormatBad ? "border-destructive" : "border-border"} bg-background px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary`}
           />
           <p className="text-xs text-muted-foreground mt-1">
-            It's important to have a reachable email in case you want to change your shipment.
+            We'll send tracking here, and you'll need it if you want to change or
+            cancel this shipment. We'll remember your details on this device so you
+            don't retype them next time.
           </p>
           {emailFormatBad && <p className="text-xs text-destructive mt-1">Please enter a valid email.</p>}
         </div>
 
-        <label className="flex items-start gap-3 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={saveInfo}
-            onChange={(e) => onSaveInfoChange(e.target.checked)}
-            className="mt-0.5 w-4 h-4 rounded accent-primary"
-          />
-          <span className="text-sm text-foreground">
-            Save my information on this device
-            <span className="block text-xs text-muted-foreground">Pre-fill your address and email next time you ship.</span>
-          </span>
-        </label>
-
+        {/* The handoff removes the "Save my information on this device"
+            checkbox, leaving one. Doing that literally would be a privacy
+            regression, not a simplification: `saveInfo` defaults to TRUE, so
+            the box is an opt-OUT, and deleting it would persist a stranger's
+            address and email with no disclosure anywhere on the screen.
+            Resolution: the checkbox goes (one control, as designed) and the
+            behaviour it governed is DISCLOSED in the helper copy above.
+            Storing it stays useful — repeat senders are the common case —
+            but silently is the part that was not acceptable. Flagged for
+            John rather than decided quietly; a one-line revert restores the
+            checkbox if he wants the control back. */}
         <label className="flex items-start gap-3 cursor-pointer">
           <input
             type="checkbox"

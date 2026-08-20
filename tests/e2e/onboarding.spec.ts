@@ -361,15 +361,24 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
     // point 9 — the label path must not gain a click).
     await expect(page.getByRole("radio", { name: "I have it" })).toHaveAttribute("aria-checked", "false");
     await expect(page.getByRole("radio", { name: "Sender fills this in" })).toHaveAttribute("aria-checked", "false");
+    // The label path is NOT taxed for the link's prominence: the origin form
+    // is open and focusable, so the path that has produced every shipment
+    // gains no clicks. Asserted BEFORE the click below — skipping navigates,
+    // and an assertion about this step after leaving it is a race. It won
+    // that race in PR #87 and on main before losing it here: the "wait for
+    // the new step to mount, never assert across a transition" rule from
+    // LOG 2026-08-17, violated by the test that was checking it.
+    await expect(page.locator("#origin-name")).toBeVisible();
+
     // The product is named by the option label and by the caption once the
     // option is taken — not in the resting caption (John, 2026-08-19; the
     // 2026-08-18 version of this assertion required it at rest).
     await page.getByRole("radio", { name: "Sender fills this in" }).click();
+    // Skipping the origin advances to the package question on the flexible
+    // segment. Wait for that to actually happen before reading the copy.
+    await expect(page).toHaveURL(/\/flexible\/package$/);
+    await expect(page.locator("#origin-name")).toHaveCount(0);
     await expect(page.getByText(/shipping link/i).first()).toBeVisible();
-
-    // And the label path is NOT taxed for it: the origin form is open by
-    // default, so the path that has produced every shipment gains no clicks.
-    await expect(page.locator("#origin-name")).toBeVisible();
   });
 
   test("a deep-linked flow (no step 0) can still undo the address escape", async ({ page }) => {

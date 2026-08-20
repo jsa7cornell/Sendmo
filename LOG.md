@@ -12,6 +12,30 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-19] Sender flow refresh — PR 3 of the flow redesign
+
+**Category:** ship | Onboarding | Sender
+**Cross-link:** [proposals/2026-08-19_shipping-flow-redesign_reviewed-2026-08-19.md](proposals/2026-08-19_shipping-flow-redesign_reviewed-2026-08-19.md) (§3 PR 3, OQ2) | follows PR 1 (#86) and PR 2 (#87)
+
+**Browser-verified:**
+  spec: `tests/e2e/sender-scenario-ui.spec.ts` (5 new: bar label per scenario ×3, known ship-from as a note with Rule 7 street check, intro subhead)
+  variants-covered: [package only; origin+package; nothing prefilled; known origin; known parcel]
+
+**What shipped.** Two pure modules, unit-tested before any UI: `senderScenario.ts` (8 tests) derives what THIS sender owes, and `senderDelivery.ts` (7 tests) formats the hedged estimate. The sender's progress bar is now the creator's `MorphProgressBar`, parameterised with segments, its first label computed per link — "Package" / "Your info" / "Destination & info". Intro subhead, package header ("From {name}" as a one-line note when the origin is known), rates copy, and the review screen's service block all follow.
+
+**The skips are IMPLIED, not stored.** `senderScenario` reads absence — no `origin_prefill` means the sender supplies the origin — rather than a flag. Deliberate: the sender flow then asks for a field exactly when the field is missing, so a mis-set flag can never cause it to skip collecting something the label needs.
+
+**Gotcha — local date arithmetic read back in UTC skews every evening order.** The first cut of `senderDelivery` used `setDate/getDate` (local) and formatted with `getUTCDate` + a UTC formatter. For any negative UTC offset that pushes every order placed after ~5pm to the following day — in California, most evening traffic, not an edge case. Caught before the tests were written; pinned by a test asserting a 9am and an 11:30pm order produce identical copy.
+
+**Copy correction, not just a restyle: "Prepaid by {name}" was factually wrong on a flexible link.** Nothing has been charged when the sender is looking at the screen — the creator is charged when this sender ships. Now "{name} will pay for shipping", which is also the Rule 7 shape: name WHO pays, never HOW MUCH.
+
+**Departure from the handoff, on consent.** The handoff removes the "Save my information on this device" checkbox, leaving one. Taken literally that is a privacy regression rather than a simplification: `saveInfo` defaults to **true**, so the box is an opt-OUT, and deleting it persists a stranger's address and email with no disclosure anywhere on the screen. Resolution: the checkbox goes (one control, as designed) and the behaviour it governed is disclosed in the email helper copy. Storing it stays useful — repeat senders are the common case — but silently was the part that was not acceptable. `REMEMBER_SENDER_ON_DEVICE` in `SenderFlow.tsx` is the one named place to change if this is revisited.
+
+**Gotcha — a test can be green and still wrong, and green CI does not find it.** `onboarding.spec.ts:352` (added in PR #87) clicked "Sender fills this in" on the ORIGIN step and then asserted `#origin-name` was visible. Skipping the origin NAVIGATES, so the element is gone — the assertion only passed by beating the transition. **It won that race in PR #87's CI and again in main's post-merge run**, then lost it here. This is precisely the rule LOG 2026-08-17 records ("wait for the new step to mount; never assert across a transition"), violated inside the test that was checking the skip. Fixed by asserting the pre-click property before clicking, then waiting for the URL and the old step's unmount; re-run three times consecutively. **Two green runs did not make it sound** — a race that wins most of the time is invisible to any number of passing runs.
+
+**Measured.** Unit 728 → **743** (15 new, both pure modules). E2E 97 → **102** (5 new sender specs). tsc clean, eslint clean on every touched file.
+
+**The pattern across all three PRs: the handoff is a design document, and design documents do not model consent or state.** Three times a literal reading would have shipped a regression — the panel swap that moved the Continue button out from under the cursor (PR 2), prefilling dimensions nobody checked (PR 2), and removing an opt-out checkbox while keeping the behaviour (PR 3). Each was resolved by keeping the visual intent and preserving the invariant the design did not know about.
 ### [2026-08-19] `scripts/ci-wait.sh` — a bounded CI wait; never hand-roll the poll loop
 
 **Category:** chore | CI

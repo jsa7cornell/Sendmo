@@ -1,4 +1,5 @@
 import { MapPin, Send, Package, Truck, UserRound, CreditCard, Check, ArrowRight } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // The morph bar (design brief point 2, 2026-08-19 flow-redesign proposal).
@@ -19,7 +20,16 @@ import { cn } from "@/lib/utils";
 // A skipped segment stays clickable — skipping IS an answer, and clicking it
 // is how the user gets back to undo it.
 
-const SEGMENTS = [
+export interface ProgressSegment {
+  icon: LucideIcon;
+  label: string;
+}
+
+// The creator flow's six. The sender flow passes its own — its steps differ
+// and its labels are computed from what that particular link left unfilled
+// (senderScenario). Shared component rather than two bars so the two cannot
+// drift in state semantics, which is the thing users read.
+const CREATOR_SEGMENTS: ProgressSegment[] = [
   { icon: MapPin, label: "Destination" },
   { icon: Send, label: "Origin" },
   { icon: Package, label: "Package" },
@@ -29,14 +39,22 @@ const SEGMENTS = [
 ];
 
 interface Props {
+  segments?: ProgressSegment[];
   activeIndex: number;
   completedIndexes: number[];
-  /** Segments answered with "the sender will fill this in". */
-  skippedIndexes: number[];
+  /**
+   * Segments answered with "the sender will fill this in". Empty on the
+   * sender's own bar — a sender fills in everything they are asked for, so
+   * the skipped state has no meaning there.
+   */
+  skippedIndexes?: number[];
   onClickIndex?: (index: number) => void;
 }
 
-export default function MorphProgressBar({ activeIndex, completedIndexes, skippedIndexes, onClickIndex }: Props) {
+export default function MorphProgressBar({
+  segments = CREATOR_SEGMENTS, activeIndex, completedIndexes, skippedIndexes = [], onClickIndex,
+}: Props) {
+  const SEGMENTS = segments;
   return (
     <div className="flex items-center justify-between w-full max-w-lg mx-auto mb-8">
       {SEGMENTS.map((seg, i) => {
