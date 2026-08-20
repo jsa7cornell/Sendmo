@@ -12,6 +12,34 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-19] CI's cost was never the tests — it was `apt` inside the Playwright install
+
+**Category:** fix | CI
+**Cross-link:** [PR #75](https://github.com/jsa7cornell/Sendmo/pull/75) | [test.yml](.github/workflows/test.yml) | follows the 2026-08-18 e2e de-rot
+
+**Browser-verified:** n/a-category: `ci-only` — n/a-reason: workflow configuration; no product surface touched.
+
+**Symptom.** `main` could not complete CI. Run `32216842692` hung and was cancelled at GitHub's 6-hour default, leaving HEAD `c0c5177` with **no conclusive run** — not a failure, an absence. A re-run hung the same way and was cancelled at ~32 min. Successful runs before that ranged 6m–20m49s with no obvious cause.
+
+**Measured, not guessed.** Step durations across the last 8 successful runs:
+
+| install | 37s | 131s | 147s | 202s | 310s | 341s | 432s | **1025s** |
+|---|---|---|---|---|---|---|---|---|
+| **e2e** | 121s | 124s | 130s | 127s | 126s | 129s | 126s | 126s |
+
+**The suite is flat at ~126s in every run.** All variance, and both hangs, were `Install Playwright Browsers` — 82% of wall-clock on the 20m49s run.
+
+**Root cause, from the log.** `--with-deps` runs `apt-get update`. The Azure Ubuntu mirror stopped answering mid-run (`Ign:` against every noble index), apt fell back to `archive.ubuntu.com`, then emitted **nothing for 30 minutes** until cancellation. No timeout, no retry, no error — a stall.
+
+**Fix.** Cache `~/.cache/ms-playwright` keyed on the Playwright version, and **drop `--with-deps`**. The second half is what actually fixes it: apt packages are per-runner and uncacheable, so caching alone would still have gone through apt. `ubuntu-latest` already ships the libraries Chromium needs. Plus `timeout-minutes` 45 (job) and 8 (install) as backstops.
+
+**Result:** install 1025s → **10s**; full run → **3m57s**, verified green on `main` at `ba0cce1` with 95 tests / 89 passed / 0 failed from the artifact. The 10s install was on a cache *miss*, so the ~150 MB download was never the problem either — apt was the entire cost.
+
+**Tradeoff accepted:** if a future runner image drops a Chromium dependency, e2e goes red immediately. A loud one-line-revert failure beats a silent multi-hour stall, especially now that e2e blocks merges.
+
+**Gotcha — do not size a threshold from a number quoted in prose.** The 20-minute job ceiling in the first draft of #75 came from "a green run is ~3.5 min", written into PLAYBOOK the day before from a single measurement. By the time it was reused, successful runs reached 20m49s — the ceiling would have cancelled a genuine pass. Caught by self-review before merge. Rule 21 now carries the measured range, its date, an explicit re-measure instruction, and the `gh api … /jobs` command to get real step durations. Same failure shape as the `retryN` bug in #62: a mechanism understood correctly, applied from a snapshot that had moved.
+
+**Pattern across 2026-08-18/19 — absence of signal read as success.** Four mechanisms, one symptom: suppressed steps reporting `success` (A1); an artifact overwritten before upload (A2); a conflicting PR producing no run at all (A6); and now a step that never failed because it never finished. In every case the surface said "no red X" and the honest answer was "no answer."
 ### [2026-08-19] Three decided proposals were cited from `main` but did not exist on it
 
 **Category:** fix | Docs / Institutional memory
@@ -192,6 +220,43 @@ gh api -X DELETE repos/jsa7cornell/Sendmo/rulesets/21062139
 **Cross-link:** [proposals/2026-08-19_onboarding-ux-refresh-design-brief.md](proposals/2026-08-19_onboarding-ux-refresh-design-brief.md) — the brief itself; continues [the unified-onboarding proposal](proposals/2026-08-18_unified-onboarding-every-question-skippable.md) after all three phases deployed.
 
 John's verdict on the deployed Phases 1–3: functionally OK, UX "super wonky." Four directives captured in the brief: skip options move to the TOP of each question; ONE progress mechanism that stays consistent but morphs as skips accumulate (not today's 5-segment↔4-segment swap); identity/sign-in/saved-address moments get a deliberate home; more creative overall, especially the label↔link transformation moment. The brief carries the full current-screen inventory, every state to design, and the hard constraints (who-pays copy, Rule 7, email non-skippable, carrier phone, Stripe Elements, resume semantics, stack limits). Design output will come back as a proposal before any implementation.
+
+### [2026-08-18] Session logouts — the server was never the problem
+
+**Category:** diagnosis | Auth | Session
+**Cross-link:** [proposals/2026-08-18_session-durability-and-auth-architecture.md](proposals/2026-08-18_session-durability-and-auth-architecture.md) | supersedes the diagnoses in the [2026-05-15] and [2026-05-18] auth entries below | corrects the [2026-05-12] free-tier claim
+
+**Symptom (user-reported, 2026-08-18):** "sendmo logs me out nearly every day … we've attempted to fix this in the past but seems to not have worked."
+
+**Finding — the two prior fixes were aimed at the wrong layer.** Both the 2026-05-15 (`getSession()` race) and 2026-05-18 (`ensureProfile` inside the auth callback) fixes targeted *server-side session revocation*. Production data says revocation is not happening:
+
+| Measurement | Result |
+|---|---|
+| Real browser sessions for John since 2026-06-27 | **7** — daily re-auth would produce ~50 |
+| Longest single session | `89cb0446`: created 2026-07-06, refreshed 2026-08-10 — **35 days** |
+| `not_after` on every session row | `null` — no time-box, no inactivity cap |
+| Revoked refresh tokens | normal rotation only; no replay-detection storm |
+
+The ~15 logins on 2026-08-18 06:19–06:46 UTC were all `user_agent: node` — the e2e harness, not John. **Both prior fixes are still correct and should stay**; they simply were not the cause of this symptom.
+
+**Root cause is client-side, and it leaves zero server trace.** From `@supabase/auth-js@2.97` `GoTrueClient.js` `_recoverAndRefresh()` (~line 1926): on a page load where the JWT has expired, the client refreshes, and if that refresh returns anything that is not an `AuthRetryableFetchError` (network error or 5xx) it calls `_removeSession()` — deleting the stored session permanently. **A 429 is not retryable.** The project's own auth logs show `429: email rate limit exceeded` on John's IP the same day, generated by the e2e harness. A laptop that sleeps overnight hits the expired-JWT path on exactly the first load each morning, which matches "nearly every day."
+
+**Two live-probed facts worth keeping:**
+1. **`/api/*` is swallowed by the CDN.** `curl https://sendmo.co/api/session-probe-<fresh-ts>` returns 200 / `text/html` / `x-vercel-cache: HIT` with the SPA shell. [vercel.json](vercel.json)'s `/(.*) → /index.html` has no API exclusion. Same shape as the 2026-05-15 Bug 4 OG-tags finding — still unfixed. Any future serverless endpoint needs `"source": "/((?!api/).*)"` **and a re-probe**, or Edge Middleware.
+2. **`www.sendmo.co` serves the app with no redirect to the apex.** Separate origin → separate `localStorage` → permanently signed-out, and `supabase/config.toml` allowlists only `sendmo.co/**`, so signing in from `www` bounces to the apex and `www` never gets a session. Not John's cause (he is always on the apex) but a real user-facing bug.
+
+**Correction to the [2026-05-12] entry:** *"Free tier Supabase locks session expiry at never … No action needed"* is **stale**. The org is on the `pro` plan (verified via the management API), so inactivity timeout and time-box are configurable. They are currently unset, which is why sessions are unbounded server-side.
+
+**Browser mix across every session row in the project** (relevant because Safari's ITP caps script-writable storage at 7 days): 272 node (harness), 12 Desktop Chrome, 2 Android Chrome, **0 Safari/iOS**. The ITP ceiling is real but has zero measured exposure today.
+
+**Browser-verified:**
+  n/a-category: infra
+  n/a-reason: Diagnosis session — no code changed. Findings are production queries (`auth.sessions`, `auth.refresh_tokens`, auth service logs), a read of the pinned `auth-js` source, and live `curl` probes against prod, all reproduced inline above.
+
+**Correction (2026-08-18 review, [proposal reviewed](proposals/2026-08-18_session-durability-and-auth-architecture_reviewed-2026-08-18.md) B1):** two precision fixes to this entry. (1) Retryable is not "network error or 5xx" — `auth-js` `handleError` retries only network failures and **502/503/504**; a plain **500 also destroys the session**. (2) The `429: email rate limit exceeded` is GoTrue's *email-send* bucket — the refresh endpoint (`/token?grant_type=refresh_token`) sits in a separate, much higher per-IP bucket and can never return that error, so the 429 log line is not direct evidence for the refresh-failure cause. A daily-rhythm symptom fits cause #3 (storage cleared on browser exit) at least as well; Phase 0 instrumentation discriminates.
+
+---
+
 
 ### [2026-08-18] Skippable destination — "the sender picks where it goes" (unified-onboarding Phase 3)
 
