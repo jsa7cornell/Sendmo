@@ -60,7 +60,10 @@ scripted waiter — and closes the three gaps it has on its own:
    like "checks are fine". The script refuses `DIRTY`/`CONFLICTING` up front, and after
    a green result requires a `github-actions` check-suite on the head SHA.
 
-Exit 0 = conclusive green. Exit 1 = red, absent, or timed out.
+**Exit codes carry the invariant this whole entry is about:** `0` = conclusive green,
+`1` = conclusive bad (red, or a confirmed absent run), `2` = **indeterminate** — timed
+out, interrupted, or GitHub could not be reached. Callers must not treat 2 as either
+outcome.
 
 **Verified.** PR #87 green in 4.2s, both piped and unpiped; nonexistent PR #99999 exits
 1 immediately with the GraphQL reason; timeout path exercised in isolation (watchdog
@@ -72,6 +75,36 @@ checks table every interval — on a 4-minute run that is ~24 near-identical blo
 caller's log. The watcher's stdout is now discarded and the script makes one
 authoritative `gh pr checks` re-query at the end, which also renders the pending state
 on the timeout path. `pr checks` has no `--compact`; that flag belongs to `run watch`.
+
+**Code review found the same bug class inside the fix.** Seven findings; the two worst
+defeated the very protections the script was written to provide, and both were the
+no-answer-read-as-a-negative-answer shape of the original 6h loop:
+
+- **An API error read as "NO TESTS RAN"** (the worst). `2>/dev/null` on the check-suites
+  query made a rate limit or network blip indistinguishable from a genuinely absent run,
+  so a green PR got a hard exit 1 and a false alarm — training agents to ignore the exact
+  warning the check exists to raise. Now: stderr captured, exit status checked, 3 retries,
+  and a distinct **exit 2** meaning "could not verify — this is not evidence either way."
+- **The conflict guard was inert when it mattered.** GitHub computes mergeability lazily,
+  so `mergeStateStatus` reads `UNKNOWN` for a window after every push — measured: PRs
+  #85/#86/#87 all UNKNOWN, only the idle #88 CLEAN. Testing only for `DIRTY` therefore
+  missed the post-push case the guard exists for, and the user got a vague 120s timeout
+  instead of "you have merge conflicts." Now polls up to 30s for a definite state, and
+  re-checks at queue-timeout before blaming the queue.
+- **`SLUG` unvalidated** — an empty value built `repos//commits/<sha>/...`, fed the same
+  false alarm. Now guarded like every other external call.
+- **One orphaned `sleep 900` per invocation.** `kill $WATCHDOG` killed the subshell but
+  not the `sleep` inside it, which survived reparented to init (confirmed with `ps`).
+  The background watchdog is gone entirely — the main shell now supervises with
+  `kill -0` polling, which also yields an explicit `TIMED_OUT` flag.
+- **`RC -gt 128` misreported interrupts as deadline expiry** — `wait` returns 128+N for
+  every signal, so a Ctrl-C at two minutes claimed "still not conclusive after 900s."
+  The explicit flag fixes it; verified both branches in isolation.
+- **Raw `jq`** on three lines, unchecked, while `gh -q` did the identical job two lines
+  later. All three now use `gh -q`; the dependency is gone.
+- **`SHA` captured before a 15-minute wait** while `--watch` follows the live head. With
+  concurrent sessions in this repo a mid-wait push meant verifying a different commit
+  than the one watched. Now re-reads the head afterward and exits 2 if it moved.
 
 **Also.** `check-deploy-green.sh` said "CI takes ~12 min" while PLAYBOOK said ~4 min.
 The number was **removed** from the hook rather than updated — duplicating a measured
