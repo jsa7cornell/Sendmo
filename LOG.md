@@ -12,6 +12,75 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-20] Unit tests 25s -> 7s: jsdom was the whole cost, and one spec slept 7.5s on purpose
+
+**Category:** perf | test-infra
+**Cross-link:** follows [PR #91](https://github.com/jsa7cornell/Sendmo/pull/91) (e2e parallelism) | review findings on that PR fixed here
+
+**Browser-verified:**
+  n/a-category: infra
+  n/a-reason: Test-harness configuration and one spec's timer strategy; no product surface changed. The suites are the verification — 728 unit tests pass, and the converted spec was mutation-tested (below) to prove its assertions still bite.
+
+**jsdom was the entire cost.** Vitest's own breakdown made it obvious once read:
+`environment 110.72s` against `tests 32.74s`. Every one of the 66 unit files paid for a
+jsdom construction, but **40 of them touch no DOM at all** — no testing-library, no
+`document`, no `window`. Those 40 run in 1.43s under `node` versus 4.37s under jsdom,
+with `environment` collapsing from 25.32s to **4ms**.
+
+**The default is now `node`, and jsdom is opt-in** via a `// @vitest-environment jsdom`
+docblock on the 26 files that need it. The default was inverted deliberately: it now fits
+the majority, and a new component test that forgets the docblock fails immediately with
+"document is not defined" — loud, one line to fix, impossible to mistake for a pass. The
+old default hid the cost silently instead.
+
+`tests/setup.ts` needed a guard: it configures `window.matchMedia` and `PointerEvent` for
+Radix at import time, which is a `ReferenceError` in a node environment before any test
+runs. Guarded with `typeof window !== "undefined"` rather than split into a second setup
+file — there is one setup contract and it should stay one.
+
+**One spec was sleeping 7.5 seconds on purpose.** `RecipientStepAddress.test.tsx` took
+9.6s of the suite's 12s. Three of its four tests assert a NEGATIVE across the component's
+2s auto-advance window, and each did it with a real `await new Promise(r => setTimeout(r,
+2500))`. Now `vi.useFakeTimers()` + `vi.advanceTimersByTimeAsync(2500)`: **9606ms ->
+38ms**. Note RTL's `waitFor` does not detect vitest's fake timers, so the positive case
+drives the clock explicitly instead of polling a frozen one.
+
+A real sleep is also the *weaker* assertion — on a loaded machine the 2s timer can fire
+late, outside the window, and the test passes for the wrong reason. Advancing fake timers
+is exact.
+
+**Mutation-tested, because converting a negative assertion to fake timers is exactly how
+one goes quietly vacuous.** Removing the OAuth-flag guard (`if (sessionStorage.getItem(
+OAUTH_PENDING_KEY) === "1")` -> `if (true)`) failed 2 of the 3 negatives; the third
+survived correctly, being guarded by validation rather than the flag. Removing the
+validation guard (`if (errors.length > 0) return;` -> `if (false) return;`) failed exactly
+that third one. Each test catches its own guard and nothing else.
+
+**Review findings from PR #91, fixed here.** The `workers` comment had become two stacked
+contradictory blocks — the first declaring "No CI override" and "hardcodes nothing"
+directly above a hardcoded `workers: 4`, because the follow-up commit added rationale
+without removing the original. Merged into one block. `vite preview` gained
+**`--strictPort`**: without it, a taken port does not fail — verified that it binds the
+OTHER IP stack (`[::1]` beside an existing `*:5173`) and still reports success, which with
+two invocations per job building different bundles (mock vs real Supabase) could serve the
+authed step the wrong one. Also corrected the claim that the build "costs ~5s" (it is paid
+twice per job, once per Playwright invocation) and the `vite.config.ts` warmup comment,
+which justified itself with a CI path that no longer exists now that CI serves a prebuilt
+bundle.
+
+**Open, not fixed: `progress-bar.spec.ts` is deterministically broken in isolation.**
+Running that spec alone at `--workers=1 --retries=0 --repeat-each=5` fails **10 of 15** —
+two of its three tests fail every single time. It expects the URL to rewrite to
+`/flexible/package` after the origin is skipped and gets `/onboarding/full-label/origin`.
+It passes in the full suite, so something about suite context masks it, and CI's
+`retries: 2` would absorb it regardless. **Not a flake — a deterministic failure wearing a
+flake's clothes.** Filed rather than fixed: it is a routing question, not a speed one.
+
+**Local e2e numbers on this machine are currently untrustworthy** and should not be quoted.
+Back-to-back full runs gave 16, then 9, then 3 failures — and clean `main` with no changes
+gave 9, more than the branch under test. Port contention between consecutive runs plus a
+saturated machine. CI is the arbiter; it is green.
+
 ### [2026-08-20] e2e in CI: 140s -> 52s by undoing scaffolding and serving what actually ships
 
 **Category:** perf | test-infra

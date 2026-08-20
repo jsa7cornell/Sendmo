@@ -1,7 +1,12 @@
 import "@testing-library/jest-dom";
 import { vi } from "vitest";
 
-// Mock matchMedia for Radix UI components
+// Everything below mocks browser globals for Radix, so it only applies in the
+// jsdom environment. Unit tests that touch no DOM now run under `node` (see
+// vitest.config.ts), where `window` does not exist and these lines would throw
+// ReferenceError before a single test ran. Guarded rather than split into a
+// second setup file: there is one setup contract, and it should stay one.
+if (typeof window !== "undefined") {
 Object.defineProperty(window, "matchMedia", {
     writable: true,
     value: vi.fn().mockImplementation((query) => ({
@@ -41,4 +46,5 @@ if (typeof window.PointerEvent === 'undefined') {
         }
     }
     (window as any).PointerEvent = PointerEvent;
+}
 }

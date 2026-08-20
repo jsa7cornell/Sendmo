@@ -1,5 +1,6 @@
+// @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 
 // ─── Regression guard: OAuth auto-advance must respect validation ───────────
@@ -89,13 +90,24 @@ function renderStep(errors: string[], onContinue: () => void) {
 }
 
 describe("RecipientStepAddress — OAuth auto-advance", () => {
+  // Fake timers. Three of these tests assert a NEGATIVE across the component's
+  // 2s auto-advance window, and each used to do it with a real
+  // `setTimeout(r, 2500)` — 7.5s of the unit suite's 12s spent sleeping. Real
+  // sleeps are also the weaker assertion: on a loaded machine the timer can
+  // fire late, outside the window, and the test passes for the wrong reason.
+  // Advancing fake timers is both instant and exact.
   beforeEach(() => {
+    vi.useFakeTimers();
     mockUser = null;
     // 2026-08-18: "user was null at mount" stopped being the discriminator —
     // the /onboarding entry redirect mounts this step before auth settles, so
     // EVERY visitor matches it. Auto-advance is now authorized only by the
     // sendmo:oauth_pending flag set just before the Google redirect.
     try { window.sessionStorage.removeItem("sendmo:oauth_pending"); } catch { /* noop */ }
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("auto-advances after OAuth return (flag set) when validation passes", async () => {
@@ -110,7 +122,8 @@ describe("RecipientStepAddress — OAuth auto-advance", () => {
 
     // "Continuing…" appears immediately; onContinue fires after the 2s timer.
     expect(screen.getByText(/Continuing…/i)).toBeInTheDocument();
-    await waitFor(() => expect(onContinue).toHaveBeenCalledTimes(1), { timeout: 4000 });
+    await vi.advanceTimersByTimeAsync(2500);
+    expect(onContinue).toHaveBeenCalledTimes(1);
   });
 
   it("does NOT auto-advance without the flag, even on a null→present transition", async () => {
@@ -124,7 +137,7 @@ describe("RecipientStepAddress — OAuth auto-advance", () => {
     rerender(makeUi());
 
     expect(screen.queryByText(/Continuing…/i)).not.toBeInTheDocument();
-    await new Promise((r) => setTimeout(r, 2500));
+    await vi.advanceTimersByTimeAsync(2500);
     expect(onContinue).not.toHaveBeenCalled();
   });
 
@@ -143,7 +156,7 @@ describe("RecipientStepAddress — OAuth auto-advance", () => {
 
     // The spinner must never appear, and onContinue must never be called.
     expect(screen.queryByText(/Continuing…/i)).not.toBeInTheDocument();
-    await new Promise((r) => setTimeout(r, 2500));
+    await vi.advanceTimersByTimeAsync(2500);
     expect(onContinue).not.toHaveBeenCalled();
     expect(screen.queryByText(/Continuing…/i)).not.toBeInTheDocument();
   });
@@ -153,7 +166,7 @@ describe("RecipientStepAddress — OAuth auto-advance", () => {
     mockUser = { email: "pat@example.com", user_metadata: {} };
     renderStep([], onContinue);
 
-    await new Promise((r) => setTimeout(r, 2500));
+    await vi.advanceTimersByTimeAsync(2500);
     expect(onContinue).not.toHaveBeenCalled();
   });
 });

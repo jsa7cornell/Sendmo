@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { describe, it, expect, beforeEach, beforeAll } from "vitest";
 
 // JSDOM's localStorage implementation in this project's vitest config is
