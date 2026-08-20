@@ -4,7 +4,7 @@ slug: session-handoff-process-hardening
 project: sendmo
 status: handoff
 created: 2026-08-19
-last_updated: 2026-08-19
+last_updated: 2026-08-20 (§2.1 — #78 closed, superseded by #84)
 author: Claude Opus 5 — session that began as "package the shipping-flow design handoff into a build proposal," discovered it was working from a 44-commit-stale tree, and spent the rest of the session hardening how SendMo ships code. Eight PRs merged (#74, #76, #77, #79, #80, #81, #82, plus review of #75).
 ---
 
@@ -43,17 +43,22 @@ A green run certifies the mocked suite, not the authed step. Check the run's ann
 
 ## 2. The overlaps you need to resolve
 
-### 2.1 PR #78 is now partly redundant, and has never run CI
+### 2.1 ~~PR #78~~ — RESOLVED 2026-08-20, superseded by #84
 
-[#78](https://github.com/jsa7cornell/Sendmo/pull/78) — *"docs: record the CI install finding; make Rule 21's number self-defending"* — is open from `fix/e2e-infra-audit`, the dead branch this session's RCA was about. Three problems, in order of how easily they bite:
+**Update, one hour after this handoff was written.** #78 was **closed unmerged** and replaced by [#84](https://github.com/jsa7cornell/Sendmo/pull/84) from a clean branch (`docs/ci-install-findings`), carrying only `LOG.md` + `PLAYBOOK.md` — the duplicate proposal file dropped, the unique content kept. That is exactly the reconciliation this section recommended, so nothing is outstanding.
 
-1. **It has no CI run at all.** `mergeStateStatus` reads `CONFLICTING`/`DIRTY` (GitHub uses both), and `check-suites` on its head (`693a943`) contains **no `github-actions` entry**. This is finding A6: GitHub builds `pull_request` events against a merge ref, a conflicting PR has no computable merge ref, so no run and no check-suite is created. `gh pr checks` shows only Vercel passing, which reads exactly like "checks are fine." **Absence of a run is not a pass.** The new required check now catches this — the PR cannot merge while the check is absent — but do not read its green Vercel as coverage.
-2. **One of its three files is already on `main`.** It adds `proposals/2026-08-18_session-durability-and-auth-architecture_reviewed-2026-08-18_decided-2026-08-18.md`, which [#81](https://github.com/jsa7cornell/Sendmo/pull/81) rescued from that same branch earlier today. Verified **byte-identical** (`df49291c3c45` on both). That part of the diff is a no-op at best and a conflict at worst.
-3. **Its other two files are the ones this session rewrote.** `LOG.md` (five new entries today) and `proposals/README.md` (rewritten in #76 and #81). Both are same-position prepends — resolve as a **union**, keep both sets of entries, and drop the duplicate session-durability line rather than the rescued file.
+**Verified against #84:** it removes **zero** lines of the Rule 21 rewrite from [#80](https://github.com/jsa7cornell/Sendmo/pull/80) — purely additive, no conflict. It was `BLOCKED` only while its required check was pending, which is the gate working as designed.
 
-**What #78 uniquely carries and is worth keeping:** its LOG content about the CI install finding, and the Rule 21 "self-defending number" change. Note [#75](https://github.com/jsa7cornell/Sendmo/pull/75) already landed the related fix — job `timeout-minutes: 45`, install step `timeout-minutes: 8`, and it **dropped `--with-deps`** (ubuntu-latest already ships Chromium's shared libraries; a missing one now fails loudly in seconds rather than stalling on apt). Reconcile #78's prose against what #75 actually shipped before merging; some of it may describe a state that no longer exists.
+**#84's finding supersedes part of this session's account of the CI wedge, and is better evidence.** This session's LOG entry attributed the hang to "Install Playwright Browsers" generally. #84 measured step durations across the last 8 successful runs and pinned it precisely: the e2e suite is **flat at ~126s in every run**, while the install step ranged 37s → 1025s and accounted for **82% of wall-clock** on the 20m49s run. Root cause is `apt-get update` inside `--with-deps`, against an Azure Ubuntu mirror that stopped answering mid-run. **Prefer #84's numbers over this session's prose** where they differ.
 
-**Recommended:** rebase #78 onto current `main`, drop the proposal file from its diff, union the LOG and README, and re-verify its Rule 21 claims against `.github/workflows/test.yml` at HEAD.
+**What still holds from the original finding**, because it is about a trap rather than this one PR: a conflicting PR gets **no `github-actions` check-suite at all** — no run, no red X — and `gh pr checks` shows only Vercel passing, which reads exactly like "checks are fine." **Absence of a run is not a pass.** Check with:
+
+```bash
+gh pr view <n> --json mergeable,mergeStateStatus
+gh api repos/jsa7cornell/Sendmo/commits/<sha>/check-suites --jq '.check_suites[].app.slug'
+```
+
+The required status check now catches this automatically — a check that never reported counts as not passed — but the diagnostic is still how you understand *why* a PR is stuck.
 
 ### 2.2 The shared checkout is on a dead branch and will banner every session
 
@@ -65,7 +70,7 @@ git -C /Users/ja/AI-Brain/sendmo checkout main && git -C /Users/ja/AI-Brain/send
 
 Two caveats: `sendmo-who-sending-wt` currently holds `main`, and git refuses to check out a branch already claimed by another worktree — release it first or use a detached checkout. And the shared tree has a modified `_archive/backend` submodule plus untracked files that are now duplicates of what is on `main`.
 
-**This is gated on resolving #78 first** — that PR's head *is* this branch, so switching before it merges strands the work.
+**No longer gated.** This was blocked on #78, whose head was this branch; #78 is closed unmerged (§2.1), so the checkout can move whenever the `main`-holding worktree is released.
 
 ### 2.3 Other sessions are live in this repo
 
@@ -137,7 +142,7 @@ The design handoff is implemented as a decided proposal: [`2026-08-19_shipping-f
 
 | Item | State | Recommendation |
 |---|---|---|
-| PR #78 | Open, conflicting, no CI | Rebase, drop the duplicate proposal, union LOG/README (§2.1) |
+| ~~PR #78~~ | **Closed unmerged 2026-08-20**, superseded by #84 | Nothing outstanding — #84 did exactly what §2.1 recommended |
 | Shared checkout on dead branch | Live | Switch to `main` after #78 resolves (§2.2) |
 | `scripts/new-session.sh` (RCA F3) | Not built | **Skip.** The SessionStart hook covers its failure mode automatically; F3 depends on remembering a command, and this class of failure has now recurred three times *despite* written guidance |
 | Flow redesign PR 1 | Ready | §5 |
