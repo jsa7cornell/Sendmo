@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 // CrashScreen + boundary behavior (T1-3 frontend half).
 // The second test pins the load-bearing inert-contract claim: with
 // Sentry.init never called, Sentry.ErrorBoundary still catches the render

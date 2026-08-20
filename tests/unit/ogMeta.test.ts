@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 // Unit tests for the link-preview (Open Graph) copy + injection helpers.
 //
 // The regression these lock down: index.html ships its own generic og:* tags,

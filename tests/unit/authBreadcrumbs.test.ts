@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach, beforeAll } from "vitest";
 
 // JSDOM's localStorage in this project's vitest config is incomplete (no

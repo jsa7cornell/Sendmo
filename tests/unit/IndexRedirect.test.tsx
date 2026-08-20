@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 // T3-3: signed-in users landing on `/` are redirected to `/dashboard`;
 // signed-out users (and the auth-loading window) still see the marketing page.
 // Covers the three variants of the guard in src/pages/Index.tsx.

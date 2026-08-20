@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 // Badge/test-copy gating on the checkout form (T1-1 review N1).
 //
 // The amber "Test Mode" / red "LIVE" badge and the "use card 4242…" hint are
