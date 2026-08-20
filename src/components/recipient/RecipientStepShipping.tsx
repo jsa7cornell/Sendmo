@@ -78,9 +78,15 @@ export default function RecipientStepShipping({
 
     const s = stateRef.current;
     if (!canFetchRates(s)) return;
-    // Rates already fetched for these inputs (e.g. Back → forward without
-    // edits): keep them, and the user's selection with them.
-    if (s.availableRates.length > 0 && s.selectedRate) return;
+    // NO "already have rates" short-circuit. An earlier cut of this file
+    // skipped the fetch when availableRates was non-empty, to avoid re-fetching
+    // on Back→forward without edits. That is wrong on the money path: this step
+    // UNMOUNTS when the user goes back to edit the parcel, so on return the
+    // effect sees the previous fetch's rates in flow state and keeps them —
+    // the user edits 10x10x10 5lb to 30x10x10 40lb and pays the small-package
+    // price. Verified by tests/e2e/rate-refetch.spec.ts, which counts the
+    // calls. Re-fetching on entry is one request; a stale quote is a wrong
+    // charge.
 
     fetchDebounceRef.current = setTimeout(async () => {
       const id = ++fetchRef.current;

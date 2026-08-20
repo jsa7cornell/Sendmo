@@ -200,12 +200,40 @@ function migrateSteps(steps: number[] | undefined): number[] | undefined {
   return [...new Set(mapped)];
 }
 
+/**
+ * Brings a draft written against an older step map onto the current one.
+ *
+ * Renumbering alone is not enough for a **pre-2026-08-18 flexible draft**.
+ * That map's flex sequence was [1, 20, 21, 22, 23] — steps 10 and 14 did not
+ * exist on it, so such a draft has neither them nor the defer flags. Under the
+ * unified map that reads as "origin and package unanswered", which walks the
+ * user back to the origin step AND — because `pathForFlags` derives the product
+ * from the flags — silently converts their shipping link into a prepaid label.
+ *
+ * Being on the flexible path in that era meant exactly one thing: the sender
+ * supplies the origin and the parcel. So restore that intent explicitly.
+ * Post-2026-08-18 drafts already carry both flags and both completions, so the
+ * guard below skips them.
+ */
+function migrateLegacyFlexDraft(data: RecipientFlowData): RecipientFlowData {
+  if (data.path !== "flexible") return data;
+  const answeredOrigin = data.completedSteps.includes(10);
+  const answeredPackage = data.completedSteps.includes(14);
+  if (answeredOrigin && answeredPackage) return data;
+  return {
+    ...data,
+    deferredOrigin: data.deferredOrigin || !answeredOrigin,
+    deferredPackage: data.deferredPackage || !answeredPackage,
+    completedSteps: [...new Set([...data.completedSteps, 10, 14])],
+  };
+}
+
 export function loadPersisted(): RecipientFlowData | null {
   const stored = readStored(Date.now());
   if (!stored) return null;
   const data = { ...INITIAL_DATA, ...stored.data };
   data.completedSteps = migrateSteps(data.completedSteps) ?? [];
-  return data;
+  return migrateLegacyFlexDraft(data);
 }
 
 export function persist(data: RecipientFlowData): void {
@@ -244,8 +272,9 @@ export function loadResumable(now: number = Date.now()): RecipientFlowData | nul
   if (!stored) return null;
   if (now - stored.savedAt > DRAFT_TTL_MS) return null;
 
-  const data: RecipientFlowData = { ...INITIAL_DATA, ...stored.data };
+  let data: RecipientFlowData = { ...INITIAL_DATA, ...stored.data };
   data.completedSteps = migrateSteps(data.completedSteps) ?? [];
+  data = migrateLegacyFlexDraft(data);
   // Finished flows are not drafts.
   if (data.labelResult || data.short_code) return null;
   // "Progress" is any typed field, not just a completed step. Someone who

@@ -27,9 +27,17 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 **Gotcha — a multi-edit script that dies mid-run leaves silently unapplied edits.** One patch script asserted on a stale expectation AFTER two successful replacements and exited without writing; the recovery pass re-applied one edit and missed the other (the banner merge). tsc can't catch a lost JSX edit that leaves valid code behind. The e2e suite caught it. When a patch script aborts, diff what was MEANT against what LANDED before moving on.
 
+**Code review of this PR found two real bugs in it — both on paths the build's own testing had walked and passed.**
+
+1. **A stale-rate short-circuit quoted the pre-edit price (money path).** An "already have rates, skip the fetch" guard, added as an optimisation, is wrong once the fetch has its own step: this component now *unmounts* while the user edits the parcel upstream, so on return it saw the previous fetch's rates in flow state and skipped. Edit 10x10x10 5lb → 30x10x10 40lb and the user is quoted, and charged, the small-package price. Proven by counting requests — the mocked response is identical either way, so only the request count distinguishes the two behaviours: 1 call across the edit before, 2 after. Guard deleted; probe promoted to `tests/e2e/rate-refetch.spec.ts`.
+
+2. **A legacy flex draft silently converted a link into a label.** Renumbering 21/22/23 is not sufficient: the pre-2026-08-18 flex sequence had no steps 10/14, so those drafts carry neither the completions nor the defer flags. They resume at the origin question instead of payment — and since `pathForFlags` derives the product purely from the flags, the shipping link becomes a prepaid label. Exactly review NB5, which required the mapping be stated *and pinned with a test*; the first cut shipped the renumbering with neither. `migrateLegacyFlexDraft` restores the intent (flexible-in-that-era meant the sender supplies origin and parcel) with three unit tests.
+
+**What that says about the testing, not just the bugs:** the full e2e suite passed 90/5/0 with both defects present. Neither is reachable by walking the flow forward — one needs a *backward* edit, the other needs a draft written by an older deploy. A suite that only walks happy paths forward will keep missing this whole class.
+
 **Census correction for the next migration:** the amendment's "24 literals across 4 specs" missed `progress-bar.spec.ts`, which navigates by UI and asserts the old segment sets — greps for URL literals do not find specs that assert *labels*. 5 spec files changed, not 4.
 
-**Measured.** Unit: 725 passing (42 rewritten stepRouting assertions replace the old map's). E2E: 90 passed / 5 skipped / 0 failed locally (was 89/5/0 on main; the suite gained morph coverage). Behavior change on the money path, per amendment A1: prices no longer live-update while dimensions are edited — the rate fetch runs on the Shipping step, downstream of both halves.
+**Measured.** Unit: 728 passing (42 rewritten stepRouting assertions replace the old map's; 3 new migration tests). E2E: 91 passed / 5 skipped / 0 failed locally (was 89/5/0 on main; the suite gained morph coverage). Behavior change on the money path, per amendment A1: prices no longer live-update while dimensions are edited — the rate fetch runs on the Shipping step, downstream of both halves.
 
 ### [2026-08-19] CI's cost was never the tests — it was `apt` inside the Playwright install
 

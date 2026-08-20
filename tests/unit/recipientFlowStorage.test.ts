@@ -9,7 +9,7 @@ import {
   prefillSlotFor,
   startFreshFlow,
 } from "@/lib/recipientFlowStorage";
-import { canAccessStep, slugToStep, stepUrl } from "@/lib/stepRouting";
+import { canAccessStep, slugToStep, stepUrl, firstIncompleteUrl } from "@/lib/stepRouting";
 
 // jsdom in this project exposes `window.localStorage` as an object with NO
 // methods (setItem/clear are undefined). `persist` swallows storage errors by
@@ -107,6 +107,42 @@ describe("the address escape — 'I don't have their address'", () => {
   });
 });
 
+
+describe("drafts written against the older step map", () => {
+  // NB5 of the 2026-08-19 review: renumbering alone strands mid-air drafts.
+  const write = (data: Record<string, unknown>) =>
+    window.localStorage.setItem(
+      "sendmo:recipient_flow:v1",
+      JSON.stringify({ savedAt: Date.now(), data }),
+    );
+
+  it("renumbers the retired flex steps (21/22/23 → 11/12/13)", () => {
+    write({ path: "flexible", completedSteps: [0, 1, 10, 14, 20, 21], email: "a@b.co",
+            deferredOrigin: true, deferredPackage: true });
+    expect(loadPersisted()?.completedSteps).toEqual([0, 1, 10, 14, 20, 11]);
+  });
+
+  it("a pre-2026-08-18 flex draft keeps its LINK identity — it must not become a label", () => {
+    // That map's flex sequence was [1, 20, 21, 22, 23]: no 10/14, no flags.
+    // Left as-is it reads as "origin and package unanswered", which walks the
+    // user back to origin and flips the product to full_label.
+    write({ path: "flexible", completedSteps: [0, 1, 20, 21], email: "a@b.co" });
+    const d = loadPersisted()!;
+    expect(d.deferredOrigin).toBe(true);
+    expect(d.deferredPackage).toBe(true);
+    expect(d.completedSteps).toEqual(expect.arrayContaining([10, 14]));
+    // Resumes where they actually were — the payment step — not at origin.
+    expect(firstIncompleteUrl(d.completedSteps, "flexible")).toBe("/onboarding/flexible/payment");
+  });
+
+  it("leaves a full-label draft untouched — its numbers never changed", () => {
+    write({ path: "full_label", completedSteps: [0, 1, 10, 14], email: "a@b.co" });
+    const d = loadPersisted()!;
+    expect(d.completedSteps).toEqual([0, 1, 10, 14]);
+    expect(d.deferredOrigin).toBe(false);
+    expect(d.deferredPackage).toBe(false);
+  });
+});
 
 describe("resuming an unfinished flow", () => {
   // The flow moved from sessionStorage to localStorage on 2026-08-18 so closing
