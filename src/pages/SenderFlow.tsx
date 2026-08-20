@@ -71,7 +71,12 @@ export default function SenderFlow() {
     });
   }, [linkData, senderAddress.street, saved?.senderAddress?.street]);
   const [senderEmail, setSenderEmail] = useState(saved?.senderEmail ?? "");
-  const [saveInfo, setSaveInfo] = useState(true);
+  // Sender details are remembered on this device so a repeat sender does not
+  // retype them. The review screen's helper copy discloses it; the opt-out
+  // checkbox was removed with the handoff's one-checkbox simplification
+  // (2026-08-19). Kept as a constant rather than inlined so the behaviour has
+  // one named place to change if that decision is revisited.
+  const REMEMBER_SENDER_ON_DEVICE = true;
   const [shareContact, setShareContact] = useState(false);
 
   const [parcel, setParcel] = useState<SenderParcel | null>(null);
@@ -212,7 +217,7 @@ export default function SenderFlow() {
 
   async function handleConfirm() {
     if (!linkData || !selectedRate || !parcel || !easypostShipmentId) return;
-    if (saveInfo) saveSender(senderAddress, senderEmail);
+    if (REMEMBER_SENDER_ON_DEVICE) saveSender(senderAddress, senderEmail);
 
     setSubmitting(true);
     setSubmitError(null);
@@ -304,8 +309,11 @@ export default function SenderFlow() {
             </div>
           )}
 
-          {step !== "loading" && step !== "error" && (
-            <SenderProgressBar step={step} />
+          {/* linkData gates the bar as well as the step: its first segment's
+              label is computed from what this link left unfilled, so there is
+              nothing meaningful to render before the link resolves. */}
+          {step !== "loading" && step !== "error" && linkData && (
+            <SenderProgressBar step={step} linkData={linkData} />
           )}
 
           <AnimatePresence mode="wait">
@@ -383,8 +391,6 @@ export default function SenderFlow() {
                   selectedRate={selectedRate}
                   senderEmail={senderEmail}
                   onSenderEmailChange={setSenderEmail}
-                  saveInfo={saveInfo}
-                  onSaveInfoChange={setSaveInfo}
                   shareContact={shareContact}
                   onShareContactChange={setShareContact}
                   onEditPackage={() => setStep("package")}

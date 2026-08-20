@@ -2,6 +2,7 @@ import { Button } from "@/components/ui/button";
 import { Package2, MapPin, Printer, ArrowRight } from "lucide-react";
 import type { LinkData } from "@/lib/api";
 import { displayName } from "@/lib/name";
+import { senderScenario, senderIntroSubhead } from "@/lib/senderScenario";
 
 interface Props {
   linkData: LinkData;
@@ -19,6 +20,10 @@ export default function SenderStepIntro({ linkData, onContinue }: Props) {
       ? `You're sending a package to ${recipientName}`
       : "You're sending a package via this prepaid link";
 
+  // What this sender is actually being asked to do — one derivation shared
+  // with the progress bar, so the headline and the bar cannot disagree.
+  const subhead = senderIntroSubhead(senderScenario(linkData));
+
   const cityState = linkData.recipient_city && linkData.recipient_state
     ? `${linkData.recipient_city}, ${linkData.recipient_state}`
     : null;
@@ -30,6 +35,7 @@ export default function SenderStepIntro({ linkData, onContinue }: Props) {
           SendMo Label Link
         </span>
         <h1 className="text-2xl font-bold text-foreground">{headline}</h1>
+        <p className="text-muted-foreground text-sm max-w-sm mx-auto leading-relaxed">{subhead}</p>
         {cityState && (
           <p className="text-muted-foreground flex items-center justify-center gap-1.5 text-sm">
             <MapPin className="w-3.5 h-3.5" /> Shipping to {cityState}

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Package, Mail, ScrollText, ArrowLeft, ArrowRight, MapPin } from "lucide-react";
+import { Package, Mail, ScrollText, ArrowLeft, ArrowRight, MapPin, Send } from "lucide-react";
 import SmartAddressInput from "@/components/ui/SmartAddressInput";
 import MagicGuestimator from "@/components/recipient/MagicGuestimator";
 import type { LinkData } from "@/lib/api";
@@ -106,6 +106,23 @@ export default function SenderStepPackage({
             {cityState && <span className="text-muted-foreground"> · {cityState}</span>}
           </span>
         </div>
+        {/* When the creator already supplied the ship-from address, say whose
+            it is — the sender should not wonder whether they still owe one.
+            A known origin renders as a one-line NOTE, never an editable
+            field (Rule 7): it is the creator's address, not this sender's to
+            change, and the street never appears in sender UI text. */}
+        {linkData.origin_prefill?.name && (
+          <div className="flex items-center gap-2 text-sm mt-1.5">
+            <Send className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+            <span className="text-muted-foreground">From</span>
+            <span className="font-medium text-foreground truncate">
+              {displayName(linkData.origin_prefill.name) || linkData.origin_prefill.name}
+              <span className="text-muted-foreground">
+                {" "}· {linkData.origin_prefill.city}, {linkData.origin_prefill.state}
+              </span>
+            </span>
+          </div>
+        )}
       </div>
 
       <div className="text-center">

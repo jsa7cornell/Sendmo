@@ -80,7 +80,11 @@ export default function SenderStepRates({
       <div className="text-center">
         <h1 className="text-2xl font-bold text-foreground">Choose a shipping option</h1>
         <p className="text-muted-foreground mt-1 text-sm">
-          Prepaid by {recipient}. Pick the speed that works best.
+          {/* Names WHO pays, never HOW MUCH — Rule 7: the sender must not
+              learn the creator's amount. "will pay" rather than "prepaid by"
+              because on a flexible link nothing has been charged yet; the
+              creator is charged when this sender ships. */}
+          {recipient} will pay for shipping. Pick the speed that works best.
         </p>
       </div>
 
