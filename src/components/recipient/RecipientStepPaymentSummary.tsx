@@ -28,7 +28,14 @@ function parcelLine(state: RecipientFlowState): string {
 
 interface Props {
   state: RecipientFlowState;
-  /** Exact total for a prepaid label. Ignored on the link path. */
+  /**
+   * Exact total for a prepaid label; unused on the link path, where the Total
+   * row shows the cap instead. A discriminated union cannot express this —
+   * which arm applies depends on `state.path`, which the types cannot see —
+   * so the guard is at render: a missing total shows "—", never "$0.00".
+   * A confident zero above the field that charges the real amount is the one
+   * failure this row must not have.
+   */
   totalCents?: number;
 }
 
@@ -131,7 +138,9 @@ export default function RecipientStepPaymentSummary({ state, totalCents }: Props
         <div className="flex gap-3 py-1 mt-1 border-t border-border pt-2">
           <dt className="text-muted-foreground w-20 shrink-0">Total</dt>
           <dd className="min-w-0 flex-1 font-medium">
-            {isLink ? `Up to $${state.price_cap} per shipment` : formatCents(totalCents ?? 0)}
+            {isLink
+              ? `Up to $${state.price_cap} per shipment`
+              : totalCents === undefined ? "—" : formatCents(totalCents)}
           </dd>
         </div>
       </dl>

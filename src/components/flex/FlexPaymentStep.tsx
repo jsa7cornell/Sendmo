@@ -357,7 +357,23 @@ export default function FlexPaymentStep({
         </p>
       </div>
 
-      {summary}
+      {summary && (
+        <div>
+          {summary}
+          {/* The destination card this replaces carried the only Edit control
+              on the screen. Losing it left a creator who spots a wrong city at
+              payment time with no way back to step 1. */}
+          {onEditDestination && (
+            <button
+              type="button"
+              onClick={onEditDestination}
+              className="text-xs text-primary hover:underline mt-2 block ml-auto"
+            >
+              Edit destination
+            </button>
+          )}
+        </div>
+      )}
 
       {!summary && showCostEstimate && (
         /* Destination summary — lets the recipient confirm and edit where

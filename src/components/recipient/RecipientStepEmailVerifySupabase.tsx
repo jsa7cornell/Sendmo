@@ -187,7 +187,13 @@ export default function RecipientStepEmailVerifySupabase({
   }
 
   function sendOtp(to: string) {
-    const redirectTo = `${window.location.origin}/onboarding/full-label/verify?confirmed=1`;
+    // The slug MUST follow state.path. This component serves both paths since
+    // the flex twin was deleted; hardcoding `full-label` sent a link creator
+    // back to the full-label URL, and RecipientFlowContext syncs data.path
+    // from the URL slug unconditionally — so tapping the email link rewrote a
+    // flexible draft into a full_label one with the defer flags still set.
+    const slug = state.path === "flexible" ? "flexible" : "full-label";
+    const redirectTo = `${window.location.origin}/onboarding/${slug}/verify?confirmed=1`;
     return supabase.auth.signInWithOtp({
       email: to,
       options: { emailRedirectTo: redirectTo },

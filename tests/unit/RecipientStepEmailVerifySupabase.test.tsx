@@ -152,6 +152,26 @@ describe("RecipientStepEmailVerifySupabase", () => {
     expect(screen.getByText(/Confirm your email/i)).toBeInTheDocument();
   });
 
+  // The redirect slug follows state.path. Hardcoding "full-label" here shipped
+  // in the first cut of this consolidation and survived every other test in
+  // this file, because they all mock signInWithOtp and none looked at the URL
+  // it was called with. RecipientFlowContext syncs data.path FROM the URL
+  // slug, so a link creator tapping their email link had the draft rewritten
+  // to full_label with the defer flags still set.
+  it.each([
+    ["full_label", "/onboarding/full-label/verify?confirmed=1"],
+    ["flexible", "/onboarding/flexible/verify?confirmed=1"],
+  ] as const)("sends the %s path back to its own verify URL", async (path, expected) => {
+    const user = userEvent.setup();
+    renderStep({ state: { path } });
+    await sendCode(user);
+
+    expect(mockSignInWithOtp).toHaveBeenCalledWith({
+      email: "user@example.com",
+      options: { emailRedirectTo: expect.stringContaining(expected) },
+    });
+  });
+
   it("keeps the digit grid hidden when the send fails", async () => {
     mockSignInWithOtp.mockResolvedValue({ data: null, error: { message: "Rate limit reached" } });
     const user = userEvent.setup();

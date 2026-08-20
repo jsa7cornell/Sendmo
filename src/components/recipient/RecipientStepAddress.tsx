@@ -13,9 +13,6 @@ import { supabase } from "@/lib/supabase";
 import type { AddressInput, RecipientPath, SenderKind } from "@/lib/types";
 import { prefillSlotFor } from "@/lib/recipientFlowStorage";
 
-// Set immediately before redirecting to Google; its presence on return is
-// what authorizes the post-OAuth auto-advance.
-
 interface Props {
   address: AddressInput;
   email: string;
