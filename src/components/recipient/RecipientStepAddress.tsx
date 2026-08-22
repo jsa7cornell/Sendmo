@@ -1,20 +1,22 @@
 import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { AlertCircle, ArrowRight, Home, LogIn, Tag, Undo2 } from "lucide-react";
+import { AlertCircle, ArrowRight, Home, LogIn, Tag } from "lucide-react";
 import { SELLER_LINK_VISIBLE, SELLER_LINK_LIVE } from "@/lib/featureFlags";
 import AddressForm from "@/components/forms/AddressForm";
+import StepQuestionHeader from "./StepQuestionHeader";
+import SkipToSenderLink from "./SkipToSenderLink";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
 import type { AddressInput, RecipientPath, SenderKind } from "@/lib/types";
 import { prefillSlotFor } from "@/lib/recipientFlowStorage";
 
-// The skip and the saved-address shortcut both live ON the field group they
-// act on (2026-08-22): the skip is the card header's one action, the shortcut
-// sits under the fields it fills. Replaces the separate two-button SkipToggle
-// card that used to sit above — a control in its own card read as a second
-// question on a screen that asks one.
+// The skip is a link beside the question (StepQuestionHeader +
+// SkipToSenderLink, shared with the Origin and Package steps since
+// 2026-08-22); the saved-address shortcut sits under the fields it fills.
+// Both replace cards that used to stack above the form — a control in its own
+// card read as a second question on a screen that asks one.
 
 interface Props {
   address: AddressInput;
@@ -100,27 +102,14 @@ export default function RecipientStepAddress({
     })();
   }, [user, address.verified, address.street, destinationIsSelf, onAddressChange]);
 
-  // ── The card header's one action ──────────────────────────────────────
-  // Skipping ADVANCES immediately — it is a complete answer to the only
-  // question on the screen, so making the user then press Continue asks them
-  // to confirm something they just said. Coming back to a skipped step (via
-  // the progress bar) offers the reverse.
-  //
   // Hidden on the 'self' branch: if YOU are the sender there is no link user
   // to hand the destination to.
-  const linkClasses =
-    "inline-flex items-center gap-1.5 text-sm font-semibold text-primary rounded-lg px-2 py-1 -mr-2 transition-colors hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2";
-
-  const skipAction = sender === "self" ? null : deferredDestination ? (
-    <button type="button" onClick={onUndoDeferDestination} className={linkClasses}>
-      <Undo2 className="w-4 h-4" aria-hidden="true" />
-      Enter it myself
-    </button>
-  ) : (
-    <button type="button" onClick={onDeferDestination} className={linkClasses}>
-      Sender will fill this in
-      <ArrowRight className="w-4 h-4" aria-hidden="true" />
-    </button>
+  const skipAction = sender === "self" ? null : (
+    <SkipToSenderLink
+      deferred={deferredDestination}
+      onDefer={onDeferDestination}
+      onUndo={onUndoDeferDestination}
+    />
   );
 
   // ── The saved-address shortcut, under the fields it fills ─────────────
@@ -159,29 +148,25 @@ export default function RecipientStepAddress({
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-xl font-bold text-foreground">
-          {destinationIsSelf ? "Where should the package be delivered?" : "Where's it going?"}
-        </h2>
-        {/* The heading already asks the question; this line only carries what
-            the heading can't. Carriers reject label buys with no phone on the
-            delivery address (FedEx/UPS PHONENUMBER.EMPTY), so warn before the
-            user is stuck mid-form without one — and on the 'self' branch it's
-            someone else's number, which is the harder one to produce. */}
-        <p className="text-muted-foreground text-sm mt-1">
-          {sender === "self"
-            ? "Carriers need a phone number for the delivery address, so have theirs handy."
-            : "Carriers need a phone number for the delivery address."}
-        </p>
-      </div>
+      {/* The subtext carries only what the question can't. Carriers reject
+          label buys with no phone on the delivery address (FedEx/UPS
+          PHONENUMBER.EMPTY), so warn before the user is stuck mid-form without
+          one — and on the 'self' branch it's someone else's number, which is
+          the harder one to produce. */}
+      <StepQuestionHeader
+        question={destinationIsSelf ? "Where should the package be delivered?" : "Where's it going?"}
+        action={skipAction}
+      >
+        {sender === "self"
+          ? "Carriers need a phone number for the delivery address, so have theirs handy."
+          : "Carriers need a phone number for the delivery address."}
+      </StepQuestionHeader>
 
       <AddressForm
         value={address}
         tried={tried}
         onChange={onAddressChange}
         destinationIsSelf={destinationIsSelf}
-        title="Destination address"
-        action={skipAction}
         footer={savedAddressShortcut}
         dimmed={deferredDestination}
       />

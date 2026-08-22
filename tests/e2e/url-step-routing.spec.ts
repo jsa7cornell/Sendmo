@@ -288,6 +288,7 @@ test.describe("URL-based step routing", () => {
 
     // Step 14: package (parcel only — the carrier choice moved to step 20)
     await expect(page).toHaveURL(/\/onboarding\/full-label\/package$/);
+    await page.getByRole("button", { name: /or fill in manually/i }).click();
     await expect(page.getByRole("textbox", { name: "L", exact: true })).toBeVisible({ timeout: 5000 });
     await page.getByRole("textbox", { name: "L", exact: true }).fill("10");
     await page.getByRole("textbox", { name: "W", exact: true }).fill("10");

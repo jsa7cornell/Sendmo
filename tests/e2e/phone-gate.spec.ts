@@ -139,6 +139,8 @@ test.describe("phone gate — onboarding", () => {
     // Add the origin phone → step 10 passes → the parcel step is reachable.
     await page.locator("#origin-phone").fill("4155550142");
     await page.getByRole("button", { name: /Continue to package details/i }).click();
+    // Parcel fields start collapsed behind "or fill in manually" (2026-08-22).
+    await page.getByRole("button", { name: /or fill in manually/i }).click();
     await expect(
       page.getByRole("textbox", { name: "L", exact: true })
     ).toBeVisible({ timeout: 5000 });
