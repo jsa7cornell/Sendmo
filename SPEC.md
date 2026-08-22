@@ -216,8 +216,11 @@ The flow uses numeric step IDs for branching:
 
 ```
 src/components/recipient/
+  StepQuestionHeader.tsx                    # The question + its one action (steps 1/10/14)
+  SkipToSenderLink.tsx                      # That action: "Sender will fill this in →"
   RecipientStepAddress.tsx                  # Step 1: destination address only (shared)
-  RecipientStepFullShipping.tsx             # Full path: shipment details (Step 10)
+  RecipientStepOrigin.tsx                   # Step 10: ship-from address
+  RecipientStepPackage.tsx                  # Step 14: the parcel
   RecipientStepContact.tsx                  # Both paths: collect + confirm email (Step 11)
   RecipientStepFlexPreferences.tsx          # Link path: shipping prefs (Step 20)
   RecipientStepPayment.tsx                  # Payment + activated state (Steps 12/13/22/23)
@@ -293,27 +296,66 @@ Google CTA moved to the Contact step on 2026-08-22.
 - **Validation**: destination address + phone only. Red borders + "Required" labels + summary block above button
 - **Button**: "Continue to shipping preferences"
 
-#### The card owns its controls (2026-08-22)
+See "The skip is a link beside the question" below — the pattern is shared with
+the Origin and Package steps.
 
-Both of this step's controls render on the field group they act on, rather than
-in cards stacked above it:
+**Under the fields:** "Use my saved address: <street>" when signed in with a
+saved address and `sender` is still null; tapping it also resolves
+`sender='other'`. Signed out it reads "Log in to use your saved address" and
+routes to `/login?next=<this step>`.
 
-- **Card header, right side** — "Sender will fill this in →". Skipping ADVANCES
-  on the click; there is no Continue press, because the skip is a complete
-  answer to the only question on the screen. `deferToSender("destination")` now
-  marks step 1 complete and navigates to step 10, exactly like the origin and
-  package skips. Returning to a skipped step (via the progress bar) flips the
-  action to "Enter it myself".
-- **Under the fields** — "Use my saved address: <street>" when signed in with a
-  saved address and `sender` is still null; tapping it also resolves
-  `sender='other'`. Signed out, it reads "Log in to use your saved address" and
-  routes to `/login?next=<this step>`.
+### The skip is a link beside the question (2026-08-22)
 
-Only the FIELDS dim and go `inert` when the destination is deferred. The header
-stays live — it holds the only control that takes the question back.
+All three question steps — Destination (1), Origin (10), Package (14) — share
+one pattern, built from two components:
 
-The two-button `SkipToggle` still serves the Origin and Package steps; only the
-destination step moved to this pattern.
+- `StepQuestionHeader` — asks the question once, as the step's `<h2>`, with one
+  action on the same row.
+- `SkipToSenderLink` — that action: "Sender will fill this in →", or
+  "↺ Enter it myself" when the question is already handed over.
+
+**Skipping ADVANCES on the click.** No Continue press — it is a complete answer
+to the step's only question. `deferToSender` marks the step complete and
+navigates to the next one for all three fields; the destination was the last
+holdout and joined on 2026-08-22, once its email half moved to Contact.
+
+**Reversing does NOT navigate.** The user is looking at the step they want
+back, so it reopens in place.
+
+**Only the FIELDS dim and go `inert`.** The skip link sits outside that subtree,
+beside the question — it holds the only control that takes the question back,
+and wrapping it made a skipped step unrecoverable (caught by
+`skip-to-sender.spec.ts`, which pins the property).
+
+**What this replaced:** a two-button `SkipToggle` radiogroup in a card of its
+own above each form. That control asked a second question ("who fills this
+in?") before the user could answer the first, and needed a whole card to do it
+— three stacked boxes for one question. Its "neither option pre-selected" rule
+is gone with it, since there is no second option; the property that rule
+protected (the label path gains no clicks) survives because the fields are open
+and typeable on arrival. `SkipToggle` and `FirstSkipExplainer` are deleted.
+
+### Package step: the parcel fields start collapsed (2026-08-22)
+
+The Package step (14) leads with "Describe the product" — the Magic Guestimator
+textarea — and keeps packaging type, dimensions, weight and item description
+behind an "or fill in manually" link. Four cards of dimensions in front of
+someone who was going to type "a hardcover cookbook" is the wrong first
+impression.
+
+They are revealed, and stay revealed, when ANY of these holds:
+
+1. The user clicked "or fill in manually".
+2. Any parcel value is present — the Guestimator just filled them, or the user
+   returned to a filled step. An auto-filled estimate must be visible and
+   correctable, never hidden behind a link.
+3. Validation failed. A summary naming "Length is required" must never point at
+   a field the user cannot see.
+
+`MagicGuestimator` serves four surfaces (recipient Package, sender Package,
+SellerBuilder, SenderPreview). Its `title` / `subtitle` / `placeholder` /
+`icon` / `action` props are all optional and default to the original rendering,
+so only the recipient Package step takes this treatment.
 
 ---
 

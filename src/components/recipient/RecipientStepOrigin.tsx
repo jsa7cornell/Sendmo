@@ -5,7 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import SmartAddressInput from "@/components/ui/SmartAddressInput";
 import PriceSummaryCard from "./PriceSummaryCard";
-import SkipToggle from "./SkipToggle";
+import StepQuestionHeader from "./StepQuestionHeader";
+import SkipToSenderLink from "./SkipToSenderLink";
 import DimmedWhenDeferred from "./DimmedWhenDeferred";
 import { useAuth } from "@/contexts/AuthContext";
 import type { RecipientFlowState } from "@/hooks/useRecipientFlow";
@@ -80,62 +81,28 @@ export default function RecipientStepOrigin({
         estimatedDays={null}
       />
 
+      {/* The question, asked once, with its one action beside it. Hidden on
+          the 'self' branch: if YOU are the sender there is no link user to
+          hand the ship-from address to. */}
+      <StepQuestionHeader
+        question="Where's it shipping from?"
+        action={isSelfSender ? undefined : (
+          <SkipToSenderLink
+            deferred={state.deferredOrigin}
+            onDefer={onNoAddress}
+            onUndo={onKeepIt}
+          />
+        )}
+      >
+        {isSelfSender
+          ? "The address the package leaves from."
+          : "Their name, address and phone — enter it and you get an exact price now."}
+      </StepQuestionHeader>
+
       <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
-        {/* Who supplies the sender's address — the question that decides
-            whether this is a finished label or a shipping link. Framed as two
-            answers to a question the user can actually answer, rather than a
-            choice between product names they have no context for.
-
-            "I have their address" is pre-selected on purpose: the label path
-            has produced every shipment to date, so it must not gain a click to
-            advertise the link path. First-class means named, weighted and
-            visible before the user can fail — not unavoidable. */}
-        {!isSelfSender && (
-          <>
-            <SkipToggle
-              legend="Where's it shipping from?"
-              choice={
-                state.deferredOrigin
-                  ? "deferred"
-                  : (state.originAddress.street || state.originAddress.name ? "kept" : null)
-              }
-              onKeepIt={onKeepIt}
-              onDefer={onNoAddress}
-            keptCaption="Enter their name, address, and phone — you'll get an exact price now."
-              deferredCaption="They'll add the ship-from address when they use your link."
-            />
-          </>
-        )}
-
-        {/* The account holder claiming the sender role. Not a third answer to
-            the toggle — it is a prefill affordance, and conflating the two put
-            an identity claim inside a question about who supplies data. */}
-        {!isSelfSender && sender === null && user && !state.deferredOrigin && (
-          <button
-            type="button"
-            onClick={() => onUpdate({ sender: "self" })}
-            className="w-full flex items-start gap-3 rounded-xl border border-border bg-card p-3.5 text-left transition-all hover:border-muted-foreground/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 mb-4"
-          >
-            <Send className="w-4 h-4 text-primary shrink-0 mt-0.5" aria-hidden="true" />
-            <span className="min-w-0">
-              <span className="block text-sm font-medium text-foreground">I'm the sender — I'm mailing this out myself</span>
-              <span className="block text-xs text-muted-foreground mt-0.5">
-                It ships from your address — we'll fill in your saved one if you have it
-              </span>
-            </span>
-          </button>
-        )}
-
-        <div className="flex items-center justify-between mb-3">
-          {/* Only the 'self' branch needs a heading here: the 'other' branch is
-              already headed by the fieldset legend above, and rendering an
-              empty <h3> for it left a bare landmark in the a11y tree. */}
-          {isSelfSender ? (
+        {originConfirmable && (
+          <div className="flex items-center justify-between mb-3">
             <h3 className="text-sm font-semibold text-foreground">Shipping from</h3>
-          ) : (
-            <span />
-          )}
-          {originConfirmable && (
             <button
               type="button"
               onClick={() => setEditingOrigin(true)}
@@ -143,10 +110,26 @@ export default function RecipientStepOrigin({
             >
               Change
             </button>
-          )}
-        </div>
+          </div>
+        )}
 
         <DimmedWhenDeferred deferred={state.deferredOrigin}>
+        {/* The account holder claiming the sender role. NOT an answer to the
+            skip question — it is a prefill shortcut, and conflating the two put
+            an identity claim inside a question about who supplies data. Sits
+            under the fields it fills, like the destination step's saved-address
+            shortcut. */}
+        {!isSelfSender && sender === null && user && (
+          <button
+            type="button"
+            onClick={() => onUpdate({ sender: "self" })}
+            className="mb-3 inline-flex items-center gap-1.5 text-sm font-semibold text-primary rounded-lg px-2 py-1 -ml-2 transition-colors hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+          >
+            <Send className="w-4 h-4" aria-hidden="true" />
+            I'm the sender — use my address
+          </button>
+        )}
+
         {originConfirmable ? (
           /* Confirm row — the generic outbound case is faster than a form when
              we already know the account holder's address. Only rendered when

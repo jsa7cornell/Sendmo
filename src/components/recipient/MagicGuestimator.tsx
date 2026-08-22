@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Sparkles, Loader2, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -7,9 +7,40 @@ import type { GuestimatorResult } from "@/lib/types";
 
 interface Props {
   onResult: (result: GuestimatorResult, meta: { confidence: "high" | "medium" | "low"; notes: string }) => void;
+  /**
+   * Copy overrides. All optional and defaulted to what this component has
+   * always rendered, because it serves four surfaces (recipient Package,
+   * sender Package, SellerBuilder, SenderPreview) and only the recipient
+   * Package step takes the 2026-08-22 treatment.
+   */
+  title?: string;
+  /** Pass null to drop the explainer line entirely. */
+  subtitle?: string | null;
+  placeholder?: string;
+  /**
+   * The sparkle badge. On by default — it is the Guestimator's identity on the
+   * three surfaces that present it as a named feature. The recipient Package
+   * step turns it off: there the card is simply the step's first question
+   * ("Describe the product"), not a feature being advertised.
+   */
+  icon?: boolean;
+  /**
+   * Rendered beside the button, replacing the default hint text. The recipient
+   * Package step puts its "or fill in manually" escape here — the fields that
+   * escape reveals are the ones this component fills, so the two belong on the
+   * same row.
+   */
+  action?: ReactNode;
 }
 
-export default function MagicGuestimator({ onResult }: Props) {
+export default function MagicGuestimator({
+  onResult,
+  title = "Magic Guestimator",
+  subtitle = "Describe what you're shipping and we'll fill in everything else.",
+  placeholder = "e.g., a hardcover cookbook, no rush",
+  icon = true,
+  action,
+}: Props) {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [note, setNote] = useState<string | null>(null);
@@ -55,21 +86,21 @@ export default function MagicGuestimator({ onResult }: Props) {
   return (
     <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
       <div className="flex items-center gap-2 mb-1">
-        <Sparkles className="w-4 h-4 text-primary" />
-        <h3 className="text-sm font-semibold text-foreground">Magic Guestimator</h3>
+        {icon && <Sparkles className="w-4 h-4 text-primary" />}
+        <h3 className="text-sm font-semibold text-foreground">{title}</h3>
       </div>
-      <p className="text-xs text-muted-foreground mb-3">
-        Describe what you're shipping and we'll fill in everything else.
-      </p>
+      {subtitle && (
+        <p className="text-xs text-muted-foreground mb-3">{subtitle}</p>
+      )}
 
       <textarea
         value={input}
         onChange={(e) => { setInput(e.target.value); if (completed) setCompleted(false); }}
         onKeyDown={handleKeyDown}
-        placeholder="e.g., a hardcover cookbook, no rush"
+        placeholder={placeholder}
         rows={1}
         disabled={loading}
-        className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary transition-colors placeholder:text-muted-foreground resize-none disabled:opacity-60"
+        className="w-full mt-2 rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary transition-colors placeholder:text-muted-foreground resize-none disabled:opacity-60"
       />
 
       <div className="flex items-center gap-3 mt-2 flex-wrap">
@@ -84,9 +115,11 @@ export default function MagicGuestimator({ onResult }: Props) {
           {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
           {loading ? "Thinking…" : "I'm Feeling Lucky"}
         </Button>
-        <span className="text-xs text-muted-foreground">
-          Auto-fill packaging, dims, weight, and pick a shipping method
-        </span>
+        {action ?? (
+          <span className="text-xs text-muted-foreground">
+            Auto-fill packaging, dims, weight, and pick a shipping method
+          </span>
+        )}
       </div>
 
       <AnimatePresence>

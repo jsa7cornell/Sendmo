@@ -38,6 +38,7 @@ test("editing the parcel then returning re-fetches rates", async ({ page }) => {
   await page.locator("#origin-phone").fill("4155550142");
   await page.getByRole("button", { name: /Continue to package details/i }).click();
 
+  await page.getByRole("button", { name: /or fill in manually/i }).click();
   await page.getByRole("textbox", { name: "L", exact: true }).fill("10");
   await page.getByRole("textbox", { name: "W", exact: true }).fill("10");
   await page.getByRole("textbox", { name: "H", exact: true }).fill("10");
