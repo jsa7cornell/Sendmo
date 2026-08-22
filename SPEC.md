@@ -193,26 +193,33 @@ SendMo uses **"try-then-show"** validation: user clicks Continue → `tried` fla
 
 The flow uses numeric step IDs for branching:
 - `0` = Path Choice
-- `1` = Address + Email (shared by both paths)
+- `1` = Destination address (shared by both paths)
 - `10-13` = Full Label path (Shipment Details -> Confirm Email -> Payment -> Label)
 - `20-23` = Flexible Link path (Shipping Prefs -> Email Verify -> Payment -> Link Activated)
 
-> Step 11 (Confirm Email) for the Full Label path was inserted 2026-05-11 per the
+> Step 11 (Contact) was inserted 2026-05-11 per the
 > [account-creation-timing proposal](proposals/2026-05-11_account-creation-timing_reviewed-2026-05-11_decided-2026-05-11.md).
 > Uses Supabase-native `signInWithOtp` so verifying the email also creates the
 > `auth.users` row, allowing shipments.user_id to be stamped from `auth.uid()`.
-> Auto-skipped when the user is already authenticated (Google OAuth at step 1,
-> or returning user with a live session).
+> Auto-skipped when the user is already authenticated (returning user with a
+> live session).
+>
+> **2026-08-22 — the step now COLLECTS the email as well as confirming it.**
+> The input and the Google CTA lived on step 1 until then, which put an account
+> question on the screen that asks where a package goes. Step 11 renders in two
+> phases: enter an email (or Google), then confirm the 6-digit code. The phase
+> is derived from `verification_email` — set when a code is sent — so it
+> survives back-navigation. Step 1 no longer reads, writes or validates
+> `state.email`; nothing between step 1 and step 11 consumes it.
 
 ### Component File Structure
 
 ```
 src/components/recipient/
-  RecipientStepAddress.tsx                  # Step 1: Address + email + Google CTA (shared)
+  RecipientStepAddress.tsx                  # Step 1: destination address only (shared)
   RecipientStepFullShipping.tsx             # Full path: shipment details (Step 10)
-  RecipientStepEmailVerifySupabase.tsx      # Full path: Supabase OTP confirm email (Step 11)
+  RecipientStepContact.tsx                  # Both paths: collect + confirm email (Step 11)
   RecipientStepFlexPreferences.tsx          # Link path: shipping prefs (Step 20)
-  RecipientStepEmailVerifyFlex.tsx          # Link path: Supabase OTP confirm email (Step 21)
   RecipientStepPayment.tsx                  # Payment + activated state (Steps 12/13/22/23)
 ```
 
@@ -274,15 +281,39 @@ This is why there is no "flexible" door at step 0: the fork is a *fact about wha
 
 **User-facing names** (strings only — `link_type` values are unchanged): `full_label` → "Prepaid label", `flexible` → "Shipping link", `seller_link` → "Seller link".
 
-### Step 1: Destination & Email (Shared)
+### Step 1: Destination (Shared)
 **Component**: `RecipientStepAddress.tsx` -- Step ID: `1`
+
+Asks one question: where is the package going. The creator's email and the
+Google CTA moved to the Contact step on 2026-08-22.
 
 - Freeform address input with auto-verification (mock: length > 15 chars; production: EasyPost API)
 - Green verified badge with CheckCircle2 icon
 - **Phone number** -- required (added 2026-05-19). FedEx and UPS reject EasyPost label purchases without a phone on both shipper and recipient addresses (`PHONENUMBER.EMPTY`); USPS doesn't. Collected on every address via `SmartAddressInput`. 10-digit minimum (digits-only count). Server re-validates in the `links` Edge Function — client-side is UX only.
-- Email input for verification in next step
-- **Validation**: Red borders + "Required" labels + summary block above button
+- **Validation**: destination address + phone only. Red borders + "Required" labels + summary block above button
 - **Button**: "Continue to shipping preferences"
+
+#### The card owns its controls (2026-08-22)
+
+Both of this step's controls render on the field group they act on, rather than
+in cards stacked above it:
+
+- **Card header, right side** — "Sender will fill this in →". Skipping ADVANCES
+  on the click; there is no Continue press, because the skip is a complete
+  answer to the only question on the screen. `deferToSender("destination")` now
+  marks step 1 complete and navigates to step 10, exactly like the origin and
+  package skips. Returning to a skipped step (via the progress bar) flips the
+  action to "Enter it myself".
+- **Under the fields** — "Use my saved address: <street>" when signed in with a
+  saved address and `sender` is still null; tapping it also resolves
+  `sender='other'`. Signed out, it reads "Log in to use your saved address" and
+  routes to `/login?next=<this step>`.
+
+Only the FIELDS dim and go `inert` when the destination is deferred. The header
+stays live — it holds the only control that takes the question back.
+
+The two-button `SkipToggle` still serves the Origin and Package steps; only the
+destination step moved to this pattern.
 
 ---
 

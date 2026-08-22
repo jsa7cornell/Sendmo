@@ -84,7 +84,6 @@ test.describe("phone gate — onboarding", () => {
     // Everything filled EXCEPT the phone.
     await page.locator("#destination-name").fill("Jane Doe");
     await verifyAddressNoPhone(page, "destination");
-    await page.locator("#recipient-email").fill("e2e-phone-gate@example.com");
 
     // Continue with a blank phone → must be BLOCKED.
     await page.getByRole("button", { name: /Continue to shipment details/i }).click();
@@ -124,7 +123,6 @@ test.describe("phone gate — onboarding", () => {
     await page.locator("#destination-name").fill("Jane Doe");
     await verifyAddressNoPhone(page, "destination");
     await page.locator("#destination-phone").fill("4155550100");
-    await page.locator("#recipient-email").fill("e2e-phone-gate@example.com");
     await page.getByRole("button", { name: /Continue to shipment details/i }).click();
 
     // Step 10 (ship-from address) — address but NO phone. Since the parcel

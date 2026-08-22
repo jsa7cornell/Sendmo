@@ -41,7 +41,6 @@ interface RecipientFlowContextValue {
   deferToSender: (field: "destination" | "origin" | "package") => void;
   /** Clears one deferral IN PLACE — the toggle's "I have it", no navigation. */
   keepIt: (field: "destination" | "origin" | "package") => void;
-  markSkipExplainerSeen: () => void;
   undoShippingLinkSwitch: () => void;
   markStepComplete: (step: number) => void;
   getErrors: (step: number) => string[];
@@ -312,31 +311,28 @@ export function RecipientFlowProvider({ children }: { children: React.ReactNode 
   // first skip is what makes the product a shipping link, and the segment
   // says so immediately (§2.2).
   //
-  // "destination" is the exception on two counts, both deliberate: the flag
-  // is set but step 1 is NOT marked complete (its email half is never
-  // deferrable — the creator still needs an account), and there is no
-  // navigation (tryAdvance(1) still validates the email and advances). The
-  // flushSync below exists because the guard reads completedSteps in the same
-  // tick as the navigate — the 2026-05-19 race (PLAYBOOK Rule 20); it must
-  // survive any refactor of this function.
+  // The destination behaved differently until 2026-08-22 — it set the flag and
+  // waited for Continue, because step 1 also collected an email that was never
+  // deferrable. The email moved to the Contact step, so the destination is now
+  // the only question on its screen and skipping it advances like the others.
+  //
+  // The flushSync below exists because the guard reads completedSteps in the
+  // same tick as the navigate — the 2026-05-19 race (PLAYBOOK Rule 20); it
+  // must survive any refactor of this function.
   const deferToSender = useCallback((field: "destination" | "origin" | "package") => {
-    if (field === "destination") {
-      setData((prev) => ({
-        ...prev,
-        deferredDestination: true,
-        sender: prev.sender ?? "other",
-      }));
-      return;
-    }
-    const step = field === "origin" ? 10 : 14;
+    const step = field === "destination" ? 1 : field === "origin" ? 10 : 14;
     flushSync(() => {
       setData((prev) => ({
         ...prev,
-        ...(field === "origin" ? { deferredOrigin: true } : { deferredPackage: true }),
+        ...(field === "destination"
+          ? { deferredDestination: true }
+          : field === "origin"
+            ? { deferredOrigin: true }
+            : { deferredPackage: true }),
         // Deferring IS an identity claim: "the sender will fill this in" only
         // makes sense when someone else is the sender. Resolves a still-null
-        // sender the same way the address chips do (never overrides 'self' —
-        // the defer buttons are hidden on that branch anyway).
+        // sender the same way the saved-address shortcut does (never overrides
+        // 'self' — the skip is hidden on that branch anyway).
         sender: prev.sender ?? "other",
         completedSteps: prev.completedSteps.includes(step)
           ? prev.completedSteps
@@ -344,35 +340,33 @@ export function RecipientFlowProvider({ children }: { children: React.ReactNode 
       }));
     });
     directionRef.current = "forward";
-    // One sequence: origin's next question is the package (14); the package's
-    // is shipping (20), which renders preferences+cap because something was
-    // skipped. Segment is `flexible` from the first skip onward.
-    navigate(stepUrl("flexible", step === 10 ? 14 : 20));
+    // One sequence: the destination's next question is the origin (10);
+    // origin's is the package (14); the package's is shipping (20), which
+    // renders preferences+cap because something was skipped. Segment is
+    // `flexible` from the first skip onward.
+    navigate(stepUrl("flexible", step === 1 ? 10 : step === 10 ? 14 : 20));
   }, [navigate]);
 
-  // The toggle's "I have it" — the inverse of deferToSender for ONE field,
-  // and deliberately NOT a navigation. `undoShippingLinkSwitch` reverses the
-  // whole decision and moves the user; this just reopens the field group the
-  // user is already looking at, so the layout stays put (the dim-in-place
-  // requirement is about not moving things under the user's cursor).
+  // "Enter it myself" — the inverse of deferToSender for ONE field, and
+  // deliberately NOT a navigation. `undoShippingLinkSwitch` reverses the whole
+  // decision and moves the user; this just reopens the field group the user is
+  // already looking at, so the layout stays put (the dim-in-place requirement
+  // is about not moving things under the user's cursor).
   //
   // The step's completion is withdrawn with the flag: the deferral is what
   // marked it complete, so keeping the completion would let the guard admit a
   // step whose question is now unanswered.
   const keepIt = useCallback((field: "destination" | "origin" | "package") => {
-    setData((prev) => {
-      if (field === "destination") return { ...prev, deferredDestination: false };
-      const step = field === "origin" ? 10 : 14;
-      return {
-        ...prev,
-        ...(field === "origin" ? { deferredOrigin: false } : { deferredPackage: false }),
-        completedSteps: prev.completedSteps.filter((s) => s !== step),
-      };
-    });
-  }, []);
-
-  const markSkipExplainerSeen = useCallback(() => {
-    setData((prev) => (prev.seenSkipExplainer ? prev : { ...prev, seenSkipExplainer: true }));
+    const step = field === "destination" ? 1 : field === "origin" ? 10 : 14;
+    setData((prev) => ({
+      ...prev,
+      ...(field === "destination"
+        ? { deferredDestination: false }
+        : field === "origin"
+          ? { deferredOrigin: false }
+          : { deferredPackage: false }),
+      completedSteps: prev.completedSteps.filter((s) => s !== step),
+    }));
   }, []);
 
   const undoShippingLinkSwitch = useCallback(() => {
@@ -384,10 +378,18 @@ export function RecipientFlowProvider({ children }: { children: React.ReactNode 
     // Step 20 un-completes too: its flex-mode answer (speed/cap preferences)
     // is void once every question is answered — the label path needs a
     // concrete rate picked there instead.
-    // (Step 1 is different: deferring the DESTINATION never marked it
-    // complete — email validation still had to pass — so there is nothing to
-    // un-complete for it; the user just gets the address form back.)
+    //
+    // Only DEFERRED steps are un-completed. A step the user actually answered
+    // keeps its completion: un-completing step 1 when the destination was
+    // typed rather than skipped makes the guard bounce the user straight back
+    // to it from the origin step this function is navigating to.
     const hadDeferredDestination = data.deferredDestination;
+    const reopened = [
+      ...(data.deferredDestination ? [1] : []),
+      ...(data.deferredOrigin ? [10] : []),
+      ...(data.deferredPackage ? [14] : []),
+      20,
+    ];
     // flushSync is LOAD-BEARING here (PLAYBOOK Rule 20 / LOG 2026-05-19).
     // Without it a render lands with the OLD URL and the NEW completedSteps:
     // the guard fails canAccessStep for the step being left and its
@@ -403,7 +405,7 @@ export function RecipientFlowProvider({ children }: { children: React.ReactNode 
         deferredDestination: false,
         deferredOrigin: false,
         deferredPackage: false,
-        completedSteps: prev.completedSteps.filter((s) => s !== 10 && s !== 14 && s !== 20),
+        completedSteps: prev.completedSteps.filter((s) => !reopened.includes(s)),
       }));
     });
     directionRef.current = "backward";
@@ -412,7 +414,7 @@ export function RecipientFlowProvider({ children }: { children: React.ReactNode 
     // (10 rather than "earliest deferred": 10 was just un-completed above, so
     // any deeper target would bounce off the guard back to it anyway.)
     navigate(stepUrl("full_label", hadDeferredDestination ? 1 : 10));
-  }, [navigate, data.deferredDestination]);
+  }, [navigate, data.deferredDestination, data.deferredOrigin, data.deferredPackage]);
 
   const markStepComplete = useCallback((step: number) => {
     setData((prev) => ({
@@ -438,7 +440,6 @@ export function RecipientFlowProvider({ children }: { children: React.ReactNode 
         selectPath,
         deferToSender,
         keepIt,
-        markSkipExplainerSeen,
         undoShippingLinkSwitch,
         markStepComplete,
         getErrors,

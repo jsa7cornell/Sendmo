@@ -51,7 +51,6 @@ async function reachOriginStep(page: Page) {
   await page.locator("button", { hasText: /Montgomery/i }).first().click();
   await expect(page.getByText("Verified").nth(0)).toBeVisible({ timeout: 5000 });
   await page.locator("#destination-phone").fill("4155551234");
-  await page.locator("#recipient-email").fill("test@example.com");
   await page.getByRole("button", { name: /Continue to shipment details/i }).click();
   await expect(page).toHaveURL(/\/full-label\/origin$/);
 }

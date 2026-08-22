@@ -53,17 +53,11 @@ describe("Step 1 validation", () => {
     expect(errors).toContain("Destination address is required");
   });
 
-  it("errors when email is empty", () => {
+  // The creator's email moved to the Contact step (2026-08-22), so step 1
+  // asks about the destination and nothing else.
+  it("ignores the email — it is not collected on this step", () => {
     const errors = getValidationErrors(makeState({ destinationAddress: verifiedAddr() }), 1);
-    expect(errors).toContain("Email is required");
-  });
-
-  it("errors when email is invalid", () => {
-    const errors = getValidationErrors(
-      makeState({ destinationAddress: verifiedAddr(), email: "notanemail" }),
-      1,
-    );
-    expect(errors).toContain("Enter a valid email address");
+    expect(errors).toEqual([]);
   });
 
   it("errors when phone is missing", () => {
@@ -71,7 +65,6 @@ describe("Step 1 validation", () => {
     const errors = getValidationErrors(
       makeState({
         destinationAddress: { ...verifiedAddr(), phone: "" },
-        email: "test@example.com",
       }),
       1,
     );
@@ -82,16 +75,15 @@ describe("Step 1 validation", () => {
     const errors = getValidationErrors(
       makeState({
         destinationAddress: { ...verifiedAddr(), phone: "12345" },
-        email: "test@example.com",
       }),
       1,
     );
     expect(errors.some((e) => /phone number/i.test(e))).toBe(true);
   });
 
-  it("passes when address verified, phone present, and email valid", () => {
+  it("passes when the address is verified and has a phone", () => {
     const errors = getValidationErrors(
-      makeState({ destinationAddress: verifiedAddr(), email: "test@example.com" }),
+      makeState({ destinationAddress: verifiedAddr() }),
       1,
     );
     expect(errors).toHaveLength(0);
@@ -204,25 +196,15 @@ describe("Step 10 validation", () => {
 
 describe("step 1 — deferred destination (Phase 3)", () => {
   // Decision B (2026-08-18): every question is skippable, including the
-  // destination. Deferring it answers the ADDRESS half only — email (and its
-  // verification downstream) is how the creator gets an account and a card,
-  // so it must still gate the step.
-  it("drops the address requirements but keeps the email ones", () => {
-    const errors = getValidationErrors(
-      makeState({ deferredDestination: true, email: "pat@example.com" }),
-      1,
-    );
+  // destination. Deferring it is the answer, so the step has nothing left to
+  // validate — the creator's email is asked for on the Contact step.
+  it("drops the address requirements", () => {
+    const errors = getValidationErrors(makeState({ deferredDestination: true }), 1);
     expect(errors).toEqual([]);
   });
 
-  it("still rejects a missing email when the destination is deferred", () => {
-    const errors = getValidationErrors(makeState({ deferredDestination: true }), 1);
-    expect(errors).toContain("Email is required");
-    expect(errors).not.toContain("Destination address is required");
-  });
-
   it("unchanged when not deferred: empty address still fails", () => {
-    const errors = getValidationErrors(makeState({ email: "pat@example.com" }), 1);
+    const errors = getValidationErrors(makeState(), 1);
     expect(errors).toContain("Destination address is required");
   });
 });

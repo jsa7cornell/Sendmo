@@ -8,18 +8,25 @@ import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/contexts/AuthContext";
 import type { RecipientFlowState } from "@/hooks/useRecipientFlow";
 
-// "Confirm your email" step for the Flexible Link flow (step 21).
+// The Contact step — where the creator's identity is collected AND confirmed.
 //
-// Mirrors RecipientStepEmailVerifySupabase (full-label step 11) but targets
-// the flex verify URL for email-link redirects.
+// Both halves live here as of 2026-08-22. The email input and Google CTA used
+// to sit on the destination step, which put an account question on a screen
+// that asks where a package goes; this screen already existed to confirm the
+// address, so it now owns getting it too.
 //
-// A Supabase session is required at step 22 (createFlexLink + the SetupIntent
-// flow both need a JWT). The session is created here via verifyOtp / signInWithOtp.
-//
-// Two paths:
-//   1. Tap the link in the email → Supabase verifies + redirects back with
+// Three ways through:
+//   1. Google → the session IS the verification; the code half never renders.
+//   2. Email → magic link in the mail → Supabase redirects back with
 //      ?confirmed=1 → session detected → auto-advance.
-//   2. Type the 6-digit code → verifyOtp({type:"email"}) → auto-advance.
+//   3. Email → type the 6-digit code → verifyOtp → auto-advance.
+//
+// One component for both paths; only the redirect target differs, so the
+// email link lands on the right step's URL.
+
+// Set immediately before redirecting to Google; its presence on return is what
+// distinguishes a fresh OAuth return from an ordinary visit.
+const OAUTH_PENDING_KEY = "sendmo:oauth_pending";
 
 interface Props {
   state: RecipientFlowState;
@@ -28,16 +35,13 @@ interface Props {
   onBack: () => void;
 }
 
-export default function RecipientStepEmailVerifyFlex({
-  state,
-  onUpdate,
-  onContinue,
-  onBack,
-}: Props) {
+export default function RecipientStepContact({ state, onUpdate, onContinue, onBack }: Props) {
   const { user } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const arrivedViaLink = searchParams.get("confirmed") === "1";
-  const [resending, setResending] = useState(false);
+  const [emailDraft, setEmailDraft] = useState(state.email);
+  const [sending, setSending] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
   const [verifying, setVerifying] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
@@ -46,8 +50,16 @@ export default function RecipientStepEmailVerifyFlex({
   const oauthLockApplied = useRef(false);
 
   const email = state.verification_email || state.email;
+  // A code has been sent iff verification_email is set — which is exactly what
+  // that field means, so the phase survives back-navigation for free.
+  const awaitingCode = !!state.verification_email;
 
-  // Strip ?confirmed=1 on first paint — keeps URL clean if user navigates back.
+  const redirectTo = state.path === "flexible"
+    ? `${window.location.origin}/onboarding/flexible/verify?confirmed=1`
+    : `${window.location.origin}/onboarding/full-label/verify?confirmed=1`;
+
+  // Strip ?confirmed=1 from the URL on first paint — keeps the URL clean if
+  // the user navigates back.
   useEffect(() => {
     if (arrivedViaLink) {
       const next = new URLSearchParams(searchParams);
@@ -56,27 +68,21 @@ export default function RecipientStepEmailVerifyFlex({
     }
   }, [arrivedViaLink, searchParams, setSearchParams]);
 
-  // Session detection — two ways the user arrives here with a live session:
-  //   1. They tapped the confirmation link → Supabase set the session and
-  //      redirected back with ?confirmed=1.
-  //   2. They picked Google at step 1 and somehow reached this screen (the
-  //      RecipientFlowContext skip should prevent it, but session = verified).
-  // In either case: mark email_verified=true and auto-advance.
+  // A live session is proof of verification however it was obtained — the
+  // magic link, the code, or Google. If the session email differs from the
+  // typed one, lock to the session's and say so.
   useEffect(() => {
     if (!user?.email || oauthLockApplied.current) return;
     if (state.email_verified) return;
     oauthLockApplied.current = true;
+    try { sessionStorage.removeItem(OAUTH_PENDING_KEY); } catch { /* noop */ }
     const authEmail = user.email;
     if (authEmail.toLowerCase() !== (email || "").toLowerCase()) {
-      onUpdate({
-        email: authEmail,
-        verification_email: authEmail,
-        email_verified: true,
-      });
+      onUpdate({ email: authEmail, verification_email: authEmail, email_verified: true });
       setInfo(`Signed in as ${authEmail}. Shipment notifications will go to that address.`);
     } else {
       onUpdate({ email_verified: true });
-      if (arrivedViaLink) setInfo("Email confirmed — taking you to payment authorization…");
+      if (arrivedViaLink) setInfo("Email confirmed — taking you to payment…");
     }
   }, [user, email, state.email_verified, onUpdate, arrivedViaLink]);
 
@@ -94,11 +100,10 @@ export default function RecipientStepEmailVerifyFlex({
     }
   }, [state.email_verified]);
 
-  // Focus the first digit input on mount
   useEffect(() => {
-    if (state.email_verified) return;
+    if (state.email_verified || !awaitingCode) return;
     setTimeout(() => inputRefs.current[0]?.focus(), 100);
-  }, [state.email_verified]);
+  }, [state.email_verified, awaitingCode]);
 
   const handleDigitChange = useCallback((index: number, value: string) => {
     if (!/^\d*$/.test(value)) return;
@@ -127,14 +132,48 @@ export default function RecipientStepEmailVerifyFlex({
     inputRefs.current[Math.min(pasted.length, 5)]?.focus();
   }
 
+  async function handleGoogle() {
+    setError(null);
+    setGoogleLoading(true);
+    try {
+      sessionStorage.setItem(OAUTH_PENDING_KEY, "1");
+    } catch { /* best-effort */ }
+    const { error: oauthErr } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo: window.location.href },
+    });
+    if (oauthErr) {
+      try { sessionStorage.removeItem(OAUTH_PENDING_KEY); } catch { /* noop */ }
+      setGoogleLoading(false);
+      setError(oauthErr.message || "Google sign-in failed");
+    }
+  }
+
+  async function handleSendCode() {
+    const cleaned = emailDraft.trim().toLowerCase();
+    if (!/^.+@.+\..+$/.test(cleaned)) {
+      setError("Enter a valid email address");
+      return;
+    }
+    setError(null);
+    setInfo(null);
+    setSending(true);
+    const { error: sendErr } = await supabase.auth.signInWithOtp({
+      email: cleaned,
+      options: { emailRedirectTo: redirectTo },
+    });
+    setSending(false);
+    if (sendErr) {
+      setError(sendErr.message || "Could not send the email");
+      return;
+    }
+    onUpdate({ email: cleaned, verification_email: cleaned });
+  }
+
   async function handleVerify() {
     const code = digits.join("");
     if (code.length < 6) {
       setError("Enter the full 6-digit code");
-      return;
-    }
-    if (!email) {
-      setError("Missing email — go back and re-enter it");
       return;
     }
     setError(null);
@@ -153,25 +192,46 @@ export default function RecipientStepEmailVerifyFlex({
   }
 
   async function handleResend() {
-    if (!email) {
-      setError("Missing email — go back and re-enter it");
-      return;
-    }
     setError(null);
     setInfo(null);
-    setResending(true);
-    const redirectTo = `${window.location.origin}/onboarding/flexible/verify?confirmed=1`;
+    setSending(true);
     const { error: sendErr } = await supabase.auth.signInWithOtp({
       email,
       options: { emailRedirectTo: redirectTo },
     });
-    setResending(false);
+    setSending(false);
     if (sendErr) {
       setError(sendErr.message || "Could not send a new email");
       return;
     }
     setInfo(`We re-sent the link + code to ${email}`);
   }
+
+  // Back to the email field. Clearing verification_email is what returns the
+  // step to its collect phase.
+  function handleUseDifferentEmail() {
+    setDigits(["", "", "", "", "", ""]);
+    setError(null);
+    setInfo(null);
+    setEmailDraft(email);
+    onUpdate({ verification_email: "" });
+  }
+
+  const messages = (
+    <>
+      {error && (
+        <div className="rounded-xl border border-destructive/50 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+          {error}
+        </div>
+      )}
+      {info && !error && (
+        <div className="rounded-xl border border-primary/30 bg-primary/5 px-4 py-3 text-sm text-foreground flex gap-2">
+          <Info className="w-4 h-4 text-primary shrink-0 mt-0.5" />
+          <span>{info}</span>
+        </div>
+      )}
+    </>
+  );
 
   if (state.email_verified) {
     return (
@@ -191,6 +251,91 @@ export default function RecipientStepEmailVerifyFlex({
             <span>{info}</span>
           </div>
         )}
+      </div>
+    );
+  }
+
+  if (!awaitingCode) {
+    return (
+      <div className="space-y-6">
+        <div className="text-center">
+          <div className="flex items-center justify-center gap-2 mb-2">
+            <Mail className="w-5 h-5 text-primary" />
+            <h1 className="text-2xl font-bold text-foreground">How do we reach you?</h1>
+          </div>
+          <p className="text-muted-foreground text-sm">
+            We'll send shipping updates here — and confirm the address is yours.
+          </p>
+        </div>
+
+        <div className="bg-card rounded-2xl border border-border shadow-sm p-5 space-y-4">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={handleGoogle}
+            disabled={googleLoading}
+            className="w-full rounded-xl shadow-sm gap-2"
+          >
+            {googleLoading ? (
+              <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+            ) : (
+              <svg className="w-4 h-4" viewBox="0 0 18 18" aria-hidden="true">
+                <path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844a4.14 4.14 0 0 1-1.796 2.716v2.258h2.908c1.702-1.567 2.684-3.874 2.684-6.615z"/>
+                <path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.184l-2.908-2.258c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z"/>
+                <path fill="#FBBC05" d="M3.964 10.707A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.707V4.961H.957A8.997 8.997 0 0 0 0 9c0 1.452.348 2.827.957 4.039l3.007-2.332z"/>
+                <path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.961L3.964 7.293C4.672 5.166 6.656 3.58 9 3.58z"/>
+              </svg>
+            )}
+            {googleLoading ? "Redirecting…" : "Continue with Google"}
+          </Button>
+          <p className="text-[11px] text-muted-foreground text-center -mt-2">
+            We'll use the email on your Google account. No confirmation needed.
+          </p>
+
+          <div className="relative">
+            <div className="absolute inset-0 flex items-center">
+              <div className="w-full border-t border-border" />
+            </div>
+            <div className="relative flex justify-center">
+              <span className="bg-card px-2 text-xs text-muted-foreground">or use your email</span>
+            </div>
+          </div>
+
+          <Input
+            id="contact-email"
+            type="email"
+            value={emailDraft}
+            onChange={(e) => setEmailDraft(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") handleSendCode(); }}
+            placeholder="Email address"
+            aria-label="Email address"
+            className="rounded-xl"
+          />
+          <Button
+            onClick={handleSendCode}
+            disabled={sending || !emailDraft.trim()}
+            className="w-full rounded-xl shadow-sm"
+          >
+            {sending ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                Sending…
+              </>
+            ) : (
+              "Send me a code"
+            )}
+          </Button>
+          <p className="text-[11px] text-muted-foreground text-center">
+            We'll send a confirmation link and a 6-digit code. Use either one.
+          </p>
+        </div>
+
+        {messages}
+
+        <Button variant="ghost" onClick={onBack} className="rounded-xl">
+          <ArrowLeft className="w-4 h-4 mr-1" />
+          Back
+        </Button>
       </div>
     );
   }
@@ -251,14 +396,14 @@ export default function RecipientStepEmailVerifyFlex({
           <button
             type="button"
             onClick={handleResend}
-            disabled={resending}
+            disabled={sending}
             className="text-primary hover:underline mr-3"
           >
-            {resending ? "Sending…" : "Resend code"}
+            {sending ? "Sending…" : "Resend code"}
           </button>
           <button
             type="button"
-            onClick={onBack}
+            onClick={handleUseDifferentEmail}
             className="text-muted-foreground hover:underline"
           >
             Use a different email
@@ -270,17 +415,7 @@ export default function RecipientStepEmailVerifyFlex({
         Tapping the link in your email also works — it sends you right back here.
       </p>
 
-      {error && (
-        <div className="rounded-xl border border-destructive/50 bg-destructive/5 px-4 py-3 text-sm text-destructive">
-          {error}
-        </div>
-      )}
-      {info && !error && (
-        <div className="rounded-xl border border-primary/30 bg-primary/5 px-4 py-3 text-sm text-foreground flex gap-2">
-          <Info className="w-4 h-4 text-primary shrink-0 mt-0.5" />
-          <span>{info}</span>
-        </div>
-      )}
+      {messages}
 
       <Button variant="ghost" onClick={onBack} className="rounded-xl">
         <ArrowLeft className="w-4 h-4 mr-1" />

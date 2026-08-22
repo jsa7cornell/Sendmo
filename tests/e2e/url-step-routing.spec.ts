@@ -243,7 +243,6 @@ test.describe("URL-based step routing", () => {
     // Fill step 1
     await page.locator("#destination-name").fill("Jane Doe");
     await fillSmartAddress(page, "destination");
-    await page.locator("#recipient-email").fill("test@example.com");
     await page.getByRole("button", { name: /Continue to shipment details/i }).click();
 
     // One step map (2026-08-19): the ship-from step's slug is `origin`;
@@ -329,7 +328,6 @@ test.describe("URL-based step routing", () => {
     // Fill step 1
     await page.locator("#destination-name").fill("Jane Doe");
     await fillSmartAddress(page, "destination");
-    await page.locator("#recipient-email").fill("test@example.com");
     await page.getByRole("button", { name: /Continue to shipment details/i }).click();
 
     // Now on step 10 (slug `origin` since 2026-08-19)

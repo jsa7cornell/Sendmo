@@ -1,8 +1,12 @@
 import { cn } from "@/lib/utils";
 
-// The shared skip control for all three question steps (Destination, Origin,
-// Package) — design brief point 1, "the skip option must sit on top of each
-// question, not below the form".
+// The skip control for the Origin and Package steps — design brief point 1,
+// "the skip option must sit on top of each question, not below the form".
+//
+// It covered the Destination step too until 2026-08-22, when that step moved
+// its skip into the field group's card header instead. The `showLegend={false}`
+// prop existed solely for that caller (the step already had its own heading)
+// and went with it.
 //
 // ─── Two decisions this control encodes, both deliberate ───
 //
@@ -29,13 +33,6 @@ import { cn } from "@/lib/utils";
 interface Props {
   /** The question itself, e.g. "Where's it shipping from?". */
   legend: string;
-  /**
-   * Render the legend as a visible heading. Off only where the step already
-   * has its own heading (the destination step's "Where's it going?"), so the
-   * question is never asked twice on one screen — and never zero times, which
-   * is what an aria-label-only legend produced.
-   */
-  showLegend?: boolean;
   /**
    * The answer, THREE states — `null` means not yet answered, which is the
    * resting state and renders neither option as chosen.
@@ -68,13 +65,11 @@ interface Props {
 }
 
 export default function SkipToggle({
-  legend, showLegend = true, choice, onKeepIt, onDefer, keptCaption, deferredCaption,
+  legend, choice, onKeepIt, onDefer, keptCaption, deferredCaption,
 }: Props) {
   return (
     <div className="mb-4">
-      {showLegend && (
-        <h2 className="text-sm font-semibold text-foreground mb-3">{legend}</h2>
-      )}
+      <h2 className="text-sm font-semibold text-foreground mb-3">{legend}</h2>
       <div role="radiogroup" aria-label={legend} className="grid grid-cols-2 gap-2">
         <button
           type="button"

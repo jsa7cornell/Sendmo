@@ -26,8 +26,8 @@ interface AuthContextValue {
   liveMode: boolean;
   /** Derived: bypass Stripe entirely (live label, no charge). */
   compMode: boolean;
-  signIn: (email: string) => Promise<{ error: string | null }>;
-  signInWithGoogle: () => Promise<{ error: string | null }>;
+  signIn: (email: string, next?: string | null) => Promise<{ error: string | null }>;
+  signInWithGoogle: (next?: string | null) => Promise<{ error: string | null }>;
   signOut: () => Promise<void>;
 }
 
@@ -159,24 +159,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => subscription.unsubscribe();
   }, [ensureProfile]);
 
-  const signIn = useCallback(async (email: string) => {
-    // ?welcome=1 triggers a transient "Signed in as X" toast on /dashboard.
-    // One-shot — Dashboard strips the param on first paint.
+  // Where sign-in lands. Default is the dashboard, where ?welcome=1 triggers a
+  // transient "Signed in as X" toast (one-shot — Dashboard strips the param on
+  // first paint). `next` overrides it for sign-ins started mid-task, e.g. the
+  // onboarding flow's "Log in to use your saved address": those must return to
+  // the step they left or the draft's place in the flow is lost.
+  //
+  // Same-origin PATHS only. An absolute URL here would make Supabase's redirect
+  // an open redirect, since `next` arrives from the query string.
+  function landingUrl(next?: string | null): string {
+    const safe = next && next.startsWith("/") && !next.startsWith("//") ? next : null;
+    return `${window.location.origin}${safe ?? "/dashboard?welcome=1"}`;
+  }
+
+  const signIn = useCallback(async (email: string, next?: string | null) => {
     const { error } = await supabase.auth.signInWithOtp({
       email,
-      options: {
-        emailRedirectTo: `${window.location.origin}/dashboard?welcome=1`,
-      },
+      options: { emailRedirectTo: landingUrl(next) },
     });
     return { error: error?.message ?? null };
   }, []);
 
-  const signInWithGoogle = useCallback(async () => {
+  const signInWithGoogle = useCallback(async (next?: string | null) => {
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
-      options: {
-        redirectTo: `${window.location.origin}/dashboard?welcome=1`,
-      },
+      options: { redirectTo: landingUrl(next) },
     });
     return { error: error?.message ?? null };
   }, []);

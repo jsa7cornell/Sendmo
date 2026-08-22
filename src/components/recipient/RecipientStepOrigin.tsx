@@ -45,11 +45,10 @@ interface Props {
   onNoAddress: () => void;
   /** Clears the deferral without leaving the step ("I have it"). */
   onKeepIt: () => void;
-  onSeenExplainer: () => void;
 }
 
 export default function RecipientStepOrigin({
-  state, sender, errors, tried, onUpdate, onContinue, onBack, onNoAddress, onKeepIt, onSeenExplainer,
+  state, sender, errors, tried, onUpdate, onContinue, onBack, onNoAddress, onKeepIt,
 }: Props) {
   const { user } = useAuth();
   // 'self' → this address is the account holder's own; it was prefilled from
@@ -101,13 +100,7 @@ export default function RecipientStepOrigin({
                   : (state.originAddress.street || state.originAddress.name ? "kept" : null)
               }
               onKeepIt={onKeepIt}
-              onDefer={() => {
-                // Marks the explainer seen for the destination step: this skip
-                // navigates, and the step it lands on carries the page-level
-                // banner, so the user has already been told.
-                onSeenExplainer();
-                onNoAddress();
-              }}
+              onDefer={onNoAddress}
             keptCaption="Enter their name, address, and phone — you'll get an exact price now."
               deferredCaption="They'll add the ship-from address when they use your link."
             />
