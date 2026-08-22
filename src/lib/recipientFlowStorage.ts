@@ -74,12 +74,6 @@ export interface RecipientFlowData {
   // step (20) moved downstream of the package step (14).
   usedGuestimator: boolean;
 
-  /**
-   * Whether the one-time "this is a shipping link now" explainer has been
-   * shown. Flow state, not component state: the skip that triggers the bubble
-   * also navigates, unmounting the step that would have rendered it.
-   */
-  seenSkipExplainer: boolean;
 
   // Validation
   tried: Record<number, boolean>;
@@ -123,7 +117,6 @@ export const INITIAL_DATA: RecipientFlowData = {
   linkId: "",
 
   usedGuestimator: false,
-  seenSkipExplainer: false,
 
   tried: {},
 };

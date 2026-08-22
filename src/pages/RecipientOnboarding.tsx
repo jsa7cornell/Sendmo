@@ -20,8 +20,7 @@ import RecipientStepPackage from "@/components/recipient/RecipientStepPackage";
 import RecipientStepShipping from "@/components/recipient/RecipientStepShipping";
 import RecipientStepPayment from "@/components/recipient/RecipientStepPayment";
 import RecipientStepFlexPreferences from "@/components/recipient/RecipientStepFlexPreferences";
-import RecipientStepEmailVerifyFlex from "@/components/recipient/RecipientStepEmailVerifyFlex";
-import RecipientStepEmailVerifySupabase from "@/components/recipient/RecipientStepEmailVerifySupabase";
+import RecipientStepContact from "@/components/recipient/RecipientStepContact";
 import RecipientStepFlexPayment from "@/components/recipient/RecipientStepFlexPayment";
 import RecipientStepLinkReady from "@/components/recipient/RecipientStepLinkReady";
 
@@ -58,7 +57,6 @@ export default function RecipientOnboarding() {
     getErrors,
     deferToSender,
     keepIt,
-    markSkipExplainerSeen,
     undoShippingLinkSwitch,
   } = useRecipientFlowContext();
 
@@ -194,25 +192,19 @@ export default function RecipientOnboarding() {
             exit="exit"
             transition={{ duration: 0.25 }}
           >
-            {/* Step 1: Address + Email */}
+            {/* Step 1: destination address */}
             {currentStep === 1 && (
               <RecipientStepAddress
                 address={state.destinationAddress}
-                email={state.email}
                 path={state.path}
                 sender={data.sender}
                 errors={getErrors(1)}
                 tried={!!state.tried[1]}
                 onAddressChange={(addr) => updateData({ destinationAddress: addr })}
-                onEmailChange={(email) => updateData({ email })}
                 onSenderResolved={(sender) => updateData({ sender })}
                 deferredDestination={data.deferredDestination}
-                // Deferring the destination is an identity claim like every
-                // other defer: someone else is the sender. It does NOT
-                // auto-advance — email verification below is not deferrable.
-                onDeferDestination={() => { deferToSender("destination"); markSkipExplainerSeen(); }}
+                onDeferDestination={() => deferToSender("destination")}
                 onUndoDeferDestination={() => keepIt("destination")}
-                seenSkipExplainer={data.seenSkipExplainer}
                 onContinue={() => tryAdvance(1)}
               />
             )}
@@ -229,7 +221,6 @@ export default function RecipientOnboarding() {
                 onBack={goBack}
                 onNoAddress={() => deferToSender("origin")}
                 onKeepIt={() => keepIt("origin")}
-                onSeenExplainer={markSkipExplainerSeen}
               />
             )}
 
@@ -246,7 +237,6 @@ export default function RecipientOnboarding() {
                 onBack={goBack}
                 onNoAddress={() => deferToSender("package")}
                 onKeepIt={() => keepIt("package")}
-                onSeenExplainer={markSkipExplainerSeen}
               />
             )}
 
@@ -275,24 +265,17 @@ export default function RecipientOnboarding() {
               />
             ))}
 
-            {/* Step 11 (verify — the Contact step): Supabase OTP, one step for
-                both paths since the maps unified; the components differ only
-                in copy and stay per-path until PR 2 consolidates them. */}
-            {currentStep === 11 && (data.path === "flexible" ? (
-              <RecipientStepEmailVerifyFlex
+            {/* Step 11 (the Contact step): collect the creator's email and
+                confirm it. One component for both paths — only the magic-link
+                redirect target differs, which it derives from state.path. */}
+            {currentStep === 11 && (
+              <RecipientStepContact
                 state={state}
                 onUpdate={updateData}
                 onContinue={() => tryAdvance(11)}
                 onBack={goBack}
               />
-            ) : (
-              <RecipientStepEmailVerifySupabase
-                state={state}
-                onUpdate={updateData}
-                onContinue={() => tryAdvance(11)}
-                onBack={goBack}
-              />
-            ))}
+            )}
 
             {/* Steps 12/13 (payment / done), label path: RecipientStepPayment
                 internally owns both — charge, then label-ready. */}

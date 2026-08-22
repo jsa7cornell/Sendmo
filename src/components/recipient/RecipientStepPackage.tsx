@@ -47,11 +47,10 @@ interface Props {
   /** "Sender fills this in" — defers the parcel to the sender. */
   onNoAddress: () => void;
   onKeepIt: () => void;
-  onSeenExplainer: () => void;
 }
 
 export default function RecipientStepPackage({
-  state, sender, errors, tried, onUpdate, onContinue, onBack, onNoAddress, onKeepIt, onSeenExplainer,
+  state, sender, errors, tried, onUpdate, onContinue, onBack, onNoAddress, onKeepIt,
 }: Props) {
   const isSelfSender = sender === "self";
   const showErrors = tried && errors.length > 0;
@@ -96,13 +95,7 @@ export default function RecipientStepPackage({
                 : (state.dimensions.length || state.weight.lbs || state.itemDescription ? "kept" : null)
             }
             onKeepIt={onKeepIt}
-            onDefer={() => {
-              // Marks the explainer seen for the destination step: this skip
-              // navigates, and the step it lands on carries the page-level
-              // banner, so the user has already been told.
-              onSeenExplainer();
-              onNoAddress();
-            }}
+            onDefer={onNoAddress}
             keptCaption="Describe the package — we'll size it and price it exactly."
             deferredCaption="They describe the package when they use your link — you set a spending cap instead."
           />

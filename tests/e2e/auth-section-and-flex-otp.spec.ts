@@ -110,9 +110,21 @@ async function mockOtp(page: Page) {
   );
 }
 
-// ─── Auth section — unauthenticated variants ────────────────
+// ─── Contact step — unauthenticated ─────────────────────────
+//
+// The Google CTA and the email input lived on step 1 until 2026-08-22. They
+// moved to the Contact step, which already existed to CONFIRM the email and
+// now also collects it. Step 1 asks where the package goes and nothing else.
 
-test.describe("Step 1 auth section — unauthenticated", () => {
+/** Flow state that has answered everything up to the Contact step. */
+const REACHED_CONTACT = {
+  completedSteps: [0, 1, 10, 14, 20],
+  deferredDestination: true,
+  deferredOrigin: true,
+  deferredPackage: true,
+};
+
+test.describe("Contact step — unauthenticated", () => {
   test.beforeEach(async ({ page }) => {
     // No auth mocks — user is signed out
     await page.route(`${SUPABASE_URL}/auth/v1/**`, (route) =>
@@ -125,117 +137,88 @@ test.describe("Step 1 auth section — unauthenticated", () => {
     await mockOtp(page);
   });
 
-  test("full_label destination — Google button leads, email input secondary, no 'Your email' label", async ({ page }) => {
-    await injectFlowState(page, { path: "full_label", completedSteps: [0] });
-    await page.goto("/onboarding/full-label/destination");
+  for (const { path, slug } of [
+    { path: "full_label", slug: "full-label" },
+    { path: "flexible", slug: "flexible" },
+  ]) {
+    test(`${path}: Google leads, email input secondary`, async ({ page }) => {
+      await injectFlowState(page, { ...REACHED_CONTACT, path });
+      await page.goto(`/onboarding/${slug}/verify`);
 
-    // Google button is present and primary (before the email input in DOM order)
-    await expect(page.getByRole("button", { name: /Continue with Google/i })).toBeVisible();
+      await expect(page.getByRole("button", { name: /Continue with Google/i })).toBeVisible();
+      await expect(page.getByText(/or use your email/i)).toBeVisible();
+      await expect(page.getByPlaceholder("Email address")).toBeVisible();
+      await expect(page.getByRole("button", { name: /Send me a code/i })).toBeVisible();
 
-    // "or use your email" divider (not "or type your email" — previous copy)
-    await expect(page.getByText(/or use your email/i)).toBeVisible();
+      // The code panel is the SECOND phase — nothing to confirm yet.
+      await expect(page.getByLabel("Digit 1")).toHaveCount(0);
+    });
+  }
 
-    // Email input with new placeholder
-    await expect(page.getByPlaceholder("Email address")).toBeVisible();
-
-    // NO old-style "Your email" section heading
-    await expect(page.getByText(/^Your email$/i)).not.toBeVisible();
-
-    // No identity pill (not signed in)
-    await expect(page.getByText(/We'll send shipping updates to this address/i)).not.toBeVisible();
-  });
-
-  test("flexible destination — Google button ALSO present (was previously hidden for flex)", async ({ page }) => {
-    await injectFlowState(page, { path: "flexible", completedSteps: [0] });
-    await page.goto("/onboarding/flexible/destination");
-
-    // Google button must be visible for flex too — this is the fix
-    await expect(page.getByRole("button", { name: /Continue with Google/i })).toBeVisible();
-    await expect(page.getByText(/or use your email/i)).toBeVisible();
-    await expect(page.getByPlaceholder("Email address")).toBeVisible();
-  });
-
-  test("email blur primes OTP for full_label path", async ({ page }) => {
+  test("sending the code fires Supabase OTP and moves to the code panel", async ({ page }) => {
+    // Replaces the old on-blur OTP priming, which fired a mail send for every
+    // email the user tabbed past on step 1. The send is now an explicit press.
     let otpFired = false;
     await page.route(`${SUPABASE_URL}/auth/v1/otp**`, (route) => {
       otpFired = true;
       return route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
     });
 
-    await injectFlowState(page, { path: "full_label", completedSteps: [0] });
-    await page.goto("/onboarding/full-label/destination");
+    await injectFlowState(page, { ...REACHED_CONTACT, path: "full_label" });
+    await page.goto("/onboarding/full-label/verify");
 
-    const emailInput = page.getByPlaceholder("Email address");
-    await emailInput.fill("test@example.com");
-    await emailInput.blur();
+    await page.getByPlaceholder("Email address").fill("test@example.com");
+    await page.getByRole("button", { name: /Send me a code/i }).click();
 
-    await page.waitForTimeout(300);
+    await expect(page.getByLabel("Digit 1")).toBeVisible();
     expect(otpFired).toBe(true);
   });
 
-  test("email blur primes OTP for flexible path (was previously skipped)", async ({ page }) => {
+  test("typing an email is not enough to send one", async ({ page }) => {
     let otpFired = false;
     await page.route(`${SUPABASE_URL}/auth/v1/otp**`, (route) => {
       otpFired = true;
       return route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
     });
 
-    await injectFlowState(page, { path: "flexible", completedSteps: [0] });
-    await page.goto("/onboarding/flexible/destination");
+    await injectFlowState(page, { ...REACHED_CONTACT, path: "full_label" });
+    await page.goto("/onboarding/full-label/verify");
 
     const emailInput = page.getByPlaceholder("Email address");
     await emailInput.fill("test@example.com");
     await emailInput.blur();
 
     await page.waitForTimeout(300);
-    expect(otpFired).toBe(true);
+    expect(otpFired, "blur must not send mail — the button does").toBe(false);
   });
 });
 
-// ─── Auth section — returning signed-in user ────────────────
+// ─── Step 1 collects no identity ────────────────────────────
 
-test.describe("Step 1 auth section — returning signed-in user", () => {
-  test("full_label: identity pill shown, no Google button, no email input", async ({ page }) => {
-    const session = buildMockSession("john@example.com", "John Anderson");
-    await injectSession(page, session);
-    await mockAuth(page, session);
-    await injectFlowState(page, { path: "full_label", completedSteps: [0], email: "john@example.com" });
+test.describe("Destination step — no identity UI, signed in or out", () => {
+  for (const { path, slug } of [
+    { path: "full_label", slug: "full-label" },
+    { path: "flexible", slug: "flexible" },
+  ]) {
+    test(`${path}: no Google button, no email input, no identity pill`, async ({ page }) => {
+      const session = buildMockSession("john@example.com", "John Anderson");
+      await injectSession(page, session);
+      await mockAuth(page, session);
+      await injectFlowState(page, { path, completedSteps: [0], email: "john@example.com" });
 
-    await page.goto("/onboarding/full-label/destination");
+      await page.goto(`/onboarding/${slug}/destination`);
 
-    // Identity pill: avatar initial visible. exact:true so "J" matches only
-    // the single-letter avatar, not every element containing the letter j.
-    await expect(page.getByText("J", { exact: true })).toBeVisible();
-    // Name visible in the pill. A bare getByText("John Anderson") is a
-    // strict-mode violation — it also matches the header identity button.
-    await expect(page.locator("p").filter({ hasText: "John Anderson" })).toBeVisible();
-    // Email visible
-    await expect(page.getByText("john@example.com")).toBeVisible();
-    // Checkmark aria-label
-    await expect(page.getByLabel("Verified")).toBeVisible();
-    // Helper text from pill
-    await expect(page.getByText(/We'll send shipping updates to this address/i)).toBeVisible();
+      // The question this step asks, and its one action.
+      await expect(page.locator("#destination-name")).toBeVisible();
+      await expect(page.getByRole("button", { name: /Sender will fill this in/i })).toBeVisible();
 
-    // Google button hidden when signed in
-    await expect(page.getByRole("button", { name: /Continue with Google/i })).not.toBeVisible();
-    // Email input hidden when signed in
-    await expect(page.getByPlaceholder("Email address")).not.toBeVisible();
-  });
-
-  test("flexible: identity pill shown, no Google button", async ({ page }) => {
-    const session = buildMockSession("john@example.com", "John Anderson");
-    await injectSession(page, session);
-    await mockAuth(page, session);
-    await injectFlowState(page, { path: "flexible", completedSteps: [0], email: "john@example.com" });
-
-    await page.goto("/onboarding/flexible/destination");
-
-    // Name in the pill — scoped to <p> so it doesn't collide with the header
-    // identity button that also reads "John Anderson".
-    await expect(page.locator("p").filter({ hasText: "John Anderson" })).toBeVisible();
-    await expect(page.getByRole("button", { name: /Continue with Google/i })).not.toBeVisible();
-    await expect(page.getByPlaceholder("Email address")).not.toBeVisible();
-  });
+      // None of the identity UI that used to sit under the address fields.
+      await expect(page.getByRole("button", { name: /Continue with Google/i })).not.toBeVisible();
+      await expect(page.getByPlaceholder("Email address")).not.toBeVisible();
+      await expect(page.getByText(/We'll send shipping updates to this address/i)).not.toBeVisible();
+      await expect(page.getByLabel("Verified")).not.toBeVisible();
+    });
+  }
 });
 
 // ─── Flex verify (step 11 since the unified map) — Supabase OTP UI ───
@@ -268,6 +251,7 @@ test.describe("Flex verify — Supabase OTP (not bespoke email_verifications)", 
       deferredOrigin: true,
       deferredPackage: true,
       email: "test@example.com",
+      verification_email: "test@example.com",
       email_verified: false,
       destinationAddress: filledAddress,
     });
@@ -309,6 +293,7 @@ test.describe("Flex verify — Supabase OTP (not bespoke email_verifications)", 
       deferredOrigin: true,
       deferredPackage: true,
       email: "test@example.com",
+      verification_email: "test@example.com",
       email_verified: false,
       destinationAddress: filledAddress,
     });
@@ -332,6 +317,7 @@ test.describe("Flex verify — Supabase OTP (not bespoke email_verifications)", 
       deferredOrigin: true,
       deferredPackage: true,
       email: "test@example.com",
+      verification_email: "test@example.com",
       email_verified: false,
       destinationAddress: filledAddress,
     });

@@ -68,13 +68,6 @@ export interface RecipientFlowState {
   // the Shipping step downstream shows the beta disclaimer beside the price).
   usedGuestimator: boolean;
 
-  /**
-   * Whether the one-time "this is a shipping link now" explainer has been
-   * shown. Flow state, not component state: the skip that triggers the bubble
-   * also navigates, unmounting the step that would have rendered it.
-   */
-  seenSkipExplainer: boolean;
-
   // Validation
   tried: Record<number, boolean>;
 }
@@ -92,17 +85,13 @@ export interface RecipientFlowState {
 export function getValidationErrors(state: RecipientFlowState, step: number): string[] {
   const errors: string[] = [];
 
-  if (step === 1) {
-    // Destination deferred (Phase 3): the sender enters it in the sender flow,
-    // so the address half of this step is answered. Email is NOT deferrable —
-    // the creator still needs an account and a card.
-    if (!state.deferredDestination) {
-      if (!state.destinationAddress.verified) errors.push("Destination address is required");
-      else if (!state.destinationAddress.street) errors.push("Destination address is missing a street — please re-select it from the dropdown");
-      if (!isUsablePhone(state.destinationAddress.phone)) errors.push("Add a phone number — the shipping carriers require it");
-    }
-    if (!state.email.trim()) errors.push("Email is required");
-    else if (!/^.+@.+\..+$/.test(state.email.trim())) errors.push("Enter a valid email address");
+  // Destination only. The creator's own email moved to the Contact step
+  // (2026-08-22) — an account question doesn't belong on the screen that asks
+  // where a package goes.
+  if (step === 1 && !state.deferredDestination) {
+    if (!state.destinationAddress.verified) errors.push("Destination address is required");
+    else if (!state.destinationAddress.street) errors.push("Destination address is missing a street — please re-select it from the dropdown");
+    if (!isUsablePhone(state.destinationAddress.phone)) errors.push("Add a phone number — the shipping carriers require it");
   }
 
   // Step 20 is the shared Shipping step (one map, 2026-08-19). Two modes:

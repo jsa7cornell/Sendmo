@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from "react";
-import { Navigate, useNavigate } from "react-router-dom";
+import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { Mail, ArrowRight, CheckCircle2, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,13 @@ import { supabase } from "@/lib/supabase";
 export default function Login() {
   const { session, loading: authLoading, signIn, signInWithGoogle } = useAuth();
   const navigate = useNavigate();
+  // Where to land after signing in. Set when the sign-in was started mid-task
+  // — e.g. onboarding's "Log in to use your saved address" — so the user comes
+  // back to the step they left instead of the dashboard. Same-origin paths
+  // only; anything else falls back to the default (see AuthContext.landingUrl).
+  const [searchParams] = useSearchParams();
+  const rawNext = searchParams.get("next");
+  const nextUrl = rawNext && rawNext.startsWith("/") && !rawNext.startsWith("//") ? rawNext : null;
   const [email, setEmail] = useState("");
   const [tried, setTried] = useState(false);
   const [sending, setSending] = useState(false);
@@ -69,13 +76,13 @@ export default function Login() {
     }
     // Same destination as the email-link click — the welcome=1 toast on
     // Dashboard fires either way so the two paths feel identical.
-    navigate("/dashboard?welcome=1");
+    navigate(nextUrl ?? "/dashboard?welcome=1");
   }
 
   async function handleGoogle() {
     setError(null);
     setGoogleLoading(true);
-    const { error: oauthError } = await signInWithGoogle();
+    const { error: oauthError } = await signInWithGoogle(nextUrl);
     if (oauthError) {
       setGoogleLoading(false);
       setError(oauthError);
@@ -91,7 +98,7 @@ export default function Login() {
       </div>
     );
   }
-  if (session) return <Navigate to="/dashboard" replace />;
+  if (session) return <Navigate to={nextUrl ?? "/dashboard"} replace />;
 
   const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
   const showEmailError = tried && !emailValid;
@@ -104,7 +111,7 @@ export default function Login() {
     if (!emailValid) return;
 
     setSending(true);
-    const { error: signInError } = await signIn(email);
+    const { error: signInError } = await signIn(email, nextUrl);
     setSending(false);
 
     if (signInError) {

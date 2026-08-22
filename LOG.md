@@ -12,6 +12,76 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-22] Step 1 asks one question — and three bugs the e2e suite caught that the browser didn't
+
+**Category:** fix | ux
+**Cross-link:** follows the 2026-08-19 flow redesign | SPEC §7 "Step 1: Destination"
+
+**Browser-verified:**
+  mcp-session: Claude Browser pane, localhost:5173, 2026-08-22
+  variants-covered: signed-out destination step (skip link + "Log in to use your saved address"); skip → lands on /flexible/origin with the shipping-link banner; return to skipped destination via progress bar → "Enter it myself" + inert fields; undo → fields live again; Contact step collect phase; progress bar with three skipped + two done + one current.
+
+**The ask was three usability fixes to the destination step.** "Deliver to me"
+became a link on the field group instead of a card above it; the black
+"this is a shipping link now" bubble was deleted; the name/email card was
+removed. John then supplied a new paradigm mid-session: the skip is the card
+header's one action, the saved-address shortcut sits under the fields, and
+skipping ADVANCES with no Continue press.
+
+**The email had a hidden dependency.** That card was not only displaying the
+signed-in identity — its email input was the ONLY place the flow ever captured
+an email, and step 1's validation required it. Step 11 had no input at all; it
+just mailed a code to whatever step 1 had stored. Deleting the card would have
+landed users on Contact with nothing to verify. So the input moved with it, and
+`RecipientStepContact` now collects AND confirms. `RecipientStepEmailVerifyFlex`
+and `RecipientStepEmailVerifySupabase` — near-identical copies differing by one
+redirect URL — merged into it, which the old code's own comment had promised
+("stay per-path until PR 2 consolidates them").
+
+**Three bugs, all found by e2e, none visible in the browser check:**
+
+1. **Undo un-completed step 1 unconditionally.** A user who TYPED the destination
+   and then hit "Undo skip" got bounced backward off the route guard. Fixed:
+   only steps that were actually deferred are re-opened.
+2. **The undo control was inside the inert subtree.** Wrapping the whole card in
+   `DimmedWhenDeferred` put "Enter it myself" inside it, so a skipped
+   destination could never be taken back. Only the FIELDS dim now. I had looked
+   at that button in the browser and called it verified without clicking it —
+   the exact failure mode PLAYBOOK Rule 19 exists to prevent.
+3. **`onboarding.spec.ts` was hitting the live Supabase OTP endpoint.** Invisible
+   for as long as it existed, because the old on-blur priming discarded every
+   error with `.catch(() => {})`. Now that sending a code is a button press
+   whose failure is shown, the real endpoint's 60s rate limit failed the test.
+   Mocked. Worth knowing the old code fired real mail sends on every email a
+   user tabbed past.
+
+**Dead code the change exposed.** `FirstSkipExplainer` only ever rendered on the
+destination step. Origin and Package imported an `onSeenExplainer` callback and
+dutifully marked the bubble "seen" — but never rendered it, because their skip
+navigates away first. So the "one-time explainer" was one-time in the sense of
+*once, on one screen, ever*. Deleted, along with `seenSkipExplainer` and its
+plumbing through four files. `SkipToggle.showLegend` went the same way: the
+destination step was its only caller.
+
+**Progress bar, from John's screenshot.** Finished steps carried the solid
+primary fill while the CURRENT step got only a thin ring — so on the Payment
+screen two finished circles shouted over the one the user was standing in. Fill
+and glyph are now separate axes: fill answers "where am I" (only the active
+segment is solid), glyph/border/label answer "what happened here" and are read
+straight from the index arrays. A segment can be both current and skipped and
+shows both — the first cut collapsed them and silently relabeled a skipped step
+as ordinary the moment you stood on it.
+
+**Sign-in can return you where you started.** `/login?next=<path>` is honored by
+both the Google and email paths, same-origin paths only. Before this there was
+no way to log in and come back — `/login` always went to `/dashboard`, which
+would have stranded the "Log in to use your saved address" shortcut.
+
+**Flakiness worth a separate look:** three unrelated specs (`account-budget-admin`,
+the flex auto-advance test, and the named-choice test) each failed once under
+4-way parallelism and passed in isolation. Not caused by this change. CI runs
+`workers: 4` with `retries: 2`, so retries are currently masking it.
+
 ### [2026-08-20] A test speedup that measured to zero — and the saturated machine that sold it
 
 **Category:** perf | test-infra

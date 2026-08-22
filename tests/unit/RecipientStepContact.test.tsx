@@ -27,7 +27,7 @@ vi.mock("@/lib/supabase", () => ({
 }));
 
 import { AuthProvider } from "@/contexts/AuthContext";
-import RecipientStepEmailVerifySupabase from "@/components/recipient/RecipientStepEmailVerifySupabase";
+import RecipientStepContact from "@/components/recipient/RecipientStepContact";
 import type { RecipientFlowState } from "@/hooks/useRecipientFlow";
 import { emptyAddress } from "@/lib/utils";
 
@@ -56,7 +56,7 @@ function makeState(overrides: Partial<RecipientFlowState> = {}): RecipientFlowSt
     speed_preference: "standard",
     preferred_carrier: "any",
     price_cap: 100,
-    verification_email: "",
+    verification_email: "user@example.com",
     email_verified: false,
     short_code: "",
     tried: {},
@@ -84,7 +84,7 @@ function renderStep(props: {
   return render(
     <MemoryRouter initialEntries={[props.initialUrl ?? "/onboarding/full-label/verify"]}>
       <AuthProvider>
-        <RecipientStepEmailVerifySupabase
+        <RecipientStepContact
           state={state}
           onUpdate={props.onUpdate ?? (() => {})}
           onContinue={props.onContinue ?? (() => {})}
@@ -95,7 +95,7 @@ function renderStep(props: {
   );
 }
 
-describe("RecipientStepEmailVerifySupabase", () => {
+describe("RecipientStepContact", () => {
   it("renders the confirm-your-email UI for the typed email", async () => {
     renderStep({});
     await waitFor(() => expect(screen.getByText(/Confirm your email/i)).toBeInTheDocument());
@@ -166,19 +166,72 @@ describe("RecipientStepEmailVerifySupabase", () => {
     });
   });
 
-  it("does NOT render a Google CTA — it lives at step 1 in the new design", async () => {
-    renderStep({});
-    await waitFor(() => screen.getByRole("button", { name: /Verify and continue/i }));
-    expect(screen.queryByRole("button", { name: /Continue with Google/i })).toBeNull();
-  });
-
-  it("Use a different email calls onBack", async () => {
-    const onBack = vi.fn();
+  it("Use a different email clears verification_email, returning to the email field", async () => {
+    const onUpdate = vi.fn();
     const user = userEvent.setup();
-    renderStep({ onBack });
+    renderStep({ onUpdate });
     await waitFor(() => screen.getByText(/Use a different email/i));
     await user.click(screen.getByText(/Use a different email/i));
-    expect(onBack).toHaveBeenCalled();
+    expect(onUpdate).toHaveBeenCalledWith({ verification_email: "" });
+  });
+
+  describe("collect phase — no code sent yet", () => {
+    it("asks for the email and offers Google", async () => {
+      renderStep({ state: { verification_email: "", email: "" } });
+      await waitFor(() => screen.getByRole("button", { name: /Send me a code/i }));
+      expect(screen.getByLabelText(/Email address/i)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /Continue with Google/i })).toBeInTheDocument();
+      expect(screen.queryByLabelText("Digit 1")).toBeNull();
+    });
+
+    it("sends the code and records the email, which advances to the code phase", async () => {
+      const onUpdate = vi.fn();
+      const user = userEvent.setup();
+      renderStep({ state: { verification_email: "", email: "" }, onUpdate });
+
+      await user.type(screen.getByLabelText(/Email address/i), "pat@example.com");
+      await user.click(screen.getByRole("button", { name: /Send me a code/i }));
+
+      await waitFor(() => {
+        expect(mockSignInWithOtp).toHaveBeenCalledWith({
+          email: "pat@example.com",
+          options: { emailRedirectTo: expect.stringContaining("/onboarding/full-label/verify?confirmed=1") },
+        });
+      });
+      expect(onUpdate).toHaveBeenCalledWith({
+        email: "pat@example.com",
+        verification_email: "pat@example.com",
+      });
+    });
+
+    it("rejects a malformed email without calling Supabase", async () => {
+      const user = userEvent.setup();
+      renderStep({ state: { verification_email: "", email: "" } });
+
+      await user.type(screen.getByLabelText(/Email address/i), "notanemail");
+      await user.click(screen.getByRole("button", { name: /Send me a code/i }));
+
+      await waitFor(() => expect(screen.getByText(/valid email address/i)).toBeInTheDocument());
+      expect(mockSignInWithOtp).not.toHaveBeenCalled();
+    });
+
+    it("targets the flex verify URL on the shipping-link path", async () => {
+      const user = userEvent.setup();
+      renderStep({
+        state: { verification_email: "", email: "", path: "flexible" },
+        initialUrl: "/onboarding/flexible/verify",
+      });
+
+      await user.type(screen.getByLabelText(/Email address/i), "pat@example.com");
+      await user.click(screen.getByRole("button", { name: /Send me a code/i }));
+
+      await waitFor(() => {
+        expect(mockSignInWithOtp).toHaveBeenCalledWith({
+          email: "pat@example.com",
+          options: { emailRedirectTo: expect.stringContaining("/onboarding/flexible/verify?confirmed=1") },
+        });
+      });
+    });
   });
 
   it("renders the verified success state when state.email_verified is true", async () => {
