@@ -54,6 +54,26 @@ difference between a progressive disclosure and a trap.
 `subtitle`, `placeholder`, `icon` and `action` are all optional and default to
 exactly what it rendered before, so only the recipient Package step changes.
 
+**A review finding the repo's own history already answered.** `/login?next=`
+makes any same-origin path a Supabase redirect target, and Supabase silently
+falls back to `site_url` when a target misses the allowlist — the exact 2026-05-15
+Bug 1 incident, on the exact URL this feature generates
+(`/onboarding/full-label/destination`). It needs no change: the fix from that
+incident put `https://sendmo.co/**` in the production dashboard, and `**` does
+match multi-segment paths (confirmed empirically there). `supabase/config.toml`
+carries the same wildcard for local dev. Recorded because the flag was correct
+to raise and will be raised again — the answer is that one wildcard, and
+narrowing it would break every OAuth return in the onboarding flow, not just
+this feature.
+
+**Dead OAuth flag removed.** `OAUTH_PENDING_KEY` came across with the email
+step but its reader did not. On the destination step it distinguished a fresh
+OAuth return from an ordinary visit, because the auto-advance there fired on a
+filled form that any returning visitor would also have. The Contact step gates
+on `email_verified`, which only a completed verification sets, so the session
+itself is the signal — the flag was written and cleared with nothing reading
+it.
+
 **Two review findings, both about a deferred step you can walk back onto.**
 The progress bar lets a user return to a question they handed off, and two
 places still assumed they could not.
