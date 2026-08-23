@@ -3,7 +3,6 @@ import { motion, AnimatePresence } from "framer-motion";
 import { AlertCircle, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import PriceSummaryCard from "./PriceSummaryCard";
 import MagicGuestimator from "./MagicGuestimator";
 import StepQuestionHeader from "./StepQuestionHeader";
 import SkipToSenderLink from "./SkipToSenderLink";
@@ -97,12 +96,6 @@ export default function RecipientStepPackage({
 
   return (
     <div className="space-y-5">
-      {/* Sticky price card — the price arrives on the next step. */}
-      <PriceSummaryCard
-        destinationAddress={state.destinationAddress}
-        priceCents={null}
-        estimatedDays={null}
-      />
 
       {/* The question, asked once, with its one action beside it. Hidden on
           the 'self' branch: if YOU are the sender there is no link user to

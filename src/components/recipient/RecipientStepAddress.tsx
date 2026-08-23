@@ -148,19 +148,10 @@ export default function RecipientStepAddress({
 
   return (
     <div className="space-y-6">
-      {/* The subtext carries only what the question can't. Carriers reject
-          label buys with no phone on the delivery address (FedEx/UPS
-          PHONENUMBER.EMPTY), so warn before the user is stuck mid-form without
-          one — and on the 'self' branch it's someone else's number, which is
-          the harder one to produce. */}
       <StepQuestionHeader
         question={destinationIsSelf ? "Where should the package be delivered?" : "Where's it going?"}
         action={skipAction}
-      >
-        {sender === "self"
-          ? "Carriers need a phone number for the delivery address, so have theirs handy."
-          : "Carriers need a phone number for the delivery address."}
-      </StepQuestionHeader>
+      />
 
       <AddressForm
         value={address}

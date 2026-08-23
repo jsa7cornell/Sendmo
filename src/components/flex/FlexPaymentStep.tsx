@@ -76,6 +76,18 @@ function formatCents(cents: number): string {
 export type FlexPaymentInput = Omit<CreateLinkParams, "initial_status" | "notes">;
 
 interface Props {
+  /**
+   * Overrides the "Add your card" heading. The onboarding flow names this step
+   * "Confirm your payment information"; LinksEditor, where the card is being
+   * added rather than confirmed, keeps the original.
+   */
+  heading?: string;
+  /**
+   * Replaces the built-in "Delivering to" card. The onboarding flow supplies a
+   * Shipment Details card that covers all four decisions, not just the
+   * destination; LinksEditor passes nothing and keeps the original.
+   */
+  summary?: React.ReactNode;
   input: FlexPaymentInput;
   // Pre-existing draft link (e.g., user clicked Back from this step). When
   // present, FlexPaymentStep skips link creation and goes straight to the
@@ -98,6 +110,8 @@ interface Props {
 }
 
 export default function FlexPaymentStep({
+  heading,
+  summary,
   input,
   linkId: initialLinkId,
   onLinkCreated,
@@ -110,7 +124,21 @@ export default function FlexPaymentStep({
   // isAdmin: mode badge + test-card hint are admin dogfood affordances —
   // customers see a plain checkout (customer-live-payments review N1).
   const { session, liveMode, isAdmin } = useAuth();
-  const estimate = getEstimate(input);
+  // The estimate must never advertise a price above the cap, because we never
+  // charge one — a $9–$38 range under a $25 cap told the user two different
+  // things on the same screen (2026-08-23). The cap is the ceiling, so it is
+  // the ceiling here too.
+  //
+  // A cap BELOW the cheapest estimate is a different problem and is not
+  // clamped away: it means no shipment this size is likely to go through, and
+  // the user needs to know that before saving a card, not after a sender's
+  // first failed attempt.
+  const rawEstimate = getEstimate(input);
+  const capCents = Math.round((input.price_cap_dollars ?? 0) * 100);
+  const capCoversEstimate = capCents <= 0 || rawEstimate.low <= capCents;
+  const estimate = capCents > 0
+    ? { ...rawEstimate, high: Math.min(rawEstimate.high, capCents) }
+    : rawEstimate;
 
   const [linkId, setLinkId] = useState<string | null>(initialLinkId);
   const [shortCode, setShortCode] = useState<string | null>(null);
@@ -342,14 +370,18 @@ export default function FlexPaymentStep({
       <div className="text-center">
         <div className="flex items-center justify-center gap-2 mb-2">
           <Shield className="w-5 h-5 text-primary" />
-          <h1 className="text-2xl font-bold text-foreground">Add your card</h1>
+          <h1 className="text-2xl font-bold text-foreground">{heading ?? "Add your card"}</h1>
         </div>
         <p className="text-muted-foreground text-sm">
           We'll charge your card each time a sender uses your link.
         </p>
       </div>
 
-      {showCostEstimate && (
+      {/* The onboarding flow passes its own Shipment Details card here; the
+          built-in destination summary below is what LinksEditor still gets. */}
+      {summary}
+
+      {showCostEstimate && !summary && (
         /* Destination summary — lets the recipient confirm and edit where
            their shipments will be delivered before saving a card. */
         <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
@@ -455,6 +487,12 @@ export default function FlexPaymentStep({
               <dd className="font-medium text-foreground">${input.price_cap_dollars}</dd>
             </div>
           </dl>
+          {!capCoversEstimate && (
+            <p className="mt-3 rounded-xl border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+              A ${input.price_cap_dollars} cap is below the cheapest rate we expect for
+              this shipment. Senders may not be able to buy a label until you raise it.
+            </p>
+          )}
         </div>
       ) : (
         /* Compact "See typical costs" disclosure — dashboard +New Link flow */

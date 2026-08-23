@@ -18,24 +18,18 @@ interface Props {
   question: string;
   /** The skip link (or its reverse) — see SkipToSenderLink. */
   action?: ReactNode;
-  /**
-   * Supporting line under the question. Only for what the question can't say
-   * itself — a constraint the user needs before they start typing, not a
-   * restatement of the heading.
-   */
-  children?: ReactNode;
 }
 
-export default function StepQuestionHeader({ question, action, children }: Props) {
+// No supporting line (2026-08-23). Every step had one and none of them earned
+// its place: "Carriers need a phone number for the delivery address" sat above
+// a field already labelled "Phone number (the shipping carriers insist on it)".
+// The question and its fields say it; a paragraph between them only delays
+// reaching the form.
+export default function StepQuestionHeader({ question, action }: Props) {
   return (
-    <div>
-      <div className="flex items-start justify-between gap-4">
-        <h2 className="text-xl font-bold text-foreground">{question}</h2>
-        {action}
-      </div>
-      {children && (
-        <p className="text-muted-foreground text-sm mt-1">{children}</p>
-      )}
+    <div className="flex items-center justify-between gap-4">
+      <h2 className="text-xl font-bold text-foreground">{question}</h2>
+      {action}
     </div>
   );
 }

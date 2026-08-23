@@ -90,7 +90,7 @@ describe("RecipientStepAddress", () => {
     renderStep();
 
     expect(screen.queryByLabelText(/Email address/i)).toBeNull();
-    expect(screen.queryByRole("button", { name: /Continue with Google/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Sign in with Google/i })).toBeNull();
     expect(screen.queryByText("pat@example.com")).toBeNull();
   });
 

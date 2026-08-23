@@ -307,7 +307,10 @@ test.describe("URL-based step routing", () => {
 
     // Step 12: payment — wait for it (auto-advance from verify takes ~1 s)
     await expect(page).toHaveURL(/\/onboarding\/full-label\/payment$/, { timeout: 8000 });
-    await expect(page.getByText("Shipment Summary")).toBeVisible({ timeout: 5000 });
+    // "Shipment Summary" became the Shipment Details card on 2026-08-23 — the
+    // same facts, but every row edits back into the step that set it.
+    await expect(page.getByText("Shipment Details")).toBeVisible({ timeout: 5000 });
+    await expect(page.getByRole("button", { name: "Edit from" })).toBeVisible();
 
     // NOTE: The post-payment redirect to /t/<code> requires completing the
     // Stripe payment form, which operates inside cross-origin iframes and
