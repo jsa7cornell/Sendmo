@@ -383,13 +383,12 @@ export function RecipientFlowProvider({ children }: { children: React.ReactNode 
     // keeps its completion: un-completing step 1 when the destination was
     // typed rather than skipped makes the guard bounce the user straight back
     // to it from the origin step this function is navigating to.
-    const hadDeferredDestination = data.deferredDestination;
-    const reopened = [
+    const reopenedQuestions = [
       ...(data.deferredDestination ? [1] : []),
       ...(data.deferredOrigin ? [10] : []),
       ...(data.deferredPackage ? [14] : []),
-      20,
     ];
+    const reopened = [...reopenedQuestions, 20];
     // flushSync is LOAD-BEARING here (PLAYBOOK Rule 20 / LOG 2026-05-19).
     // Without it a render lands with the OLD URL and the NEW completedSteps:
     // the guard fails canAccessStep for the step being left and its
@@ -409,11 +408,21 @@ export function RecipientFlowProvider({ children }: { children: React.ReactNode 
       }));
     });
     directionRef.current = "backward";
-    // Land on the earliest question the undo re-opens, back on the label
-    // segment — the last undo is the other direction of the §2.2 rewrite.
-    // (10 rather than "earliest deferred": 10 was just un-completed above, so
-    // any deeper target would bounce off the guard back to it anyway.)
-    navigate(stepUrl("full_label", hadDeferredDestination ? 1 : 10));
+    // Land on the earliest question the undo actually re-opened, back on the
+    // label segment — the last undo is the other direction of the §2.2
+    // rewrite. `reopenedQuestions` is already in step order.
+    //
+    // This was hardcoded to `hadDeferredDestination ? 1 : 10` while undo
+    // un-completed 10 and 14 unconditionally, which made 10 a safe floor. Once
+    // only DEFERRED steps are re-opened that stopped being true: skipping the
+    // package alone left 10 completed, so the hardcoded target threw the user
+    // back two steps onto an origin form they had already filled in, rather
+    // than onto the parcel question the undo had just handed back to them.
+    //
+    // The `?? 10` fallback is unreachable through the UI — the banner carrying
+    // this control only renders when at least one flag is set — and exists so
+    // a stale persisted draft with no flags still lands somewhere valid.
+    navigate(stepUrl("full_label", reopenedQuestions[0] ?? 10));
   }, [navigate, data.deferredDestination, data.deferredOrigin, data.deferredPackage]);
 
   const markStepComplete = useCallback((step: number) => {

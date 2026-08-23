@@ -116,7 +116,14 @@ export function getValidationErrors(state: RecipientFlowState, step: number): st
   // Step 10 is the ship-from address only (slug `origin` since 2026-08-19).
   // Split from the parcel 2026-08-18 so each can be skipped independently —
   // deferring the address must not also skip the package question.
-  if (step === 10) {
+  //
+  // Deferred → answered. "The sender fills this in" IS an answer, so there is
+  // nothing left to validate; the sender supplies it in their own flow. This
+  // guard matched step 1's from the day skipping shipped, but 10 and 14 never
+  // got it — invisible while a deferred step was unreachable, and visible the
+  // moment the progress bar let the user walk back onto one: a red "Origin
+  // address is required" over a field group that is correctly handed off.
+  if (step === 10 && !state.deferredOrigin) {
     if (!state.originAddress.name) errors.push("Sender name is required");
     if (!state.originAddress.verified) errors.push("Origin address is required");
     else if (!state.originAddress.street) errors.push("Origin address is missing a street — please re-select it from the dropdown");
@@ -126,7 +133,9 @@ export function getValidationErrors(state: RecipientFlowState, step: number): st
   // Step 14 is the parcel only. The carrier/rate choice moved to the shared
   // Shipping step (20) when the maps unified — the design's Package screen
   // shows no prices, so the fetch runs downstream of both halves.
-  if (step === 14) {
+  //
+  // Deferred → answered, same as step 10 above.
+  if (step === 14 && !state.deferredPackage) {
     const l = parseFloat(state.dimensions.length);
     const w = parseFloat(state.dimensions.width);
     const h = parseFloat(state.dimensions.height);

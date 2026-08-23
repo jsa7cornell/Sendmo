@@ -1,6 +1,13 @@
 import { test, expect, type Page } from "@playwright/test";
 import { SUPABASE_URL } from "./supabase-env";
 
+/** Type into a SmartAddressInput and take the first autocomplete suggestion. */
+async function fillSmartAddress(page: Page, label: string) {
+  await page.locator(`#${label}-address`).fill("149 New Montgomery");
+  await page.locator("button", { hasText: /Montgomery/i }).first().click();
+  await expect(page.getByText("Verified").first()).toBeVisible({ timeout: 5000 });
+}
+
 // "Sender will fill this in" — ONE control, on all three question steps
 // (Destination, Origin, Package) since 2026-08-22. It replaced the two-button
 // SkipToggle radiogroup, which needed a card of its own above each form.
@@ -115,6 +122,43 @@ test.describe("returning to a skipped step", () => {
     await expect(skip(page)).toBeVisible();
     expect(await inertness(page, "#destination-name")).toBe(false);
   });
+});
+
+// ─── Undo skip returns to the question it re-opened ─────────────────
+
+test("undoing a package-only skip lands on the package, not the origin", async ({ page }) => {
+  // The banner's "Undo skip" hardcoded step 10 as its target, which was a safe
+  // floor only while undo un-completed 10 and 14 unconditionally. Once it
+  // re-opened just the DEFERRED steps, skipping the package alone left 10
+  // completed — and the hardcoded target threw the user back two steps onto an
+  // origin form they had already filled in, instead of the parcel question
+  // they had just taken back.
+  await page.goto("/onboarding");
+  await expect(page).toHaveURL(/\/full-label\/destination$/);
+  await page.locator("#destination-name").fill("Jane Doe");
+  await fillSmartAddress(page, "destination");
+  await page.locator("#destination-phone").fill("4155551234");
+  await page.getByRole("button", { name: /Continue to shipment details/i }).click();
+
+  await expect(page).toHaveURL(/\/full-label\/origin$/);
+  await expect(page.locator("#destination-name")).toHaveCount(0);
+  await page.locator("#origin-name").fill("John Smith");
+  await fillSmartAddress(page, "origin");
+  await page.locator("#origin-phone").fill("4155550100");
+  await page.getByRole("button", { name: /Continue to package details/i }).click();
+
+  // Skip ONLY the package. Destination and origin are answered and complete.
+  await expect(page).toHaveURL(/\/full-label\/package$/);
+  await expect(page.locator("#origin-name")).toHaveCount(0);
+  await skip(page).click();
+  await expect(page).toHaveURL(/\/flexible\/shipping$/);
+
+  await page.getByRole("button", { name: /Undo skip/i }).click();
+
+  // The parcel question, not the origin form the user already filled in.
+  await expect(page).toHaveURL(/\/full-label\/package$/);
+  // …and the answered origin keeps its completion, so nothing bounces.
+  await expect(page.getByRole("button", { name: "Origin", exact: true })).toBeEnabled();
 });
 
 // ─── The 'self' branch has nobody to hand the question to ───────────

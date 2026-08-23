@@ -54,6 +54,29 @@ difference between a progressive disclosure and a trap.
 `subtitle`, `placeholder`, `icon` and `action` are all optional and default to
 exactly what it rendered before, so only the recipient Package step changes.
 
+**Two review findings, both about a deferred step you can walk back onto.**
+The progress bar lets a user return to a question they handed off, and two
+places still assumed they could not.
+
+`getValidationErrors` guarded step 1 with `!deferredDestination` from the day
+skipping shipped, but steps 10 and 14 never got the same guard — invisible
+while a deferred step was unreachable. Revisiting one showed a red "Origin
+address is required" over a field group that was correctly handed off, and on
+the package step that error ALSO expanded the newly-collapsed parcel fields,
+which are inert while deferred: a validation error pointing at fields the user
+cannot focus. Guards added; the three flags stay independent, which is why the
+origin and package steps were split in the first place.
+
+`undoShippingLinkSwitch` hardcoded step 10 as its navigate target. That was a
+safe floor only while undo un-completed 10 and 14 unconditionally. Once it
+re-opened just the DEFERRED steps (earlier fix, same session), skipping the
+package alone left 10 completed — so "Undo skip" threw the user back two steps
+onto an origin form they had already filled in, instead of the parcel question
+they had just taken back. The target is now the first re-opened question.
+
+Both fixes were checked by reverting them and confirming the new tests fail —
+the habit this session earned the hard way (see the deleted no-op test below).
+
 **A real bug the paradigm created: the outgoing step swallowed the click.**
 `AnimatePresence` runs `mode="wait"`, so for the ~250ms after the URL flips the
 OUTGOING step is the only thing mounted — and it stayed fully clickable. Once
