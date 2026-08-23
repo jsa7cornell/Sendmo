@@ -29,8 +29,22 @@ import RecipientStepLinkReady from "@/components/recipient/RecipientStepLinkRead
 function getVariants(direction: "forward" | "backward") {
   return {
     initial: { opacity: 0, x: direction === "forward" ? 20 : -20 },
-    animate: { opacity: 1, x: 0 },
-    exit: { opacity: 0, x: direction === "forward" ? -20 : 20 },
+    animate: { opacity: 1, x: 0, pointerEvents: "auto" as const },
+    // `pointerEvents: none` while leaving is load-bearing, not polish.
+    // AnimatePresence runs mode="wait", so for the ~250ms after the URL flips
+    // the OUTGOING step is the only thing mounted — and it stays clickable.
+    // Since 2026-08-22 all three question steps carry a control with the same
+    // accessible name ("Sender will fill this in"), so a fast click during
+    // that window fires the PREVIOUS step's skip: on the origin step it read
+    // as "skipping the origin did nothing", when it had actually re-skipped
+    // the destination and bounced the flow back to origin.
+    //
+    // Pinned by progress-bar.spec ("skipping the origin morphs its segment in
+    // place" + "skipping everything"), which fail without this line. A more
+    // direct test — two skips back to back with no wait — does NOT reproduce
+    // it: Playwright's click actionability check waits out the transition. If
+    // you are hunting this, reach for progress-bar.spec, not a minimal repro.
+    exit: { opacity: 0, x: direction === "forward" ? -20 : 20, pointerEvents: "none" as const },
   };
 }
 

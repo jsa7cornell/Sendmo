@@ -55,6 +55,14 @@ async function reachOriginStep(page: Page) {
   await expect(page).toHaveURL(/\/full-label\/origin$/);
 }
 
+// These two skip tests double as the guard on RecipientOnboarding's
+// `pointerEvents: "none"` exit variant (2026-08-22). AnimatePresence runs
+// mode="wait", so the outgoing step is the only thing mounted for ~250ms after
+// the URL flips; while it stayed clickable, the click below landed on the
+// PREVIOUS step's skip link — every question step now has one with the same
+// accessible name — which re-skipped the destination and bounced the flow back
+// to origin. Both tests fail if that line is removed. Keep them in mind before
+// "simplifying" the animation config.
 test.describe("progress bar — one segment per question", () => {
   test.beforeEach(async ({ page }) => {
     await mockEdgeFunctions(page);

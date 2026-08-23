@@ -54,6 +54,25 @@ difference between a progressive disclosure and a trap.
 `subtitle`, `placeholder`, `icon` and `action` are all optional and default to
 exactly what it rendered before, so only the recipient Package step changes.
 
+**A real bug the paradigm created: the outgoing step swallowed the click.**
+`AnimatePresence` runs `mode="wait"`, so for the ~250ms after the URL flips the
+OUTGOING step is the only thing mounted — and it stayed fully clickable. Once
+all three question steps carried a control with the SAME accessible name, a
+fast click in that window fired the previous step's skip. On the origin step it
+presented as "skipping the origin did nothing"; what actually happened was the
+destination got re-skipped and the route guard bounced the flow back to origin.
+Fixed with `pointerEvents: "none"` on the exit variant.
+
+Worth recording how it was caught, because the obvious test does not catch it:
+a minimal repro (two skips back to back, no wait) passes with OR without the
+fix, because Playwright's click actionability check waits out the transition.
+The tests that actually fail without it are the two skip cases in
+progress-bar.spec, which reach the origin step the slow way. A first attempt
+added the minimal repro as a regression test; it was deleted once it proved to
+pass both ways — a test that cannot fail is worse than no test, because it
+claims a property is pinned when it is not. progress-bar.spec now carries a
+comment saying it is the guard.
+
 **A flaky test, finally diagnosed instead of re-run.** `session arrival marks
 email_verified and auto-advances` failed three times under 4-way parallelism
 and passed in isolation every time. Its assertion allowed 4000ms for a
