@@ -60,6 +60,12 @@ const RATE_TABLE: Record<string, Record<string, Record<string, RangeEstimate>>> 
   },
 };
 
+const SPEED_LABEL: Record<string, string> = {
+  no_rush: "No rush",
+  standard: "Standard",
+  express: "Express",
+};
+
 function getEstimate(input: FlexPaymentInput): RangeEstimate {
   const size: SizeKey = (input.size_hint as SizeKey | null) ?? "default";
   const distance = input.distance_hint ?? "regional";
@@ -464,7 +470,9 @@ export default function FlexPaymentStep({
           <dl className="space-y-2 text-sm border-t border-border pt-3">
             <div className="flex justify-between">
               <dt className="text-muted-foreground">Speed</dt>
-              <dd className="font-medium text-foreground capitalize">{input.speed_preference}</dd>
+              {/* The raw enum leaked through `capitalize` as "No_rush". Same
+                  wording as the Shipment Details card so the two agree. */}
+              <dd className="font-medium text-foreground">{SPEED_LABEL[input.speed_preference] ?? input.speed_preference}</dd>
             </div>
             {input.distance_hint && (
               <div className="flex justify-between">
