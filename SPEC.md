@@ -218,6 +218,7 @@ The flow uses numeric step IDs for branching:
 src/components/recipient/
   StepQuestionHeader.tsx                    # The question + its one action (steps 1/10/14)
   SkipToSenderLink.tsx                      # That action: "Sender will fill this in →"
+  ShipmentDetails.tsx                       # The one summary, payment step only
   RecipientStepAddress.tsx                  # Step 1: destination address only (shared)
   RecipientStepOrigin.tsx                   # Step 10: ship-from address
   RecipientStepPackage.tsx                  # Step 14: the parcel
@@ -226,14 +227,57 @@ src/components/recipient/
   RecipientStepPayment.tsx                  # Payment + activated state (Steps 12/13/22/23)
 ```
 
-### Progress Bar (4 visual steps, varies by path)
+### No progress UI (2026-08-23)
 
-| Path | Step 1 | Step 2 | Step 3 | Step 4 |
-|------|--------|--------|--------|--------|
-| **Full Label** | Destination (MapPin) | Shipment Details (Package2) | Payment (CreditCard) | Label & Link (Tag) |
-| **Flexible Link** | Destination (MapPin) | Shipping Info (Sliders) | Payment & Verification (CreditCard) | Label & Link (Tag) |
+There is no progress bar, no path chip and no skip banner. All three were
+deleted together: they competed to narrate *position*, and none of them
+answered the question a creator actually has mid-flow — what have I told you so
+far. A step is now a heading, its skip link, a form and the buttons.
 
-Steps are clickable to navigate back to completed steps (but not forward).
+What each removed element did, and what carries it now:
+
+| Removed | What it said | Where that lives now |
+|---|---|---|
+| `MorphProgressBar` | Which of six steps you're on; which were skipped | Nothing states position. The Shipment Details card lists decisions instead |
+| Path chip (`Prepaid label` / `Shipping link`) | Which product you're building | The Shipment Details heading, on the payment step |
+| Skip banner + `Undo skip` | That a skip made this a link; a way to reverse every skip at once | The URL segment mid-flow; per-question undo via each step's "Enter it myself" |
+| `PriceSummaryCard` | Sticky "Shipping to …" on Origin, Package, Shipping | Nothing — it was a tracker by another name |
+
+**Navigating back.** The bar's clickable segments are gone, so mid-flow the
+only route to an earlier question is Back, which walks one step at a time.
+From the payment step, the Shipment Details card's per-row pencils jump
+directly to any question. `undoShippingLinkSwitch` was deleted with the banner
+that was its only caller.
+
+### Shipment Details (payment step only)
+
+**Component**: `ShipmentDetails.tsx`
+
+The single summary in the flow, on the last screen before money moves. Replaces
+`RecipientStepPayment`'s old "Shipment Summary" list and `FlexPaymentStep`'s
+"Delivering to" card.
+
+- **2×2 grid**: `from` and `to` side by side — the direction a shipment travels,
+  and the reason it isn't a list — then `parcel` and `via`. One column below 380px.
+- **Every cell has a pencil** that jumps to the step which set it (from → 10,
+  to → 1, parcel → 14, via → 20). This is the only direct back-navigation left.
+- **Handed-off questions** read `Sender fills in` / `Sender chooses` /
+  `Sender describes` in italic, and stay editable.
+- **Heading names the product**: `Shipment Details` on the label path,
+  `Shipping Link Details` on the flexible path. After the chip, bar and banner
+  went, this is the only place the two are distinguished.
+- **Price**: the label path closes with `Total`. The flexible path carries no
+  price at all — the cap belongs to the Estimated shipping cost panel below.
+
+### The estimate never exceeds the cap (2026-08-23)
+
+`FlexPaymentStep`'s estimate range is clamped to `price_cap_dollars`, because a
+shipment above the cap is never charged. Before this, a $25 cap could sit above
+a "$9.00 – $38.00" range on the same screen.
+
+A cap *below* the cheapest estimate is NOT clamped away — that state means no
+sender is likely to be able to buy a label, so it renders an explicit warning
+rather than a tidy "$25 – $25".
 
 ### Entry: /onboarding resolves straight to the destination step (who's-sending deleted 2026-08-18, Phase 2)
 
@@ -304,15 +348,20 @@ saved address and `sender` is still null; tapping it also resolves
 `sender='other'`. Signed out it reads "Log in to use your saved address" and
 routes to `/login?next=<this step>`.
 
-### The skip is a link beside the question (2026-08-22)
+### The skip is a link beside the question (2026-08-22, revised 2026-08-23)
 
 All three question steps — Destination (1), Origin (10), Package (14) — share
 one pattern, built from two components:
 
 - `StepQuestionHeader` — asks the question once, as the step's `<h2>`, with one
-  action on the same row.
+  action **vertically centred on the heading line**. It takes no supporting
+  copy: every step had a line under its heading and none earned the delay
+  ("Carriers need a phone number for the delivery address" sat directly above a
+  field labelled "Phone number (the shipping carriers insist on it)").
 - `SkipToSenderLink` — that action: "Sender will fill this in →", or
-  "↺ Enter it myself" when the question is already handed over.
+  "↺ Enter it myself" when the question is already handed over. **Underlined**,
+  because it navigates; every other control on these screens submits or edits
+  in place.
 
 **Skipping ADVANCES on the click.** No Continue press — it is a complete answer
 to the step's only question. `deferToSender` marks the step complete and

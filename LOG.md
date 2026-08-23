@@ -12,6 +12,71 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-23] Deleting the progress UI — three narrators replaced by one summary
+
+**Category:** fix | ux
+**Cross-link:** follows [PR #94](https://github.com/jsa7cornell/Sendmo/pull/94) + [PR #95](https://github.com/jsa7cornell/Sendmo/pull/95)
+
+**Browser-verified:**
+  mcp-session: Claude Browser pane, localhost:5173, 2026-08-23
+  variants-covered: destination step (no bar/chip/subtext, underlined skip on the heading line); payment label path (Shipment Details 2×2, from-left, Total $9.20, all four pencils navigate — verified Edit parcel → /full-label/package); payment link path all-skipped (three italic Sender rows, "SHIPPING LINK DETAILS" heading, no price); payment link path mixed; estimate clamped to cap on a large cross-country box.
+
+**John's read after seeing the box in situ: "it makes the page too busy."** The
+progress box had been designed to sit on every step. Rendered full-page it read
+as a second card competing with the question, so the decision inverted — no
+tracker anywhere, one summary on the payment step. That is a better product
+than what was designed, and it only became obvious at full-page scale. Mocking
+the component in isolation had hidden it twice.
+
+**What went, and what carries each job now.** The progress bar, the path chip
+and the skip banner all narrated POSITION; none answered "what have I told you
+so far". Deleted together, plus `PriceSummaryCard`, which was a tracker by
+another name on three steps.
+
+- Position: nothing states it. The step's heading is the context.
+- Which product: the Shipment Details heading — `Shipment Details` for a label,
+  `Shipping Link Details` for a link. That one conditional word is all that
+  survives of a signal five separate elements used to carry (chip, bar, banner,
+  card header glyph, per-row link icon), which is worth knowing before the next
+  one is removed.
+- Reversing a skip: per-question, via each step's "Enter it myself".
+  `undoShippingLinkSwitch` went with the banner that was its only caller.
+- Back-navigation: Back walks one step; the Shipment Details pencils jump.
+
+**The 2×2 is a route, not a list.** `from` sits left of `to` because that is the
+direction a shipment travels — John's call, and it is why the layout is a grid
+rather than the receipt-style option A that was in the first cut.
+
+**A pricing conflict the summary exposed.** With the cap shown in the card and
+the estimate panel below it, the same screen said "Up to $25" and "$9.00 –
+$38.00". The fix is not cosmetic: the estimate is now clamped to the cap,
+because a shipment above the cap is never charged, so advertising one was
+simply wrong. The card carries no price on the link path at all — the
+Estimated shipping cost panel owns pricing and states the cap once.
+
+A cap BELOW the cheapest estimate is deliberately not clamped away. Clamping
+would render a tidy "$25 – $25" while no sender could ever buy a label; it now
+shows an explicit warning instead, before a card is saved rather than after a
+sender's first failed attempt.
+
+**The deleted test file was load-bearing.** `progress-bar.spec.ts` had become
+the accidental guard for RecipientOnboarding's `pointerEvents: "none"` exit
+variant (LOG 2026-08-22) — it reached the origin step the SLOW way, which is
+what reproduces the outgoing-step-swallows-the-click race. Deleting the bar
+would have silently dropped that coverage. Ported to skip-to-sender.spec as
+"skipping the origin right after arriving does not re-skip the destination",
+and verified by reverting the fix and watching it fail. The minimal repro still
+does not reproduce it; Playwright's actionability check waits the transition
+out.
+
+**Google's button now follows Google's spec**, not ours: 40px tall, 4px radius,
+`#747775` hairline, Roboto Medium 14px at 0.25px, the four-colour G, and a
+white ground it keeps in dark mode. Their branding terms don't bend to a host
+theme, so it is deliberately the one control on the Contact step that ignores
+our tokens. Roboto is loaded at one weight in `index.html` for it alone.
+`/login` still has the old in-house Google button — out of scope this round,
+and now inconsistent with the Contact step.
+
 ### [2026-08-22] One skip control for all three question steps — and the dead card it replaced
 
 **Category:** fix | ux

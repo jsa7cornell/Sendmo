@@ -180,7 +180,7 @@ describe("RecipientStepContact", () => {
       renderStep({ state: { verification_email: "", email: "" } });
       await waitFor(() => screen.getByRole("button", { name: /Send me a code/i }));
       expect(screen.getByLabelText(/Email address/i)).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: /Continue with Google/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /Sign in with Google/i })).toBeInTheDocument();
       expect(screen.queryByLabelText("Digit 1")).toBeNull();
     });
 

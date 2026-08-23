@@ -1,4 +1,5 @@
 import FlexPaymentStep, { type FlexPaymentInput } from "@/components/flex/FlexPaymentStep";
+import ShipmentDetails from "./ShipmentDetails";
 import type { RecipientFlowState } from "@/hooks/useRecipientFlow";
 
 // Pattern D step 22. Thin wrapper around the shared <FlexPaymentStep>; the
@@ -13,6 +14,8 @@ interface Props {
   onBack: () => void;
   onEditDestination: () => void;
   onEditShipping: () => void;
+  /** Jump back to the step a Shipment Details row describes. */
+  onEditStep: (step: number) => void;
 }
 
 export default function RecipientStepFlexPayment({
@@ -22,6 +25,7 @@ export default function RecipientStepFlexPayment({
   onBack,
   onEditDestination,
   onEditShipping,
+  onEditStep,
 }: Props) {
   // All-or-nothing: a partial parcel produces junk rates, so a half-filled
   // package is treated as not answered.
@@ -93,8 +97,19 @@ export default function RecipientStepFlexPayment({
         onContinue();
       }}
       onBack={onBack}
+      heading="Confirm your payment information"
       onEditDestination={onEditDestination}
       onEditShipping={onEditShipping}
+      summary={
+        /* Replaces FlexPaymentStep's own "Delivering to" card. On this path
+           three of the four rows can read "Sender …", which that card could
+           not show — it only ever described the destination. */
+        <ShipmentDetails
+          state={state}
+          totalCents={null}
+          onEdit={onEditStep}
+        />
+      }
     />
   );
 }

@@ -41,7 +41,6 @@ interface RecipientFlowContextValue {
   deferToSender: (field: "destination" | "origin" | "package") => void;
   /** Clears one deferral IN PLACE — the toggle's "I have it", no navigation. */
   keepIt: (field: "destination" | "origin" | "package") => void;
-  undoShippingLinkSwitch: () => void;
   markStepComplete: (step: number) => void;
   getErrors: (step: number) => string[];
   state: RecipientFlowState;
@@ -369,61 +368,11 @@ export function RecipientFlowProvider({ children }: { children: React.ReactNode 
     }));
   }, []);
 
-  const undoShippingLinkSwitch = useCallback(() => {
-    // Undo reverses the deferral decision itself, not just the location:
-    // flags cleared AND the steps deferral completed un-completed. Leaving
-    // them in completedSteps let the progress bar jump defer→undo users
-    // forward past an empty origin (review finding 5) — deferral was how
-    // those steps got "completed", so undoing it un-completes them.
-    // Step 20 un-completes too: its flex-mode answer (speed/cap preferences)
-    // is void once every question is answered — the label path needs a
-    // concrete rate picked there instead.
-    //
-    // Only DEFERRED steps are un-completed. A step the user actually answered
-    // keeps its completion: un-completing step 1 when the destination was
-    // typed rather than skipped makes the guard bounce the user straight back
-    // to it from the origin step this function is navigating to.
-    const reopenedQuestions = [
-      ...(data.deferredDestination ? [1] : []),
-      ...(data.deferredOrigin ? [10] : []),
-      ...(data.deferredPackage ? [14] : []),
-    ];
-    const reopened = [...reopenedQuestions, 20];
-    // flushSync is LOAD-BEARING here (PLAYBOOK Rule 20 / LOG 2026-05-19).
-    // Without it a render lands with the OLD URL and the NEW completedSteps:
-    // the guard fails canAccessStep for the step being left and its
-    // <Navigate replace> to firstIncompleteUrl — computed from the OLD URL's
-    // segment — wins over this function's navigate. The pre-2026-08-19 code
-    // had the same race, invisibly: its bounce target happened to coincide
-    // with the intended destination. The segment rewrite made them differ,
-    // which is how the race was finally caught (e2e: undo landed on
-    // /flexible/origin instead of /full-label/origin).
-    flushSync(() => {
-      setData((prev) => ({
-        ...prev,
-        deferredDestination: false,
-        deferredOrigin: false,
-        deferredPackage: false,
-        completedSteps: prev.completedSteps.filter((s) => !reopened.includes(s)),
-      }));
-    });
-    directionRef.current = "backward";
-    // Land on the earliest question the undo actually re-opened, back on the
-    // label segment — the last undo is the other direction of the §2.2
-    // rewrite. `reopenedQuestions` is already in step order.
-    //
-    // This was hardcoded to `hadDeferredDestination ? 1 : 10` while undo
-    // un-completed 10 and 14 unconditionally, which made 10 a safe floor. Once
-    // only DEFERRED steps are re-opened that stopped being true: skipping the
-    // package alone left 10 completed, so the hardcoded target threw the user
-    // back two steps onto an origin form they had already filled in, rather
-    // than onto the parcel question the undo had just handed back to them.
-    //
-    // The `?? 10` fallback is unreachable through the UI — the banner carrying
-    // this control only renders when at least one flag is set — and exists so
-    // a stale persisted draft with no flags still lands somewhere valid.
-    navigate(stepUrl("full_label", reopenedQuestions[0] ?? 10));
-  }, [navigate, data.deferredDestination, data.deferredOrigin, data.deferredPackage]);
+  // `undoShippingLinkSwitch` lived here until 2026-08-23. It reversed every
+  // deferral at once and was reachable only from the skip banner, which is
+  // gone. Taking a question back is now per-question: the Shipment Details
+  // card on the payment step edits into the step, and the step's own "Enter it
+  // myself" clears its flag. Nothing needs the all-at-once version.
 
   const markStepComplete = useCallback((step: number) => {
     setData((prev) => ({
@@ -449,7 +398,6 @@ export function RecipientFlowProvider({ children }: { children: React.ReactNode 
         selectPath,
         deferToSender,
         keepIt,
-        undoShippingLinkSwitch,
         markStepComplete,
         getErrors,
         state,

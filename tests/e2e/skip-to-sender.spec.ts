@@ -78,8 +78,10 @@ test.describe("skipping advances to the next question", () => {
     await skip(page).click();
 
     await expect(page).toHaveURL(/\/flexible\/shipping$/);
-    await expect(page.getByText(/This will be a shipping link, not a label/i)).toBeVisible();
-    await expect(page.getByRole("button", { name: /Undo skip/i })).toBeVisible();
+    // No banner and no all-at-once undo since 2026-08-23 — the URL segment is
+    // the only mid-flow signal, and the payment step's card names the product.
+    await expect(page.getByText(/This will be a shipping link, not a label/i)).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /Undo skip/i })).toHaveCount(0);
   });
 });
 
@@ -90,11 +92,15 @@ test.describe("returning to a skipped step", () => {
   // onto it. This is the only state in which a step's fields render dimmed —
   // skipping advances, so there is no dimmed-and-still-here moment going
   // forward.
+  // Back is the only route to an earlier question mid-flow now that the
+  // progress bar is gone (2026-08-23). From the payment step the Shipment
+  // Details pencils jump directly; before it, you walk.
   test.beforeEach(async ({ page }) => {
     await page.goto("/onboarding");
     await skip(page).click();
     await expect(page).toHaveURL(/\/flexible\/origin$/);
-    await page.getByRole("button", { name: "Destination — the sender fills this in" }).click();
+    await expect(page.locator("#destination-name")).toHaveCount(0);
+    await page.getByRole("button", { name: "Back", exact: true }).click();
     await expect(page).toHaveURL(/\/destination$/);
     // Stale-DOM rule: the URL flips before the outgoing step unmounts, and the
     // exiting step's container still swallows clicks.
@@ -124,15 +130,22 @@ test.describe("returning to a skipped step", () => {
   });
 });
 
-// ─── Undo skip returns to the question it re-opened ─────────────────
+// ─── The outgoing step must not swallow the click ───────────────────
 
-test("undoing a package-only skip lands on the package, not the origin", async ({ page }) => {
-  // The banner's "Undo skip" hardcoded step 10 as its target, which was a safe
-  // floor only while undo un-completed 10 and 14 unconditionally. Once it
-  // re-opened just the DEFERRED steps, skipping the package alone left 10
-  // completed — and the hardcoded target threw the user back two steps onto an
-  // origin form they had already filled in, instead of the parcel question
-  // they had just taken back.
+test("skipping the origin right after arriving does not re-skip the destination", async ({ page }) => {
+  // AnimatePresence runs mode="wait", so the OUTGOING step is the only thing
+  // mounted for ~250ms after the URL flips — and it stayed clickable until
+  // RecipientOnboarding's exit variant got `pointerEvents: none`. All three
+  // question steps carry a control with the same accessible name, so a click
+  // in that window fired the PREVIOUS step's skip: here that re-skipped the
+  // destination and bounced the flow back to origin, reading as "skipping the
+  // origin did nothing".
+  //
+  // Reaching origin the SLOW way (filling the destination) is what reproduces
+  // it — a two-skip minimal repro passes either way, because Playwright's
+  // click actionability check waits the transition out. This test replaced
+  // progress-bar.spec, which was the accidental guard until the bar was
+  // deleted with the rest of the progress UI.
   await page.goto("/onboarding");
   await expect(page).toHaveURL(/\/full-label\/destination$/);
   await page.locator("#destination-name").fill("Jane Doe");
@@ -141,24 +154,14 @@ test("undoing a package-only skip lands on the package, not the origin", async (
   await page.getByRole("button", { name: /Continue to shipment details/i }).click();
 
   await expect(page).toHaveURL(/\/full-label\/origin$/);
-  await expect(page.locator("#destination-name")).toHaveCount(0);
-  await page.locator("#origin-name").fill("John Smith");
-  await fillSmartAddress(page, "origin");
-  await page.locator("#origin-phone").fill("4155550100");
-  await page.getByRole("button", { name: /Continue to package details/i }).click();
-
-  // Skip ONLY the package. Destination and origin are answered and complete.
-  await expect(page).toHaveURL(/\/full-label\/package$/);
-  await expect(page.locator("#origin-name")).toHaveCount(0);
   await skip(page).click();
-  await expect(page).toHaveURL(/\/flexible\/shipping$/);
 
-  await page.getByRole("button", { name: /Undo skip/i }).click();
-
-  // The parcel question, not the origin form the user already filled in.
-  await expect(page).toHaveURL(/\/full-label\/package$/);
-  // …and the answered origin keeps its completion, so nothing bounces.
-  await expect(page.getByRole("button", { name: "Origin", exact: true })).toBeEnabled();
+  await expect(page).toHaveURL(/\/flexible\/package$/);
+  // The destination the user typed is still theirs — it was never re-skipped.
+  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await expect(page).toHaveURL(/\/destination$/);
+  await expect(page.locator("#destination-name")).toHaveValue("Jane Doe");
 });
 
 // ─── The 'self' branch has nobody to hand the question to ───────────

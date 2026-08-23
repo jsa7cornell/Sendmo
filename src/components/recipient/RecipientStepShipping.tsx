@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { AlertCircle, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import PriceSummaryCard from "./PriceSummaryCard";
 import ShippingMethodCard from "./ShippingMethodCard";
 import { fetchRates, pickRecommendedRate, formatCents } from "@/lib/api";
 import { getTotalPriceCents, getTotalWeightOz, canFetchRates } from "@/hooks/useRecipientFlow";
@@ -140,12 +139,6 @@ export default function RecipientStepShipping({
 
   return (
     <div className="space-y-5">
-      {/* Sticky price card */}
-      <PriceSummaryCard
-        destinationAddress={state.destinationAddress}
-        priceCents={state.selectedRate ? totalCents : null}
-        estimatedDays={state.selectedRate?.estimated_days ?? null}
-      />
 
       {/* Shipping method */}
       <div className="bg-card rounded-2xl border border-border shadow-sm p-5">

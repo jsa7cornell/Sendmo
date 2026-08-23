@@ -259,37 +259,38 @@ export default function RecipientStepContact({ state, onUpdate, onContinue, onBa
   if (!awaitingCode) {
     return (
       <div className="space-y-6">
-        <div className="text-center">
-          <div className="flex items-center justify-center gap-2 mb-2">
-            <Mail className="w-5 h-5 text-primary" />
-            <h1 className="text-2xl font-bold text-foreground">How do we reach you?</h1>
-          </div>
-          <p className="text-muted-foreground text-sm">
-            We'll send shipping updates here — and confirm the address is yours.
-          </p>
-        </div>
+        {/* Left-aligned like the four question steps before it. Centring this
+            one made the last screen before payment read as a different
+            product. */}
+        <h2 className="text-xl font-bold text-foreground">How do we reach you?</h2>
 
         <div className="bg-card rounded-2xl border border-border shadow-sm p-5 space-y-4">
-          <Button
+          {/* Google's own button, to Google's published light-theme spec: 40px
+              tall, 4px radius, #747775 hairline, #1f1f1f Roboto Medium 14px at
+              0.25px tracking, the four-colour G at 18px, 12px gap. It keeps
+              those values in dark mode too — Google's branding terms don't
+              bend to a host theme, which is why this is the one control here
+              that doesn't use <Button> or our tokens. */}
+          <button
             type="button"
-            variant="outline"
             onClick={handleGoogle}
             disabled={googleLoading}
-            className="w-full rounded-xl shadow-sm gap-2"
+            style={{ fontFamily: "Roboto, ui-sans-serif, system-ui, sans-serif", letterSpacing: "0.25px" }}
+            className="w-full h-10 px-3 flex items-center justify-center gap-3 rounded bg-white border border-[#747775] text-[#1f1f1f] text-sm font-medium transition-shadow hover:shadow-sm disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
           >
             {googleLoading ? (
-              <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+              <Loader2 className="w-[18px] h-[18px] animate-spin" aria-hidden="true" />
             ) : (
-              <svg className="w-4 h-4" viewBox="0 0 18 18" aria-hidden="true">
+              <svg className="w-[18px] h-[18px]" viewBox="0 0 18 18" aria-hidden="true">
                 <path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844a4.14 4.14 0 0 1-1.796 2.716v2.258h2.908c1.702-1.567 2.684-3.874 2.684-6.615z"/>
                 <path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.184l-2.908-2.258c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z"/>
                 <path fill="#FBBC05" d="M3.964 10.707A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.707V4.961H.957A8.997 8.997 0 0 0 0 9c0 1.452.348 2.827.957 4.039l3.007-2.332z"/>
                 <path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.961L3.964 7.293C4.672 5.166 6.656 3.58 9 3.58z"/>
               </svg>
             )}
-            {googleLoading ? "Redirecting…" : "Continue with Google"}
-          </Button>
-          <p className="text-[11px] text-muted-foreground text-center -mt-2">
+            {googleLoading ? "Redirecting…" : "Sign in with Google"}
+          </button>
+          <p className="text-[11px] text-muted-foreground -mt-1">
             We'll use the email on your Google account. No confirmation needed.
           </p>
 

@@ -323,29 +323,28 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
     // link now, and the URL says so from the very next navigation. No Continue
     // press in between.
     await expect(page).toHaveURL(/\/flexible\/origin$/);
-    // The product change is announced immediately, on the origin step.
-    await expect(page.getByText(/This will be a shipping link, not a label/i)).toBeVisible();
+    // 2026-08-23: the banner that used to announce this is gone with the
+    // progress bar and the path chip. The URL segment carries it until the
+    // payment step's Shipment Details card names it in full.
+    await expect(page.getByText(/This will be a shipping link, not a label/i)).toHaveCount(0);
   });
 
-  test("deferring resolves the sender — the skip banner appears the moment it happens", async ({ page }) => {
+  test("deferring resolves the sender and asks the next question", async ({ page }) => {
     await gotoStep10(page);
 
-    // Skip the origin. The product change is announced NOW, on step 14 — not
-    // at the end of the flow (John's point 3, 2026-08-18).
+    // Skip the origin. The first skip rewrites the segment to flexible (§2.2),
+    // and the next question — the package — is still asked.
     await page.getByRole("button", { name: /Sender will fill this in/i }).click();
     await expect(page.locator("#origin-name")).toHaveCount(0);
-    // The first skip rewrites the segment to flexible (§2.2), and the next
-    // question — the package — is still asked.
     await expect(page).toHaveURL(/\/flexible\/package$/);
-    await expect(page.getByText(/This will be a shipping link, not a label/i)).toBeVisible();
 
-    // Undo reverses the deferral itself: back on step 10 (slug `origin`) on
-    // the label segment, and after answering every question the flow must
-    // produce a LABEL again — the stale-flag bug where defer→undo→fill still
-    // produced a link.
-    await page.getByRole("button", { name: /Undo skip/i }).click();
-    await expect(page).toHaveURL(/\/full-label\/origin$/);
-    await expect(page.getByText(/This will be a shipping link/i)).toHaveCount(0);
+    // No banner and no all-at-once undo since 2026-08-23. Taking the question
+    // back is per-question: walk back to it and press "Enter it myself".
+    await expect(page.getByRole("button", { name: /Undo skip/i })).toHaveCount(0);
+    await page.getByRole("button", { name: "Back", exact: true }).click();
+    await expect(page).toHaveURL(/\/origin$/);
+    await page.getByRole("button", { name: /Enter it myself/i }).click();
+    await expect(page.getByRole("button", { name: /Sender will fill this in/i })).toBeVisible();
   });
 
   test("the shipping link is a named, visible choice — not an escape from a failed form", async ({ page }) => {
@@ -368,9 +367,16 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
     await expect(page.locator("#origin-name")).toBeVisible();
     await expect(page.locator("#origin-name")).toBeEditable();
 
-    // And the product is named the moment the link is taken.
+    // 2026-08-23: taking the link no longer NAMES it mid-flow. The banner that
+    // said "This will be a shipping link" went with the progress bar and the
+    // path chip; the URL segment is the only mid-flow signal, and the product
+    // is named on the payment step by the Shipment Details card. Recorded as a
+    // deliberate narrowing so a later reader does not treat it as drift — the
+    // 2026-08-18 property was "named before the user can fail", and what
+    // survives is "named before the user pays".
     await skipLink.click();
-    await expect(page.getByText(/shipping link/i).first()).toBeVisible();
+    await expect(page).toHaveURL(/\/flexible\/package$/);
+    await expect(page.getByText(/This will be a shipping link/i)).toHaveCount(0);
   });
 
   test("a deep-linked flow (no step 0) can still undo the address escape", async ({ page }) => {
@@ -396,9 +402,11 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
     await page.getByRole("button", { name: /Sender will fill this in/i }).click();
     await expect(page).toHaveURL(/\/onboarding\/flexible\/shipping/);
 
-    // The way back must be rendered for this user too.
-    await page.getByRole("button", { name: /Undo skip/i }).click();
-    await expect(page).toHaveURL(/\/onboarding\/full-label\/origin/);
+    // The way back must be rendered for this user too — Back walks a step at
+    // a time now that the banner's all-at-once undo is gone.
+    await page.getByRole("button", { name: "Back", exact: true }).click();
+    await expect(page).toHaveURL(/\/onboarding\/flexible\/package/);
+    await expect(page.getByRole("button", { name: /Enter it myself/i })).toBeVisible();
   });
 
   test("the address escape converts to a shipping link, and undo restores what was typed", async ({
@@ -431,11 +439,17 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
       page.getByRole("heading", { name: /How fast should it get there/i })
     ).toBeVisible();
 
-    // Undo is reachable and returns the flow — with the typed origin intact,
-    // because the skip never clears it.
-    await page.getByRole("button", { name: /Undo skip/i }).click();
-    await expect(page).toHaveURL(/\/onboarding\/full-label\/origin/);
+    // Walking back re-opens each question in turn, and the typed origin is
+    // intact — the skip never cleared it.
+    await page.getByRole("button", { name: "Back", exact: true }).click();
+    await expect(page).toHaveURL(/\/onboarding\/flexible\/package/);
+    await page.getByRole("button", { name: "Back", exact: true }).click();
+    await expect(page).toHaveURL(/\/origin$/);
     await expect(page.locator("#origin-name")).toHaveValue("Sarah Smith");
+
+    // And taking it back restores the label path.
+    await page.getByRole("button", { name: /Enter it myself/i }).click();
+    await expect(page.getByRole("button", { name: /Sender will fill this in/i })).toBeVisible();
   });
 
   test("Full label flow: Step 0 → Step 1 → Step 10 → reaches email verification", async ({

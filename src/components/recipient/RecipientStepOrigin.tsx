@@ -4,7 +4,6 @@ import { AlertCircle, MapPin, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import SmartAddressInput from "@/components/ui/SmartAddressInput";
-import PriceSummaryCard from "./PriceSummaryCard";
 import StepQuestionHeader from "./StepQuestionHeader";
 import SkipToSenderLink from "./SkipToSenderLink";
 import DimmedWhenDeferred from "./DimmedWhenDeferred";
@@ -73,13 +72,6 @@ export default function RecipientStepOrigin({
 
   return (
     <div className="space-y-5">
-      {/* Sticky price card — no rate is selectable yet on this step, so it
-          shows the destination with the price pending. */}
-      <PriceSummaryCard
-        destinationAddress={state.destinationAddress}
-        priceCents={null}
-        estimatedDays={null}
-      />
 
       {/* The question, asked once, with its one action beside it. Hidden on
           the 'self' branch: if YOU are the sender there is no link user to
@@ -93,11 +85,7 @@ export default function RecipientStepOrigin({
             onUndo={onKeepIt}
           />
         )}
-      >
-        {isSelfSender
-          ? "The address the package leaves from."
-          : "Their name, address and phone — enter it and you get an exact price now."}
-      </StepQuestionHeader>
+      />
 
       <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
         {originConfirmable && (
@@ -114,21 +102,6 @@ export default function RecipientStepOrigin({
         )}
 
         <DimmedWhenDeferred deferred={state.deferredOrigin}>
-        {/* The account holder claiming the sender role. NOT an answer to the
-            skip question — it is a prefill shortcut, and conflating the two put
-            an identity claim inside a question about who supplies data. Sits
-            under the fields it fills, like the destination step's saved-address
-            shortcut. */}
-        {!isSelfSender && sender === null && user && (
-          <button
-            type="button"
-            onClick={() => onUpdate({ sender: "self" })}
-            className="mb-3 inline-flex items-center gap-1.5 text-sm font-semibold text-primary rounded-lg px-2 py-1 -ml-2 transition-colors hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-          >
-            <Send className="w-4 h-4" aria-hidden="true" />
-            I'm the sender — use my address
-          </button>
-        )}
 
         {originConfirmable ? (
           /* Confirm row — the generic outbound case is faster than a form when
@@ -182,6 +155,22 @@ export default function RecipientStepOrigin({
               className="mt-1.5 rounded-xl"
             />
           </div>
+        )}
+
+        {/* Under the fields it fills, matching the destination step's saved-
+            address link. NOT an answer to the skip question above — it is a
+            prefill shortcut, and conflating the two put an identity claim
+            inside a question about who supplies data. Choosing it does still
+            resolve sender='self', which is why it disappears once answered. */}
+        {!isSelfSender && sender === null && user && (
+          <button
+            type="button"
+            onClick={() => onUpdate({ sender: "self" })}
+            className="mt-4 inline-flex items-center gap-1.5 text-sm font-semibold text-primary rounded-lg px-2 py-1 -ml-2 transition-colors hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+          >
+            <Send className="w-4 h-4" aria-hidden="true" />
+            Use a saved address
+          </button>
         )}
         </DimmedWhenDeferred>
       </div>

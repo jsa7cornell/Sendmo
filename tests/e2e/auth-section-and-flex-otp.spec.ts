@@ -145,7 +145,7 @@ test.describe("Contact step — unauthenticated", () => {
       await injectFlowState(page, { ...REACHED_CONTACT, path });
       await page.goto(`/onboarding/${slug}/verify`);
 
-      await expect(page.getByRole("button", { name: /Continue with Google/i })).toBeVisible();
+      await expect(page.getByRole("button", { name: /Sign in with Google/i })).toBeVisible();
       await expect(page.getByText(/or use your email/i)).toBeVisible();
       await expect(page.getByPlaceholder("Email address")).toBeVisible();
       await expect(page.getByRole("button", { name: /Send me a code/i })).toBeVisible();
@@ -213,7 +213,7 @@ test.describe("Destination step — no identity UI, signed in or out", () => {
       await expect(page.getByRole("button", { name: /Sender will fill this in/i })).toBeVisible();
 
       // None of the identity UI that used to sit under the address fields.
-      await expect(page.getByRole("button", { name: /Continue with Google/i })).not.toBeVisible();
+      await expect(page.getByRole("button", { name: /Sign in with Google/i })).not.toBeVisible();
       await expect(page.getByPlaceholder("Email address")).not.toBeVisible();
       await expect(page.getByText(/We'll send shipping updates to this address/i)).not.toBeVisible();
       await expect(page.getByLabel("Verified")).not.toBeVisible();

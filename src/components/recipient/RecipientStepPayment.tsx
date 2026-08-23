@@ -3,8 +3,8 @@ import { Gift, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { formatCents, buyLabel, addressToApi, BuyLabelRateChangedError } from "@/lib/api";
 import { RateChangedDialog } from "@/components/RateChangedDialog";
-import { carrierDisplayName, serviceDisplayName } from "@/lib/utils";
 import { getTotalPriceCents } from "@/hooks/useRecipientFlow";
+import ShipmentDetails from "./ShipmentDetails";
 import type { RecipientFlowState } from "@/hooks/useRecipientFlow";
 import type { LabelResult } from "@/lib/types";
 import StripePaymentForm from "./StripePaymentForm";
@@ -46,11 +46,13 @@ interface Props {
   state: RecipientFlowState;
   onUpdate: (partial: Partial<RecipientFlowState>) => void;
   onBack: () => void;
+  /** Jump back to the step a Shipment Details row describes. */
+  onEditStep: (step: number) => void;
   liveMode?: boolean;
   compMode?: boolean;
 }
 
-export default function RecipientStepPayment({ state, onUpdate, onBack, liveMode = false, compMode = false }: Props) {
+export default function RecipientStepPayment({ state, onUpdate, onBack, onEditStep, liveMode = false, compMode = false }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [compLoading, setCompLoading] = useState(false);
   const [rateChanged, setRateChanged] = useState<BuyLabelRateChangedError | null>(null);
@@ -131,58 +133,17 @@ export default function RecipientStepPayment({ state, onUpdate, onBack, liveMode
 
   return (
     <div className="space-y-5">
-      {/* Shipment summary */}
-      <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
-        <h3 className="text-sm font-semibold text-foreground mb-3">Shipment Summary</h3>
-        <dl className="space-y-2 text-sm">
-          <div className="flex justify-between">
-            <dt className="text-muted-foreground">To</dt>
-            <dd className="font-medium">
-              {state.destinationAddress.city}, {state.destinationAddress.state}
-            </dd>
-          </div>
-          <div className="flex justify-between">
-            <dt className="text-muted-foreground">From</dt>
-            <dd className="font-medium">
-              {state.originAddress.city}, {state.originAddress.state}
-            </dd>
-          </div>
-          {state.selectedRate && (
-            <>
-              <div className="flex justify-between">
-                <dt className="text-muted-foreground">Service</dt>
-                <dd className="font-medium">
-                  {carrierDisplayName(state.selectedRate.carrier)} — {serviceDisplayName(state.selectedRate.service)}
-                </dd>
-              </div>
-              {state.selectedRate.estimated_days && (
-                <div className="flex justify-between">
-                  <dt className="text-muted-foreground">Est. delivery</dt>
-                  <dd className="font-medium">{state.selectedRate.estimated_days} days</dd>
-                </div>
-              )}
-            </>
-          )}
-          <div className="flex justify-between">
-            <dt className="text-muted-foreground">Package</dt>
-            <dd className="font-medium">
-              {state.dimensions.length}×{state.dimensions.width}
-              {state.packagingType !== "envelope" ? `×${state.dimensions.height}` : ""} in,{" "}
-              {state.weight.lbs || 0} lbs {state.weight.oz || 0} oz
-            </dd>
-          </div>
-          {state.insurance && (
-            <div className="flex justify-between">
-              <dt className="text-muted-foreground">Insurance</dt>
-              <dd className="font-medium text-success">Included ($2.50)</dd>
-            </div>
-          )}
-          <div className="border-t border-border pt-2 mt-2 flex justify-between">
-            <dt className="font-semibold text-foreground">Total</dt>
-            <dd className="text-2xl font-bold text-primary">{formatCents(totalCents)}</dd>
-          </div>
-        </dl>
-      </div>
+      <h2 className="text-xl font-bold text-foreground">Confirm your payment information</h2>
+
+      {/* Replaces the old "Shipment Summary" list (2026-08-23). Same facts, but
+          every row now edits back into the step that set it — this card is the
+          only route back to an earlier question since the progress bar went. */}
+      <ShipmentDetails
+        state={state}
+        totalCents={totalCents}
+        totalLabel="Total"
+        onEdit={onEditStep}
+      />
 
       {/* Comp button (admin "Live Comp" mode) OR Stripe payment form */}
       {compMode ? (
