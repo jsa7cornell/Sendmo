@@ -1,10 +1,12 @@
+import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { AlertCircle, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import PriceSummaryCard from "./PriceSummaryCard";
 import MagicGuestimator from "./MagicGuestimator";
-import SkipToggle from "./SkipToggle";
+import StepQuestionHeader from "./StepQuestionHeader";
+import SkipToSenderLink from "./SkipToSenderLink";
 import DimmedWhenDeferred from "./DimmedWhenDeferred";
 import { cn } from "@/lib/utils";
 import { getTotalWeightOz } from "@/hooks/useRecipientFlow";
@@ -55,6 +57,24 @@ export default function RecipientStepPackage({
   const isSelfSender = sender === "self";
   const showErrors = tried && errors.length > 0;
 
+  // The parcel fields start collapsed behind "or fill in manually" — describing
+  // the item is the intended path, and four cards of dimensions in front of
+  // someone who was going to type "a hardcover cookbook" is the wrong first
+  // impression.
+  //
+  // They are NOT collapsible once there is something to see. Any parcel value
+  // present (the guestimator just filled them, or the user is returning to a
+  // filled step) reveals them, so an auto-filled estimate is always visible and
+  // correctable rather than hidden behind a link. `showErrors` reveals them
+  // too: a validation summary naming Length and Width must never point at
+  // fields the user cannot see.
+  const [manualOpen, setManualOpen] = useState(false);
+  const hasParcelValues = !!(
+    state.dimensions.length || state.dimensions.width || state.dimensions.height ||
+    state.weight.lbs || state.weight.oz || state.itemDescription
+  );
+  const showParcelFields = manualOpen || hasParcelValues || showErrors;
+
   function handleGuestimation(result: GuestimatorResult) {
     onUpdate({
       packagingType: result.packaging,
@@ -84,29 +104,42 @@ export default function RecipientStepPackage({
         estimatedDays={null}
       />
 
-      {/* The question's answer control sits ABOVE the fields (brief point 1). */}
-      {!isSelfSender && (
-        <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
-          <SkipToggle
-            legend="What's being shipped?"
-            choice={
-              state.deferredPackage
-                ? "deferred"
-                : (state.dimensions.length || state.weight.lbs || state.itemDescription ? "kept" : null)
-            }
-            onKeepIt={onKeepIt}
+      {/* The question, asked once, with its one action beside it. Hidden on
+          the 'self' branch: if YOU are the sender there is no link user to
+          describe the package. */}
+      <StepQuestionHeader
+        question="What's being shipped?"
+        action={isSelfSender ? undefined : (
+          <SkipToSenderLink
+            deferred={state.deferredPackage}
             onDefer={onNoAddress}
-            keptCaption="Describe the package — we'll size it and price it exactly."
-            deferredCaption="They describe the package when they use your link — you set a spending cap instead."
+            onUndo={onKeepIt}
           />
-        </div>
-      )}
+        )}
+      />
 
       <DimmedWhenDeferred deferred={state.deferredPackage}>
       <div className="space-y-5">
-      {/* Magic Guestimator — primary input */}
-      <MagicGuestimator onResult={handleGuestimation} />
+      {/* Describe it and we size it — the intended path. */}
+      <MagicGuestimator
+        onResult={handleGuestimation}
+        title="Describe the product"
+        subtitle={null}
+        placeholder="e.g., a hardcover cookbook"
+        icon={false}
+        action={showParcelFields ? undefined : (
+          <button
+            type="button"
+            onClick={() => setManualOpen(true)}
+            className="text-sm font-medium text-foreground underline underline-offset-4 rounded px-1 transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+          >
+            or fill in manually
+          </button>
+        )}
+      />
 
+      {showParcelFields && (
+      <>
       {/* Item description (auto-filled by guestimator, but editable) */}
       <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
         <label htmlFor="item-desc" className="text-sm font-medium text-foreground">
@@ -217,6 +250,8 @@ export default function RecipientStepPackage({
           </div>
         </div>
       </div>
+      </>
+      )}
 
       </div>
       </DimmedWhenDeferred>

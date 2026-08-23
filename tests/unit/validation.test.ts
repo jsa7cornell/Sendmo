@@ -194,6 +194,38 @@ describe("Step 10 validation", () => {
   });
 });
 
+describe("a deferred question has nothing left to validate", () => {
+  // "The sender fills this in" IS an answer — the sender supplies the value in
+  // their own flow. Step 1 had this guard from the day skipping shipped; 10
+  // and 14 did not, which stayed invisible only while a deferred step was
+  // unreachable. Once the progress bar let users walk back onto one, a
+  // revisited deferred step showed a red "Origin address is required" over a
+  // field group that was correctly handed off — and, on the package step, that
+  // error also expanded the collapsed parcel fields, which are inert while
+  // deferred. A validation error pointing at fields the user cannot focus.
+  it("step 10 drops the origin requirements when deferred", () => {
+    expect(getValidationErrors(makeState({ deferredOrigin: true }), 10)).toEqual([]);
+  });
+
+  it("step 14 drops the parcel requirements when deferred", () => {
+    expect(getValidationErrors(makeState({ deferredPackage: true }), 14)).toEqual([]);
+  });
+
+  it("still validates each step when NOT deferred", () => {
+    expect(getValidationErrors(makeState(), 10)).toContain("Origin address is required");
+    expect(getValidationErrors(makeState(), 14)).toContain("Length is required");
+  });
+
+  it("deferring one question does not excuse another", () => {
+    // The three flags are independent — that independence is why the origin
+    // and package steps were split in the first place (2026-08-18).
+    expect(getValidationErrors(makeState({ deferredOrigin: true }), 14))
+      .toContain("Length is required");
+    expect(getValidationErrors(makeState({ deferredPackage: true }), 10))
+      .toContain("Origin address is required");
+  });
+});
+
 describe("step 1 — deferred destination (Phase 3)", () => {
   // Decision B (2026-08-18): every question is skippable, including the
   // destination. Deferring it is the answer, so the step has nothing left to

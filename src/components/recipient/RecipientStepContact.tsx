@@ -24,10 +24,6 @@ import type { RecipientFlowState } from "@/hooks/useRecipientFlow";
 // One component for both paths; only the redirect target differs, so the
 // email link lands on the right step's URL.
 
-// Set immediately before redirecting to Google; its presence on return is what
-// distinguishes a fresh OAuth return from an ordinary visit.
-const OAUTH_PENDING_KEY = "sendmo:oauth_pending";
-
 interface Props {
   state: RecipientFlowState;
   onUpdate: (partial: Partial<RecipientFlowState>) => void;
@@ -75,7 +71,6 @@ export default function RecipientStepContact({ state, onUpdate, onContinue, onBa
     if (!user?.email || oauthLockApplied.current) return;
     if (state.email_verified) return;
     oauthLockApplied.current = true;
-    try { sessionStorage.removeItem(OAUTH_PENDING_KEY); } catch { /* noop */ }
     const authEmail = user.email;
     if (authEmail.toLowerCase() !== (email || "").toLowerCase()) {
       onUpdate({ email: authEmail, verification_email: authEmail, email_verified: true });
@@ -135,15 +130,21 @@ export default function RecipientStepContact({ state, onUpdate, onContinue, onBa
   async function handleGoogle() {
     setError(null);
     setGoogleLoading(true);
-    try {
-      sessionStorage.setItem(OAUTH_PENDING_KEY, "1");
-    } catch { /* best-effort */ }
+    // No "OAuth pending" flag. The destination step needed one to tell a fresh
+    // OAuth return from an ordinary visit, because its auto-advance fired on a
+    // filled form that any returning visitor would also have. This step gates
+    // on `email_verified` instead, which only a completed verification sets —
+    // so the session itself is the signal and there is nothing to remember.
+    //
+    // `window.location.href` as the return target relies on the production
+    // Supabase allowlist carrying `https://sendmo.co/**`; `**` matches
+    // multi-segment paths (LOG 2026-05-15, Bug 1 — the incident that put it
+    // there). Narrowing that entry breaks every OAuth return in this flow.
     const { error: oauthErr } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: { redirectTo: window.location.href },
     });
     if (oauthErr) {
-      try { sessionStorage.removeItem(OAUTH_PENDING_KEY); } catch { /* noop */ }
       setGoogleLoading(false);
       setError(oauthErr.message || "Google sign-in failed");
     }

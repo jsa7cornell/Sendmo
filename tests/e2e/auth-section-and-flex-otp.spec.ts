@@ -328,8 +328,14 @@ test.describe("Flex verify — Supabase OTP (not bespoke email_verifications)", 
     // "Email verified" success state
     await expect(page.getByRole("heading", { name: /Email verified/i })).toBeVisible({ timeout: 5000 });
 
-    // Auto-advances to step 22 (authorize) within ~2s
-    await expect(page).toHaveURL(/\/onboarding\/flexible\/payment/, { timeout: 4000 });
+    // Auto-advances to step 22 (authorize) — the component arms a 1s timer.
+    //
+    // The budget is deliberately generous. The property under test is THAT it
+    // advances, not that it advances inside four seconds, and 4000ms left only
+    // ~3s of slack after the 1s timer — which this test spent under 4-way
+    // parallel load, flaking three times on 2026-08-22 while passing in
+    // isolation every time. Tightening it back tests the runner, not the app.
+    await expect(page).toHaveURL(/\/onboarding\/flexible\/payment/, { timeout: 15_000 });
   });
 });
 

@@ -12,6 +12,120 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-22] One skip control for all three question steps — and the dead card it replaced
+
+**Category:** fix | ux
+**Cross-link:** completes the same-day destination-step work below | [PR #94](https://github.com/jsa7cornell/Sendmo/pull/94)
+
+**Browser-verified:**
+  mcp-session: Claude Browser pane, localhost:5173, 2026-08-22
+  variants-covered: Destination (skip link on the question row, no duplicate card title); Origin (link + "I'm the sender — use my address" under the fields); Package (link + "Describe the product" card + "or fill in manually"); skip → advance chain destination → origin → package → shipping; return to a skipped step (dimmed fields, live undo).
+
+**The paradigm generalised, and doing so deleted a component.** The destination
+step got the card-header treatment earlier the same day; John then supplied a
+Package mock putting the link on the PAGE HEADING row instead. That is the
+better placement, and it resolves the duplication flagged in the first pass
+(a card titled "Destination address" sitting under an h2 asking the same
+question). All three question steps now share `StepQuestionHeader` +
+`SkipToSenderLink`, and the destination step was re-aligned to match rather
+than left as a third variant.
+
+**`SkipToggle` is gone.** It asked a SECOND question ("who fills this in?")
+before the user could answer the first, and needed its own card to do it —
+three stacked boxes for one question. Its most-defended property, "neither
+option is pre-selected so the label path gains no clicks", does not survive
+because there is no second option to pre-select; the thing that property
+protected does, because the fields are open and typeable on arrival. That
+distinction is now written into the surviving e2e assertion rather than left
+for a future reader to rediscover.
+
+**Package: the parcel fields start collapsed.** Per the mock — "Describe the
+product", then "I'm Feeling Lucky" beside "or fill in manually". Four cards of
+dimensions in front of someone about to type "a hardcover cookbook" is the
+wrong first impression. Three conditions reveal them and none of them is
+reversible: the user asked, any parcel value exists (so an auto-filled estimate
+is always visible and correctable — never hidden behind a link), or validation
+failed (a summary naming "Length is required" must never point at a field the
+user cannot see). That third condition is the one worth keeping: it is the
+difference between a progressive disclosure and a trap.
+
+**`MagicGuestimator` was extended, not forked.** It serves four surfaces
+(recipient Package, sender Package, SellerBuilder, SenderPreview). `title`,
+`subtitle`, `placeholder`, `icon` and `action` are all optional and default to
+exactly what it rendered before, so only the recipient Package step changes.
+
+**A review finding the repo's own history already answered.** `/login?next=`
+makes any same-origin path a Supabase redirect target, and Supabase silently
+falls back to `site_url` when a target misses the allowlist — the exact 2026-05-15
+Bug 1 incident, on the exact URL this feature generates
+(`/onboarding/full-label/destination`). It needs no change: the fix from that
+incident put `https://sendmo.co/**` in the production dashboard, and `**` does
+match multi-segment paths (confirmed empirically there). `supabase/config.toml`
+carries the same wildcard for local dev. Recorded because the flag was correct
+to raise and will be raised again — the answer is that one wildcard, and
+narrowing it would break every OAuth return in the onboarding flow, not just
+this feature.
+
+**Dead OAuth flag removed.** `OAUTH_PENDING_KEY` came across with the email
+step but its reader did not. On the destination step it distinguished a fresh
+OAuth return from an ordinary visit, because the auto-advance there fired on a
+filled form that any returning visitor would also have. The Contact step gates
+on `email_verified`, which only a completed verification sets, so the session
+itself is the signal — the flag was written and cleared with nothing reading
+it.
+
+**Two review findings, both about a deferred step you can walk back onto.**
+The progress bar lets a user return to a question they handed off, and two
+places still assumed they could not.
+
+`getValidationErrors` guarded step 1 with `!deferredDestination` from the day
+skipping shipped, but steps 10 and 14 never got the same guard — invisible
+while a deferred step was unreachable. Revisiting one showed a red "Origin
+address is required" over a field group that was correctly handed off, and on
+the package step that error ALSO expanded the newly-collapsed parcel fields,
+which are inert while deferred: a validation error pointing at fields the user
+cannot focus. Guards added; the three flags stay independent, which is why the
+origin and package steps were split in the first place.
+
+`undoShippingLinkSwitch` hardcoded step 10 as its navigate target. That was a
+safe floor only while undo un-completed 10 and 14 unconditionally. Once it
+re-opened just the DEFERRED steps (earlier fix, same session), skipping the
+package alone left 10 completed — so "Undo skip" threw the user back two steps
+onto an origin form they had already filled in, instead of the parcel question
+they had just taken back. The target is now the first re-opened question.
+
+Both fixes were checked by reverting them and confirming the new tests fail —
+the habit this session earned the hard way (see the deleted no-op test below).
+
+**A real bug the paradigm created: the outgoing step swallowed the click.**
+`AnimatePresence` runs `mode="wait"`, so for the ~250ms after the URL flips the
+OUTGOING step is the only thing mounted — and it stayed fully clickable. Once
+all three question steps carried a control with the SAME accessible name, a
+fast click in that window fired the previous step's skip. On the origin step it
+presented as "skipping the origin did nothing"; what actually happened was the
+destination got re-skipped and the route guard bounced the flow back to origin.
+Fixed with `pointerEvents: "none"` on the exit variant.
+
+Worth recording how it was caught, because the obvious test does not catch it:
+a minimal repro (two skips back to back, no wait) passes with OR without the
+fix, because Playwright's click actionability check waits out the transition.
+The tests that actually fail without it are the two skip cases in
+progress-bar.spec, which reach the origin step the slow way. A first attempt
+added the minimal repro as a regression test; it was deleted once it proved to
+pass both ways — a test that cannot fail is worse than no test, because it
+claims a property is pinned when it is not. progress-bar.spec now carries a
+comment saying it is the guard.
+
+**A flaky test, finally diagnosed instead of re-run.** `session arrival marks
+email_verified and auto-advances` failed three times under 4-way parallelism
+and passed in isolation every time. Its assertion allowed 4000ms for a
+component that arms a **1s** timer — about 3s of slack, which a loaded runner
+eats. Budget raised to 15s. The property under test is THAT it advances, not
+that it advances inside four seconds; the old number was testing the runner.
+Two other specs (`account-budget-admin`, the named-choice test) flaked the same
+way earlier in the session and were not chased — if they recur, suspect the
+same class rather than the app.
+
 ### [2026-08-22] Step 1 asks one question — and three bugs the e2e suite caught that the browser didn't
 
 **Category:** fix | ux

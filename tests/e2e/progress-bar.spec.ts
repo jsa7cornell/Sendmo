@@ -55,6 +55,14 @@ async function reachOriginStep(page: Page) {
   await expect(page).toHaveURL(/\/full-label\/origin$/);
 }
 
+// These two skip tests double as the guard on RecipientOnboarding's
+// `pointerEvents: "none"` exit variant (2026-08-22). AnimatePresence runs
+// mode="wait", so the outgoing step is the only thing mounted for ~250ms after
+// the URL flips; while it stayed clickable, the click below landed on the
+// PREVIOUS step's skip link — every question step now has one with the same
+// accessible name — which re-skipped the destination and bounced the flow back
+// to origin. Both tests fail if that line is removed. Keep them in mind before
+// "simplifying" the animation config.
 test.describe("progress bar — one segment per question", () => {
   test.beforeEach(async ({ page }) => {
     await mockEdgeFunctions(page);
@@ -71,7 +79,7 @@ test.describe("progress bar — one segment per question", () => {
 
   test("skipping the origin morphs its segment in place — the bar never swaps sets", async ({ page }) => {
     await reachOriginStep(page);
-    await page.getByRole("radio", { name: "Sender fills this in" }).click();
+    await page.getByRole("button", { name: /Sender will fill this in/i }).click();
     // Stale-DOM rule: the URL flips before the outgoing step unmounts — wait
     // for the origin step's field to be GONE before reading the bar.
     await expect(page.locator("#origin-name")).toHaveCount(0);
@@ -92,10 +100,10 @@ test.describe("progress bar — one segment per question", () => {
 
   test("skipping everything: same six segments, two marked skipped, none falsely completed", async ({ page }) => {
     await reachOriginStep(page);
-    await page.getByRole("radio", { name: "Sender fills this in" }).click();
+    await page.getByRole("button", { name: /Sender will fill this in/i }).click();
     await expect(page.locator("#origin-name")).toHaveCount(0);
     // Defer the package too → the shared shipping step, flex mode.
-    await page.getByRole("radio", { name: "Sender fills this in" }).click();
+    await page.getByRole("button", { name: /Sender will fill this in/i }).click();
     await expect(page).toHaveURL(/\/flexible\/shipping$/);
     // The SAME six labels — the morph, not a swap (the 2026-08-19 regression:
     // the old bar rendered a different 4-segment set here).
