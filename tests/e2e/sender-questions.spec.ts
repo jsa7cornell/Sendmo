@@ -40,6 +40,10 @@ async function mockLink(page: Page, link: object) {
     r.fulfill({ status: 200, contentType: "application/json", body: "[]" }));
   await page.route(`${SUPABASE_URL}/functions/v1/**`, r =>
     r.fulfill({ status: 200, contentType: "application/json", body: "{}" }));
+  await page.route(`${SUPABASE_URL}/functions/v1/labels**`, r =>
+    r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+      public_code: "PC12345", cancel_token: "tok", tracking_number: "1Z", label_url: "https://example.test/l.png",
+    }) }));
   await page.route(`${SUPABASE_URL}/functions/v1/rates**`, r =>
     r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(RATES) }));
   // Registered LAST so it wins — Playwright checks routes most-recent-first.
@@ -137,5 +141,30 @@ test.describe("the review step summarises the shipment the way its creator saw i
     // The sender never sees what the recipient is paying.
     await expect(page.getByText(/\$11\.35|\$9\.00/)).toHaveCount(0);
     await expect(page.getByText(/Shipping is prepaid by John Anderson/i)).toBeVisible();
+  });
+});
+
+test.describe("\"Save my information\" saves the sender's information", () => {
+  test("a creator-supplied ship-from address is never saved as the sender's", async ({ page }) => {
+    // The box is checked by default. On a link that supplied the ship-from
+    // address the sender is never asked for one, so `senderAddress` holds the
+    // CREATOR's — persisting it would prefill a stranger's street the next
+    // time this browser ships on a link that does ask.
+    await start(page, { ...LINK, origin_prefill: ORIGIN, package_prefill: PARCEL });
+
+    await expect(page.getByText(/USPS/i).first()).toBeVisible({ timeout: 15000 });
+    await page.getByRole("button", { name: /continue|review/i }).first().click();
+    await expect(page.getByText("Shipment Details")).toBeVisible({ timeout: 10000 });
+
+    await page.locator("#sender-email").fill("sender@example.com");
+    await page.getByRole("button", { name: /Confirm and generate label/i }).click();
+    await page.getByRole("button", { name: /^Generate label$/i }).click();
+
+    await expect(page).toHaveURL(/\/t\/PC12345/, { timeout: 15000 });
+    const stored = await page.evaluate(() => window.localStorage.getItem("sendmo:sender:v1"));
+    expect(stored).toBeTruthy();
+    expect(stored).not.toContain("388 Townsend");
+    // The email IS theirs, and is still saved.
+    expect(stored).toContain("sender@example.com");
   });
 });

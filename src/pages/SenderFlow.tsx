@@ -298,7 +298,18 @@ export default function SenderFlow() {
 
   async function handleConfirm() {
     if (!linkData || !selectedRate || !parcel || !easypostShipmentId) return;
-    if (saveInfo) saveSender(senderAddress, senderEmail);
+    if (saveInfo) {
+      // "Save my information on this device" saves THEIR information. When the
+      // link supplied the ship-from address, `senderAddress` is the creator's
+      // — persisting it would prefill a stranger's street the next time this
+      // browser ships on a link that does ask. Keep whatever address they had
+      // (usually none) and save the email either way.
+      const originFromLink = plan?.answered.includes("origin") ?? false;
+      saveSender(
+        originFromLink ? (saved?.senderAddress ?? emptyAddress()) : senderAddress,
+        senderEmail,
+      );
+    }
 
     setSubmitting(true);
     setSubmitError(null);

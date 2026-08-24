@@ -12,6 +12,23 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-24] "Save my information" was saving someone else's information
+
+**Category:** fix | sender-flow
+**Cross-link:** follow-up to the sender-flow question rework earlier today (#105), found in its own review pass
+
+**The bug:** on a link whose creator supplied the ship-from address, the sender is never asked for one — so `senderAddress` holds the CREATOR's address. "Save my information on this device" is checked by default, and `saveSender` persisted that address into the sender's `localStorage`. The next time that browser met a link that *did* ask, the form prefilled a stranger's street.
+
+It was latent before (the same overwrite could happen when the browser had nothing saved), but #105's precedence flip — `origin_prefill` now wins over the saved address — made it the normal case rather than the edge one. The fix keeps whatever address they already had and saves the email either way, which is theirs.
+
+**Test-before-fix (Rule 12):** the new spec was run against the pre-fix line and failed on exactly the right string — `senderAddress.street: "388 Townsend St"` in the stored payload, which is the creator's address, not the sender's.
+
+**Browser-verified:**
+- spec: `tests/e2e/sender-questions.spec.ts` — 8/8 passed; confirmed red without the fix
+- variants-covered: creator-supplied ship-from (address not saved, email saved); the sender-answered case is unchanged and still saves both
+
+**Flake note for whoever reads a red run next:** running the full mocked e2e suite twice back-to-back on this machine produced 11 failures spread across unrelated specs (auth, breadcrumbs, flex OTP) at 4.7 min wall-clock, versus 1 at 1.1 min for the same commit run cold. Each failure passed in isolation. Machine load, not a regression — re-run the named specs before believing a broad red.
+
 ### [2026-08-24] Sender flow asks one question — and only the ones the link left open
 
 **Category:** fix | sender-flow
