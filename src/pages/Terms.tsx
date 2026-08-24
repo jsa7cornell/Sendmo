@@ -1,6 +1,12 @@
+import AppHeader from "@/components/AppHeader";
+import SiteFooter from "@/components/SiteFooter";
+
 export default function Terms() {
   return (
-    <main className="max-w-2xl mx-auto px-4 py-10 prose prose-sm">
+    <div className="min-h-screen bg-gradient-to-b from-background to-muted/50 flex flex-col">
+      <AppHeader />
+
+      <main className="flex-1 w-full max-w-2xl mx-auto px-4 py-10 prose prose-sm">
       <h1 className="text-2xl font-bold text-foreground mb-2">Terms of Service</h1>
       <p className="text-xs text-muted-foreground mb-6">Last updated: May 10, 2026</p>
 
@@ -54,6 +60,9 @@ export default function Terms() {
           <a className="text-primary hover:underline" href="mailto:support@sendmo.co">support@sendmo.co</a>.
         </p>
       </div>
-    </main>
+      </main>
+
+      <SiteFooter />
+    </div>
   );
 }

@@ -2,6 +2,7 @@ import { motion } from "framer-motion";
 import { Package, ArrowLeft, Home } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import AppHeader from "@/components/AppHeader";
+import SiteFooter from "@/components/SiteFooter";
 
 export default function NotFound() {
   return (
@@ -45,6 +46,8 @@ export default function NotFound() {
           <p className="text-xs text-muted-foreground mt-10">Error 404</p>
         </motion.div>
       </div>
+
+      <SiteFooter />
     </div>
   );
 }

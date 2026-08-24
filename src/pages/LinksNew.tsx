@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import AppHeader from "@/components/AppHeader";
+import SiteFooter from "@/components/SiteFooter";
 import LinksEditor, { defaultFlexValue, type FlexFormValue } from "@/components/links/LinksEditor";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
@@ -61,7 +62,7 @@ export default function LinksNew() {
   }, [user]);
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-background to-muted/50">
+    <div className="min-h-screen bg-gradient-to-b from-background to-muted/50 flex flex-col">
       <AppHeader />
       {loading ? (
         <div className="max-w-xl mx-auto px-4 py-16 text-center">
@@ -70,6 +71,7 @@ export default function LinksNew() {
       ) : (
         <LinksEditor mode="create" initialValue={initial} linkId={null} />
       )}
+      <SiteFooter />
     </div>
   );
 }

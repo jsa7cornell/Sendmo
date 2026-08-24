@@ -4,7 +4,7 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
   Copy, Link2, MapPin, Zap, Shield, CreditCard,
   Package, Truck, CheckCircle2, ChevronRight,
-  LogOut, User, AlertCircle, Pencil, X, Tag,
+  AlertCircle, Pencil, X, Tag,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -15,7 +15,8 @@ import { SELLER_LINK_VISIBLE, SELLER_LINK_LIVE } from "@/lib/featureFlags";
 import { supabase } from "@/lib/supabase";
 import LinksTab from "@/components/dashboard/LinksTab";
 import AddCardModal from "@/components/dashboard/AddCardModal";
-import AdminModeToolbar from "@/components/AdminModeToolbar";
+import AppHeader from "@/components/AppHeader";
+import SiteFooter from "@/components/SiteFooter";
 import { removePaymentMethod, rotateLinkUrl } from "@/lib/api";
 
 // ─── Types ──────────────────────────────────────────────────
@@ -160,7 +161,7 @@ function refundBadge(refundStatus: string) {
 // ─── Component ──────────────────────────────────────────────
 
 export default function Dashboard() {
-  const { user, session, signOut, isAdmin, liveMode } = useAuth();
+  const { user, session, isAdmin, liveMode } = useAuth();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const updatedLinkId = searchParams.get("updated_link");
@@ -182,7 +183,6 @@ export default function Dashboard() {
   const [loadingShipments, setLoadingShipments] = useState(true);
   const [link, setLink] = useState<DashboardLink | null>(null);
   const [loadingLink, setLoadingLink] = useState(true);
-  const [showUserMenu, setShowUserMenu] = useState(false);
   // 2026-05-13: Dashboard splits into two tabs (Shipments | Links). Shipments
   // is the default per John's call — high-volume use case is "where's my
   // package?" not "what links do I own?". Tab state syncs to ?tab= so refresh
@@ -452,9 +452,11 @@ export default function Dashboard() {
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       transition={{ duration: 0.3 }}
-      className="min-h-screen bg-gradient-to-b from-background to-muted/50"
+      className="min-h-screen bg-gradient-to-b from-background to-muted/50 flex flex-col"
     >
-      <div className="container max-w-4xl mx-auto px-4 py-8">
+      <AppHeader />
+
+      <div className="container max-w-4xl mx-auto px-4 py-8 w-full">
         {/* Header */}
         <div className="flex items-center justify-between mb-8">
           {/* Me / profile identity */}
@@ -469,12 +471,8 @@ export default function Dashboard() {
           </div>
 
           <div className="flex items-center gap-3">
-            <AdminModeToolbar />
-            {/* Signed-in users never see the marketing homepage (they're
-                redirected here), so this is the ONLY surface where a returning
-                seller can reach the buyer-pays flow. Without it the seller door
-                exists only on a page this audience can't get to — and repeat
-                sellers are exactly who that product was built for. */}
+            {/* The seller door also lives on the marketing homepage; keeping it
+                here is what a returning seller actually sees first. */}
             {SELLER_LINK_VISIBLE && (
               <Button
                 variant="outline"
@@ -496,35 +494,6 @@ export default function Dashboard() {
               <SendMoLogo className="w-4 h-4" />
               Create a new shipment
             </Button>
-
-            <div className="relative">
-              <button
-                onClick={() => setShowUserMenu(!showUserMenu)}
-                className="flex items-center justify-center w-9 h-9 rounded-xl border border-border bg-card hover:bg-muted/50 transition-colors"
-                title="Account options"
-              >
-                <User className="w-4 h-4 text-muted-foreground" />
-              </button>
-
-              {showUserMenu && (
-                <>
-                  <div className="fixed inset-0 z-10" onClick={() => setShowUserMenu(false)} />
-                  <motion.div
-                    initial={{ opacity: 0, y: -4 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="absolute right-0 top-full mt-1 z-20 w-48 bg-card rounded-xl border border-border shadow-lg p-1"
-                  >
-                    <button
-                      onClick={signOut}
-                      className="flex items-center gap-2 w-full px-3 py-2 text-sm text-destructive hover:bg-destructive/5 rounded-lg transition-colors"
-                    >
-                      <LogOut className="w-4 h-4" />
-                      Sign out
-                    </button>
-                  </motion.div>
-                </>
-              )}
-            </div>
           </div>
         </div>
 
@@ -1040,6 +1009,8 @@ export default function Dashboard() {
         </div>
         )}
       </div>
+
+      <SiteFooter />
 
       <AddCardModal
         open={showAddCard}

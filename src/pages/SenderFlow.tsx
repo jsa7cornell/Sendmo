@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Loader2, AlertCircle, Shield } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import AppHeader from "@/components/AppHeader";
+import SiteFooter from "@/components/SiteFooter";
 import {
   fetchLink, fetchSenderRates, buyLabel, BuyLabelRateChangedError,
 } from "@/lib/api";
@@ -422,6 +423,8 @@ export default function SenderFlow() {
           }}
         />
       )}
+
+      <SiteFooter />
     </div>
   );
 }
