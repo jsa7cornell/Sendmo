@@ -2,8 +2,8 @@ import { Button } from "@/components/ui/button";
 import { ArrowLeft, ArrowRight } from "lucide-react";
 import SmartAddressInput from "@/components/ui/SmartAddressInput";
 import StepQuestionHeader from "@/components/recipient/StepQuestionHeader";
-import { isUsablePhone } from "@/lib/phone";
 import type { AddressInput } from "@/lib/types";
+import { originErrors } from "./senderState";
 
 interface Props {
   value: AddressInput;
@@ -12,13 +12,6 @@ interface Props {
   onContinue: () => void;
   onBack?: () => void;
   continueLabel: string;
-}
-
-export function originErrors(a: AddressInput): string[] {
-  const errs: string[] = [];
-  if (!a.street || !a.city || !a.state || !a.zip) errs.push("A complete ship-from address");
-  if (!isUsablePhone(a.phone)) errs.push("A phone number — the carriers require one");
-  return errs;
 }
 
 // Asked only when the link's creator didn't already supply the ship-from

@@ -14,7 +14,8 @@ vi.mock("@/components/ui/SmartAddressInput", () => ({
   default: () => <div>smart-address-input</div>,
 }));
 
-import SenderStepOrigin, { originErrors } from "@/components/sender/SenderStepOrigin";
+import SenderStepOrigin from "@/components/sender/SenderStepOrigin";
+import { originErrors } from "@/components/sender/senderState";
 import type { AddressInput } from "@/lib/types";
 import { emptyAddress } from "@/lib/utils";
 

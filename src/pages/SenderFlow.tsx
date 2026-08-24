@@ -15,15 +15,15 @@ import type { AddressInput, ShippingRate } from "@/lib/types";
 import { emptyAddress } from "@/lib/utils";
 
 import SenderStepIntro from "@/components/sender/SenderStepIntro";
-import SenderStepDestination, { destinationErrors } from "@/components/sender/SenderStepDestination";
-import SenderStepOrigin, { originErrors } from "@/components/sender/SenderStepOrigin";
+import SenderStepDestination from "@/components/sender/SenderStepDestination";
+import SenderStepOrigin from "@/components/sender/SenderStepOrigin";
 import SenderStepPackage from "@/components/sender/SenderStepPackage";
 import SenderStepRates from "@/components/sender/SenderStepRates";
 import SenderStepReview from "@/components/sender/SenderStepReview";
 import {
   type SenderStep, type SenderParcel, type SenderQuestion,
   loadSavedSender, saveSender, sortRatesForSender, pickBestPerCarrier,
-  planSenderSteps,
+  planSenderSteps, destinationErrors, originErrors,
 } from "@/components/sender/senderState";
 
 // The sender wizard for flex shipping links. See SPEC §8 and

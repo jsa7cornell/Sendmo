@@ -4,8 +4,8 @@ import SmartAddressInput from "@/components/ui/SmartAddressInput";
 // The recipient flow's question heading, reused rather than re-cut — both
 // flows now ask one question per step and they should look identical doing it.
 import StepQuestionHeader from "@/components/recipient/StepQuestionHeader";
-import { isUsablePhone } from "@/lib/phone";
 import type { AddressInput } from "@/lib/types";
+import { destinationErrors } from "./senderState";
 
 interface Props {
   value: AddressInput;
@@ -15,13 +15,6 @@ interface Props {
   onBack?: () => void;
   /** "Continue" on an ordinary pass, "Save" when re-opened from the summary. */
   continueLabel: string;
-}
-
-export function destinationErrors(a: AddressInput): string[] {
-  const errs: string[] = [];
-  if (!a.street || !a.city || !a.state || !a.zip) errs.push("A complete delivery address");
-  if (!isUsablePhone(a.phone)) errs.push("A phone number — the carriers require one");
-  return errs;
 }
 
 // The one question a destination-deferred link exists to ask. Previously it

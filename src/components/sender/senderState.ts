@@ -250,3 +250,25 @@ export function dropOffCopy(carrier: string): { body: string; locationUrl: strin
 export function isValidEmail(email: string): boolean {
   return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email);
 }
+
+
+// ── Address gates ────────────────────────────────────────────
+// Both address questions clear the same bar: a complete address plus a phone
+// the carriers will accept (FedEx/UPS reject a label without one). They live
+// here rather than beside their steps so the step files export components
+// only — and so the gate is testable without rendering.
+
+function addressErrors(a: AddressInput, what: string): string[] {
+  const errs: string[] = [];
+  if (!a.street || !a.city || !a.state || !a.zip) errs.push(`A complete ${what} address`);
+  if (!isUsablePhone(a.phone)) errs.push("A phone number — the carriers require one");
+  return errs;
+}
+
+export function destinationErrors(a: AddressInput): string[] {
+  return addressErrors(a, "delivery");
+}
+
+export function originErrors(a: AddressInput): string[] {
+  return addressErrors(a, "ship-from");
+}
