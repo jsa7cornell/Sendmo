@@ -6,7 +6,9 @@ import tseslint from 'typescript-eslint'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  globalIgnores(['dist']),
+  // .claude/ holds agent worktrees (full repo copies — linting them multiplies
+  // every finding), _archive/ holds embedded repos with .next build output.
+  globalIgnores(['dist', '.claude/', '_archive/', 'playwright-report/', 'test-results/', 'coverage/']),
   {
     files: ['**/*.{ts,tsx}'],
     extends: [
