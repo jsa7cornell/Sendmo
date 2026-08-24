@@ -20,6 +20,7 @@ import { assertKeysMatchEnv } from "../_shared/env-guard.ts";
 import { checkLiveChargeAllowed } from "../_shared/allowlist.ts";
 import { resolveGateBasisCents } from "../_shared/pricing.ts";
 import { runInBackground } from "../_shared/background.ts";
+import { lookupRate, rerateAndMatch, rerateRetryCapCents } from "../_shared/easypost-rates.ts";
 
 // Pricing markup MUST stay in sync with supabase/functions/rates/index.ts.
 // Server-derives display_price_cents from EasyPost rate for the flex-link
@@ -1297,40 +1298,31 @@ Deno.serve(async (req: Request) => {
             verifiedPiAmountCents: verifiedPaymentIntent?.amount ?? null,
         });
 
+        // Resolved once, before the gate, and reused by the BUY path below so a
+        // rerate retry knows which carrier+service to re-match (2026-08-24 fix).
+        const preBuyRate = await lookupRate(easypost_shipment_id, easypost_rate_id, authHeader);
+
         if (gateDisplayCents > 0 && !isComp) {
-            // Refetch rate — same fallback pattern as the flex-cap block above
-            // (/rates/<id> endpoint preferred, fall back to GET shipment).
-            let buyTimeRateCents: number | null = null;
-            try {
-                const rateResp = await fetch(
-                    `https://api.easypost.com/v2/shipments/${easypost_shipment_id}/rates/${easypost_rate_id}`,
-                    { headers: { Authorization: authHeader } },
-                );
-                if (rateResp.ok) {
-                    const rateData = await rateResp.json();
-                    buyTimeRateCents = Math.round(parseFloat(rateData.rate ?? "0") * 100);
-                } else {
-                    const shipResp = await fetch(
-                        `https://api.easypost.com/v2/shipments/${easypost_shipment_id}`,
-                        { headers: { Authorization: authHeader } },
-                    );
-                    if (shipResp.ok) {
-                        const shipData = await shipResp.json();
-                        const matched = (shipData.rates || []).find((r: { id: string }) => r.id === easypost_rate_id);
-                        if (matched) {
-                            buyTimeRateCents = Math.round(parseFloat(matched.rate ?? "0") * 100);
-                        }
-                    }
-                }
-            } catch (rateErr) {
+            const buyTimeRateCents: number | null = preBuyRate?.cents ?? null;
+
+            // The rate is not on the shipment. Previously this fell through
+            // with buyTimeRateCents = null and skipped the price-cap gate
+            // silently — no event, no alert — which is why the 2026-08-24
+            // NOT_FOUND could not be diagnosed from the logs. It is now loud.
+            // The buy below will attempt a rerate; this records that we went
+            // into it blind on price.
+            if (buyTimeRateCents === null) {
                 log({
-                    event_type: "label.buy_time_rate_refetch_failed",
+                    event_type: "label.buy_time_rate_unresolvable",
                     session_id: sessionId,
                     severity: "warn",
                     entity_type: "label",
                     entity_id: easypost_shipment_id,
                     properties: {
-                        error_message: rateErr instanceof Error ? rateErr.message : String(rateErr),
+                        easypost_rate_id,
+                        quoted_display_price_cents: gateDisplayCents,
+                        flow: resolvedLink ? "flex" : "full_label",
+                        note: "rate absent from shipment — price cap not evaluated; buy will attempt rerate",
                     },
                 });
             }
@@ -1586,9 +1578,19 @@ Deno.serve(async (req: Request) => {
             }
         }
 
-        // Buy the label with EndShipper
+        // Buy the label with EndShipper.
+        //
+        // A rate that is no longer purchasable answers with 404 NOT_FOUND —
+        // "The requested resource could not be found." — which is what a
+        // customer was shown on 2026-08-24 after their card had already been
+        // charged (see LOG). EasyPost's documented remedy is to re-rate the
+        // shipment and buy the fresh rate, so that is what we do here rather
+        // than dead-ending into a refund: one rerate, re-match the SAME
+        // carrier+service, re-check it against the price the customer actually
+        // paid, then retry once. If any of that fails we fall through to the
+        // existing refund path unchanged.
         const buyStart = Date.now();
-        const buyResponse = await fetch(
+        const doBuy = (rateId: string) => fetch(
             `https://api.easypost.com/v2/shipments/${easypost_shipment_id}/buy`,
             {
                 method: "POST",
@@ -1597,13 +1599,97 @@ Deno.serve(async (req: Request) => {
                     "Content-Type": "application/json",
                 },
                 body: JSON.stringify({
-                    rate: { id: easypost_rate_id },
+                    rate: { id: rateId },
                     end_shipper_id: endShipperData.id,
                 }),
             }
         );
 
-        const buyData = await buyResponse.json();
+        let boughtRateId = easypost_rate_id;
+        let rerateOutcome: string = "not_attempted";
+        let buyResponse = await doBuy(easypost_rate_id);
+        let buyData = await buyResponse.json();
+
+        if (buyResponse.status === 404 || buyData.error?.code === "NOT_FOUND") {
+            // Retrying cannot produce two labels: this branch is only reachable
+            // when EasyPost explicitly REFUSED the first buy, and a shipment
+            // that already carries a postage_label is refused on any further
+            // buy attempt regardless of rate. One retry, one label, or none.
+            //
+            // Only the ORIGINAL carrier+service is eligible — never silently
+            // substitute a different service than the one the customer chose
+            // and paid for.
+            const target = preBuyRate;
+            if (!target) {
+                rerateOutcome = "no_target_service";
+            } else {
+                const fresh = await rerateAndMatch(
+                    easypost_shipment_id, target.carrier, target.service, authHeader,
+                );
+                if (!fresh) {
+                    rerateOutcome = "service_unavailable_after_rerate";
+                } else {
+                    // Same cap the buy-time gate uses. A rerate that comes back
+                    // MORE expensive than the customer's payment supports is a
+                    // rate change, not a retry — fall through to the refund +
+                    // rate-changed path rather than eating the margin.
+                    const retryCapCents = rerateRetryCapCents({
+                        gateDisplayCents,
+                        isComp,
+                        stripeFeePct: STRIPE_FEE_PCT,
+                        stripeFeeFlatCents: STRIPE_FEE_FLAT_CENTS,
+                        minNetMarginPct: MIN_NET_MARGIN_PCT,
+                    });
+                    if (fresh.cents > retryCapCents) {
+                        rerateOutcome = "rerated_price_over_cap";
+                        log({
+                            event_type: "label.rerate_over_cap",
+                            session_id: sessionId,
+                            severity: "warn",
+                            entity_type: "label",
+                            entity_id: easypost_shipment_id,
+                            properties: {
+                                stale_rate_id: easypost_rate_id,
+                                rerated_rate_cents: fresh.cents,
+                                retry_cap_cents: retryCapCents,
+                                quoted_display_price_cents: gateDisplayCents,
+                                carrier: fresh.carrier,
+                                service: fresh.service,
+                            },
+                        });
+                    } else {
+                        const retryResp = await doBuy(fresh.id);
+                        const retryData = await retryResp.json();
+                        if (retryResp.ok && !retryData.error) {
+                            rerateOutcome = "recovered";
+                            boughtRateId = fresh.id;
+                            buyResponse = retryResp;
+                            buyData = retryData;
+                        } else {
+                            rerateOutcome = "retry_buy_failed";
+                        }
+                        log({
+                            event_type: "label.rerate_retry",
+                            session_id: sessionId,
+                            severity: rerateOutcome === "recovered" ? "info" : "error",
+                            entity_type: "label",
+                            entity_id: easypost_shipment_id,
+                            properties: {
+                                outcome: rerateOutcome,
+                                stale_rate_id: easypost_rate_id,
+                                fresh_rate_id: fresh.id,
+                                rerated_rate_cents: fresh.cents,
+                                carrier: fresh.carrier,
+                                service: fresh.service,
+                                retry_http_status: retryResp.status,
+                                retry_error_code: retryData.error?.code ?? null,
+                            },
+                        });
+                    }
+                }
+            }
+        }
+
         const buyElapsed = Date.now() - buyStart;
 
         if (!buyResponse.ok || buyData.error) {
@@ -1638,6 +1724,16 @@ Deno.serve(async (req: Request) => {
                     error_message: errorMsg,
                     easypost_code: buyData.error?.code ?? null,
                     http_status: buyResponse.status,
+                    // 2026-08-24: a bare NOT_FOUND names neither of the two ids
+                    // the buy body carries, so the log could not say which
+                    // resource was missing. Record both, plus what the rerate
+                    // recovery attempt did, so the next one is diagnosable
+                    // from a single query.
+                    end_shipper_id: endShipperData.id ?? null,
+                    carrier: preBuyRate?.carrier ?? null,
+                    service: preBuyRate?.service ?? null,
+                    rate_present_before_buy: preBuyRate !== null,
+                    rerate_outcome: rerateOutcome,
                 },
             });
 
@@ -1734,8 +1830,21 @@ Deno.serve(async (req: Request) => {
             // it as PHONENUMBEREMPTY / "phone number is empty" — translate to an
             // actionable message instead of the raw carrier string.
             const isPhoneError = /phone\s*number|phonenumberempty/i.test(errorMsg);
+            // EasyPost answers an unbuyable rate with a bare "The requested
+            // resource could not be found." A customer read that verbatim on
+            // 2026-08-24 and had no idea what to do with it. By the time we
+            // get here the rerate retry above has already failed, so the
+            // honest instruction is: pick a different option.
+            const isStaleRateError =
+                buyResponse.status === 404 || buyData.error?.code === "NOT_FOUND";
             const friendlyMsg = isPhoneError
                 ? "This shipment needs a phone number — FedEx and UPS require one for delivery. If you're shipping on a link created before phone numbers were required, ask the link owner to update their delivery address, or choose a USPS option."
+                : isStaleRateError
+                ? "That shipping option is no longer available at the price we quoted. " +
+                  (verifiedPaymentIntent
+                      ? "Your card has been refunded in full. "
+                      : "You have not been charged. ") +
+                  "Go back and choose a shipping option to get a fresh quote."
                 : errorMsg;
             return new Response(
                 JSON.stringify({ error: friendlyMsg, refunded: !!verifiedPaymentIntent }),
@@ -1757,7 +1866,11 @@ Deno.serve(async (req: Request) => {
             duration_ms: buyElapsed,
             properties: {
                 easypost_shipment_id,
-                easypost_rate_id,
+                // The rate actually purchased — differs from the requested one
+                // when the rerate recovery above kicked in.
+                easypost_rate_id: boughtRateId,
+                requested_rate_id: easypost_rate_id,
+                rerate_outcome: rerateOutcome,
                 tracking_number: trackingNumber ?? null,
                 carrier,
                 service,

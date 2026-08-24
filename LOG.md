@@ -12,6 +12,72 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-24] Checkout 404: EasyPost refused the buy after the card was charged — auto-refund held
+
+**Category:** investigation | payments | easypost
+**Cross-link:** [labels/index.ts:1592](supabase/functions/labels/index.ts) (`/buy` handler) | [StripePaymentForm.tsx](src/components/recipient/StripePaymentForm.tsx) | [payments/index.ts](supabase/functions/payments/index.ts) | prior identical NOT_FOUND on 2026-05-12
+
+**The report:** `sendmo.co/onboarding/full-label/payment`, Test mode, UPS 3 Day Select, $19.91. "The requested resource could not be found." rendered twice — inline in the payment card and again in the page-level error band.
+
+**What actually happened** (reconstructed from `event_logs` + `function_edge_logs`, `pi_2U86OtxS6gsndgF32b3CL2gc`):
+
+| time (UTC) | event |
+|---|---|
+| 22:30:52 | `rate.fetched` — `shp_f030258aa7be49aab7f155277ec18bdc`, 17 rates, USPS/UPSDAP/FedExDefault |
+| 22:31:32 | `payment.intent_created` — 1991¢, test mode |
+| 22:31:54 | `stripe.payment_succeeded` + `ledger.fee_stripe_recorded` (−88¢) |
+| 22:31:55 | `label.buy_error` — EasyPost `POST /shipments/{id}/buy` → **404 `NOT_FOUND`**, rate `rate_0f7f0aee10734b118437a2f42d7ab29c` |
+| 22:31:56 | `label.auto_refund_issued` — `re_2U86OtxS6gsndgF32r2lAqs3`, 1991¢ |
+| 22:31:57 | `stripe.charge_refunded` — refund booked |
+
+The message is EasyPost's, not ours; the frontend surfaces `data.error` verbatim, which is why it reads like a routing 404. **The safety net worked** — customer was made whole in ~2s, and the ledger is exactly right: `charge +1991`, `fee_stripe −88`, `refund −1991`. SendMo eats the 88¢ Stripe fee on a failed buy (Stripe does not return it on refund). Not a money-loss incident.
+
+**Root cause — narrowed, not closed.** EasyPost's own docs confirm this exact 404 is what an unpurchasable rate returns, and name the remedy: *"you should re-rate that Shipment or create a new Shipment"* ([rate retention policy](https://www.easypost.com/blog/2020-04-15-rate-retention-change), [rerate endpoint](https://docs.easypost.com/docs/shipments/rates)). But retention is **28 days**, so plain expiry does not explain a 63-second gap — the timing correlation with the 2026-05-12 failure (88s, vs ~13s for every success in that window) is suggestive but its mechanism is wrong. The other documented 404 cause is *"referencing a deleted or non-existent carrier account"*, which fits better: **every** successful test-mode buy since 2026-05-20 is USPS GroundAdvantage, the last successful UPSDAP test buy was 2026-05-20, and both 404s are on shipments where UPSDAP was quoted. A re-provisioned UPSDAP test carrier account would produce exactly this.
+
+Not closed because proving it needs one EasyPost call this session could not make — `op` is blocked from the agent shell, and reading `.env.local` is barred by global rule 1. **John can close it in one command:**
+```bash
+curl -s -u "$(op read op://Secrets/EASYPOST_TEST_API_KEY/credential):" \
+  https://api.easypost.com/v2/shipments/shp_f030258aa7be49aab7f155277ec18bdc | grep -c rate_0f7f0aee10734b118437a2f42d7ab29c
+```
+`0` → the rate is gone (stale-rate cause). Non-zero → the rate is still there and the missing resource is the EndShipper or the carrier account.
+
+**The fix does not depend on which.** Under every one of those causes the right server behaviour is the same, and none of it was happening:
+
+1. **Rerate-and-retry** ([labels/index.ts](supabase/functions/labels/index.ts), buy path). On a 404 the function now calls `POST /shipments/:id/rerate` — EasyPost's documented remedy — re-matches the **same carrier+service**, re-checks the fresh price against the cap the customer's payment supports, and retries the buy once. A recoverable failure now produces a label instead of a refund. Never substitutes a different service, even a cheaper one: the customer chose and paid for that one. Cannot double-buy — the branch is only reachable when EasyPost *refused* the first buy, and a shipment already carrying a `postage_label` is refused on any further attempt.
+2. **The silent gate skip is closed.** The rate lookup now runs once, before the gate, and a `null` (rate absent) emits `label.buy_time_rate_unresolvable` instead of skipping the price cap with no trace. That blind spot is the reason this incident needed a whole session to characterise.
+3. **`label.buy_error` now names the resource.** A bare `NOT_FOUND` identifies neither of the two ids the buy body carries. The event now records `end_shipper_id`, `carrier`, `service`, `rate_present_before_buy`, and `rerate_outcome` — the next occurrence is one query, not one session.
+4. **Honest customer copy.** "The requested resource could not be found." is now *"That shipping option is no longer available at the price we quoted. Your card has been refunded in full. Go back and choose a shipping option to get a fresh quote."* — branched so it never claims a refund on the comp/flex legs where no charge existed.
+
+Helpers live in [`_shared/easypost-rates.ts`](supabase/functions/_shared/easypost-rates.ts) rather than inline, for the reason `pricing.ts` and `ledger.ts` do: `labels/index.ts` calls `Deno.serve` at module load, so nothing in it is reachable from Vitest. `fetch` is injected so the tests drive every branch offline.
+
+**Browser-verified:**
+- spec: `tests/unit/easypostRates.test.ts` — 17/17 pass, covering both lookup surfaces, rate-absent, rerate match/no-match, carrier-AND-service matching, the price cap at the incident's real $19.91, and the comp exemption
+- variants-covered: rate resolvable / absent / unparseable; rerate recovers / service gone / over cap / rerate call fails; comp vs charged
+- **Not covered, stated plainly:** the orchestration *inside* `labels/index.ts` (404 → rerate → retry → fall through to refund) has no executing test — `labels/index.ts` cannot be imported under Vitest, and reproducing a real EasyPost 404 in a browser is not something this session could stage. The helpers it calls are covered; the wiring between them is read-verified only. Closing that needs the integration harness, tracked with the sibling gap below.
+
+**Coverage gap (unchanged):** nothing in `tests/` executes the "buy fails after the card was charged → auto-refund" path. `tests/unit/alert.test.ts` only *mentions* `label.buy_error` in a comment. The path that ran in production today is still untested end-to-end.
+
+**Ruled out — the phone-number hypothesis.** John's guess was a missing sender phone. The logs disprove it: a missing phone at buy time produces `SHIPMENT.POSTAGE.FAILURE` / `PHONENUMBER.EMPTY` at **HTTP 422** (there is one on record, 2026-05-19), not a 404. And `rates/index.ts:273-283` refuses to quote at all unless `isUsablePhone` passes on **both** addresses — the quote succeeded at 22:30:52, so both phones were present.
+
+### [2026-08-24] Checkout offers a bank tab and a "$5 back" badge that SendMo does not implement
+
+**Category:** investigation | payments | risk
+**Cross-link:** [_shared/stripe.ts:180](supabase/functions/_shared/stripe.ts) (`automatic_payment_methods`) | [StripePaymentForm.tsx](src/components/recipient/StripePaymentForm.tsx)
+
+**Question asked:** is the "$5 back" on the Bank tab real?
+
+**Answer: there is no $5 discount in SendMo.** A repo-wide sweep for `$5 back` / `bankDiscount` / `incentive` / `us_bank` returns nothing in the checkout path. The only `incentive` token anywhere is the `balance_topup_bonus` ledger type reserved in migration 017 §3.6 for a future top-up bonus — unimplemented and unrelated. `payments/index.ts` creates the PI at `amount_cents` = the quoted total with **no branch on payment-method type**, so the customer is charged the same $19.91 whichever tab they pick.
+
+The badge is rendered by **Stripe's own Payment Element**. SendMo passes `automatic_payment_methods: { enabled: true, allow_redirects: "never" }`, i.e. whatever is switched on in the Stripe Dashboard appears — nobody chose to offer ACH here. Whether that incentive is genuinely configured and Stripe-funded is a **Dashboard question**, not a code question: check Payment methods → US bank account.
+
+**The larger risk is not the badge — ACH cannot complete a SendMo checkout at all.** `us_bank_account` PaymentIntents settle to `processing` for 1–5 business days, never straight to `succeeded`. Both gates hard-refuse that:
+- `StripePaymentForm.tsx` — `if (paymentIntent?.status !== "succeeded")` → *"Payment status: processing — please try again"*
+- `labels/index.ts:1156` — `if (pi.status !== "succeeded")` → 402 *"Payment not captured"*
+
+So a customer paying by bank is debited, gets no label, sees copy inviting a retry, and never reaches the EasyPost buy — which means the auto-refund never runs either. No test covers `us_bank_account` anywhere in `tests/`. Until ACH is deliberately supported, the bank method should be turned off in the Stripe Dashboard (or the PI restricted to `card`).
+
+**Test state at time of writing:** unit 762/762 pass; e2e 108 passed / 5 skipped; integration api 36 passed / 1 failed / 4 skipped. The one failure is a **stale test, not a product bug** — `tests/integration/recipient-flow-api.test.ts:69` posts `{from, to}` to `/rates`, which has required `from_address`/`to_address` plus a phone on both since 2026-05-19, so it gets a 400.
+
 ### [2026-08-24] "Save my information" was saving someone else's information
 
 **Category:** fix | sender-flow
