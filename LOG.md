@@ -12,6 +12,28 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-24] Sender flow asks one question — and only the ones the link left open
+
+**Category:** fix | sender-flow
+**Cross-link:** mirrors the recipient flow's 2026-08-22/23 paradigm; extends the creator-carried prefills of 2026-08-18 (PR #68)
+
+**The report:** John created a flexible link that specced the ship-from address (SendMo Seller Test, 629 Sugar Bowl Road) and the parcel (20×10×10, 15 lb) and deferred only the delivery address — the creator-side card read "TO: Sender chooses". Opening the link as a sender "still required filling out information".
+
+**What the sender actually saw** (verified live against `/s/ZSA9LQgh9v` before touching code): one screen headed **"Package Details"**, with a sticky bar reading **"Shipping to `this prepaid link`"**, containing the destination form, the ship-from card, the Magic Guestimator, packaging type, description, dimensions and weight. The prefills *were* landing — origin name/phone/address verified, dims 20/10/10, weight 15 — which is the point: the sender was scrolling past four pre-answered fields to reach the one question that was theirs.
+
+**What changed:** [`planSenderSteps`](src/components/sender/senderState.ts) derives the question list from the link, and the wizard asks them one per step (`SenderStepDestination` / `SenderStepOrigin` / a parcel-only `SenderStepPackage`), each using the recipient flow's `StepQuestionHeader`. A question the LINK answers is never asked. The progress bar is gone, as the recipient's is.
+
+- **A saved browser address is not an answer.** It prefills a question that is still the sender's; only the creator's `origin_prefill` skips the step. That flipped the prefill precedence — `origin_prefill` now WINS over localStorage, because the step that would have let the sender correct a stale saved address no longer exists.
+- **A half-answer is still a question.** A prefilled origin with no usable phone still asks: the carriers reject a phone-less from-address, so skipping the step would have bypassed the phone gate that `SenderStepPackage` used to hold. Same for a parcel prefill missing weight.
+
+**The summary block is now shared.** The presentational card moved to `components/shipment/ShipmentDetailsCard.tsx`; `recipient/ShipmentDetails.tsx` is its adapter and renders identically (its unit test is unchanged and green). `SenderStepReview` replaced its two bespoke cards with the same block, so both halves of one shipment describe it the same way. **The sender's copy carries no price** — no estimate cell, no total row.
+
+**Test-fixture gotcha, worth the line:** the first `/rates` route mock used the client's `ShippingRate` shape. It "worked" — and silently yielded `undefined` delivery days and a $0 price, which made the assertion "the sender sees no price" pass vacuously. `fetchSenderRates` maps `easypost_rate_id` / `display_price` / `delivery_days` off the wire; mock the wire shape.
+
+**Browser-verified:**
+- spec: `tests/e2e/sender-questions.spec.ts` — 7/7 passed (rewritten from `sender-origin-prefill.spec.ts`, whose prefill assertions folded in: a carried answer now means the question isn't asked, so "did the prefill land" and "was the question skipped" are one test); `tests/e2e/phone-gate.spec.ts` updated for the split steps, 4 passed / 1 skipped; full mocked e2e 106 passed; unit 762/762 (new `senderPlan.test.ts`, `SenderStepOrigin.test.tsx` carrying the phone gate over from the retired `SenderStepPackage.test.tsx`)
+- variants-covered: link answers {destination-deferred + origin + parcel} → one question; bare link → origin then parcel; {origin + parcel} answered → straight to rates; phone-less origin prefill → still asked, address carried; weightless parcel prefill → still asked, dims blank; review step on a fully-specced link → shared card with the four cells, no price
+
 ### [2026-08-23] Flexible payment step says the cost once — estimate panel folded into the details card
 
 **Category:** fix | ui

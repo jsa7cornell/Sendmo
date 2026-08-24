@@ -5,15 +5,76 @@
 import type { AddressInput, ShippingRate } from "@/lib/types";
 import type { LinkData } from "@/lib/api";
 import { classifySpeedTier } from "@/lib/utils";
+import { isUsablePhone } from "@/lib/phone";
 
 // Round 2 (proposal §11+§13): the "done" step is gone — the post-confirm
-// surface is the shipment page at /t/<public_code>. The progress bar still
-// shows 4 dots because the wizard has 4 form steps after the intro.
-export type SenderStep = "intro" | "package" | "rates" | "review";
+// surface is the shipment page at /t/<public_code>.
+//
+// 2026-08-24: the flow asks ONE question per step, and only the questions the
+// link left open — mirroring the recipient flow's 2026-08-22/23 paradigm. The
+// single "Package Details" mega-step (destination + origin + parcel on one
+// screen, most of it pre-answered by the creator) is gone, and so is the
+// progress bar, for the same reason the recipient's went: it narrated position
+// instead of stating decisions. The review step's summary card states them.
+export type SenderStep =
+  | "intro"
+  | "destination"
+  | "origin"
+  | "package"
+  | "rates"
+  | "review";
 
 export const SENDER_STEP_ORDER: SenderStep[] = [
-  "intro", "package", "rates", "review",
+  "intro", "destination", "origin", "package", "rates", "review",
 ];
+
+/** The three questions a link can leave open for the sender. */
+export type SenderQuestion = "destination" | "origin" | "package";
+
+export interface SenderPlan {
+  /** Questions the sender must answer, in flow order. */
+  questions: SenderQuestion[];
+  /** Answered by the link's creator — shown in the summary, never asked. */
+  answered: SenderQuestion[];
+}
+
+/**
+ * What is this sender actually being asked?
+ *
+ * A question is skipped when the LINK answers it — the creator supplied a
+ * ship-from address, or specced the parcel. It is NOT skipped merely because
+ * the sender's own browser has a saved address: that is a prefill for a
+ * question that is still theirs to answer. The distinction is the whole point
+ * — the creator's answers are not the sender's to re-enter, and before this
+ * the flow made them scroll past every one.
+ */
+export function planSenderSteps(link: {
+  needs_destination?: boolean | null;
+  origin_prefill?: { street1?: string; phone?: string | null } | null;
+  package_prefill?: { length_in?: number; width_in?: number; weight_oz?: number | null } | null;
+}): SenderPlan {
+  const questions: SenderQuestion[] = [];
+  const answered: SenderQuestion[] = [];
+
+  // Destination: only ever a question when the creator deferred it. On an
+  // ordinary flex link the address is the creator's own and never shown
+  // (Rule 7) — it is not in `answered` either, because there is nothing the
+  // sender may see or edit.
+  if (link.needs_destination === true) questions.push("destination");
+
+  // A prefilled origin only counts as answered if it is shippable as-is: the
+  // carriers reject a label with no phone on the from-address, so a
+  // phone-less prefill is a half-answer and the sender still has to be asked.
+  const op = link.origin_prefill;
+  const originKnown = !!op?.street1 && isUsablePhone(op.phone ?? "");
+  (originKnown ? answered : questions).push("origin");
+
+  const pp = link.package_prefill;
+  const parcelKnown = !!pp && !!pp.length_in && !!pp.width_in && !!pp.weight_oz;
+  (parcelKnown ? answered : questions).push("package");
+
+  return { questions, answered };
+}
 
 export type PackagingType = "box" | "envelope" | "tube";
 

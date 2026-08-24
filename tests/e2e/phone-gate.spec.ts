@@ -337,8 +337,9 @@ test.describe("phone gate — sender flow on a phoneless link", () => {
   test("the rates step shows the specific phone error, not the generic 'hide and seek'", async ({ page }) => {
     await page.goto(`/s/${CODE}`);
 
-    // Intro → Package step. The sender address field is unique to the package
-    // step, so it's the stable signal that we've advanced.
+    // Intro → ship-from question. This link carries no origin prefill, so it
+    // is the first thing the sender is asked (2026-08-24: one question per
+    // step — the address and the parcel are no longer the same screen).
     await page.getByRole("button", { name: /Get Started/i }).click();
     const senderAddress = page.locator('[id="Sender address-address"]');
     await expect(senderAddress).toBeVisible({ timeout: 8000 });
@@ -351,8 +352,10 @@ test.describe("phone gate — sender flow on a phoneless link", () => {
     await option.click();
     await expect(page.getByText("Verified").first()).toBeVisible({ timeout: 5000 });
     await page.locator('[id="Sender address-phone"]').fill("4155550100");
+    await page.getByRole("button", { name: /Continue/i }).click();
 
-    // Package dimensions + weight.
+    // Parcel question.
+    await expect(page.getByRole("heading", { name: /What are you shipping\?/i })).toBeVisible({ timeout: 8000 });
     await page.getByPlaceholder("Length").fill("10");
     await page.getByPlaceholder("Width").fill("10");
     await page.getByPlaceholder("Height").fill("10");
