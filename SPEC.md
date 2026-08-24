@@ -1199,7 +1199,9 @@ Defaults: `STRIPE_FEE_PCT = 0.029`, `STRIPE_FEE_FLAT_CENTS = 30`, `MIN_NET_MARGI
 **When the rate is ABSENT rather than merely expensive** (added 2026-08-24): `lookupRate` returning `null` means the rate is on neither surface, which reliably predicts a 404 `NOT_FOUND` from `/buy` — EasyPost's message for that is the bare *"The requested resource could not be found."* Two rules follow, both learned from the 2026-08-24 incident (LOG):
 
 - **A `null` is never a reason to skip the price cap silently.** Before the fix, `buyTimeRateCents` stayed `null` and the gate simply didn't run — no event, no alert — so the incident left no trace of *why*. It now emits `label.buy_time_rate_unresolvable` (severity `warn`).
-- **A 404 from `/buy` triggers one rerate recovery, not an immediate refund.** The labels function calls `POST /shipments/<id>/rerate` (EasyPost's documented remedy for an unpurchasable rate), re-matches the **same carrier+service** via `rerateAndMatch`, re-checks the fresh price against `rerateRetryCapCents` — the identical cap formula above — and retries the buy once. Outcomes are logged as `label.rerate_retry` (`recovered` | `service_unavailable_after_rerate` | `retry_buy_failed` | `no_target_service`) or `label.rerate_over_cap`.
+- **A 404 from `/buy` triggers one rerate recovery, not an immediate refund.** The labels function calls `POST /shipments/<id>/rerate` (EasyPost's documented remedy for an unpurchasable rate), re-matches the **same carrier+service** via `rerateAndMatch`, re-checks the fresh price against `rerateRetryCapCents` — the identical cap formula above — and retries the buy once. Outcomes are logged as `label.rerate_retry` (`recovered` | `service_unavailable_after_rerate` | `retry_buy_failed`) or `label.rerate_over_cap`.
+
+  **Known limit — recovery needs the rate OBJECT to still exist.** The rerate must re-match a carrier+service, and the only server-trusted source for that is the rate object itself: SendMo never persists the selected rate before purchase, and the client does not send carrier/service. If the rate is gone entirely (EasyPost retains unpurchased rates 28 days, so this means a very old or purged rate) there is nothing to re-match and recovery cannot run — the request falls straight through to the refund path and emits `label.rerate_impossible` (severity `error`). Closing this would require persisting carrier+service at PI-creation time; not done, because the 28-day retention makes the resolvable case the common one.
 
   **Invariants:** the service is never substituted, even for a cheaper one — the customer chose and paid for that service. The retry cannot produce two labels: it is only reachable when EasyPost *refused* the first buy, and a shipment already carrying a `postage_label` is refused on any further attempt. A failed retry leaves the original 404 as the reported error, so the refund path reports the real cause. Exhausted recovery falls through to the standard refund path with customer-facing copy that names the situation instead of echoing EasyPost's string.
 
@@ -1499,7 +1501,7 @@ SendMo uses a **structured event log** in Supabase (`event_logs` table) as a deb
 |---|---|
 | `addresses` | `address.verified`, `address.soft_warning`, `address.hard_error`, `address.google_fallback` |
 | `rates` | `rate.fetched`, `rate.no_results`, `rate.error` |
-| `labels` | `label.created`, `label.buy_error`, `label.endshipper_error`, `label.buy_time_rate_unresolvable`, `label.rerate_retry`, `label.rerate_over_cap` |
+| `labels` | `label.created`, `label.buy_error`, `label.endshipper_error`, `label.buy_time_rate_unresolvable`, `label.rerate_retry`, `label.rerate_over_cap`, `label.rerate_impossible`, `label.rerate_comp_price_jump` |
 
 ### Retention Policy
 

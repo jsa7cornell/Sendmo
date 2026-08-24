@@ -1605,8 +1605,20 @@ Deno.serve(async (req: Request) => {
             }
         );
 
+        // Union, not `string`: these values are compared by literal to pick log
+        // severity and are written into label.buy_error / label.created, so a
+        // typo must fail the build rather than silently corrupt the telemetry
+        // this recovery path exists to produce.
+        type RerateOutcome =
+            | "not_attempted"
+            | "rate_gone_before_buy"
+            | "service_unavailable_after_rerate"
+            | "rerated_price_over_cap"
+            | "retry_buy_failed"
+            | "recovered";
         let boughtRateId = easypost_rate_id;
-        let rerateOutcome: string = "not_attempted";
+        let rerateOutcome: RerateOutcome = "not_attempted";
+        let retryFailureDetail: string | null = null;
         let buyResponse = await doBuy(easypost_rate_id);
         let buyData = await buyResponse.json();
 
@@ -1619,9 +1631,30 @@ Deno.serve(async (req: Request) => {
             // Only the ORIGINAL carrier+service is eligible — never silently
             // substitute a different service than the one the customer chose
             // and paid for.
+            // KNOWN LIMIT: the rerate needs a carrier+service to re-match, and
+            // the only server-trusted source for it is the rate object itself —
+            // SendMo never persists the selected rate before purchase, and the
+            // client does not send carrier/service. So if the rate object is
+            // ALSO gone (EasyPost retains unpurchased rates 28 days, so this
+            // means a very old or purged rate), there is nothing to re-match
+            // and recovery cannot run. Named for what it is, and logged, so it
+            // is never mistaken for "we tried and the service was unavailable".
             const target = preBuyRate;
             if (!target) {
-                rerateOutcome = "no_target_service";
+                rerateOutcome = "rate_gone_before_buy";
+                log({
+                    event_type: "label.rerate_impossible",
+                    session_id: sessionId,
+                    severity: "error",
+                    entity_type: "label",
+                    entity_id: easypost_shipment_id,
+                    properties: {
+                        stale_rate_id: easypost_rate_id,
+                        reason: "rate object absent before buy — no carrier+service to re-match",
+                        quoted_display_price_cents: gateDisplayCents,
+                        flow: resolvedLink ? "flex" : "full_label",
+                    },
+                });
             } else {
                 const fresh = await rerateAndMatch(
                     easypost_shipment_id, target.carrier, target.service, authHeader,
@@ -1640,6 +1673,25 @@ Deno.serve(async (req: Request) => {
                         stripeFeeFlatCents: STRIPE_FEE_FLAT_CENTS,
                         minNetMarginPct: MIN_NET_MARGIN_PCT,
                     });
+                    // Comp exempts the CAP (no customer payment to compare
+                    // against) but must not exempt visibility: an automatic
+                    // purchase at any price is a different thing from a manual
+                    // one, so a comp rerate that jumps materially is logged.
+                    if (!Number.isFinite(retryCapCents) && fresh.cents > target.cents * 1.25) {
+                        log({
+                            event_type: "label.rerate_comp_price_jump",
+                            session_id: sessionId,
+                            severity: "warn",
+                            entity_type: "label",
+                            entity_id: easypost_shipment_id,
+                            properties: {
+                                original_rate_cents: target.cents,
+                                rerated_rate_cents: fresh.cents,
+                                carrier: fresh.carrier,
+                                service: fresh.service,
+                            },
+                        });
+                    }
                     if (fresh.cents > retryCapCents) {
                         rerateOutcome = "rerated_price_over_cap";
                         log({
@@ -1667,6 +1719,15 @@ Deno.serve(async (req: Request) => {
                             buyData = retryData;
                         } else {
                             rerateOutcome = "retry_buy_failed";
+                            // buyResponse/buyData deliberately stay as the
+                            // ORIGINAL 404 so the refund path reports the cause
+                            // the customer actually hit. But an operator paged
+                            // by the admin alert would then chase a stale-rate
+                            // problem that is not the real failure — so carry
+                            // the retry's own error to the alert.
+                            retryFailureDetail =
+                                `${retryResp.status} ${retryData.error?.code ?? "unknown"}: `
+                                + (retryData.error?.message ?? "no message");
                         }
                         log({
                             event_type: "label.rerate_retry",
@@ -1750,6 +1811,10 @@ Deno.serve(async (req: Request) => {
                     { label: "Rate", value: easypost_rate_id },
                     { label: "Error", value: errorMsg },
                     { label: "EasyPost code", value: String(buyData.error?.code ?? "unknown") },
+                    { label: "Rerate recovery", value: rerateOutcome },
+                    ...(retryFailureDetail
+                        ? [{ label: "Retry buy error", value: retryFailureDetail }]
+                        : []),
                     { label: "PaymentIntent", value: verifiedPaymentIntent?.id ?? "none (comp/flex pre-charge)" },
                     { label: "Mode", value: isLive ? "LIVE" : "Test" },
                 ],
