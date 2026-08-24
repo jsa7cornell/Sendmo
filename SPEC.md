@@ -1191,10 +1191,17 @@ buy_time_rate_cents > display_price_cents × (1 − STRIPE_FEE_PCT − MIN_NET_M
 Defaults: `STRIPE_FEE_PCT = 0.029`, `STRIPE_FEE_FLAT_CENTS = 30`, `MIN_NET_MARGIN_PCT = 0.05` (env-overridable via `LABEL_BUY_GATE_MIN_NET_MARGIN_PCT`).
 
 **Flow on a gate trip:**
-1. Re-fetch the rate from EasyPost (`/shipments/<id>/rates/<rate_id>` with fallback to `/shipments/<id>`) BEFORE calling `/buy`. No EasyPost label is ever created for a refused buy — no carrier-side artifact, no `shipments` row, no `label_cost` ledger row.
+1. Re-fetch the rate from EasyPost (`/shipments/<id>/rates/<rate_id>` with fallback to `/shipments/<id>`) BEFORE calling `/buy`. Shared helper `lookupRate` in [`_shared/easypost-rates.ts`](supabase/functions/_shared/easypost-rates.ts). No EasyPost label is ever created for a refused buy — no carrier-side artifact, no `shipments` row, no `label_cost` ledger row.
 2. Refund the captured PaymentIntent via Stripe `createRefund` with idempotency key `refund_<eps_id>_buy_time_rate_exceeded`.
 3. Return HTTP 409 with `error: "rate_changed"` and the new buy-time rate. The client (`RecipientStepPayment` / `SenderFlow`) catches `BuyLabelRateChangedError`, renders `RateChangedDialog`, lets the buyer re-shop at the new price or cancel.
 4. **Middle-path refund-failure handling**: if the Stripe refund itself fails, the 409 response carries `refunded: false` + `refund_error`. The dialog renders honest copy: "we tried, our team is on it, reference: <pi_id>". An `auto_refund_failed` event_logs row with `requires_manual_intervention: true` is the admin signal to manually process the refund. No automatic retry queue yet — fast-follow when real-world data demands it.
+
+**When the rate is ABSENT rather than merely expensive** (added 2026-08-24): `lookupRate` returning `null` means the rate is on neither surface, which reliably predicts a 404 `NOT_FOUND` from `/buy` — EasyPost's message for that is the bare *"The requested resource could not be found."* Two rules follow, both learned from the 2026-08-24 incident (LOG):
+
+- **A `null` is never a reason to skip the price cap silently.** Before the fix, `buyTimeRateCents` stayed `null` and the gate simply didn't run — no event, no alert — so the incident left no trace of *why*. It now emits `label.buy_time_rate_unresolvable` (severity `warn`).
+- **A 404 from `/buy` triggers one rerate recovery, not an immediate refund.** The labels function calls `POST /shipments/<id>/rerate` (EasyPost's documented remedy for an unpurchasable rate), re-matches the **same carrier+service** via `rerateAndMatch`, re-checks the fresh price against `rerateRetryCapCents` — the identical cap formula above — and retries the buy once. Outcomes are logged as `label.rerate_retry` (`recovered` | `service_unavailable_after_rerate` | `retry_buy_failed` | `no_target_service`) or `label.rerate_over_cap`.
+
+  **Invariants:** the service is never substituted, even for a cheaper one — the customer chose and paid for that service. The retry cannot produce two labels: it is only reachable when EasyPost *refused* the first buy, and a shipment already carrying a `postage_label` is refused on any further attempt. A failed retry leaves the original 404 as the reported error, so the refund path reports the real cause. Exhausted recovery falls through to the standard refund path with customer-facing copy that names the situation instead of echoing EasyPost's string.
 
 **Soft warning band:** if the buy-time rate drifted >5% from the back-derived quoted rate but still passes the gate, emits a `label.buy_time_rate_drift` event_logs row (severity `warn`) with carrier/service/drift_pct/margin_remaining for telemetry. Doesn't block the buy. Threshold env-tunable via `LABEL_BUY_GATE_SOFT_DRIFT_PCT`.
 
@@ -1492,7 +1499,7 @@ SendMo uses a **structured event log** in Supabase (`event_logs` table) as a deb
 |---|---|
 | `addresses` | `address.verified`, `address.soft_warning`, `address.hard_error`, `address.google_fallback` |
 | `rates` | `rate.fetched`, `rate.no_results`, `rate.error` |
-| `labels` | `label.created`, `label.buy_error`, `label.endshipper_error` |
+| `labels` | `label.created`, `label.buy_error`, `label.endshipper_error`, `label.buy_time_rate_unresolvable`, `label.rerate_retry`, `label.rerate_over_cap` |
 
 ### Retention Policy
 
