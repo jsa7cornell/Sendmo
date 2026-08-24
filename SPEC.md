@@ -260,15 +260,24 @@ The single summary in the flow, on the last screen before money moves. Replaces
 
 - **2×2 grid**: `from` and `to` side by side — the direction a shipment travels,
   and the reason it isn't a list — then `parcel` and `via`. One column below 380px.
+  On the flexible path a full-width `estimated cost` cell follows (see Price).
 - **Every cell has a pencil** that jumps to the step which set it (from → 10,
-  to → 1, parcel → 14, via → 20). This is the only direct back-navigation left.
+  to → 1, parcel → 14, via → 20, estimated cost → 20). This is the only direct
+  back-navigation left.
 - **Handed-off questions** read `Sender fills in` / `Sender chooses` /
   `Sender describes` in italic, and stay editable.
 - **Heading names the product**: `Shipment Details` on the label path,
   `Shipping Link Details` on the flexible path. After the chip, bar and banner
   went, this is the only place the two are distinguished.
-- **Price**: the label path closes with `Total`. The flexible path carries no
-  price at all — the cap belongs to the Estimated shipping cost panel below.
+- **Price**: the label path closes with `Total`. The flexible path gets an
+  `estimated cost` cell — the range from `lib/flexEstimate.ts`, with
+  `Capped at $N · you're charged the actual rate` under it — and `via` gains the
+  days range. This replaced the separate "Estimated shipping cost (per
+  shipment)" panel below the card (2026-08-23): the two said the same thing
+  twice. The cap is stated once, in that cell, and it bounds the range's high
+  end; a cap below the cheapest expected rate is NOT clamped away — it raises a
+  warning under the card instead, because no shipment that size is likely to
+  go through.
 
 ### Choosing a saved address (2026-08-23)
 

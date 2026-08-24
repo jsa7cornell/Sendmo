@@ -1,18 +1,19 @@
-import FlexPaymentStep, { type FlexPaymentInput } from "@/components/flex/FlexPaymentStep";
+import FlexPaymentStep from "@/components/flex/FlexPaymentStep";
+import { getFlexEstimate, type FlexPaymentInput } from "@/lib/flexEstimate";
 import ShipmentDetails from "./ShipmentDetails";
 import type { RecipientFlowState } from "@/hooks/useRecipientFlow";
 
 // Pattern D step 22. Thin wrapper around the shared <FlexPaymentStep>; the
 // inline SetupIntent, polling, and rate-table logic all live in the shared
 // component now (so the dashboard /links/new flow uses the same pattern).
-// Onboarding shows the per-shipment cost panel; /links/new does not.
+// Onboarding folds the per-shipment cost range into the Shipping Link Details
+// card; /links/new shows only the compact "See typical costs" disclosure.
 
 interface Props {
   state: RecipientFlowState;
   onUpdate: (partial: Partial<RecipientFlowState>) => void;
   onContinue: () => void;
   onBack: () => void;
-  onEditShipping: () => void;
   /** Jump back to the step a Shipment Details row describes. */
   onEditStep: (step: number) => void;
 }
@@ -22,7 +23,6 @@ export default function RecipientStepFlexPayment({
   onUpdate,
   onContinue,
   onBack,
-  onEditShipping,
   onEditStep,
 }: Props) {
   // All-or-nothing: a partial parcel produces junk rates, so a half-filled
@@ -84,6 +84,11 @@ export default function RecipientStepFlexPayment({
       : {}),
   };
 
+  // The cost range lives in the Shipping Link Details card now, not in a
+  // second panel below it (2026-08-23) — the two said the same thing, and the
+  // card was already the place the user reads their decisions back.
+  const estimate = getFlexEstimate(input);
+
   return (
     <FlexPaymentStep
       input={input}
@@ -96,16 +101,29 @@ export default function RecipientStepFlexPayment({
       }}
       onBack={onBack}
       heading="Confirm your payment information"
-      onEditShipping={onEditShipping}
       summary={
         /* Replaces FlexPaymentStep's own "Delivering to" card. On this path
            three of the four rows can read "Sender …", which that card could
            not show — it only ever described the destination. */
-        <ShipmentDetails
-          state={state}
-          totalCents={null}
-          onEdit={onEditStep}
-        />
+        <div className="space-y-2">
+          <ShipmentDetails
+            state={state}
+            estimate={estimate}
+            priceCapDollars={state.price_cap}
+            totalCents={null}
+            onEdit={onEditStep}
+          />
+          {/* Not clamped away with the range: a cap under the cheapest rate
+              means no shipment this size is likely to go through, and the user
+              needs to know before saving a card. */}
+          {!estimate.capCovers && (
+            <p className="max-w-md rounded-xl border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+              A ${state.price_cap} cap is below the cheapest rate we expect for
+              this shipment. Senders may not be able to buy a label until you
+              raise it.
+            </p>
+          )}
+        </div>
       }
     />
   );

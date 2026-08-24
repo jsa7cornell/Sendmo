@@ -1,20 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { motion } from "framer-motion";
 import { Elements, PaymentElement, useStripe, useElements } from "@stripe/react-stripe-js";
 import { CreditCard, ArrowLeft, Loader2, Shield, Info, CheckCircle2, MapPin } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/contexts/AuthContext";
-import { speedDisplayName } from "@/lib/utils";
 import { supabase } from "@/lib/supabase";
 import { getStripeForMode } from "@/lib/stripeClient";
+import type { FlexPaymentInput } from "@/lib/flexEstimate";
 import {
   activateLinkWithExistingPm,
   createFlexLink,
   createSetupIntent,
   fetchLinkStatusById,
   updateFlexLink,
-  type CreateLinkParams,
 } from "@/lib/api";
 
 interface SavedPm {
@@ -25,56 +23,10 @@ interface SavedPm {
   exp_year: number | null;
 }
 
-// ─── Rate estimate lookup (onboarding only) ───────────────────
-// Shown to recipients in step 22 so they get a sense of per-shipment cost
-// before saving a card. The /links/new dashboard flow suppresses this panel
-// in favor of a small "See typical costs" disclosure (`showCostEstimate=false`).
-
-interface RangeEstimate {
-  low: number;
-  high: number;
-  days: string;
-}
-
-type SizeKey = "envelope" | "smallbox" | "largebox" | "default";
-
-const RATE_TABLE: Record<string, Record<string, Record<string, RangeEstimate>>> = {
-  envelope: {
-    nearby:  { economy: { low: 500, high: 600, days: "2–3" }, standard: { low: 800, high: 1000, days: "1–2" }, express: { low: 2800, high: 3000, days: "Next day" } },
-    regional: { economy: { low: 600, high: 700, days: "3–4" }, standard: { low: 900, high: 1200, days: "2–3" }, express: { low: 2900, high: 3200, days: "1–2" } },
-    cross:   { economy: { low: 700, high: 900, days: "4–5" }, standard: { low: 1100, high: 1400, days: "2–3" }, express: { low: 3000, high: 3400, days: "1–2" } },
-  },
-  smallbox: {
-    nearby:  { economy: { low: 700, high: 1000, days: "2–4" }, standard: { low: 1000, high: 1400, days: "1–3" }, express: { low: 3200, high: 4200, days: "1–2" } },
-    regional: { economy: { low: 1000, high: 1500, days: "3–5" }, standard: { low: 1400, high: 1900, days: "2–3" }, express: { low: 3600, high: 4800, days: "1–2" } },
-    cross:   { economy: { low: 1400, high: 2000, days: "5–7" }, standard: { low: 1800, high: 2400, days: "2–3" }, express: { low: 4200, high: 5600, days: "1–2" } },
-  },
-  largebox: {
-    nearby:  { economy: { low: 1400, high: 2000, days: "2–4" }, standard: { low: 1800, high: 2600, days: "1–3" }, express: { low: 4800, high: 6800, days: "1–2" } },
-    regional: { economy: { low: 2000, high: 3000, days: "3–5" }, standard: { low: 2600, high: 3800, days: "2–3" }, express: { low: 5800, high: 8200, days: "1–2" } },
-    cross:   { economy: { low: 2800, high: 4000, days: "5–7" }, standard: { low: 3400, high: 4800, days: "2–3" }, express: { low: 7200, high: 10000, days: "1–2" } },
-  },
-  default: {
-    nearby:  { economy: { low: 500, high: 2000, days: "2–5" }, standard: { low: 800, high: 2600, days: "1–3" }, express: { low: 2800, high: 6800, days: "1–2" } },
-    regional: { economy: { low: 600, high: 3000, days: "3–5" }, standard: { low: 900, high: 3800, days: "2–3" }, express: { low: 2900, high: 8200, days: "1–2" } },
-    cross:   { economy: { low: 700, high: 4000, days: "4–7" }, standard: { low: 1100, high: 4800, days: "2–3" }, express: { low: 3000, high: 10000, days: "1–2" } },
-  },
-};
-
-function getEstimate(input: FlexPaymentInput): RangeEstimate {
-  const size: SizeKey = (input.size_hint as SizeKey | null) ?? "default";
-  const distance = input.distance_hint ?? "regional";
-  return RATE_TABLE[size]?.[distance]?.[input.speed_preference]
-    ?? RATE_TABLE.default.regional.standard;
-}
-
-function formatCents(cents: number): string {
-  return `$${(cents / 100).toFixed(2)}`;
-}
-
 // ─── Component ───────────────────────────────────────────────
 
-export type FlexPaymentInput = Omit<CreateLinkParams, "initial_status" | "notes">;
+/** Re-exported for the many call sites that import it alongside this component. */
+export type { FlexPaymentInput };
 
 interface Props {
   /**
@@ -103,11 +55,11 @@ interface Props {
   showCostEstimate?: boolean;
   onContinue: (linkId: string, shortCode: string) => void;
   onBack: () => void;
-  // Onboarding-only: jump back to the destination (step 1) or shipping
-  // preferences (step 20) step to edit them. Omitted by the dashboard
-  // +New Link flow, which has no such steps — the Edit links then hide.
+  // Onboarding-only: jump back to the destination step (step 1) to edit it.
+  // Omitted by the dashboard +New Link flow, which has no such step — the
+  // Edit link then hides. Shipping preferences are edited from the Shipping
+  // Link Details card's own pencils (see ShipmentDetails).
   onEditDestination?: () => void;
-  onEditShipping?: () => void;
 }
 
 export default function FlexPaymentStep({
@@ -120,27 +72,10 @@ export default function FlexPaymentStep({
   onContinue,
   onBack,
   onEditDestination,
-  onEditShipping,
 }: Props) {
   // isAdmin: mode badge + test-card hint are admin dogfood affordances —
   // customers see a plain checkout (customer-live-payments review N1).
   const { session, liveMode, isAdmin } = useAuth();
-  // The estimate must never advertise a price above the cap, because we never
-  // charge one — a $9–$38 range under a $25 cap told the user two different
-  // things on the same screen (2026-08-23). The cap is the ceiling, so it is
-  // the ceiling here too.
-  //
-  // A cap BELOW the cheapest estimate is a different problem and is not
-  // clamped away: it means no shipment this size is likely to go through, and
-  // the user needs to know that before saving a card, not after a sender's
-  // first failed attempt.
-  const rawEstimate = getEstimate(input);
-  const capCents = Math.round((input.price_cap_dollars ?? 0) * 100);
-  const capCoversEstimate = capCents <= 0 || rawEstimate.low <= capCents;
-  const estimate = capCents > 0
-    ? { ...rawEstimate, high: Math.min(rawEstimate.high, capCents) }
-    : rawEstimate;
-
   const [linkId, setLinkId] = useState<string | null>(initialLinkId);
   const [shortCode, setShortCode] = useState<string | null>(null);
   const [linkError, setLinkError] = useState<string | null>(null);
@@ -427,82 +362,7 @@ export default function FlexPaymentStep({
         </div>
       )}
 
-      {showCostEstimate ? (
-        /* Estimated cost range — informational only under Pattern D */
-        <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-semibold text-foreground">Estimated shipping cost (per shipment)</h3>
-            {onEditShipping && (
-              <button
-                type="button"
-                onClick={onEditShipping}
-                className="text-xs text-primary hover:underline"
-              >
-                Edit
-              </button>
-            )}
-          </div>
-          <div className="mb-4">
-            <motion.div
-              animate={{ scale: [1, 1.02, 1] }}
-              transition={{ duration: 0.3 }}
-              className="flex items-start justify-center gap-3"
-            >
-              <div className="flex-1 text-center">
-                <div className="text-3xl font-bold text-primary leading-tight">{formatCents(estimate.low)}</div>
-                <p className="text-[11px] text-muted-foreground mt-1 leading-tight">
-                  Shorter / smaller package
-                </p>
-              </div>
-              <div className="text-2xl font-bold text-muted-foreground/40 pt-1.5">–</div>
-              <div className="flex-1 text-center">
-                <div className="text-3xl font-bold text-primary leading-tight">{formatCents(estimate.high)}</div>
-                <p className="text-[11px] text-muted-foreground mt-1 leading-tight">
-                  For large, heavy and long shipments
-                </p>
-              </div>
-            </motion.div>
-            <p className="text-xs text-muted-foreground text-center mt-3">
-              {estimate.days} business days
-            </p>
-          </div>
-          <dl className="space-y-2 text-sm border-t border-border pt-3">
-            <div className="flex justify-between">
-              <dt className="text-muted-foreground">Speed</dt>
-              {/* The raw enum leaked through `capitalize` as "No_rush".
-                  speedDisplayName is shared with the Shipment Details card
-                  above so the two cannot drift apart again. */}
-              <dd className="font-medium text-foreground">{speedDisplayName(input.speed_preference)}</dd>
-            </div>
-            {input.distance_hint && (
-              <div className="flex justify-between">
-                <dt className="text-muted-foreground">Distance</dt>
-                <dd className="font-medium text-foreground capitalize">
-                  {input.distance_hint === "cross" ? "Cross-country" : input.distance_hint}
-                </dd>
-              </div>
-            )}
-            {input.size_hint && (
-              <div className="flex justify-between">
-                <dt className="text-muted-foreground">Size hint</dt>
-                <dd className="font-medium text-foreground capitalize">
-                  {input.size_hint === "smallbox" ? "Small box" : input.size_hint === "largebox" ? "Large box" : "Envelope"}
-                </dd>
-              </div>
-            )}
-            <div className="flex justify-between">
-              <dt className="text-muted-foreground">Price cap per shipment</dt>
-              <dd className="font-medium text-foreground">${input.price_cap_dollars}</dd>
-            </div>
-          </dl>
-          {!capCoversEstimate && (
-            <p className="mt-3 rounded-xl border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
-              A ${input.price_cap_dollars} cap is below the cheapest rate we expect for
-              this shipment. Senders may not be able to buy a label until you raise it.
-            </p>
-          )}
-        </div>
-      ) : (
+      {!showCostEstimate && (
         /* Compact "See typical costs" disclosure — dashboard +New Link flow */
         <div className="bg-muted/50 rounded-xl px-4 py-3">
           <button
