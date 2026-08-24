@@ -23,7 +23,11 @@ const STEP = { destination: 1, origin: 10, package: 14, shipping: 20 } as const;
 
 interface Cell {
   key: string;
+  /** Overrides `key` as the cell's label when the key is too terse. */
+  label?: string;
   step: number;
+  /** Full width — used by the price range, which needs the room. */
+  wide?: boolean;
   /** Undefined when the question was handed to the sender. */
   primary?: string;
   secondary?: string;
@@ -33,6 +37,15 @@ interface Cell {
 
 interface Props {
   state: RecipientFlowState;
+  /**
+   * Per-shipment cost range for the link path. Supplying it adds the days
+   * range to VIA and an ESTIMATED COST cell; this card is then the only place
+   * the flow states cost, which is why the separate "Estimated shipping cost"
+   * panel below it is gone (2026-08-23).
+   */
+  estimate?: { low: number; high: number; days: string } | null;
+  /** Cap in dollars, shown under the range. Omit to hide that line. */
+  priceCapDollars?: number | null;
   /** Null while no concrete price exists — the flexible path caps instead. */
   totalCents?: number | null;
   /** Names what the number is: "Total" for a label, "Charged up to" for a cap. */
@@ -42,7 +55,8 @@ interface Props {
 }
 
 export default function ShipmentDetails({
-  state, totalCents = null, totalLabel = "Total", onEdit,
+  state, estimate = null, priceCapDollars = null,
+  totalCents = null, totalLabel = "Total", onEdit,
 }: Props) {
   const origin = state.originAddress;
   const destination = state.destinationAddress;
@@ -94,15 +108,30 @@ export default function ShipmentDetails({
             secondary: rate.estimated_days ? `${rate.estimated_days} days` : "",
           }
         : {
-            // Speed only — no cap. The cap is priced material and belongs to
-            // the Estimated shipping cost panel below, which states it once
-            // and bounds its own range by it. Repeating it here produced two
-            // numbers that disagreed ("Up to $25" over a $9–$38 range).
+            // Speed plus how long it takes — never the cap. The cap is priced
+            // material and belongs to the estimated-cost cell, which states it
+            // once and bounds its own range by it. Repeating it here produced
+            // two numbers that disagreed ("Up to $25" over a $9–$38 range).
             primary: speedDisplayName(state.speed_preference),
-            secondary: "",
+            secondary: estimate ? `${estimate.days} business days` : "",
           }),
     },
   ];
+
+  // Last, and full width: a range needs more room than half a card, and the
+  // cost is the thing the user is deciding about on this screen.
+  if (estimate) {
+    cells.push({
+      key: "price",
+      label: "estimated cost",
+      step: STEP.shipping,
+      wide: true,
+      primary: `${formatCents(estimate.low)} – ${formatCents(estimate.high)}`,
+      secondary: priceCapDollars
+        ? `Capped at $${priceCapDollars} · you're charged the actual rate`
+        : "",
+    });
+  }
 
   // The chip, the bar, the banner and the row icons all went; this heading is
   // the only thing left that names what the user is about to pay for, so it
@@ -125,19 +154,20 @@ export default function ShipmentDetails({
               "min-w-0 px-3 py-2 border-border",
               // Interior rules only — the card's own border closes the edges.
               "border-t",
-              i % 2 === 0 ? "min-[380px]:border-r" : "",
+              cell.wide ? "min-[380px]:col-span-2" : "",
+              !cell.wide && i % 2 === 0 ? "min-[380px]:border-r" : "",
               i < 2 ? "min-[380px]:border-t-0" : "",
               i === 0 ? "border-t-0" : "",
             ].join(" ")}
           >
             <div className="flex items-center justify-between gap-2 mb-0.5">
               <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                {cell.key}
+                {cell.label ?? cell.key}
               </span>
               <button
                 type="button"
                 onClick={() => onEdit(cell.step)}
-                aria-label={`Edit ${cell.key}`}
+                aria-label={`Edit ${cell.label ?? cell.key}`}
                 className="text-muted-foreground rounded p-0.5 -mr-0.5 transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <Pencil className="w-3 h-3" aria-hidden="true" />
@@ -147,7 +177,9 @@ export default function ShipmentDetails({
               <p className="text-[12.5px] italic text-muted-foreground truncate">{cell.deferred}</p>
             ) : (
               <>
-                <p className="text-[12.5px] truncate">{cell.primary}</p>
+                <p className={cell.wide
+                  ? "text-[15px] font-bold text-primary tabular-nums truncate"
+                  : "text-[12.5px] truncate"}>{cell.primary}</p>
                 {cell.secondary && (
                   <p className="text-[12.5px] text-muted-foreground truncate">{cell.secondary}</p>
                 )}

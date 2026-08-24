@@ -12,6 +12,27 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-23] Flexible payment step says the cost once — estimate panel folded into the details card
+
+**Category:** fix | ui
+**Cross-link:** SPEC.md "Shipment Details" section; [previous entry] "the cap belongs to the Estimated shipping cost panel"
+
+**What changed:** the `Estimated shipping cost (per shipment)` panel on `/onboarding/flexible/payment` is gone. Everything it said now lives in the **Shipping Link Details** card above it: `via` gained the days range as its secondary line (`Standard` / `2–3 business days`), and a new full-width **`estimated cost`** cell carries the range (`$9.00 – $38.00`) with `Capped at $100 · you're charged the actual rate` under it. Its pencil edits step 20, same as `via`.
+
+**Why:** the two blocks were the same content twice — speed, days, cap and range all appeared in both, and the card was already where the user reads their decisions back. The panel's own comments record the previous round of this ("Up to $25" over a $9–$38 range): the fix then was to move the cap out of the card; the fix now is to move the range in, so exactly one surface states cost.
+
+**Kept, deliberately:** the cap-below-cheapest-rate warning. The range's high end is still clamped to the cap (we never charge above it), but a cap *under* the low end is not clamped away — it means no shipment that size is likely to go through, and that has to be said before a card is saved, not after a sender's first failed attempt. It now renders as a strip under the card (`RecipientStepFlexPayment`).
+
+**Structure:** `RATE_TABLE` + the estimate lookup moved out of `FlexPaymentStep.tsx` into **`src/lib/flexEstimate.ts`** as `getFlexEstimate()` (returning the clamped range plus `capCovers`), because two components need it and `react-refresh/only-export-components` forbids exporting it from a component file. `FlexPaymentInput` moved with it and is re-exported from `FlexPaymentStep` for existing call sites. The dashboard `/links/new` flow (`showCostEstimate={false}`) is unchanged — it still shows only the compact "See typical costs" disclosure. `onEditShipping` is gone from both components; the card's pencils cover it.
+
+**Files:** `src/lib/flexEstimate.ts` (new), `src/components/flex/FlexPaymentStep.tsx` (−156), `src/components/recipient/ShipmentDetails.tsx`, `src/components/recipient/RecipientStepFlexPayment.tsx`, `src/pages/RecipientOnboarding.tsx`, `tests/unit/ShipmentDetails.test.tsx`, `SPEC.md`.
+
+**Tests:** `tests/unit/ShipmentDetails.test.tsx` — 8 passed. Two added (range + cap + days render in one cell; the cost pencil routes to step 20) and the stale "carries no price on the link path" premise rewritten to "…until an estimate is supplied". Typecheck clean; ESLint clean on all touched files (the 2 remaining errors in `src/components/recipient/` are pre-existing, in `RecipientStepContact.tsx` and `SavedAddressPicker.tsx`).
+
+**Browser-verified:**
+- `mcp-session:` Claude Browser, `sendmo-dev` :5173, `/onboarding/flexible/payment` reached by seeding `sendmo:recipient_flow:v1` (all three questions deferred, standard / regional / largebox / $100 cap) — no e2e spec reaches this step. Rendered: `VIA Standard / 2–3 business days`, `ESTIMATED COST $26.00 – $38.00`, `Capped at $100 · you're charged the actual rate`, and no "Estimated shipping cost" panel anywhere on the page. Seeded storage cleared after.
+- `variants-covered:` all-deferred flexible link (the screenshot case). Not exercised live: the concrete-rate `via` branch (label path — untouched by this change, covered by unit test), the cap-below-estimate warning (unit-level logic in `getFlexEstimate`, `capCovers`), and the `/links/new` compact disclosure (unchanged branch).
+
 ### [2026-08-23] Sitewide chrome — one header, one footer, and `/` is the homepage for everyone
 
 **Category:** fix | chrome
@@ -43,6 +64,7 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 **Browser-verified:**
 - spec: `tests/e2e/onboarding.spec.ts` — 15/15 passed
 - variants-covered: fresh entry with no draft; entry with a finished draft in localStorage (asserts no banner + blank destination fields); deep-linked step entry
+
 
 ### [2026-08-23] Worktree graveyard cleared — 96MB, 39 branches, and one rescued migration
 

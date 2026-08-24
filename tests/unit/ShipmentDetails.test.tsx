@@ -83,10 +83,10 @@ describe("ShipmentDetails", () => {
     expect(screen.getByRole("button", { name: "Edit to" })).toBeEnabled();
   });
 
-  it("carries no price on the link path", () => {
-    // The cap belongs to the Estimated shipping cost panel, which bounds its
-    // own range by it. Stating it here too produced two numbers that
-    // disagreed — "Up to $25" above a $9–$38 range.
+  it("carries no price on the link path until an estimate is supplied", () => {
+    // Without an estimate the card says nothing about money: the cap alone
+    // over no range produced two numbers that disagreed once a range appeared
+    // ("Up to $25" above $9–$38).
     render(
       <ShipmentDetails
         state={makeState({ path: "flexible", price_cap: 25, speed_preference: "no_rush" })}
@@ -97,6 +97,41 @@ describe("ShipmentDetails", () => {
     expect(screen.getByText(/No rush/)).toBeInTheDocument();
     expect(screen.queryByText(/\$25/)).toBeNull();
     expect(screen.queryByText("Total")).toBeNull();
+  });
+
+  it("states the cost range and its cap once, in one cell", () => {
+    // Replaced the separate "Estimated shipping cost" panel (2026-08-23): the
+    // two said the same thing, so the range, the days and the cap all live in
+    // this card now.
+    render(
+      <ShipmentDetails
+        state={makeState({ path: "flexible", price_cap: 100, speed_preference: "standard" })}
+        estimate={{ low: 900, high: 3800, days: "2–3" }}
+        priceCapDollars={100}
+        totalCents={null}
+        onEdit={() => {}}
+      />,
+    );
+    expect(screen.getByText("estimated cost")).toBeInTheDocument();
+    expect(screen.getByText("$9.00 – $38.00")).toBeInTheDocument();
+    expect(screen.getByText(/Capped at \$100/)).toBeInTheDocument();
+    // The days range rides on VIA, next to the speed it belongs to.
+    expect(screen.getByText("2–3 business days")).toBeInTheDocument();
+  });
+
+  it("edits the cost cell back into the shipping step", async () => {
+    const onEdit = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <ShipmentDetails
+        state={makeState({ path: "flexible" })}
+        estimate={{ low: 900, high: 3800, days: "2–3" }}
+        priceCapDollars={100}
+        onEdit={onEdit}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Edit estimated cost" }));
+    expect(onEdit).toHaveBeenLastCalledWith(20);
   });
 
   it("shows the total on the label path, where it is the price", () => {
