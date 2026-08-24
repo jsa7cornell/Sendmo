@@ -10,7 +10,7 @@ import DimmedWhenDeferred from "./DimmedWhenDeferred";
 import { cn } from "@/lib/utils";
 import { getTotalWeightOz } from "@/hooks/useRecipientFlow";
 import type { RecipientFlowState } from "@/hooks/useRecipientFlow";
-import type { GuestimatorResult, PackagingType, SenderKind, SpeedTier } from "@/lib/types";
+import type { GuestimatorResult, PackagingType, SpeedTier } from "@/lib/types";
 
 // Step 14 (slug `package`) — the parcel: what it is, how it's packed, its
 // dimensions and weight. Extracted from RecipientStepFullShipping's
@@ -29,7 +29,6 @@ const PACKAGING_OPTIONS: { id: PackagingType; label: string; desc: string }[] = 
 
 interface Props {
   state: RecipientFlowState;
-  sender: SenderKind | null;
   errors: string[];
   tried: boolean;
   onUpdate: (partial: Partial<RecipientFlowState>) => void;
@@ -41,9 +40,8 @@ interface Props {
 }
 
 export default function RecipientStepPackage({
-  state, sender, errors, tried, onUpdate, onContinue, onBack, onNoAddress, onKeepIt,
+  state, errors, tried, onUpdate, onContinue, onBack, onNoAddress, onKeepIt,
 }: Props) {
-  const isSelfSender = sender === "self";
   const showErrors = tried && errors.length > 0;
 
   // The parcel fields start collapsed behind "or fill in manually" — describing
@@ -87,18 +85,18 @@ export default function RecipientStepPackage({
   return (
     <div className="space-y-5">
 
-      {/* The question, asked once, with its one action beside it. Hidden on
-          the 'self' branch: if YOU are the sender there is no link user to
-          describe the package. */}
+      {/* The question, asked once, with its one action beside it. The
+          sender='self' gate that used to hide this went with the rest of the
+          unreachable 'self' branches (2026-08-23 review finding 1). */}
       <StepQuestionHeader
         question="What's being shipped?"
-        action={isSelfSender ? undefined : (
+        action={
           <SkipToSenderLink
             deferred={state.deferredPackage}
             onDefer={onNoAddress}
             onUndo={onKeepIt}
           />
-        )}
+        }
       />
 
       <DimmedWhenDeferred deferred={state.deferredPackage}>

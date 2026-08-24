@@ -12,7 +12,6 @@ interface Props {
   onUpdate: (partial: Partial<RecipientFlowState>) => void;
   onContinue: () => void;
   onBack: () => void;
-  onEditDestination: () => void;
   onEditShipping: () => void;
   /** Jump back to the step a Shipment Details row describes. */
   onEditStep: (step: number) => void;
@@ -23,7 +22,6 @@ export default function RecipientStepFlexPayment({
   onUpdate,
   onContinue,
   onBack,
-  onEditDestination,
   onEditShipping,
   onEditStep,
 }: Props) {
@@ -98,7 +96,6 @@ export default function RecipientStepFlexPayment({
       }}
       onBack={onBack}
       heading="Confirm your payment information"
-      onEditDestination={onEditDestination}
       onEditShipping={onEditShipping}
       summary={
         /* Replaces FlexPaymentStep's own "Delivering to" card. On this path

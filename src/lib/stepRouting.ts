@@ -160,34 +160,6 @@ export function pathForFlags(flags: {
     : "full_label";
 }
 
-// ─── Progress Bar Mapping ───────────────────────────────────
-
-// SIX fixed segments, both paths (the morph bar): Destination / Origin /
-// Package / Shipping / Contact / Payment. A skip turns a segment amber-state
-// ("skipped") IN PLACE — nothing is added or removed, which is what makes the
-// label↔link transformation legible (design brief point 2). Verify (11) folds
-// into the Payment-adjacent Contact segment; label (13) keeps Payment's index
-// so the bar reads complete on the done screen.
-const STEP_TO_PROGRESS: Record<number, number> = {
-  0: -1,
-  1: 0,
-  10: 1,
-  14: 2,
-  20: 3,
-  11: 4,
-  12: 5,
-  13: 5,
-};
-
-export function stepToProgressIndex(step: number): number {
-  return STEP_TO_PROGRESS[step] ?? -1;
-}
-
-export function progressIndexToStep(index: number, path: RecipientPath | null): number {
-  void path;
-  return [1, 10, 14, 20, 11, 12][index] ?? 1;
-}
-
 // ─── Slug Validation ────────────────────────────────────────
 
 export function isSlugValidForPath(slug: string, path: RecipientPath | null): boolean {

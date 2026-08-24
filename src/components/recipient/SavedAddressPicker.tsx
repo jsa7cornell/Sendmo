@@ -39,6 +39,7 @@ export default function SavedAddressPicker({ onSelect, label = "Use a saved addr
   const [addresses, setAddresses] = useState<SavedAddress[]>([]);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     if (!user) return;
@@ -50,7 +51,7 @@ export default function SavedAddressPicker({ onSelect, label = "Use a saved addr
       // phone for each distinct address. The cap is generous rather than
       // precise — it bounds the payload for someone with hundreds of
       // shipments, and dedupe collapses it to a handful of entries.
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("addresses")
         .select("id, name, street1, street2, city, state, zip, phone, is_verified, created_at")
         .eq("user_id", user.id)
@@ -58,6 +59,13 @@ export default function SavedAddressPicker({ onSelect, label = "Use a saved addr
         .limit(100);
 
       if (cancelled) return;
+      // Discarding this made a failed query indistinguishable from an empty
+      // address book: the component returned null and a user with five saved
+      // addresses saw no shortcut at all, with nothing to explain why.
+      if (error) {
+        console.error("Saved addresses could not be loaded:", error.message);
+        setFailed(true);
+      }
       setAddresses(dedupeAddresses((data ?? []) as AddressRow[]));
       setLoading(false);
     })();
@@ -65,8 +73,18 @@ export default function SavedAddressPicker({ onSelect, label = "Use a saved addr
     return () => { cancelled = true; };
   }, [user]);
 
-  // Nothing to offer: signed out, still loading, or genuinely no saved rows.
-  if (!user || loading || addresses.length === 0) return null;
+  if (!user || loading) return null;
+
+  // A failure says so; an empty book stays silent, because "you have not saved
+  // an address yet" is not news to anyone.
+  if (failed) {
+    return (
+      <p className="text-xs text-muted-foreground">
+        Couldn't load your saved addresses — enter one below.
+      </p>
+    );
+  }
+  if (addresses.length === 0) return null;
 
   const triggerClasses =
     "inline-flex items-center gap-1.5 text-sm font-semibold text-primary rounded-lg px-2 py-1 -ml-2 transition-colors hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2";

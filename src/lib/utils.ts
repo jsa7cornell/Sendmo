@@ -140,3 +140,20 @@ export function carrierTrackingUrl(carrier: string | null | undefined, tracking:
   const builder = CARRIER_TRACKING_URLS[key] || CARRIER_TRACKING_URLS[upper];
   return builder ? builder(tracking) : null;
 }
+
+/**
+ * Display text for a flexible link's speed preference.
+ *
+ * Shared because two copies drifted: ShipmentDetails said "No rush · cheapest"
+ * while FlexPaymentStep's estimate panel said "No rush", and both render on
+ * the payment screen a few hundred pixels apart (2026-08-23 review). Same
+ * reason carrierDisplayName and serviceDisplayName live here.
+ */
+export function speedDisplayName(raw: string): string {
+  const LABELS: Record<string, string> = {
+    no_rush: "No rush · cheapest",
+    standard: "Standard",
+    express: "Express",
+  };
+  return LABELS[raw] ?? raw;
+}

@@ -297,6 +297,14 @@ key, newest first:
 "e.g. Home, Office", but nothing populates it, so entries are identified by name
 and street. Nicknames would need a prompt at save time.
 
+**`sender='self'` is unreachable, deliberately.** `deferToSender` is the only
+writer and only ever sets `'other'`, so the flow knows either "someone else is
+sending" or nothing. The origin step's confirm-row collapse depended on
+`'self'` and was deleted with it (2026-08-23) — the picker fills a known
+address for any saved entry, which is what that collapse existed to avoid
+retyping. `SenderKind` keeps the `'self'` variant for drafts persisted before
+this.
+
 **The picker does not infer who is sending.** The single-address shortcut set
 `sender='other'` on the destination step and `sender='self'` on the origin step,
 both reasoning "this is YOUR saved address". That held only while there was one

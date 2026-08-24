@@ -152,7 +152,6 @@ export default function RecipientOnboarding() {
             {currentStep === 10 && (
               <RecipientStepOrigin
                 state={state}
-                sender={data.sender}
                 errors={getErrors(10)}
                 tried={!!state.tried[10]}
                 onUpdate={updateData}
@@ -168,7 +167,6 @@ export default function RecipientOnboarding() {
             {currentStep === 14 && (
               <RecipientStepPackage
                 state={state}
-                sender={data.sender}
                 errors={getErrors(14)}
                 tried={!!state.tried[14]}
                 onUpdate={updateData}
@@ -236,7 +234,6 @@ export default function RecipientOnboarding() {
                 onUpdate={updateData}
                 onContinue={() => tryAdvance(12)}
                 onBack={goBack}
-                onEditDestination={() => goToStep(1)}
                 onEditShipping={() => goToStep(20)}
                 onEditStep={goToStep}
               />

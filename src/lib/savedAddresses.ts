@@ -32,16 +32,17 @@ export interface AddressRow {
 }
 
 /**
- * Identity for deduping. Street + zip, aggressively normalised: the same
- * address typed twice differs by case, punctuation and whitespace far more
- * often than by anything meaningful.
+ * Identity for deduping: street1 + street2 + zip, aggressively normalised.
+ * The same address typed twice differs by case, punctuation and whitespace far
+ * more often than by anything meaningful.
  *
- * Deliberately NOT including name — "Mum" and "Jane Doe" at one address are
- * the same place, and showing it twice is the problem being solved. The most
+ * street2 IS part of the key. A unit number distinguishes real addresses, so
+ * `Apt 4B` and `Apt 4C` on one street are two homes and must stay separate —
+ * merging them would put one neighbour's parcel on the other's label.
+ *
+ * The name is NOT part of the key: "Mum" and "Jane Doe" at one address are the
+ * same place, and showing it twice is the problem being solved. The most
  * recent row supplies the name, which is the one the user typed last.
- *
- * Deliberately NOT including street2. A unit number distinguishes real
- * addresses, so `4B` and `4C` on one street must stay separate rows.
  */
 export function addressKey(row: Pick<AddressRow, "street1" | "street2" | "zip">): string {
   const norm = (s: string | null | undefined) =>

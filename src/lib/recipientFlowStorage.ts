@@ -308,10 +308,15 @@ export function loadResumable(now: number = Date.now()): RecipientFlowData | nul
 export function prefillSlotFor(sender: SenderKind | null): "origin" | "destination" | null {
   if (sender === "self") return "origin";
   if (sender === "other") return "destination";
-  // Unknown (step 0 is gone, 2026-08-18): nothing prefills silently. The
-  // address steps offer a "use my address" chip instead, and tapping it is
-  // what resolves `sender`. Prefilling a guessed slot is how the wrong
-  // party's address ends up on a label.
+  // Unknown (step 0 is gone, 2026-08-18): nothing prefills silently.
+  // Prefilling a guessed slot is how the wrong party's address ends up on a
+  // label.
+  //
+  // The "use my address" chips that used to resolve `sender` here are gone
+  // (2026-08-23) — a saved-address PICKER replaced them, and choosing from a
+  // list that may hold a friend's address implies nothing about who ships. So
+  // `sender` is now written in exactly one place, deferToSender, and only ever
+  // as 'other'; 'self' is unreachable from the UI. See SavedAddressPicker.
   return null;
 }
 

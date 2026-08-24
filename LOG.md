@@ -69,6 +69,36 @@ card rendered `USPS GroundAdvantage` beside rate cards saying `Ground Advantage`
 suite retargeted `/links/new`'s "Continue to payment" button, which is a
 different surface whose button did not change; caught by that spec failing.
 
+**Seven review findings, all fixed before merge — and the review is the point.**
+This PR and the one before it (#96) were about to merge unreviewed. Asked
+directly whether they had been, the answer was no, and running `/code-review`
+over both surfaced seven things, five of them mine and one of them a feature
+silently switched off:
+
+- **`sender='self'` became unreachable.** Removing the two "use my address"
+  inferences left nothing writing it — `deferToSender` only ever writes
+  `'other'`. So the origin step's confirm-row collapse (a returning user
+  confirming a known address instead of retyping it) could never render, along
+  with three other display branches. Resolved by deleting them: the picker does
+  the same job for ANY saved address rather than only when we had guessed the
+  user was the sender, so the feature was superseded rather than lost. Gone with
+  it: `isOriginComplete`, the latched `originWasCompleteOnOpen`, the Change
+  button, and `sender` as a prop on two steps.
+- **Two speed-label maps disagreed on the same screen** — ShipmentDetails said
+  "No rush · cheapest" while the estimate panel below said "No rush", under a
+  comment claiming they matched. Now one `speedDisplayName` in lib/utils,
+  beside `carrierDisplayName`, which is the pattern this same session reached
+  for hours earlier to fix "USPS GroundAdvantage".
+- **The picker swallowed its query error**, so an RLS denial rendered nothing at
+  all — indistinguishable from an empty address book. Now logs and says so.
+- **`addressKey`'s doc said "NOT including street2" while including it**, with
+  the next sentence arguing why it must be included. A reader trusting the
+  comment would have merged Apt 4B and Apt 4C.
+- Dead `stepToProgressIndex` / `progressIndexToStep` (plus their tests, which
+  kept a deleted bar's mapping green), a `prefillSlotFor` comment describing
+  chips this session deleted, and an `onEditDestination` path that can no longer
+  render.
+
 **Playwright route ordering, for the next person who loses twenty minutes:**
 routes are matched LAST-registered first. Registering `**/rest/v1/addresses**`
 before `**/rest/v1/**` means the catch-all wins and the specific mock never

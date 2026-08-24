@@ -1,6 +1,5 @@
-import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { AlertCircle, MapPin } from "lucide-react";
+import { AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import SmartAddressInput from "@/components/ui/SmartAddressInput";
@@ -9,7 +8,7 @@ import SkipToSenderLink from "./SkipToSenderLink";
 import DimmedWhenDeferred from "./DimmedWhenDeferred";
 import SavedAddressPicker from "./SavedAddressPicker";
 import type { RecipientFlowState } from "@/hooks/useRecipientFlow";
-import type { AddressInput, SenderKind } from "@/lib/types";
+import type { AddressInput } from "@/lib/types";
 
 // Step 10 (slug `origin`) — the ship-from address. Extracted from
 // RecipientStepFullShipping's mode="address" branch when the step maps
@@ -20,22 +19,9 @@ import type { AddressInput, SenderKind } from "@/lib/types";
 // step (RecipientStepShipping), so the co-location it protected no longer
 // applies. Recorded in the 2026-08-19 flow-redesign proposal, amendment A1.
 
-// Mirrors the origin half of step 10's validation (see getValidationErrors).
-// The "Shipping from" confirm row may only replace the form when every field
-// the form would have blocked on is already satisfied — otherwise collapsing
-// it would hide a required field behind a "Change" button.
-function isOriginComplete(addr: AddressInput): boolean {
-  return (
-    !!addr.verified &&
-    !!addr.street &&
-    !!addr.name &&
-    (addr.phone ?? "").replace(/\D/g, "").length >= 10
-  );
-}
 
 interface Props {
   state: RecipientFlowState;
-  sender: SenderKind | null;
   errors: string[];
   tried: boolean;
   onUpdate: (partial: Partial<RecipientFlowState>) => void;
@@ -48,113 +34,73 @@ interface Props {
 }
 
 export default function RecipientStepOrigin({
-  state, sender, errors, tried, onUpdate, onContinue, onBack, onNoAddress, onKeepIt,
+  state, errors, tried, onUpdate, onContinue, onBack, onNoAddress, onKeepIt,
 }: Props) {
-  // 'self' → this address is the account holder's own; it was prefilled from
-  // their saved address, so it collapses to a confirmable row.
-  // 'other' → it belongs to the person shipping to them, and is the one thing
-  // they may not know — hence the skip answer.
-  const isSelfSender = sender === "self";
-  // LATCHED at mount, never re-derived. If the saved address was already
-  // complete when this step opened, collapse it to the confirm row; if it
-  // wasn't, the user is filling the form in and it must stay a form for this
-  // visit. Deriving this live meant the whole SmartAddressInput — including the
-  // phone field being typed into — unmounted on the keystroke that completed
-  // the last missing field, destroying focus mid-entry. Common trigger: a saved
-  // address with no phone (anything predating the 2026-05-19 phone requirement).
-  // Re-latches on the next visit to this step, so a completed address does
-  // collapse once the user moves on and comes back.
-  const [originWasCompleteOnOpen] = useState(() => isSelfSender && isOriginComplete(state.originAddress));
-  const [editingOrigin, setEditingOrigin] = useState(false);
-  const originConfirmable = originWasCompleteOnOpen && !editingOrigin;
+  // The 'self' branch is gone (2026-08-23 review finding 1). Nothing writes
+  // sender='self' any more: both "use my address" chips that used to claim it
+  // were replaced by SavedAddressPicker, which deliberately infers nothing
+  // about who is shipping. `deferToSender` is now the only writer and only
+  // ever sets 'other', so every isSelfSender branch here was unreachable —
+  // including the confirm-row collapse, which could never render.
+  //
+  // The collapse is not mourned: it existed so a returning user would not
+  // retype an address we already held, and the picker does that job for ANY
+  // saved address rather than only when we had guessed the user was the
+  // sender. What went with it — `isOriginComplete`, the latched
+  // `originWasCompleteOnOpen`, the Change button — was all scaffolding for the
+  // guess.
   const showErrors = tried && errors.length > 0;
 
   return (
     <div className="space-y-5">
 
-      {/* The question, asked once, with its one action beside it. Hidden on
-          the 'self' branch: if YOU are the sender there is no link user to
-          hand the ship-from address to. */}
+      {/* The question, asked once, with its one action beside it. */}
       <StepQuestionHeader
         question="Where's it shipping from?"
-        action={isSelfSender ? undefined : (
+        action={
           <SkipToSenderLink
             deferred={state.deferredOrigin}
             onDefer={onNoAddress}
             onUndo={onKeepIt}
           />
-        )}
+        }
       />
 
       <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
-        {originConfirmable && (
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-semibold text-foreground">Shipping from</h3>
-            <button
-              type="button"
-              onClick={() => setEditingOrigin(true)}
-              className="text-xs font-medium text-primary rounded-lg px-2 py-1 transition-colors hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-            >
-              Change
-            </button>
-          </div>
-        )}
-
         <DimmedWhenDeferred deferred={state.deferredOrigin}>
 
-        {originConfirmable ? (
-          /* Confirm row — the generic outbound case is faster than a form when
-             we already know the account holder's address. Only rendered when
-             every field step-10 validation requires is present. */
-          <div className="flex items-start gap-2.5 rounded-xl bg-muted px-4 py-3">
-            <MapPin className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" aria-hidden="true" />
-            <div className="min-w-0">
-              <p className="text-sm font-medium text-foreground truncate">{state.originAddress.name}</p>
-              <p className="text-sm text-muted-foreground">
-                {state.originAddress.street}, {state.originAddress.city}, {state.originAddress.state} {state.originAddress.zip}
-              </p>
-            </div>
-          </div>
-        ) : (
-          <>
-            <SmartAddressInput
-              label="origin"
-              value={state.originAddress}
-              onChange={(addr: AddressInput) => onUpdate({ originAddress: addr })}
-              error={tried && !state.originAddress.verified ? "Origin address is required" : undefined}
-              nameLabel={isSelfSender ? "Your name" : "Sender's name"}
-              nameHint=""
-              addressPlaceholder={isSelfSender ? "Start typing your address…" : "Start typing the origin address…"}
-            />
-            {tried && !state.originAddress.name && (
-              <p className="text-xs text-destructive mt-1">
-                {isSelfSender
-                  ? "Your name is required for the shipping label"
-                  : "Sender name is required for the shipping label"}
-              </p>
-            )}
-          </>
+        <SmartAddressInput
+          label="origin"
+          value={state.originAddress}
+          onChange={(addr: AddressInput) => onUpdate({ originAddress: addr })}
+          error={tried && !state.originAddress.verified ? "Origin address is required" : undefined}
+          nameLabel="Sender's name"
+          nameHint=""
+          addressPlaceholder="Start typing the origin address…"
+        />
+        {tried && !state.originAddress.name && (
+          <p className="text-xs text-destructive mt-1">
+            Sender name is required for the shipping label
+          </p>
         )}
 
-        {/* The sender's email is only worth asking for when the sender is
-            someone else. When it's the account holder, the labels function
-            resolves their email server-side from the session (decided
-            2026-06-27 OQ5-A), so a field here would be asking twice. */}
-        {!isSelfSender && (
-          <div className="mt-4">
-            <label htmlFor="sender-email" className="text-sm font-medium text-foreground">
-              Sender's email <span className="text-muted-foreground font-normal">(optional — they'll get tracking updates)</span>
-            </label>
-            <Input
-              id="sender-email"
-              type="email"
-              value={state.senderEmail}
-              onChange={(e) => onUpdate({ senderEmail: e.target.value })}
-              placeholder="sender@example.com"
-              className="mt-1.5 rounded-xl"
-            />
-          </div>
-        )}
+        {/* The sender's email. Was hidden when sender='self', on the grounds
+            that the labels function resolves the account holder's email
+            server-side from the session (2026-06-27 OQ5-A) — but 'self' is
+            unreachable now, so the field always shows. It stays optional. */}
+        <div className="mt-4">
+          <label htmlFor="sender-email" className="text-sm font-medium text-foreground">
+            Sender's email <span className="text-muted-foreground font-normal">(optional — they'll get tracking updates)</span>
+          </label>
+          <Input
+            id="sender-email"
+            type="email"
+            value={state.senderEmail}
+            onChange={(e) => onUpdate({ senderEmail: e.target.value })}
+            placeholder="sender@example.com"
+            className="mt-1.5 rounded-xl"
+          />
+        </div>
 
         {/* Under the fields it fills, matching the destination step. NOT an
             answer to the skip question above — it is a prefill shortcut, and
@@ -167,13 +113,11 @@ export default function RecipientStepOrigin({
             friend's address — picking one says nothing about who sends, and
             the label John chose ("Use a saved address") had already stopped
             claiming it did. */}
-        {!isSelfSender && !originConfirmable && (
-          <div className="mt-4">
-            <SavedAddressPicker
-              onSelect={(addr) => onUpdate({ originAddress: addr })}
-            />
-          </div>
-        )}
+        <div className="mt-4">
+          <SavedAddressPicker
+            onSelect={(addr) => onUpdate({ originAddress: addr })}
+          />
+        </div>
         </DimmedWhenDeferred>
       </div>
 
