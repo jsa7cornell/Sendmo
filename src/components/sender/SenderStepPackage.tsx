@@ -10,7 +10,6 @@ interface Props {
   initialParcel: SenderParcel | null;
   onSubmit: (parcel: SenderParcel) => void;
   onBack?: () => void;
-  onGuestimatorUsed?: () => void;
   continueLabel: string;
 }
 
@@ -21,7 +20,7 @@ interface Props {
 // answers this question with. Before that the two flows had different UIs for
 // identical fields, and the sender's showed every field up front.
 export default function SenderStepPackage({
-  initialParcel, onSubmit, onBack, onGuestimatorUsed, continueLabel,
+  initialParcel, onSubmit, onBack, continueLabel,
 }: Props) {
   const [tried, setTried] = useState(false);
   const [draft, setDraft] = useState<ParcelDraft>(() => {
@@ -70,7 +69,6 @@ export default function SenderStepPackage({
       <ParcelQuestion
         value={draft}
         onChange={(patch) => setDraft((d) => ({ ...d, ...patch }))}
-        onGuestimated={() => onGuestimatorUsed?.()}
         showErrors={showErrors}
         invalid={{
           length: tried && !l,
