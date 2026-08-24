@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { AlertCircle, Sparkles } from "lucide-react";
+import { AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import MagicGuestimator from "./MagicGuestimator";
@@ -10,7 +10,7 @@ import DimmedWhenDeferred from "./DimmedWhenDeferred";
 import { cn } from "@/lib/utils";
 import { getTotalWeightOz } from "@/hooks/useRecipientFlow";
 import type { RecipientFlowState } from "@/hooks/useRecipientFlow";
-import type { GuestimatorResult, PackagingType, SenderKind, SpeedTier } from "@/lib/types";
+import type { GuestimatorResult, PackagingType, SpeedTier } from "@/lib/types";
 
 // Step 14 (slug `package`) — the parcel: what it is, how it's packed, its
 // dimensions and weight. Extracted from RecipientStepFullShipping's
@@ -27,19 +27,8 @@ const PACKAGING_OPTIONS: { id: PackagingType; label: string; desc: string }[] = 
   { id: "tube", label: "Tube / Irregular", desc: "Cylindrical or odd shape" },
 ];
 
-// Title with the Magic Guestimator sparkle — signals these fields can be auto-filled.
-function GuestimatorTitle({ children }: { children: React.ReactNode }) {
-  return (
-    <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-1.5">
-      <Sparkles className="w-3.5 h-3.5 text-primary" />
-      {children}
-    </h3>
-  );
-}
-
 interface Props {
   state: RecipientFlowState;
-  sender: SenderKind | null;
   errors: string[];
   tried: boolean;
   onUpdate: (partial: Partial<RecipientFlowState>) => void;
@@ -51,9 +40,8 @@ interface Props {
 }
 
 export default function RecipientStepPackage({
-  state, sender, errors, tried, onUpdate, onContinue, onBack, onNoAddress, onKeepIt,
+  state, errors, tried, onUpdate, onContinue, onBack, onNoAddress, onKeepIt,
 }: Props) {
-  const isSelfSender = sender === "self";
   const showErrors = tried && errors.length > 0;
 
   // The parcel fields start collapsed behind "or fill in manually" — describing
@@ -97,18 +85,18 @@ export default function RecipientStepPackage({
   return (
     <div className="space-y-5">
 
-      {/* The question, asked once, with its one action beside it. Hidden on
-          the 'self' branch: if YOU are the sender there is no link user to
-          describe the package. */}
+      {/* The question, asked once, with its one action beside it. The
+          sender='self' gate that used to hide this went with the rest of the
+          unreachable 'self' branches (2026-08-23 review finding 1). */}
       <StepQuestionHeader
         question="What's being shipped?"
-        action={isSelfSender ? undefined : (
+        action={
           <SkipToSenderLink
             deferred={state.deferredPackage}
             onDefer={onNoAddress}
             onUndo={onKeepIt}
           />
-        )}
+        }
       />
 
       <DimmedWhenDeferred deferred={state.deferredPackage}>
@@ -133,113 +121,117 @@ export default function RecipientStepPackage({
 
       {showParcelFields && (
       <>
-      {/* Item description (auto-filled by guestimator, but editable) */}
-      <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
-        <label htmlFor="item-desc" className="text-sm font-medium text-foreground">
-          Item description <span className="text-muted-foreground font-normal">(optional — for the shipping label)</span>
-        </label>
-        <Input
-          id="item-desc"
-          value={state.itemDescription}
-          onChange={(e) => onUpdate({ itemDescription: e.target.value })}
-          placeholder="e.g., Hardcover cookbook"
-          className="mt-1.5 rounded-xl"
-        />
-      </div>
-
-      {/* Packaging type */}
-      <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
-        <GuestimatorTitle>Packaging type</GuestimatorTitle>
-        <div className="grid grid-cols-3 gap-2">
-          {PACKAGING_OPTIONS.map((opt) => (
-            <button
-              key={opt.id}
-              type="button"
-              onClick={() => onUpdate({ packagingType: opt.id })}
-              className={cn(
-                "rounded-xl border p-3 text-left transition-all",
-                state.packagingType === opt.id
-                  ? "border-primary bg-primary/5"
-                  : "border-border hover:border-muted-foreground/30",
-              )}
-            >
-              <div className="flex items-center gap-2 mb-1">
-                <div className={cn(
-                  "w-3.5 h-3.5 rounded-full border-2 flex items-center justify-center",
-                  state.packagingType === opt.id ? "border-primary" : "border-muted-foreground/40",
-                )}>
-                  {state.packagingType === opt.id && <div className="w-1.5 h-1.5 rounded-full bg-primary" />}
-                </div>
-                <span className="text-sm font-medium text-foreground">{opt.label}</span>
-              </div>
-              <p className="text-xs text-muted-foreground ml-5.5">{opt.desc}</p>
-            </button>
-          ))}
+      {/* ONE card, not four (2026-08-23). Description, packaging, dimensions
+          and weight are all the same question — "what is the parcel" — and
+          four stacked cards made them read as four separate decisions. The
+          per-heading sparkles went too: they marked "the Guestimator fills
+          this", which was true of three of the four headings and therefore
+          told the user nothing. The Guestimator card above says it once. */}
+      <div className="bg-card rounded-2xl border border-border shadow-sm p-5 space-y-5">
+        <div>
+          <label htmlFor="item-desc" className="text-sm font-semibold text-foreground">
+            Item description <span className="text-muted-foreground font-normal">(optional — for the shipping label)</span>
+          </label>
+          <Input
+            id="item-desc"
+            value={state.itemDescription}
+            onChange={(e) => onUpdate({ itemDescription: e.target.value })}
+            placeholder="e.g., Hardcover cookbook"
+            className="mt-1.5 rounded-xl"
+          />
         </div>
-      </div>
 
-      {/* Dimensions */}
-      <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
-        <GuestimatorTitle>Package dimensions (inches)</GuestimatorTitle>
-        <div className={cn("grid gap-3", state.packagingType === "envelope" ? "grid-cols-2" : "grid-cols-3")}>
-          <div>
-            <label className="text-xs text-muted-foreground">Length</label>
-            <Input
-              inputMode="numeric"
-              value={state.dimensions.length}
-              onChange={(e) => onUpdate({ dimensions: { ...state.dimensions, length: e.target.value } })}
-              placeholder="L"
-              className={cn("mt-1 rounded-xl", tried && !parseFloat(state.dimensions.length) && "border-destructive")}
-            />
+        <div className="border-t border-border pt-5">
+          <h3 className="text-sm font-semibold text-foreground mb-3">Packaging type</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            {PACKAGING_OPTIONS.map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                onClick={() => onUpdate({ packagingType: opt.id })}
+                className={cn(
+                  "rounded-xl border p-3 text-left transition-all",
+                  state.packagingType === opt.id
+                    ? "border-primary bg-primary/5"
+                    : "border-border hover:border-muted-foreground/30",
+                )}
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <div className={cn(
+                    "w-3.5 h-3.5 rounded-full border-2 flex items-center justify-center shrink-0",
+                    state.packagingType === opt.id ? "border-primary" : "border-muted-foreground/40",
+                  )}>
+                    {state.packagingType === opt.id && <div className="w-1.5 h-1.5 rounded-full bg-primary" />}
+                  </div>
+                  <span className="text-sm font-medium text-foreground">{opt.label}</span>
+                </div>
+                <p className="text-xs text-muted-foreground ml-5.5">{opt.desc}</p>
+              </button>
+            ))}
           </div>
-          <div>
-            <label className="text-xs text-muted-foreground">Width</label>
-            <Input
-              inputMode="numeric"
-              value={state.dimensions.width}
-              onChange={(e) => onUpdate({ dimensions: { ...state.dimensions, width: e.target.value } })}
-              placeholder="W"
-              className={cn("mt-1 rounded-xl", tried && !parseFloat(state.dimensions.width) && "border-destructive")}
-            />
-          </div>
-          {state.packagingType !== "envelope" && (
+        </div>
+
+        <div className="border-t border-border pt-5">
+          <h3 className="text-sm font-semibold text-foreground mb-3">Dimensions <span className="text-muted-foreground font-normal">(inches)</span></h3>
+          <div className={cn("grid gap-3", state.packagingType === "envelope" ? "grid-cols-2" : "grid-cols-3")}>
             <div>
-              <label className="text-xs text-muted-foreground">Height</label>
+              <label className="text-xs text-muted-foreground">Length</label>
               <Input
                 inputMode="numeric"
-                value={state.dimensions.height}
-                onChange={(e) => onUpdate({ dimensions: { ...state.dimensions, height: e.target.value } })}
-                placeholder="H"
-                className={cn("mt-1 rounded-xl", tried && !parseFloat(state.dimensions.height) && "border-destructive")}
+                value={state.dimensions.length}
+                onChange={(e) => onUpdate({ dimensions: { ...state.dimensions, length: e.target.value } })}
+                placeholder="L"
+                className={cn("mt-1 rounded-xl", tried && !parseFloat(state.dimensions.length) && "border-destructive")}
               />
             </div>
-          )}
-        </div>
-      </div>
-
-      {/* Weight */}
-      <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
-        <GuestimatorTitle>Package weight</GuestimatorTitle>
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="text-xs text-muted-foreground">Pounds</label>
-            <Input
-              inputMode="numeric"
-              value={state.weight.lbs}
-              onChange={(e) => onUpdate({ weight: { ...state.weight, lbs: e.target.value } })}
-              placeholder="lbs"
-              className={cn("mt-1 rounded-xl", tried && getTotalWeightOz(state) <= 0 && "border-destructive")}
-            />
+            <div>
+              <label className="text-xs text-muted-foreground">Width</label>
+              <Input
+                inputMode="numeric"
+                value={state.dimensions.width}
+                onChange={(e) => onUpdate({ dimensions: { ...state.dimensions, width: e.target.value } })}
+                placeholder="W"
+                className={cn("mt-1 rounded-xl", tried && !parseFloat(state.dimensions.width) && "border-destructive")}
+              />
+            </div>
+            {state.packagingType !== "envelope" && (
+              <div>
+                <label className="text-xs text-muted-foreground">Height</label>
+                <Input
+                  inputMode="numeric"
+                  value={state.dimensions.height}
+                  onChange={(e) => onUpdate({ dimensions: { ...state.dimensions, height: e.target.value } })}
+                  placeholder="H"
+                  className={cn("mt-1 rounded-xl", tried && !parseFloat(state.dimensions.height) && "border-destructive")}
+                />
+              </div>
+            )}
           </div>
-          <div>
-            <label className="text-xs text-muted-foreground">Ounces</label>
-            <Input
-              inputMode="numeric"
-              value={state.weight.oz}
-              onChange={(e) => onUpdate({ weight: { ...state.weight, oz: e.target.value } })}
-              placeholder="oz"
-              className="mt-1 rounded-xl"
-            />
+        </div>
+
+        <div className="border-t border-border pt-5">
+          <h3 className="text-sm font-semibold text-foreground mb-3">Weight</h3>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs text-muted-foreground">Pounds</label>
+              <Input
+                inputMode="numeric"
+                value={state.weight.lbs}
+                onChange={(e) => onUpdate({ weight: { ...state.weight, lbs: e.target.value } })}
+                placeholder="lbs"
+                className={cn("mt-1 rounded-xl", tried && getTotalWeightOz(state) <= 0 && "border-destructive")}
+              />
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground">Ounces</label>
+              <Input
+                inputMode="numeric"
+                value={state.weight.oz}
+                onChange={(e) => onUpdate({ weight: { ...state.weight, oz: e.target.value } })}
+                placeholder="oz"
+                className="mt-1 rounded-xl"
+              />
+            </div>
           </div>
         </div>
       </div>
@@ -277,7 +269,7 @@ export default function RecipientStepPackage({
           Back
         </Button>
         <Button onClick={onContinue} className="flex-1 rounded-xl shadow-sm">
-          Continue to shipping
+          Continue
         </Button>
       </div>
 

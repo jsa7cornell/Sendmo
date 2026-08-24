@@ -21,17 +21,18 @@ vi.mock("@/contexts/AuthContext", () => ({
   useAuth: () => ({ user: mockUser }),
 }));
 
-// The prefill effect reads the user's most recent address; it backs the
-// "Use my saved address" shortcut under the fields.
-let mockSavedAddress: Record<string, unknown> | null = null;
+// SavedAddressPicker reads the whole address book and dedupes it. The query
+// is awaited directly (no .single()), so the chain has to be thenable.
+let mockSavedRows: Record<string, unknown>[] = [];
 
 vi.mock("@/lib/supabase", () => {
-  const chain = {
+  const chain: Record<string, unknown> = {
     select: () => chain,
     eq: () => chain,
     order: () => chain,
     limit: () => chain,
-    maybeSingle: () => Promise.resolve({ data: mockSavedAddress }),
+    then: (resolve: (v: { data: unknown }) => unknown) => resolve({ data: mockSavedRows }),
+    maybeSingle: () => Promise.resolve({ data: mockSavedRows[0] ?? null }),
     single: () => Promise.resolve({ data: null }),
   };
   return { supabase: { from: () => chain, auth: {} } };
@@ -42,13 +43,27 @@ import { emptyAddress } from "@/lib/utils";
 import type { SenderKind } from "@/lib/types";
 
 const savedRow = {
+  id: "a1",
   name: "Pat Smith",
   street1: "388 Townsend St",
+  street2: null,
   city: "San Francisco",
   state: "CA",
   zip: "94107",
   phone: "4155550100",
   is_verified: true,
+  created_at: "2026-08-01T00:00:00Z",
+};
+
+const secondRow = {
+  ...savedRow,
+  id: "a2",
+  name: "Mum",
+  street1: "22 Elm Road",
+  city: "Portland",
+  state: "OR",
+  zip: "97201",
+  created_at: "2026-07-01T00:00:00Z",
 };
 
 function renderStep(overrides: {
@@ -81,7 +96,7 @@ function renderStep(overrides: {
 beforeEach(() => {
   vi.clearAllMocks();
   mockUser = null;
-  mockSavedAddress = null;
+  mockSavedRows = [];
 });
 
 describe("RecipientStepAddress", () => {
@@ -94,25 +109,47 @@ describe("RecipientStepAddress", () => {
     expect(screen.queryByText("pat@example.com")).toBeNull();
   });
 
-  it("offers the saved address, named, when the sender is unresolved", async () => {
+  it("lets a user with two saved addresses see and choose", async () => {
+    // The bug this fixes: the old shortcut silently took the most recent row,
+    // so someone with a home address and their mum's got whichever they typed
+    // last with no way to see or change it.
     mockUser = { email: "pat@example.com" };
-    mockSavedAddress = savedRow;
+    mockSavedRows = [savedRow, secondRow];
     const onAddressChange = vi.fn();
-    const onSenderResolved = vi.fn();
     const user = userEvent.setup();
-    renderStep({ onAddressChange, onSenderResolved });
+    renderStep({ onAddressChange });
 
-    const link = await screen.findByRole("button", { name: /Use my saved address/i });
-    // The street is in the label so the user knows which address they'd get.
-    expect(link).toHaveTextContent("388 Townsend St");
-    await user.click(link);
+    // The count is what signals a choice exists at all.
+    const trigger = await screen.findByRole("button", { name: /Use a saved address/i });
+    expect(trigger).toHaveTextContent("2");
 
-    // Claiming the destination as your own IS the answer the deleted
-    // who's-sending step used to ask for.
-    expect(onSenderResolved).toHaveBeenCalledWith("other");
+    await user.click(trigger);
+    expect(screen.getByText("Pat Smith")).toBeInTheDocument();
+    expect(screen.getByText("Mum")).toBeInTheDocument();
+
+    await user.click(screen.getByText("Mum"));
     expect(onAddressChange).toHaveBeenCalledWith(
-      expect.objectContaining({ street: "388 Townsend St", verified: true }),
+      expect.objectContaining({ street: "22 Elm Road", city: "Portland" }),
     );
+  });
+
+  it("collapses the append-only log to one entry per address", async () => {
+    // Every link creation inserts a new row, so the same address recurs once
+    // per shipment. Listing the table raw shows it repeatedly.
+    mockUser = { email: "pat@example.com" };
+    mockSavedRows = [
+      { ...savedRow, id: "a3", created_at: "2026-08-10T00:00:00Z" },
+      { ...savedRow, id: "a2", name: "P. Smith", created_at: "2026-08-05T00:00:00Z" },
+      savedRow,
+    ];
+    const user = userEvent.setup();
+    renderStep();
+
+    const trigger = await screen.findByRole("button", { name: /Use a saved address/i });
+    // One address, so no count — three rows collapsed to one entry.
+    expect(trigger).not.toHaveTextContent("3");
+    await user.click(trigger);
+    expect(screen.getAllByText(/388 Townsend St/)).toHaveLength(1);
   });
 
   it("offers a login that returns to this step when signed out", async () => {
@@ -152,30 +189,30 @@ describe("RecipientStepAddress", () => {
     expect(screen.queryByRole("button", { name: /Sender will fill this in/i })).toBeNull();
   });
 
-  it("prefills silently instead of offering the shortcut once sender='other'", async () => {
+  it("never fills the form without being asked", async () => {
+    // The silent prefill went with the picker (2026-08-23). Dropping the most
+    // recent row into the form unannounced is indistinguishable from a picker
+    // that guessed, and wrong as soon as a user has two saved addresses.
     mockUser = { email: "pat@example.com" };
-    mockSavedAddress = savedRow;
+    mockSavedRows = [savedRow, secondRow];
     const onAddressChange = vi.fn();
     renderStep({ sender: "other", onAddressChange });
 
-    await waitFor(() =>
-      expect(onAddressChange).toHaveBeenCalledWith(
-        expect.objectContaining({ street: "388 Townsend St" }),
-      ),
-    );
-    expect(screen.queryByRole("button", { name: /Use my saved address/i })).toBeNull();
+    await screen.findByRole("button", { name: /Use a saved address/i });
+    expect(onAddressChange).not.toHaveBeenCalled();
   });
 
   it("never touches the destination with the account holder's address when sender='self'", async () => {
     // This screen is the OTHER party's address on that branch — prefilling it
-    // is how a user ends up mailing a package to themselves.
+    // is how a user ends up mailing a package to themselves. The picker is
+    // still offered (choosing is explicit, so it cannot mis-fill on its own),
+    // but nothing may be written without a click.
     mockUser = { email: "pat@example.com" };
-    mockSavedAddress = savedRow;
+    mockSavedRows = [savedRow, secondRow];
     const onAddressChange = vi.fn();
     renderStep({ sender: "self", onAddressChange });
 
     await waitFor(() => expect(screen.getByText(/Where's it going\?/i)).toBeInTheDocument());
     expect(onAddressChange).not.toHaveBeenCalled();
-    expect(screen.queryByRole("button", { name: /Use my saved address/i })).toBeNull();
   });
 });

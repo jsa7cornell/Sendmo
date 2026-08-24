@@ -5,6 +5,7 @@ import { CreditCard, ArrowLeft, Loader2, Shield, Info, CheckCircle2, MapPin } fr
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/contexts/AuthContext";
+import { speedDisplayName } from "@/lib/utils";
 import { supabase } from "@/lib/supabase";
 import { getStripeForMode } from "@/lib/stripeClient";
 import {
@@ -58,12 +59,6 @@ const RATE_TABLE: Record<string, Record<string, Record<string, RangeEstimate>>> 
     regional: { economy: { low: 600, high: 3000, days: "3–5" }, standard: { low: 900, high: 3800, days: "2–3" }, express: { low: 2900, high: 8200, days: "1–2" } },
     cross:   { economy: { low: 700, high: 4000, days: "4–7" }, standard: { low: 1100, high: 4800, days: "2–3" }, express: { low: 3000, high: 10000, days: "1–2" } },
   },
-};
-
-const SPEED_LABEL: Record<string, string> = {
-  no_rush: "No rush",
-  standard: "Standard",
-  express: "Express",
 };
 
 function getEstimate(input: FlexPaymentInput): RangeEstimate {
@@ -387,6 +382,10 @@ export default function FlexPaymentStep({
           built-in destination summary below is what LinksEditor still gets. */}
       {summary}
 
+      {/* Only when no `summary` was supplied — i.e. LinksEditor. The
+          onboarding flow's Shipment Details card carries its own per-row
+          edits, so `onEditDestination` is not wired there and nothing on this
+          branch can fire for it. */}
       {showCostEstimate && !summary && (
         /* Destination summary — lets the recipient confirm and edit where
            their shipments will be delivered before saving a card. */
@@ -470,9 +469,10 @@ export default function FlexPaymentStep({
           <dl className="space-y-2 text-sm border-t border-border pt-3">
             <div className="flex justify-between">
               <dt className="text-muted-foreground">Speed</dt>
-              {/* The raw enum leaked through `capitalize` as "No_rush". Same
-                  wording as the Shipment Details card so the two agree. */}
-              <dd className="font-medium text-foreground">{SPEED_LABEL[input.speed_preference] ?? input.speed_preference}</dd>
+              {/* The raw enum leaked through `capitalize` as "No_rush".
+                  speedDisplayName is shared with the Shipment Details card
+                  above so the two cannot drift apart again. */}
+              <dd className="font-medium text-foreground">{speedDisplayName(input.speed_preference)}</dd>
             </div>
             {input.distance_hint && (
               <div className="flex justify-between">

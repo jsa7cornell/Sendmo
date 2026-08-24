@@ -5,8 +5,6 @@ import {
   stepsForPath,
   nextStep,
   prevStep,
-  stepToProgressIndex,
-  progressIndexToStep,
   canAccessStep,
   firstIncompleteUrl,
   isSlugValidForPath,
@@ -190,42 +188,7 @@ describe("pathForFlags — the product is a function of the skips", () => {
   });
 });
 
-describe("stepToProgressIndex — six fixed segments", () => {
-  it("maps the sequence onto six segments: Destination/Origin/Package/Shipping/Contact/Payment", () => {
-    expect(stepToProgressIndex(1)).toBe(0);
-    expect(stepToProgressIndex(10)).toBe(1);
-    expect(stepToProgressIndex(14)).toBe(2);
-    expect(stepToProgressIndex(20)).toBe(3);
-    expect(stepToProgressIndex(11)).toBe(4);
-    expect(stepToProgressIndex(12)).toBe(5);
-  });
 
-  it("the done screen (13) keeps Payment's segment — the bar reads complete", () => {
-    expect(stepToProgressIndex(13)).toBe(5);
-  });
-
-  it("returns -1 for step 0 and unknown steps", () => {
-    expect(stepToProgressIndex(0)).toBe(-1);
-    expect(stepToProgressIndex(21)).toBe(-1);
-    expect(stepToProgressIndex(99)).toBe(-1);
-  });
-});
-
-describe("progressIndexToStep — segment clicks", () => {
-  it("maps each of the six segments to its step, path-independently", () => {
-    const expected = [1, 10, 14, 20, 11, 12];
-    for (const path of ["full_label", "flexible", null] as const) {
-      expected.forEach((step, i) => {
-        expect(progressIndexToStep(i, path)).toBe(step);
-      });
-    }
-  });
-
-  it("clamps out-of-range indexes to the first step", () => {
-    expect(progressIndexToStep(6, "full_label")).toBe(1);
-    expect(progressIndexToStep(-1, "flexible")).toBe(1);
-  });
-});
 
 describe("stepUrl", () => {
   it("builds the segment-scoped URL for any step", () => {

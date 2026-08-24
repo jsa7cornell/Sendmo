@@ -3,7 +3,9 @@ import { motion, AnimatePresence } from "framer-motion";
 import { AlertCircle, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import ShippingMethodCard from "./ShippingMethodCard";
+import StepQuestionHeader from "./StepQuestionHeader";
 import { fetchRates, pickRecommendedRate, formatCents } from "@/lib/api";
+import { carrierDisplayName, serviceDisplayName } from "@/lib/utils";
 import { getTotalPriceCents, getTotalWeightOz, canFetchRates } from "@/hooks/useRecipientFlow";
 import type { RecipientFlowState } from "@/hooks/useRecipientFlow";
 import type { ShippingRate } from "@/lib/types";
@@ -140,9 +142,12 @@ export default function RecipientStepShipping({
   return (
     <div className="space-y-5">
 
-      {/* Shipping method */}
+      {/* The question, phrased and set like every other step's — it was the
+          one step still labelling itself with a small in-card <h3> (2026-08-23).
+          No skip action: the rate choice is not deferrable on this path. */}
+      <StepQuestionHeader question="What shipping method do you want?" />
+
       <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
-        <h3 className="text-sm font-semibold text-foreground mb-3">Shipping method</h3>
 
         {ratesLoading && (
           <div className="space-y-3">
@@ -209,7 +214,11 @@ export default function RecipientStepShipping({
         {state.selectedRate ? (
           <>
             <div className="text-sm text-foreground">
-              <span className="font-medium">{state.selectedRate.carrier} {state.selectedRate.service}</span>
+              {/* Same formatters as the rate cards above — raw values here read
+                  "USPS GroundAdvantage" beside a card saying "Ground Advantage". */}
+              <span className="font-medium">
+                {carrierDisplayName(state.selectedRate.carrier)} {serviceDisplayName(state.selectedRate.service)}
+              </span>
               {state.selectedRate.estimated_days && (
                 <span className="text-muted-foreground">
                   {" "}· arrives in ~{state.selectedRate.estimated_days} {state.selectedRate.estimated_days === 1 ? "day" : "days"}
@@ -243,7 +252,7 @@ export default function RecipientStepShipping({
           Back
         </Button>
         <Button onClick={onContinue} className="flex-1 rounded-xl shadow-sm">
-          Continue to payment
+          Continue
         </Button>
       </div>
 

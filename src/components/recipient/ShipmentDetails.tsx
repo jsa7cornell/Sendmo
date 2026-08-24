@@ -1,6 +1,6 @@
 import { Pencil } from "lucide-react";
 import { formatCents } from "@/lib/api";
-import { carrierDisplayName, serviceDisplayName } from "@/lib/utils";
+import { carrierDisplayName, serviceDisplayName, speedDisplayName } from "@/lib/utils";
 import type { RecipientFlowState } from "@/hooks/useRecipientFlow";
 
 // The one place the flow summarises itself (2026-08-23).
@@ -62,11 +62,6 @@ export default function ShipmentDetails({
   // path, the speed-and-cap preference on the link path, because no rate is
   // computable until the sender fills in what was skipped.
   const rate = state.selectedRate;
-  const speedLabel: Record<string, string> = {
-    no_rush: "No rush · cheapest",
-    standard: "Standard",
-    express: "Express",
-  };
 
   const cells: Cell[] = [
     {
@@ -103,7 +98,7 @@ export default function ShipmentDetails({
             // the Estimated shipping cost panel below, which states it once
             // and bounds its own range by it. Repeating it here produced two
             // numbers that disagreed ("Up to $25" over a $9–$38 range).
-            primary: speedLabel[state.speed_preference] ?? "Standard",
+            primary: speedDisplayName(state.speed_preference),
             secondary: "",
           }),
     },
