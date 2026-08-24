@@ -12,6 +12,19 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-23] Repo hygiene — phantom "uncommitted work", a stash graveyard, and two fake submodules
+
+**Category:** chore | repo-hygiene | Gotcha
+**Cross-link:** follows the [PR #97](https://github.com/jsa7cornell/Sendmo/pull/97) merge; concurrent-sessions memory note
+
+**The phantom 12 modified files (gotcha, worth knowing):** a session starting ~20:41 on 2026-08-23 saw 12 files "modified" on main — the exact minute another session was doing `checkout main` + `pull` for the PR #97 merge. All 12 files were verified to be exactly PR #97's merged diff (`git diff --name-only d9d9004..03c805b`); nothing was ever uncommitted. **Lesson: a dirty `git status` observed while a concurrent session is mid-git-operation can be a stale-index mirage — diff the "modified" files against the freshly-merged PR before treating them as real WIP.**
+
+**Stash cleanup:** `stash@{0}` from 2026-05-20 ("concurrent-session WIP + phone-audit proposal, auto-stashed by phone-fix session") was dropped after verifying every part is superseded in main: the FlexPaymentStep UX pass (Delivering-to card, `onEditDestination`, `updateFlexLink` draft sync) is all in current `src/components/flex/FlexPaymentStep.tsx`; the LOG + SPEC entries exist (LOG "[2026-05-20] Flex authorize step", SPEC step-22 section); the trapped `proposals/2026-05-20_phone-required-flow-audit.md` was committed later via `f2d8580` and the committed copy is 12 lines newer than the stashed one. Dropped SHA (recoverable from git objects until gc): `91604e4fe104a0e70bbae29581cd041f328b7447`.
+
+Two March stashes remain (WIP on `feat/url-step-routing` and `feat/email-notifications`, both branches merged in March; the email one still uses pre-JSR `esm.sh` imports eliminated by PR #45). Verified superseded but left for John to drop explicitly — SHAs if ever needed: `ebf8a63be0e3ddf818e74203a4d14d2624cb81f9` (url-step-routing), `f874b7412ffdaaab287aca1f35ebd1ed7d51172a` (email-notifications).
+
+**Fake submodules removed:** `_archive/backend` and `_archive/frontend` were bare gitlinks with **no `.gitmodules`** — unregistered embedded repos. Fresh clones got empty directories, and `_archive/backend`'s dirty working tree (a deleted `.env.backup` — a deletion we keep — plus untracked `test-results/`) put a permanent ` m ` in every `git status`. Fix: `git rm --cached` both gitlinks + `.gitignore` entries. The on-disk embedded repos are untouched; nothing in CI/build references `_archive`.
+
 ### [2026-08-23] The address book is an append-only log, which is why picking one is not a small feature
 
 **Category:** feat | ux
