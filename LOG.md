@@ -12,6 +12,35 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-24] How the checkout 404 reached a customer: the label-purchase harness has been dead since May
+
+**Category:** investigation | testing
+**Cross-link:** answers John's "how did this come about?" on the checkout 404 (entry below) | [`tests/integration/easypost-test.mjs`](tests/integration/easypost-test.mjs) | `90aebca` (2026-05-10, PR #30)
+
+**SendMo has had zero automated coverage of label purchase for three and a half months.** Not thin coverage — none.
+
+`tests/integration/easypost-test.mjs` is the harness built for exactly this: 205 address pairs, three parcel sizes, "Rates + Labels". Its last good report (committed 2026-02-25) reads **192 / 201 labels purchased**, including UPSDAP. Run today:
+
+```
+Phase 1: Rate Generation   ✅ Rates succeeded: 10
+Phase 2: Label Purchases   ❌ Labels failed: 10
+                           ❌ Missing required field: payment_intent_id  (×10)
+```
+
+`90aebca` (2026-05-10, "real Stripe Payment Intents + label auth gate") made `payment_intent_id` mandatory on `/labels`. The harness was never updated, so **every** Phase 2 has failed 100% since that day. Nothing caught it because the harness is excluded from CI *and* from `npm test` (it burns EasyPost calls), so the only signal is a human reading its output — and its Phase 1 still prints a wall of green ticks above the failures.
+
+**This is the whole provenance of the 404.** The buy path had no executing test, so nothing exercised it; the customer did, and got EasyPost's raw string back.
+
+**A second, narrower blindness, found while reading the same file and fixed here.** Phase 2 could only ever buy the **cheapest** rate per pair — and the cheapest is essentially always USPS GroundAdvantage. So even when it worked, 200 pairs exercised *one carrier's* buy path; UPS and FedEx purchase had no coverage at any point. It now **rotates the target carrier across pairs** (same one-purchase-per-shipment constraint, same EasyPost spend, coverage spread across every carrier the rate shop returns). The failure John hit was UPS 3 Day Select — a non-cheapest service, on the axis the harness was blind to.
+
+That the production `shipments` table shows *every* successful test-mode buy since 2026-05-20 as USPS GroundAdvantage is the same fact from the other side.
+
+**The rotation fix does not make the harness work** — Phase 2 still cannot buy anything until it can supply a `payment_intent_id`. Two ways to restore it, not chosen here:
+- **Comp path** — authenticate as admin (`SENDMO_TEST_EMAIL` / `SENDMO_TEST_PASSWORD`, already referenced by `vitest.integration.config.ts`) and buy with `comp: true`. Cheap, and exercises the whole EasyPost leg — end shipper, buy, rerate recovery, DB persist. Does not exercise the price gate, which comp exempts.
+- **Full payment path** — `/payments` → confirm the PI server-side with a Stripe test PM → `/labels`. Slower and more moving parts, but it is the real customer path and the only one that covers the gate.
+
+**Rule to take from this:** a harness excluded from CI needs its own liveness signal. This one printed "Labels failed: 10" for three months into a file nobody opened. A non-zero exit on total Phase 2 failure would have caught it the first time anyone ran it.
+
 ### [2026-08-24] Audit: the same failure shape is running in production right now, in three other places
 
 **Category:** investigation | payments | reliability
