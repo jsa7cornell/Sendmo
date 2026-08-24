@@ -12,6 +12,26 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-24] Sender flow polish — one parcel component for both flows, and three devices deleted
+
+**Category:** fix | sender-flow
+**Cross-link:** follows #105 (one question per step) and #106 (the save-info bug); John's punch list
+
+Six changes, all narrowing what the sender is shown to what they actually need:
+
+1. **The parcel question is now literally the same component in both flows** — [`components/shipment/ParcelQuestion.tsx`](src/components/shipment/ParcelQuestion.tsx) plus its `ParcelDraft` boundary type. The creator's side got the describe-it-first, fields-revealed-after shape on 2026-08-23; the sender's kept a four-card stack with every field visible. Each flow adapts its own state at the boundary (`RecipientFlowState` ⇄ draft ⇄ `SenderParcel`); the recipient's rendering is byte-identical, which is why its e2e specs are untouched and green.
+2. **Shipping-option step:** the Guestimator beta note is gone (it explained where the dimensions came from, on a screen about carriers), and the cheapest rate now carries **"Most economical option for {recipient}"**. The sender sees no prices, so the one kindness they can do the payer has to be said in words.
+3. **Intro:** the "SendMo Label Link" badge is gone — it named the artifact to someone who arrived by tapping it.
+4. **Every heading's supporting line is gone**, matching the recipient flow's 2026-08-23 pass: "Prepaid by X. Pick the speed that works best.", "One last look before we generate the label.", "Checking rates from available carriers", "Everything else is already set." Field-level hints stay.
+5. **"Save my information on this device" is gone**, and the `sendmo:sender` localStorage store with it (`loadSavedSender` / `saveSender`, their unit tests, and the version-2 migration). It was a small convenience with a real footgun — see the #106 entry — and most senders use a link once. Browser autofill covers the repeat case.
+6. **The ship-again CTA is gone** (`ShipAgainCTA`, its visibility predicate and its test). "Ship another package to the same recipient?" invited a second label on someone else's prepaid link from anyone holding the URL.
+
+**Gotcha worth keeping:** `--success` is a CSS variable in `index.css` with **no Tailwind color mapped to it** — `bg-success/10 text-success` compiles to nothing and renders an unstyled span. Caught by looking at the screenshot, not by tsc or the test (which asserted the text, which was there). The badge uses `emerald-100/700`, as SellerBuilder does. Note `text-success` appears elsewhere in the app (Dashboard, TrackingPage) and is silently inert there too — not fixed here, flagged for whoever owns that sweep.
+
+**Browser-verified:**
+- spec: `tests/e2e/sender-questions.spec.ts` — 8/8 (new: the cheapest-option badge lands on the USPS card and not the UPS one, no beta note, no heading subtext); `phone-gate.spec.ts` updated for the shared reveal; full mocked e2e 107 passed; unit 748/748
+- variants-covered: rates step {cheapest badge on the right card, absent beta note}; parcel question {collapsed by default, revealed by "or fill in manually", prefilled values reveal it}; intro {no badge, no supporting line}; review {no save-info checkbox}; recipient package step unchanged (its own specs green)
+
 ### [2026-08-24] "Save my information" was saving someone else's information
 
 **Category:** fix | sender-flow

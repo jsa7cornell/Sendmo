@@ -29,10 +29,12 @@ const RATES = {
   // maps easypost_rate_id/display_price/delivery_days across. A fixture in the
   // client shape passes the route mock and then quietly yields undefined days
   // and a $0 price, which makes "the sender sees no price" vacuous.
-  rates: [{
-    easypost_rate_id: "rate_1", easypost_shipment_id: "shp_test",
-    carrier: "USPS", service: "Priority", display_price: 11.35, delivery_days: 2,
-  }],
+  rates: [
+    { easypost_rate_id: "rate_1", easypost_shipment_id: "shp_test",
+      carrier: "USPS", service: "Priority", display_price: 11.35, delivery_days: 2 },
+    { easypost_rate_id: "rate_2", easypost_shipment_id: "shp_test",
+      carrier: "UPS", service: "Ground", display_price: 18.40, delivery_days: 3 },
+  ],
 };
 
 async function mockLink(page: Page, link: object) {
@@ -79,7 +81,7 @@ test.describe("the sender is asked only what the link left open", () => {
     await expect(page.getByRole("heading", { name: q.origin })).toHaveCount(0);
     await expect(page.getByRole("heading", { name: q.package })).toHaveCount(0);
     // Nothing pre-answered is on screen as a form: no dimension inputs at all.
-    await expect(page.getByPlaceholder("Length")).toHaveCount(0);
+    await expect(page.getByPlaceholder("L", { exact: true })).toHaveCount(0);
   });
 
   test("a bare link asks for the ship-from address, then the parcel", async ({ page }) => {
@@ -92,7 +94,7 @@ test.describe("the sender is asked only what the link left open", () => {
   test("a specced parcel is never asked about again", async ({ page }) => {
     await start(page, { ...LINK, origin_prefill: ORIGIN, package_prefill: PARCEL });
     // Nothing left to ask → the flow goes straight to shipping options.
-    await expect(page.getByPlaceholder("Length")).toHaveCount(0);
+    await expect(page.getByPlaceholder("L", { exact: true })).toHaveCount(0);
     await expect(page.getByRole("heading", { name: q.origin })).toHaveCount(0);
   });
 
@@ -114,7 +116,11 @@ test.describe("the sender is asked only what the link left open", () => {
       package_prefill: { ...PARCEL, weight_oz: null },
     });
     await expect(page.getByRole("heading", { name: q.package })).toBeVisible({ timeout: 10000 });
-    await expect(page.getByPlaceholder("Length")).toHaveValue("");
+    // Shared <ParcelQuestion>: describe-it-first, so the dimension fields are
+    // behind "or fill in manually" until there is something to show.
+    await expect(page.getByPlaceholder("L", { exact: true })).toHaveCount(0);
+    await page.getByRole("button", { name: /or fill in manually/i }).click();
+    await expect(page.getByPlaceholder("L", { exact: true })).toHaveValue("");
   });
 
   test("an asked parcel question carries whatever the creator did specc", async ({ page }) => {
@@ -144,27 +150,22 @@ test.describe("the review step summarises the shipment the way its creator saw i
   });
 });
 
-test.describe("\"Save my information\" saves the sender's information", () => {
-  test("a creator-supplied ship-from address is never saved as the sender's", async ({ page }) => {
-    // The box is checked by default. On a link that supplied the ship-from
-    // address the sender is never asked for one, so `senderAddress` holds the
-    // CREATOR's — persisting it would prefill a stranger's street the next
-    // time this browser ships on a link that does ask.
+test.describe("the shipping-option step", () => {
+  test("names the cheapest option for the person paying, and drops the Guestimator note", async ({ page }) => {
     await start(page, { ...LINK, origin_prefill: ORIGIN, package_prefill: PARCEL });
+    await expect(page.getByRole("heading", { name: /Choose a shipping option/i })).toBeVisible({ timeout: 15000 });
 
-    await expect(page.getByText(/USPS/i).first()).toBeVisible({ timeout: 15000 });
-    await page.getByRole("button", { name: /continue|review/i }).first().click();
-    await expect(page.getByText("Shipment Details")).toBeVisible({ timeout: 10000 });
+    // The sender sees no prices, so "cheapest" has to be said in words.
+    const cheapest = page.getByText(/Most economical option for John Anderson/i);
+    await expect(cheapest).toHaveCount(1);
+    // …and it sits on the USPS card ($11.35), not the UPS one ($18.40).
+    const uspsCard = page.locator("button", { hasText: /USPS/ }).first();
+    await expect(uspsCard.getByText(/Most economical option/i)).toBeVisible();
 
-    await page.locator("#sender-email").fill("sender@example.com");
-    await page.getByRole("button", { name: /Confirm and generate label/i }).click();
-    await page.getByRole("button", { name: /^Generate label$/i }).click();
-
-    await expect(page).toHaveURL(/\/t\/PC12345/, { timeout: 15000 });
-    const stored = await page.evaluate(() => window.localStorage.getItem("sendmo:sender:v1"));
-    expect(stored).toBeTruthy();
-    expect(stored).not.toContain("388 Townsend");
-    // The email IS theirs, and is still saved.
-    expect(stored).toContain("sender@example.com");
+    // The Guestimator beta note is gone — it described how the dimensions were
+    // arrived at, on a screen about choosing a carrier.
+    await expect(page.getByText(/Magic Guestimator is in beta/i)).toHaveCount(0);
+    // No supporting line under the heading either.
+    await expect(page.getByText(/Pick the speed that works best/i)).toHaveCount(0);
   });
 });

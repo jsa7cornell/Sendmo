@@ -20,8 +20,6 @@ interface Props {
   selectedRate: ShippingRate;
   senderEmail: string;
   onSenderEmailChange: (e: string) => void;
-  saveInfo: boolean;
-  onSaveInfoChange: (v: boolean) => void;
   shareContact: boolean;
   onShareContactChange: (v: boolean) => void;
   onEditOrigin: () => void;
@@ -43,8 +41,7 @@ interface Props {
 // estimate cell and no total row.
 export default function SenderStepReview({
   linkData, senderAddress, destinationOverride, parcel, selectedRate,
-  senderEmail, onSenderEmailChange,
-  saveInfo, onSaveInfoChange, shareContact, onShareContactChange,
+  senderEmail, onSenderEmailChange, shareContact, onShareContactChange,
   onEditOrigin, onEditDestination, onEditPackage, onEditRate,
   onConfirm, submitting, submitError,
 }: Props) {
@@ -112,9 +109,6 @@ export default function SenderStepReview({
     <div className="space-y-5">
       <div className="text-center">
         <h1 className="text-2xl font-bold text-foreground">Review and confirm</h1>
-        <p className="text-muted-foreground mt-1 text-sm">
-          One last look before we generate the label.
-        </p>
       </div>
 
       <div className="space-y-2">
@@ -144,19 +138,6 @@ export default function SenderStepReview({
           </p>
           {emailFormatBad && <p className="text-xs text-destructive mt-1">Please enter a valid email.</p>}
         </div>
-
-        <label className="flex items-start gap-3 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={saveInfo}
-            onChange={(e) => onSaveInfoChange(e.target.checked)}
-            className="mt-0.5 w-4 h-4 rounded accent-primary"
-          />
-          <span className="text-sm text-foreground">
-            Save my information on this device
-            <span className="block text-xs text-muted-foreground">Pre-fill your address and email next time you ship.</span>
-          </span>
-        </label>
 
         <label className="flex items-start gap-3 cursor-pointer">
           <input
