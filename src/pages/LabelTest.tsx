@@ -7,6 +7,14 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 
 const BASE_URL = import.meta.env.VITE_SUPABASE_URL;
+
+// One shape for the verify-address error: thrown as `errResult` in verifyAddresses
+// and cast back in its catch — a single type so the two sites can't drift.
+type AddressVerifyError = {
+    message?: string;
+    type?: string;
+    fieldErrors?: Array<{ field: string; message: string }>;
+};
 const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 
@@ -261,7 +269,7 @@ export default function LabelTest() {
             });
             if (!res.ok) {
                 const body = await res.json().catch(() => ({}));
-                const errResult = {
+                const errResult: AddressVerifyError = {
                     message: body.error || `Address verification failed (${res.status})`,
                     type: body.type,
                     fieldErrors: body.fieldErrors || []
@@ -272,11 +280,7 @@ export default function LabelTest() {
             setVerifiedAddresses(data);
             setStep(2);
         } catch (caught) {
-            const err = caught as {
-                message?: string;
-                type?: string;
-                fieldErrors?: Array<{ field: string; message: string }>;
-            };
+            const err = caught as AddressVerifyError;
             if (err && err.fieldErrors && err.fieldErrors.length > 0) {
                 const fieldMap: Record<string, keyof AddressInput> = {
                     address: "street",

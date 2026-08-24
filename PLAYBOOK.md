@@ -365,7 +365,7 @@ No production-path stubs remain. (Minor non-production leftovers: `src/pages/Sen
 
     | Step | Config | Blocking? |
     |---|---|---|
-    | ESLint | `\|\| true` + `continue-on-error` | No — always green. 27 pre-existing errors, tracked separately. |
+    | ESLint | bare | **Yes** — blocking since 2026-08-23; backlog cleared 57 → 0 (see LOG that date). |
     | `tsc -b` | bare | **Yes** |
     | Unit tests | bare | **Yes** |
     | Playwright e2e (mocked) | bare `npm run test:e2e` | **Yes — a red result stops the merge** |

@@ -93,7 +93,7 @@ function makeMockSupabase(cfg: MockSupabaseConfig = {}) {
     // Transactions chain shaped to support both:
     //   .from('transactions').select('amount_cents').eq('type', 'carrier_adjustment').eq('shipment_id', X)
     //   .from('transactions').select('amount_cents').eq('type', 'charge').eq('user_id', U).like(...).gte(...)
-    const transactionsChainV2 = {
+    const transactionsChain = {
         select: () => {
             // Track which path via the sequence of .eq calls.
             const eqs: Array<{ col: string; val: unknown }> = [];
@@ -128,7 +128,7 @@ function makeMockSupabase(cfg: MockSupabaseConfig = {}) {
         from(table: string) {
             if (table === "carrier_adjustments") return carrierAdjustmentsChain;
             if (table === "notifications_log") return notifLogChain;
-            if (table === "transactions") return transactionsChainV2;
+            if (table === "transactions") return transactionsChain;
             throw new Error(`makeMockSupabase: unexpected table '${table}'`);
         },
         rpc(_name: string, _args: unknown) {

@@ -62,7 +62,7 @@ export default function RefundModal({
     // the actual remaining balance).
     useEffect(() => {
         if (open) {
-            // eslint-disable-next-line react-hooks/set-state-in-effect -- deliberate reset-on-open; the structural fix (conditional mount, which resets state for free) is tracked in WISHLIST "AddCardModal is never unmounted".
+            // eslint-disable-next-line react-hooks/set-state-in-effect -- pre-fill from `target` on open; Admin.tsx mounts this conditionally ({refundTarget && ...}), so this seeds each fresh mount's form.
             setAmountInput((target.collectedCents / 100).toFixed(2));
             setReason("requested_by_customer");
             setValidationError(null);

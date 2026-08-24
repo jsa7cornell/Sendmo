@@ -238,7 +238,7 @@ export async function dispatchNotifications(
           event_type: eventType,
           status: "failed",
           error_message: errorMsg,
-        }).catch(() => {}); // Don't fail on log insert failure
+        }).then(() => {}, () => {}); // Don't fail on log insert failure. NOT .catch(): the query builder is a thenable, not a Promise — it has no .catch, and calling it threw before the insert ever ran (same fix as adjustments.ts). Regression-pinned by tests/unit/notifications-dispatch.test.ts.
 
         log({
           event_type: `notification.${contact.channel}_failed`,

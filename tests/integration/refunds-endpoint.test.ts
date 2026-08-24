@@ -1,10 +1,12 @@
 /**
- * Integration tests for the /refunds Edge Function.
+ * Logic-level assertions for the /refunds Edge Function's business rules.
  *
- * These tests mock the Supabase client and Stripe calls to verify the
- * endpoint's business logic without real network calls. They exercise the
- * happy paths, over-balance rejection, non-admin rejection, and missing field
- * 400 responses.
+ * HONEST SCOPE (corrected 2026-08-23): these tests do NOT execute the edge
+ * function — they restate its rules (balance arithmetic, reason mapping,
+ * expected status codes) over local literals. A regression in the function
+ * itself will NOT fail this file. Wiring real endpoint execution (or deleting
+ * this file in favor of it) is tracked in WISHLIST "refunds endpoint has no
+ * executing test".
  *
  * Cross-link: H3 — decided proposal
  *   proposals/2026-05-21_refund-system-implementation_reviewed-2026-05-21_

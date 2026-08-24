@@ -1,5 +1,4 @@
-import { createClient } from "jsr:@supabase/supabase-js@2.97.0";
-import type { SupabaseClient } from "jsr:@supabase/supabase-js@2.97.0";
+import { createClient, type SupabaseClient } from "jsr:@supabase/supabase-js@2.97.0";
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { log } from "../_shared/logger.ts";
 import { sendEmail } from "../_shared/resend.ts";

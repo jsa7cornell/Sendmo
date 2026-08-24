@@ -1,5 +1,5 @@
-/* eslint-disable react-hooks/refs -- this provider deliberately reads directionRef during render: the animation direction is set by the same navigation action that triggers the render, and making it state would re-render every consumer a second time just to animate. The rule's data-flow tracking flags every downstream use of the value, so a per-line disable cannot scope it — this is the one sanctioned ref-in-render in the file. */
 import { createContext, useContext, useCallback, useEffect, useState, useRef } from "react";
+import { readNavDirection } from "./navDirection";
 import { flushSync } from "react-dom";
 import { useNavigate, useParams } from "react-router-dom";
 import type { RecipientPath } from "@/lib/types";
@@ -391,7 +391,8 @@ export function RecipientFlowProvider({ children }: { children: React.ReactNode 
       value={{
         data,
         currentStep,
-        direction: directionRef.current,
+        // eslint-disable-next-line react-hooks/refs -- the one sanctioned render-time ref read: direction is set by the same navigation action that triggered this render, and state would re-render every consumer a second time just to animate. readNavDirection narrows the rule's data-flow flag to this single line, keeping the rule armed for the rest of the file.
+        direction: readNavDirection(directionRef),
         updateData,
         tryAdvance,
         goBack,

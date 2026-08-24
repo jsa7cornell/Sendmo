@@ -114,7 +114,12 @@ Deno.serve(async (req: Request) => {
         return new Response(JSON.stringify({ success: true }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     } catch (err) {
         console.error("Test DB insert error:", err);
-        const message = (err as { message?: string })?.message || "Failed to insert test records";
+        // Not the sibling `instanceof Error` idiom on purpose: this function
+        // throws raw postgrest `error` objects (plain parsed JSON, not Error
+        // instances), and their .message is the whole point of a debug endpoint.
+        const message = err instanceof Error
+            ? err.message
+            : (err as { message?: string })?.message ?? "Failed to insert test records";
         return new Response(JSON.stringify({ error: message }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 });
