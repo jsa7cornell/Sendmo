@@ -11,6 +11,9 @@
 import { sendEmail } from "./resend.ts";
 import { trackingUpdateEmail, labelConfirmationEmail, senderLabelReadyEmail } from "./email-templates.ts";
 import { log } from "./logger.ts";
+// Type-only: erased by Vitest's TS transform so unit tests never resolve the
+// URL import (same load-bearing pattern as ledger.ts/budget.ts — keep `type`).
+import type { SupabaseClient } from "jsr:@supabase/supabase-js@2.97.0";
 
 // Event type for the one-time label-creation confirmation (payer only).
 // Distinct from the tracking-status events (in_transit/out_for_delivery/
@@ -122,7 +125,7 @@ const channelHandlers: Record<string, ChannelHandler> = {
  * Fire-and-forget: never throws, logs all outcomes.
  */
 export async function dispatchNotifications(
-  supabase: any,
+  supabase: SupabaseClient,
   shipmentId: string,
   eventType: string,
   ctx: NotificationContext,
@@ -235,7 +238,7 @@ export async function dispatchNotifications(
           event_type: eventType,
           status: "failed",
           error_message: errorMsg,
-        }).catch(() => {}); // Don't fail on log insert failure
+        }).then(() => {}, () => {}); // Don't fail on log insert failure. NOT .catch(): the query builder is a thenable, not a Promise — it has no .catch, and calling it threw before the insert ever ran (same fix as adjustments.ts). Regression-pinned by tests/unit/notifications-dispatch.test.ts.
 
         log({
           event_type: `notification.${contact.channel}_failed`,

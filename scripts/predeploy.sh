@@ -25,10 +25,8 @@ run_frontend() {
   echo "▸ Type check (tsc -b --noEmit)..."
   npx tsc -b --noEmit
 
-  echo "▸ Lint (non-blocking — 60+ pre-existing errors; surface count, don't gate)..."
-  if ! npm run lint; then
-    echo "  ⚠ Lint failed. NOT blocking the deploy — but please don't add new errors."
-  fi
+  echo "▸ Lint (blocking since 2026-08-23 — the backlog is cleared; keep it at zero errors)..."
+  npm run lint
 
   echo "▸ Unit tests..."
   npm run test:unit

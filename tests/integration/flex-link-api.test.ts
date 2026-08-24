@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll } from "vitest";
 
 // Integration tests for the flex link API contract (GET + POST /functions/v1/links).
 //

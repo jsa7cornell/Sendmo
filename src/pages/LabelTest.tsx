@@ -7,6 +7,14 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 
 const BASE_URL = import.meta.env.VITE_SUPABASE_URL;
+
+// One shape for the verify-address error: thrown as `errResult` in verifyAddresses
+// and cast back in its catch — a single type so the two sites can't drift.
+type AddressVerifyError = {
+    message?: string;
+    type?: string;
+    fieldErrors?: Array<{ field: string; message: string }>;
+};
 const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 
@@ -261,7 +269,7 @@ export default function LabelTest() {
             });
             if (!res.ok) {
                 const body = await res.json().catch(() => ({}));
-                const errResult = {
+                const errResult: AddressVerifyError = {
                     message: body.error || `Address verification failed (${res.status})`,
                     type: body.type,
                     fieldErrors: body.fieldErrors || []
@@ -271,7 +279,8 @@ export default function LabelTest() {
             const data = await res.json();
             setVerifiedAddresses(data);
             setStep(2);
-        } catch (err: any) {
+        } catch (caught) {
+            const err = caught as AddressVerifyError;
             if (err && err.fieldErrors && err.fieldErrors.length > 0) {
                 const fieldMap: Record<string, keyof AddressInput> = {
                     address: "street",
@@ -305,7 +314,7 @@ export default function LabelTest() {
                 setToErrors({ street: err.message });
                 setError(`To address: ${err.message} (Session ID: ${sessionId})`);
             } else {
-                setError(`${err instanceof Error ? err.message : err.message || "Address verification failed"} (Session ID: ${sessionId})`);
+                setError(`${err.message || "Address verification failed"} (Session ID: ${sessionId})`);
             }
         } finally {
             setLoading(false);
@@ -475,10 +484,16 @@ export default function LabelTest() {
     const steps = ["Addresses", "Package", "Rates", "Payment", "Label"];
 
     // ─── Carrier restrictions from verified address ────────────
-    const toAddr_uspsOnly = !!(verifiedAddresses?.to_address as any)?.usps_only;
-    const toAddr_isPOBox = !!(verifiedAddresses?.to_address as any)?.is_po_box;
-    const toAddr_isMilitary = !!(verifiedAddresses?.to_address as any)?.is_military;
-    const toAddr_verificationWarning = (verifiedAddresses?.to_address as any)?.verification_warning as string | null ?? null;
+    const toAddrFlags = verifiedAddresses?.to_address as {
+        usps_only?: boolean;
+        is_po_box?: boolean;
+        is_military?: boolean;
+        verification_warning?: string | null;
+    } | undefined;
+    const toAddr_uspsOnly = !!toAddrFlags?.usps_only;
+    const toAddr_isPOBox = !!toAddrFlags?.is_po_box;
+    const toAddr_isMilitary = !!toAddrFlags?.is_military;
+    const toAddr_verificationWarning = toAddrFlags?.verification_warning ?? null;
 
     // Filter rates to only carriers that can deliver to this address type
     const displayableRates = toAddr_uspsOnly

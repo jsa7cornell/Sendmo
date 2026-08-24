@@ -15,7 +15,7 @@
 //   proposals/2026-05-22_reconciliation-and-carrier-adjustments_reviewed-2026-05-22_decided-2026-05-22.md
 //   — §2.1 writer map, B3/B4 blocking fixes, D2 decision list.
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect } from "vitest";
 import {
     writeLabelCost,
     writeEasypostRefund,

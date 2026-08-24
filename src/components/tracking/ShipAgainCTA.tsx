@@ -14,6 +14,7 @@ interface Props {
   recipientName: string | null;
 }
 
+// eslint-disable-next-line react-refresh/only-export-components -- exported so the unit test can exercise the visibility predicate in isolation (proposal §13 B4).
 export function shouldShowShipAgain({
   isFresh,
   isAuthenticated,

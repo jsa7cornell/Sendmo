@@ -90,38 +90,10 @@ function makeMockSupabase(cfg: MockSupabaseConfig = {}) {
     // Add a `.then(...)` so insert chains can be awaited as-is.
     (notifLogChain.insert as unknown as { then: unknown }) = notifLogChain.insert;
 
-    // Unlocked-fallback: transactions table select chains.
-    const transactionsChain = {
-        select: () => ({
-            eq: (col: string) => {
-                if (col === "type") {
-                    // After type='charge': .eq('user_id').like().gte()
-                    return {
-                        eq: () => ({
-                            like: () => ({
-                                gte: () => Promise.resolve({
-                                    data: cfg.unlockedUserRows ?? [],
-                                    error: null,
-                                }),
-                            }),
-                        }),
-                        // .eq('shipment_id') path for per-shipment unlocked fallback
-                        // The actual chain: .eq('type','carrier_adjustment').eq('shipment_id', id)
-                    };
-                }
-                // shipment_id path
-                return Promise.resolve({
-                    data: cfg.unlockedShipmentRows ?? [],
-                    error: null,
-                });
-            },
-        }),
-    };
-
-    // Re-shape transactionsChain to support both:
+    // Transactions chain shaped to support both:
     //   .from('transactions').select('amount_cents').eq('type', 'carrier_adjustment').eq('shipment_id', X)
     //   .from('transactions').select('amount_cents').eq('type', 'charge').eq('user_id', U).like(...).gte(...)
-    const transactionsChainV2 = {
+    const transactionsChain = {
         select: () => {
             // Track which path via the sequence of .eq calls.
             const eqs: Array<{ col: string; val: unknown }> = [];
@@ -156,7 +128,7 @@ function makeMockSupabase(cfg: MockSupabaseConfig = {}) {
         from(table: string) {
             if (table === "carrier_adjustments") return carrierAdjustmentsChain;
             if (table === "notifications_log") return notifLogChain;
-            if (table === "transactions") return transactionsChainV2;
+            if (table === "transactions") return transactionsChain;
             throw new Error(`makeMockSupabase: unexpected table '${table}'`);
         },
         rpc(_name: string, _args: unknown) {

@@ -85,6 +85,7 @@ export default function AddCardModal({ open, onClose, onSuccess }: Props) {
     let cancelled = false;
     idempotencyNonceRef.current = Date.now();
     const nonce = idempotencyNonceRef.current;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- clearing stale SetupIntent state before the async fetch is the point of this effect; do NOT restructure casually (BUG A regression magnet, see comment above).
     setClientSecret(null);
     setError(null);
     (async () => {

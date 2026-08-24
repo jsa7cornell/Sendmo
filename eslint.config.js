@@ -21,5 +21,28 @@ export default defineConfig([
       ecmaVersion: 2020,
       globals: globals.browser,
     },
+    rules: {
+      // The codebase deliberately names intentionally-unused bindings with a
+      // leading underscore (mock params like `_table`, kept-for-signature args
+      // like `_expectedBalance`); tell the rule about the convention.
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        {
+          argsIgnorePattern: '^_',
+          varsIgnorePattern: '^_',
+          caughtErrorsIgnorePattern: '^_',
+          destructuredArrayIgnorePattern: '^_',
+        },
+      ],
+    },
+  },
+  {
+    // shadcn/ui generated components canonically export their cva variant
+    // objects (buttonVariants, badgeVariants) alongside the component; that's
+    // the library's documented import surface, not our code to restructure.
+    files: ['src/components/ui/**/*.{ts,tsx}'],
+    rules: {
+      'react-refresh/only-export-components': 'off',
+    },
   },
 ])

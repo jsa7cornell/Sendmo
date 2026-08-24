@@ -54,6 +54,7 @@ describe("deriveActor — auth precedence rules", () => {
   // documented as the contract this PR ships.
   let deriveActor: DeriveActorFn | null = null;
   try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports -- deliberate runtime require: a Deno-style URL import inside actor.ts must fail at RESOLVE time and be caught by this try/catch (a static import would fail the whole suite at load).
     const mod = require("../../supabase/functions/_shared/actor.ts") as ActorHelper;
     deriveActor = mod.deriveActor;
   } catch {

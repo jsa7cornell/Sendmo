@@ -1,10 +1,12 @@
 /**
- * Integration tests for the /refunds Edge Function.
+ * Logic-level assertions for the /refunds Edge Function's business rules.
  *
- * These tests mock the Supabase client and Stripe calls to verify the
- * endpoint's business logic without real network calls. They exercise the
- * happy paths, over-balance rejection, non-admin rejection, and missing field
- * 400 responses.
+ * HONEST SCOPE (corrected 2026-08-23): these tests do NOT execute the edge
+ * function — they restate its rules (balance arithmetic, reason mapping,
+ * expected status codes) over local literals. A regression in the function
+ * itself will NOT fail this file. Wiring real endpoint execution (or deleting
+ * this file in favor of it) is tracked in WISHLIST "refunds endpoint has no
+ * executing test".
  *
  * Cross-link: H3 — decided proposal
  *   proposals/2026-05-21_refund-system-implementation_reviewed-2026-05-21_
@@ -12,60 +14,6 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-
-// ── Mock types ──────────────────────────────────────────────────────────────
-
-interface MockChain {
-  select: ReturnType<typeof vi.fn>;
-  eq: ReturnType<typeof vi.fn>;
-  in: ReturnType<typeof vi.fn>;
-  maybeSingle: ReturnType<typeof vi.fn>;
-}
-
-// Build a mock Supabase client that returns a different result per table.
-function buildSupabaseMock(config: {
-  transactions?: { data: unknown; error: unknown };
-  shipments?: { data: unknown; error: unknown };
-  carrier_adjustments?: { data: null; error: null; count: number };
-  event_logs?: { data: null; error: null };
-}) {
-  return {
-    from: vi.fn((table: string) => {
-      if (table === "transactions") {
-        return {
-          select: vi.fn().mockReturnThis(),
-          eq: vi.fn().mockReturnThis(),
-          maybeSingle: vi.fn().mockResolvedValue(config.transactions ?? { data: null, error: null }),
-          in: vi.fn().mockResolvedValue({ data: [], error: null }),
-        } as MockChain;
-      }
-      if (table === "shipments") {
-        return {
-          select: vi.fn().mockReturnThis(),
-          eq: vi.fn().mockReturnThis(),
-          maybeSingle: vi.fn().mockResolvedValue(config.shipments ?? { data: null, error: null }),
-        };
-      }
-      if (table === "carrier_adjustments") {
-        return {
-          select: vi.fn().mockReturnThis(),
-          eq: vi.fn().mockReturnThis(),
-          // head: true returns count not data
-          mockResolvedValue: vi.fn(),
-        };
-      }
-      if (table === "event_logs") {
-        return {
-          insert: vi.fn().mockResolvedValue({ data: null, error: null }),
-        };
-      }
-      return { select: vi.fn().mockReturnThis(), eq: vi.fn().mockReturnThis(), in: vi.fn().mockResolvedValue({ data: [], error: null }) };
-    }),
-    auth: {
-      getUser: vi.fn(),
-    },
-  };
-}
 
 // ── Happy path tests (logic-level) ─────────────────────────────────────────
 

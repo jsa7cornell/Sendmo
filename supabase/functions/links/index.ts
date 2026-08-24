@@ -548,7 +548,6 @@ Deno.serve(async (req: Request) => {
             preferred_carrier,
             price_cap_dollars,
             size_hint,
-            distance_hint,
             notes,
             // Optional: 'draft' for onboarding flex flow (link awaits a saved
             // PM before becoming visible to senders). 'active' creates ready.
