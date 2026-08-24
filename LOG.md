@@ -124,11 +124,21 @@ Helpers live in [`_shared/easypost-rates.ts`](supabase/functions/_shared/easypos
 
 The badge is rendered by **Stripe's own Payment Element**. SendMo passes `automatic_payment_methods: { enabled: true, allow_redirects: "never" }`, i.e. whatever is switched on in the Stripe Dashboard appears — nobody chose to offer ACH here. Whether that incentive is genuinely configured and Stripe-funded is a **Dashboard question**, not a code question: check Payment methods → US bank account.
 
-**The larger risk is not the badge — ACH cannot complete a SendMo checkout at all.** `us_bank_account` PaymentIntents settle to `processing` for 1–5 business days, never straight to `succeeded`. Both gates hard-refuse that:
-- `StripePaymentForm.tsx` — `if (paymentIntent?.status !== "succeeded")` → *"Payment status: processing — please try again"*
-- `labels/index.ts:1156` — `if (pi.status !== "succeeded")` → 402 *"Payment not captured"*
+**CORRECTION (same day, after reading the Stripe Dashboard).** The paragraph that stood here claimed ACH was enabled and that a bank payer would be debited, get no label, and never reach the auto-refund — and called it the higher-severity of the two findings. **That was wrong, and it was wrong because it was inferred from a screenshot instead of checked.** In the Dashboard:
 
-So a customer paying by bank is debited, gets no label, sees copy inviting a retry, and never reaches the EasyPost buy — which means the auto-refund never runs either. No test covers `us_bank_account` anywhere in `tests/`. Until ACH is deliberately supported, the bank method should be turned off in the Stripe Dashboard (or the PI restricted to `card`).
+| Method | Test | Live |
+|---|---|---|
+| **ACH Direct Debit** | Disabled | Disabled |
+| **Bank Transfers** | Disabled | — |
+| **Link** | **Enabled** | Enabled |
+
+`us_bank_account` is off in **both** modes, so the async-settlement path cannot be reached. Production agrees: across all 41 rows in `stripe_intents`, `funding_source` is `card` every time and **no intent has ever been in `processing`** — zero `us_bank_account`, ever.
+
+What survives from the original finding, unchanged: **SendMo implements no $5 discount** — no `$5 back` / `bankDiscount` / `incentive` anywhere in the checkout path, and `payments/index.ts` creates the PI at the quoted total with **no branch on payment-method type**. And there is still no `us_bank_account` coverage in `tests/`, which is now moot rather than urgent.
+
+**What the "Bank" tab and "$5 back" actually are: narrowed to Link, not proven.** With ACH Direct Debit and Bank Transfers both disabled, Link is the only enabled method that can present a bank funding source, and Stripe runs its own incentives on Link bank payments. That is inference from elimination, not evidence. Proving it takes one look at the resolved payment-method types on a real PI — worth doing before anyone acts on it, because the only lever that would remove that tab is **disabling Link**, and Link is also the card wallet (a live buyer used it on the 2026-08-17 incident above). That is a conversion decision, not a safety fix, and nothing was changed in Stripe.
+
+**Method note for next time:** "the UI shows a Bank tab" was treated as "ACH is enabled" and escalated to a same-day recommendation. The Dashboard was two clicks away. Check the setting before assigning severity to it.
 
 **Test state at time of writing:** unit 762/762 pass on the pre-merge branch (765/765 after merging origin/main, which retired the ShipAgainCTA specs); e2e 108 passed / 5 skipped; integration api 36 passed / 1 failed / 4 skipped. The one failure is a **stale test, not a product bug** — `tests/integration/recipient-flow-api.test.ts:69` posts `{from, to}` to `/rates`, which has required `from_address`/`to_address` plus a phone on both since 2026-05-19, so it gets a 400.
 ### [2026-08-24] Sender flow polish — one parcel component for both flows, and three devices deleted
