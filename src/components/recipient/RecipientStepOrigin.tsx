@@ -1,13 +1,13 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { AlertCircle, MapPin, Send } from "lucide-react";
+import { AlertCircle, MapPin } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import SmartAddressInput from "@/components/ui/SmartAddressInput";
 import StepQuestionHeader from "./StepQuestionHeader";
 import SkipToSenderLink from "./SkipToSenderLink";
 import DimmedWhenDeferred from "./DimmedWhenDeferred";
-import { useAuth } from "@/contexts/AuthContext";
+import SavedAddressPicker from "./SavedAddressPicker";
 import type { RecipientFlowState } from "@/hooks/useRecipientFlow";
 import type { AddressInput, SenderKind } from "@/lib/types";
 
@@ -50,7 +50,6 @@ interface Props {
 export default function RecipientStepOrigin({
   state, sender, errors, tried, onUpdate, onContinue, onBack, onNoAddress, onKeepIt,
 }: Props) {
-  const { user } = useAuth();
   // 'self' → this address is the account holder's own; it was prefilled from
   // their saved address, so it collapses to a confirmable row.
   // 'other' → it belongs to the person shipping to them, and is the one thing
@@ -157,20 +156,23 @@ export default function RecipientStepOrigin({
           </div>
         )}
 
-        {/* Under the fields it fills, matching the destination step's saved-
-            address link. NOT an answer to the skip question above — it is a
-            prefill shortcut, and conflating the two put an identity claim
-            inside a question about who supplies data. Choosing it does still
-            resolve sender='self', which is why it disappears once answered. */}
-        {!isSelfSender && sender === null && user && (
-          <button
-            type="button"
-            onClick={() => onUpdate({ sender: "self" })}
-            className="mt-4 inline-flex items-center gap-1.5 text-sm font-semibold text-primary rounded-lg px-2 py-1 -ml-2 transition-colors hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-          >
-            <Send className="w-4 h-4" aria-hidden="true" />
-            Use a saved address
-          </button>
+        {/* Under the fields it fills, matching the destination step. NOT an
+            answer to the skip question above — it is a prefill shortcut, and
+            conflating the two put an identity claim inside a question about
+            who supplies data.
+
+            It no longer sets sender='self' either (2026-08-23). That was the
+            last of the same inference: "use MY address" meant the account
+            holder was shipping. With a list to choose from — which may hold a
+            friend's address — picking one says nothing about who sends, and
+            the label John chose ("Use a saved address") had already stopped
+            claiming it did. */}
+        {!isSelfSender && !originConfirmable && (
+          <div className="mt-4">
+            <SavedAddressPicker
+              onSelect={(addr) => onUpdate({ originAddress: addr })}
+            />
+          </div>
         )}
         </DimmedWhenDeferred>
       </div>
@@ -203,7 +205,7 @@ export default function RecipientStepOrigin({
           Back
         </Button>
         <Button onClick={onContinue} className="flex-1 rounded-xl shadow-sm">
-          Continue to package details
+          Continue
         </Button>
       </div>
 

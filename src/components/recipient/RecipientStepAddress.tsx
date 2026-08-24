@@ -1,15 +1,14 @@
-import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { AlertCircle, ArrowRight, Home, LogIn, Tag } from "lucide-react";
+import { AlertCircle, ArrowRight, LogIn, Tag } from "lucide-react";
 import { SELLER_LINK_VISIBLE, SELLER_LINK_LIVE } from "@/lib/featureFlags";
 import AddressForm from "@/components/forms/AddressForm";
 import StepQuestionHeader from "./StepQuestionHeader";
 import SkipToSenderLink from "./SkipToSenderLink";
+import SavedAddressPicker from "./SavedAddressPicker";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/contexts/AuthContext";
-import { supabase } from "@/lib/supabase";
-import type { AddressInput, RecipientPath, SenderKind } from "@/lib/types";
+import type { AddressInput, SenderKind } from "@/lib/types";
 import { prefillSlotFor } from "@/lib/recipientFlowStorage";
 
 // The skip is a link beside the question (StepQuestionHeader +
@@ -20,17 +19,10 @@ import { prefillSlotFor } from "@/lib/recipientFlowStorage";
 
 interface Props {
   address: AddressInput;
-  path: RecipientPath | null;
   sender: SenderKind | null;
   errors: string[];
   tried: boolean;
   onAddressChange: (addr: AddressInput) => void;
-  /**
-   * Resolves the still-null `sender` (2026-08-18: the who's-sending step is
-   * gone). Fired by the "deliver to me" chip — claiming the destination as
-   * your own address IS the answer step 0 used to ask for.
-   */
-  onSenderResolved: (sender: SenderKind) => void;
   /** Phase 3: "the sender picks the destination" — skippable like every question. */
   deferredDestination: boolean;
   onDeferDestination: () => void;
@@ -39,8 +31,8 @@ interface Props {
 }
 
 export default function RecipientStepAddress({
-  address, path, sender, errors, tried,
-  onAddressChange, onSenderResolved,
+  address, sender, errors, tried,
+  onAddressChange,
   deferredDestination, onDeferDestination, onUndoDeferDestination, onContinue,
 }: Props) {
   const navigate = useNavigate();
@@ -50,57 +42,12 @@ export default function RecipientStepAddress({
   // account holder's own saved address must not be prefilled into it.
   const destinationIsSelf = prefillSlotFor(sender) === "destination";
   const { user } = useAuth();
-  const prefillAttempted = useRef(false);
-  // Saved address held for the "deliver to me" link when `sender` is still
-  // unresolved — never applied silently (that guess is the wrong-party bug).
-  const [savedAddr, setSavedAddr] = useState<AddressInput | null>(null);
 
-  // Silent prefill: returning signed-in user with an empty address field gets
-  // their most recent saved address pre-populated. User can still edit freely.
-  //
-  // Skipped when the account holder is the one shipping out ('self'), because
-  // this screen is then the other party's address — filling it with the
-  // user's own saved address, pre-verified, is how a user ends up mailing a
-  // package to themselves. Email prefill lives with the identity/verify step
-  // now, not here.
-  useEffect(() => {
-    if (!user || prefillAttempted.current) return;
-    if (address.verified || address.street) return;
-    prefillAttempted.current = true;
-
-    (async () => {
-      const [{ data: profile }, { data: recentAddr }] = await Promise.all([
-        supabase.from("profiles").select("full_name, phone").eq("id", user.id).single(),
-        supabase
-          .from("addresses")
-          .select("name, street1, street2, city, state, zip, phone, is_verified")
-          .eq("user_id", user.id)
-          .order("created_at", { ascending: false })
-          .limit(1)
-          .maybeSingle(),
-      ]);
-
-      const fetched = recentAddr?.street1
-        ? {
-            name: recentAddr.name || profile?.full_name || "",
-            street: recentAddr.street1,
-            city: recentAddr.city,
-            state: recentAddr.state,
-            zip: recentAddr.zip,
-            phone: recentAddr.phone || profile?.phone || "",
-            verified: !!recentAddr.is_verified,
-          }
-        : null;
-      if (fetched && destinationIsSelf) {
-        // sender='other' is already resolved — the destination is known to be
-        // the account holder's, so the silent prefill is safe.
-        onAddressChange(fetched);
-      } else if (fetched) {
-        // Unresolved: hold it for the link below instead.
-        setSavedAddr(fetched);
-      }
-    })();
-  }, [user, address.verified, address.street, destinationIsSelf, onAddressChange]);
+  // The silent single-address prefill went with the picker (2026-08-23). It
+  // read the most recent row and, on the sender='other' branch, dropped it
+  // into the form unannounced — which is indistinguishable from a picker that
+  // guessed, and wrong the moment a user has two saved addresses. Choosing is
+  // now explicit; SavedAddressPicker below offers the deduped list.
 
   // Hidden on the 'self' branch: if YOU are the sender there is no link user
   // to hand the destination to.
@@ -113,10 +60,9 @@ export default function RecipientStepAddress({
   );
 
   // ── The saved-address shortcut, under the fields it fills ─────────────
-  // Signed in: one tap fills the destination AND resolves sender='other'
-  // (someone else ships to the account holder) — the identity claim the
-  // deleted who's-sending step used to ask for. Never applied silently while
-  // `sender` is null: we don't know which party the saved address belongs to.
+  // Signed in: the picker. It no longer resolves `sender` — see
+  // SavedAddressPicker for why picking from a list implies nothing about who
+  // is shipping, where picking THE one saved address arguably did.
   //
   // Signed out: the same offer, gated. /login returns here rather than to the
   // dashboard so the draft in progress survives the round trip.
@@ -132,19 +78,9 @@ export default function RecipientStepAddress({
       <LogIn className="w-4 h-4" aria-hidden="true" />
       Log in to use your saved address
     </button>
-  ) : savedAddr && sender === null ? (
-    <button
-      type="button"
-      onClick={() => {
-        onAddressChange(savedAddr);
-        onSenderResolved("other");
-      }}
-      className={shortcutClasses}
-    >
-      <Home className="w-4 h-4" aria-hidden="true" />
-      <span className="truncate">Use my saved address: {savedAddr.street}</span>
-    </button>
-  ) : null;
+  ) : (
+    <SavedAddressPicker onSelect={(addr) => onAddressChange(addr)} />
+  );
 
   return (
     <div className="space-y-6">
@@ -187,7 +123,7 @@ export default function RecipientStepAddress({
       {/* Buttons. No Back: this is the flow's first step (2026-08-18 — the
           who's-sending picker it used to return to is gone). */}
       <Button onClick={onContinue} className="w-full rounded-xl shadow-sm">
-        {path === "full_label" ? "Continue to shipment details" : "Continue to shipping preferences"}
+        Continue
       </Button>
 
       {/* Seller link-out. Lived on the deleted who's-sending step; this is the

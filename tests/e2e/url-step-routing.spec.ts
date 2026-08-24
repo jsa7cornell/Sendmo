@@ -243,7 +243,7 @@ test.describe("URL-based step routing", () => {
     // Fill step 1
     await page.locator("#destination-name").fill("Jane Doe");
     await fillSmartAddress(page, "destination");
-    await page.getByRole("button", { name: /Continue to shipment details/i }).click();
+    await page.getByRole("button", { name: /^Continue$/ }).click();
 
     // One step map (2026-08-19): the ship-from step's slug is `origin`;
     // `shipping` now names the shared rates/preferences step (20).
@@ -278,13 +278,13 @@ test.describe("URL-based step routing", () => {
     await expect(page).toHaveURL(/\/onboarding\/full-label\/destination$/);
     await page.locator("#destination-name").fill("Jane Doe");
     await fillSmartAddress(page, "destination");
-    await page.getByRole("button", { name: /Continue to shipment details/i }).click();
+    await page.getByRole("button", { name: /^Continue$/ }).click();
 
     // Step 10: origin (ship-from address)
     await expect(page).toHaveURL(/\/onboarding\/full-label\/origin$/);
     await page.locator("#origin-name").fill("John Smith");
     await fillSmartAddress(page, "origin");
-    await page.getByRole("button", { name: /Continue to package details/i }).click();
+    await page.getByRole("button", { name: /^Continue$/ }).click();
 
     // Step 14: package (parcel only — the carrier choice moved to step 20)
     await expect(page).toHaveURL(/\/onboarding\/full-label\/package$/);
@@ -294,12 +294,12 @@ test.describe("URL-based step routing", () => {
     await page.getByRole("textbox", { name: "W", exact: true }).fill("10");
     await page.getByRole("textbox", { name: "H", exact: true }).fill("10");
     await page.getByRole("textbox", { name: "lbs" }).fill("5");
-    await page.getByRole("button", { name: /Continue to shipping/i }).click();
+    await page.getByRole("button", { name: /^Continue$/ }).click();
 
     // Step 20: shipping — rates fetch on entry; pick is auto-applied.
     await expect(page).toHaveURL(/\/onboarding\/full-label\/shipping$/);
     await expect(page.getByText("$9.20").first()).toBeVisible({ timeout: 8000 });
-    await page.getByRole("button", { name: /Continue to payment/i }).click();
+    await page.getByRole("button", { name: /^Continue$/ }).click();
 
     // Step 11: email verify — auto-advances because session email matches.
     // URL momentarily hits /verify before jumping to /payment.
@@ -332,7 +332,7 @@ test.describe("URL-based step routing", () => {
     // Fill step 1
     await page.locator("#destination-name").fill("Jane Doe");
     await fillSmartAddress(page, "destination");
-    await page.getByRole("button", { name: /Continue to shipment details/i }).click();
+    await page.getByRole("button", { name: /^Continue$/ }).click();
 
     // Now on step 10 (slug `origin` since 2026-08-19)
     await expect(page).toHaveURL(/\/onboarding\/full-label\/origin$/);

@@ -151,7 +151,7 @@ test("skipping the origin right after arriving does not re-skip the destination"
   await page.locator("#destination-name").fill("Jane Doe");
   await fillSmartAddress(page, "destination");
   await page.locator("#destination-phone").fill("4155551234");
-  await page.getByRole("button", { name: /Continue to shipment details/i }).click();
+  await page.getByRole("button", { name: /^Continue$/ }).click();
 
   await expect(page).toHaveURL(/\/full-label\/origin$/);
   await skip(page).click();

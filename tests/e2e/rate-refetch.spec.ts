@@ -29,21 +29,21 @@ test("editing the parcel then returning re-fetches rates", async ({ page }) => {
   await page.locator("button", { hasText: /Montgomery/i }).first().click();
   await expect(page.getByText("Verified").nth(0)).toBeVisible({ timeout: 5000 });
   await page.locator("#destination-phone").fill("4155551234");
-  await page.getByRole("button", { name: /Continue to shipment details/i }).click();
+  await page.getByRole("button", { name: /^Continue$/ }).click();
 
   await page.locator("#origin-name").fill("John Smith");
   await page.locator("#origin-address").fill("149 New Montgomery");
   await page.locator("button", { hasText: /Montgomery/i }).first().click();
   await page.waitForTimeout(600);
   await page.locator("#origin-phone").fill("4155550142");
-  await page.getByRole("button", { name: /Continue to package details/i }).click();
+  await page.getByRole("button", { name: /^Continue$/ }).click();
 
   await page.getByRole("button", { name: /or fill in manually/i }).click();
   await page.getByRole("textbox", { name: "L", exact: true }).fill("10");
   await page.getByRole("textbox", { name: "W", exact: true }).fill("10");
   await page.getByRole("textbox", { name: "H", exact: true }).fill("10");
   await page.getByRole("textbox", { name: "lbs" }).fill("5");
-  await page.getByRole("button", { name: /Continue to shipping/i }).click();
+  await page.getByRole("button", { name: /^Continue$/ }).click();
   await expect(page.getByText("$9.20").first()).toBeVisible({ timeout: 8000 });
   const afterFirst = rateCalls;
   console.log("RATE_CALLS_AFTER_FIRST:", afterFirst);
@@ -53,7 +53,7 @@ test("editing the parcel then returning re-fetches rates", async ({ page }) => {
   await expect(page).toHaveURL(/\/full-label\/package$/);
   await page.getByRole("textbox", { name: "L", exact: true }).fill("30");
   await page.getByRole("textbox", { name: "lbs" }).fill("40");
-  await page.getByRole("button", { name: /Continue to shipping/i }).click();
+  await page.getByRole("button", { name: /^Continue$/ }).click();
   await expect(page).toHaveURL(/\/full-label\/shipping$/);
   await page.waitForTimeout(2500);
   console.log("RATE_CALLS_AFTER_EDIT:", rateCalls);

@@ -253,7 +253,7 @@ async function fillSmartAddress(page: Page, label: string) {
 async function gotoPackageStep(page: Page) {
   await page.locator("#origin-name").fill("John Smith");
   await fillSmartAddress(page, "origin");
-  await page.getByRole("button", { name: /Continue to package details/i }).click();
+  await page.getByRole("button", { name: /^Continue$/ }).click();
 }
 
 /** Drive Step 0 → Step 1 → Step 10, leaving the page on the ship-from address step. */
@@ -263,7 +263,7 @@ async function gotoStep10(page: Page) {
   await expect(page).toHaveURL(/\/full-label\/destination$/);
   await page.locator("#destination-name").fill("Jane Doe");
   await fillSmartAddress(page, "destination");
-  await page.getByRole("button", { name: /Continue to shipment details/i }).click();
+  await page.getByRole("button", { name: /^Continue$/ }).click();
   await expect(page.locator("#origin-name")).toBeVisible({ timeout: 5000 });
 }
 
@@ -387,7 +387,7 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
     await page.goto("/onboarding/full-label/destination");
     await page.locator("#destination-name").fill("Jane Doe");
     await fillSmartAddress(page, "destination");
-    await page.getByRole("button", { name: /Continue to shipment details/i }).click();
+    await page.getByRole("button", { name: /^Continue$/ }).click();
     await expect(page.locator("#origin-name")).toBeVisible({ timeout: 5000 });
 
     await page.getByRole("button", { name: /Sender will fill this in/i }).click();
@@ -476,7 +476,7 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
 
     // Click continue
     await page
-      .getByRole("button", { name: /Continue to shipment details/i })
+      .getByRole("button", { name: /^Continue$/ })
       .click();
 
     // ── Step 10: Full Shipping Details ───────────────────────
@@ -493,7 +493,7 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
     // ── Step 14: parcel + carrier ────────────────────────────
     // Split out of step 10 on 2026-08-18 so the address and the package can be
     // deferred independently.
-    await page.getByRole("button", { name: /Continue to package details/i }).click();
+    await page.getByRole("button", { name: /^Continue$/ }).click();
     // Parcel fields start collapsed behind "or fill in manually" (2026-08-22).
     await page.getByRole("button", { name: /or fill in manually/i }).click();
     await expect(
@@ -509,7 +509,7 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
     await page.getByRole("textbox", { name: "lbs" }).fill("5");
 
     // ── Step 20: shipping — rates fetch on entry ─────────────
-    await page.getByRole("button", { name: /Continue to shipping/i }).click();
+    await page.getByRole("button", { name: /^Continue$/ }).click();
     await expect(page).toHaveURL(/\/full-label\/shipping/);
     await expect(
       page.getByText(/USPS/i).first()
@@ -520,7 +520,7 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
 
     // Click continue to payment
     await page
-      .getByRole("button", { name: /Continue to payment/i })
+      .getByRole("button", { name: /^Continue$/ })
       .click();
 
     // ── Step 11: the Contact step ────────────────────────────
@@ -554,7 +554,7 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
 
     // Continue with nothing filled in.
     await page
-      .getByRole("button", { name: /Continue to shipment details/i })
+      .getByRole("button", { name: /^Continue$/ })
       .click();
 
     // Validation summary + specific errors render; the step does not advance.
@@ -571,7 +571,7 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
   }) => {
     await gotoStep10(page);
 
-    await page.getByRole("button", { name: /Continue to package details/i }).click();
+    await page.getByRole("button", { name: /^Continue$/ }).click();
 
     await expect(page.getByText("Please fix the following:")).toBeVisible();
     // "Origin address is required" renders both inline and in the summary list
@@ -585,7 +585,7 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
     await gotoStep10(page);
     await gotoPackageStep(page);
 
-    await page.getByRole("button", { name: /Continue to shipping/i }).click();
+    await page.getByRole("button", { name: /^Continue$/ }).click();
 
     await expect(page.getByText("Please fix the following:")).toBeVisible();
     await expect(page.getByText("Length is required")).toBeVisible();

@@ -35,11 +35,13 @@ function getVariants(direction: "forward" | "backward") {
     // as "skipping the origin did nothing", when it had actually re-skipped
     // the destination and bounced the flow back to origin.
     //
-    // Pinned by progress-bar.spec ("skipping the origin morphs its segment in
-    // place" + "skipping everything"), which fail without this line. A more
-    // direct test — two skips back to back with no wait — does NOT reproduce
-    // it: Playwright's click actionability check waits out the transition. If
-    // you are hunting this, reach for progress-bar.spec, not a minimal repro.
+    // Pinned by skip-to-sender.spec, "skipping the origin right after arriving
+    // does not re-skip the destination", which fails without this line. It
+    // reaches the origin step the SLOW way (filling the destination), which is
+    // what reproduces the race — a two-skip minimal repro passes either way,
+    // because Playwright's click actionability check waits the transition out.
+    // progress-bar.spec was the accidental guard until the bar was deleted
+    // with the rest of the progress UI (2026-08-23).
     exit: { opacity: 0, x: direction === "forward" ? -20 : 20, pointerEvents: "none" as const },
   };
 }
@@ -135,12 +137,10 @@ export default function RecipientOnboarding() {
             {currentStep === 1 && (
               <RecipientStepAddress
                 address={state.destinationAddress}
-                path={state.path}
                 sender={data.sender}
                 errors={getErrors(1)}
                 tried={!!state.tried[1]}
                 onAddressChange={(addr) => updateData({ destinationAddress: addr })}
-                onSenderResolved={(sender) => updateData({ sender })}
                 deferredDestination={data.deferredDestination}
                 onDeferDestination={() => deferToSender("destination")}
                 onUndoDeferDestination={() => keepIt("destination")}

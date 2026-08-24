@@ -219,6 +219,7 @@ src/components/recipient/
   StepQuestionHeader.tsx                    # The question + its one action (steps 1/10/14)
   SkipToSenderLink.tsx                      # That action: "Sender will fill this in →"
   ShipmentDetails.tsx                       # The one summary, payment step only
+  SavedAddressPicker.tsx                    # Deduped saved-address list (steps 1/10)
   RecipientStepAddress.tsx                  # Step 1: destination address only (shared)
   RecipientStepOrigin.tsx                   # Step 10: ship-from address
   RecipientStepPackage.tsx                  # Step 14: the parcel
@@ -268,6 +269,43 @@ The single summary in the flow, on the last screen before money moves. Replaces
   went, this is the only place the two are distinguished.
 - **Price**: the label path closes with `Total`. The flexible path carries no
   price at all — the cap belongs to the Estimated shipping cost panel below.
+
+### Choosing a saved address (2026-08-23)
+
+**Components**: `SavedAddressPicker.tsx`, `lib/savedAddresses.ts`
+
+"Use a saved address" used to take the most recent row silently, so a user with
+two saved addresses got whichever they typed last with no way to see or change
+it. It now expands a list in place under the field it fills (design option A of
+three), with a count on the trigger so the choice is visible before it is opened.
+
+**Dedupe is the load-bearing part.** `addresses` is an append-only log, not a
+curated book: every link creation INSERTS a row, and edits use insert-new-row +
+repoint-FK so shipment history keeps pointing at the address as it was
+(`links/index.ts`). Someone who has shipped to the same friend five times owns
+five near-identical rows, and listing the table raw shows that friend five
+times. `dedupeAddresses` collapses on a normalised `street1 + street2 + zip`
+key, newest first:
+
+- **Name is excluded from the key** — "Mum" and "Jane Doe" at one address are
+  one place. The newest row supplies the name, which is the one last typed.
+- **street2 is included** — a unit number distinguishes real addresses, so
+  `Apt 4B` and `Apt 4C` must stay separate.
+- Rows with no street are dropped; they come from partly-filled drafts.
+
+**`addresses.label` is still never written.** The column exists and is commented
+"e.g. Home, Office", but nothing populates it, so entries are identified by name
+and street. Nicknames would need a prompt at save time.
+
+**The picker does not infer who is sending.** The single-address shortcut set
+`sender='other'` on the destination step and `sender='self'` on the origin step,
+both reasoning "this is YOUR saved address". That held only while there was one
+address assumed to be the account holder's; picking from a list that may include
+a friend's implies nothing, so the picker fills fields and leaves `sender` alone.
+Skipping a question still resolves it, which is where the flow learns the answer.
+
+**The silent prefill is gone with it.** Dropping the most recent row into the
+form unannounced is indistinguishable from a picker that guessed.
 
 ### The estimate never exceeds the cap (2026-08-23)
 

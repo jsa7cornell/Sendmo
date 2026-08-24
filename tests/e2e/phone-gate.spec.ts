@@ -86,7 +86,7 @@ test.describe("phone gate — onboarding", () => {
     await verifyAddressNoPhone(page, "destination");
 
     // Continue with a blank phone → must be BLOCKED.
-    await page.getByRole("button", { name: /Continue to shipment details/i }).click();
+    await page.getByRole("button", { name: /^Continue$/ }).click();
     await expect(page.getByText(/Add a phone number/i).first()).toBeVisible();
     await expect(
       page.getByRole("heading", { name: /Where's it going/i }),
@@ -96,7 +96,7 @@ test.describe("phone gate — onboarding", () => {
 
     // Provide a valid phone → Continue now advances to step 10.
     await page.locator("#destination-phone").fill("4155550100");
-    await page.getByRole("button", { name: /Continue to shipment details/i }).click();
+    await page.getByRole("button", { name: /^Continue$/ }).click();
     await expect(page.locator("#origin-name")).toBeVisible({ timeout: 5000 });
   });
 
@@ -123,7 +123,7 @@ test.describe("phone gate — onboarding", () => {
     await page.locator("#destination-name").fill("Jane Doe");
     await verifyAddressNoPhone(page, "destination");
     await page.locator("#destination-phone").fill("4155550100");
-    await page.getByRole("button", { name: /Continue to shipment details/i }).click();
+    await page.getByRole("button", { name: /^Continue$/ }).click();
 
     // Step 10 (ship-from address) — address but NO phone. Since the parcel
     // moved to its own step on 2026-08-18, the phone is now enforced BEFORE
@@ -131,14 +131,14 @@ test.describe("phone gate — onboarding", () => {
     await expect(page.locator("#origin-name")).toBeVisible({ timeout: 5000 });
     await page.locator("#origin-name").fill("John Smith");
     await verifyAddressNoPhone(page, "origin");
-    await page.getByRole("button", { name: /Continue to package details/i }).click();
+    await page.getByRole("button", { name: /^Continue$/ }).click();
     await expect(page.getByText("Please fix the following:")).toBeVisible();
     await page.waitForTimeout(1800);
     expect(ratesCalls, "rates must NOT be fetched without an origin phone").toBe(0);
 
     // Add the origin phone → step 10 passes → the parcel step is reachable.
     await page.locator("#origin-phone").fill("4155550142");
-    await page.getByRole("button", { name: /Continue to package details/i }).click();
+    await page.getByRole("button", { name: /^Continue$/ }).click();
     // Parcel fields start collapsed behind "or fill in manually" (2026-08-22).
     await page.getByRole("button", { name: /or fill in manually/i }).click();
     await expect(
@@ -152,7 +152,7 @@ test.describe("phone gate — onboarding", () => {
     // moved to the shipping step, downstream of both halves). The 4×-regressed
     // invariant survives relocation: still zero calls until here…
     expect(ratesCalls, "the package step itself must not fetch rates").toBe(0);
-    await page.getByRole("button", { name: /Continue to shipping/i }).click();
+    await page.getByRole("button", { name: /^Continue$/ }).click();
     // …and the fetch fires on the shipping step, where every input is known.
     await expect
       .poll(() => ratesCalls, {

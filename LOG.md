@@ -12,6 +12,68 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-23] The address book is an append-only log, which is why picking one is not a small feature
+
+**Category:** feat | ux
+**Cross-link:** follows [PR #96](https://github.com/jsa7cornell/Sendmo/pull/96)
+
+**Browser-verified:**
+  mcp-session: Playwright-driven Chromium against localhost:5173, 2026-08-23
+  variants-covered: picker with 4 rows containing one duplicate pair → trigger reads "Use a saved address (3)", list shows Jane Doe (LAST USED) / Mum / Office, picking the second fills the name field with "Mum"; package step as one card; shipping step heading + Continue.
+
+**The ask was "let someone choose between two saved addresses".** Two schema
+facts made it bigger than that, and both were worth finding before designing
+rather than after:
+
+1. **`addresses.label` is never written.** The column exists, commented "e.g.
+   Home, Office" — and nothing populates it. Every row has `label = NULL`, so a
+   picker cannot lead with nicknames. Entries are name + street.
+2. **The table is an append-only log.** Every link creation INSERTS a row, and
+   edits use insert-new-row + repoint-FK to preserve shipment history
+   (`links/index.ts`). A user who has shipped to one friend five times owns five
+   near-identical rows. **A picker that lists the table raw shows that friend
+   five times.**
+
+So the feature is dedupe, and the list is the easy half. `dedupeAddresses`
+collapses on normalised `street1 + street2 + zip`, newest first. Name is
+excluded from the key — "Mum" and "Jane Doe" at one address are one place — and
+street2 is included, because `Apt 4B` and `Apt 4C` are two homes. Pure function,
+8 unit tests, because this is the part that will be wrong in a way nobody
+notices.
+
+**An inference died with the single address.** Both shortcuts used to resolve
+`sender`: the destination one set `'other'`, the origin one `'self'`, each
+reasoning "this is YOUR saved address, so you must be the other party". That was
+only sound while there was exactly one address assumed to be the account
+holder's. Picking from a list that may hold a friend's address implies nothing
+about who ships, so the picker fills fields and leaves `sender` alone — skipping
+a question still resolves it, which is where the flow actually learns the
+answer. The origin label John chose last round ("Use a saved address", replacing
+"I'm the sender — use my address") had already stopped claiming it.
+
+**The silent prefill went too.** Dropping the most recent row into the form
+unannounced is indistinguishable from a picker that guessed, and wrong the
+moment a second address exists.
+
+**Also this round:** every step's primary button now reads just "Continue" (the
+destination step's `path` prop became unused and was removed); the shipping step
+asks "What shipping method do you want?" as a page heading instead of labelling
+itself with an in-card `<h3>`; and the package step is ONE card — description,
+packaging, dimensions and weight separated by hairlines. The per-heading
+sparkles went with it: they marked "the Guestimator fills this" on three of the
+four headings, which told the reader nothing.
+
+**Two smaller things found while verifying, both fixed.** The estimated-cost
+card rendered `USPS GroundAdvantage` beside rate cards saying `Ground Advantage`
+— it was skipping the display-name formatters. And a blanket regex over the test
+suite retargeted `/links/new`'s "Continue to payment" button, which is a
+different surface whose button did not change; caught by that spec failing.
+
+**Playwright route ordering, for the next person who loses twenty minutes:**
+routes are matched LAST-registered first. Registering `**/rest/v1/addresses**`
+before `**/rest/v1/**` means the catch-all wins and the specific mock never
+fires. Register general first, specific last.
+
 ### [2026-08-23] Deleting the progress UI — three narrators replaced by one summary
 
 **Category:** fix | ux
