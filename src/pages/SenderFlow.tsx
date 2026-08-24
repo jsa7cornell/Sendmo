@@ -22,7 +22,7 @@ import SenderStepRates from "@/components/sender/SenderStepRates";
 import SenderStepReview from "@/components/sender/SenderStepReview";
 import {
   type SenderStep, type SenderParcel, type SenderQuestion,
-  loadSavedSender, saveSender, sortRatesForSender, pickBestPerCarrier,
+  sortRatesForSender, pickBestPerCarrier,
   planSenderSteps, destinationErrors, originErrors,
 } from "@/components/sender/senderState";
 
@@ -57,9 +57,12 @@ export default function SenderFlow() {
     return false;
   });
 
-  // Pre-fill from localStorage when available (non-blocking nit).
-  const saved = useMemo(() => loadSavedSender(), []);
-  const [senderAddress, setSenderAddress] = useState<AddressInput>(saved?.senderAddress ?? emptyAddress());
+  // No saved-sender store any more (2026-08-24). "Save my information on this
+  // device" is gone: it was a small convenience with a real footgun — on a
+  // link that supplied the ship-from address it persisted the CREATOR's
+  // address as this browser's "my information" — and most senders use a link
+  // once. Browser autofill covers the repeat case.
+  const [senderAddress, setSenderAddress] = useState<AddressInput>(emptyAddress());
   // Prefill the ship-from address from the link when its creator already knew
   // it (flexible only — `origin_prefill` is null for seller links).
   //
@@ -86,8 +89,7 @@ export default function SenderFlow() {
       verified: p.verified === true,
     });
   }, [linkData]);
-  const [senderEmail, setSenderEmail] = useState(saved?.senderEmail ?? "");
-  const [saveInfo, setSaveInfo] = useState(true);
+  const [senderEmail, setSenderEmail] = useState("");
   const [shareContact, setShareContact] = useState(false);
 
   const [parcel, setParcel] = useState<SenderParcel | null>(null);
@@ -118,7 +120,6 @@ export default function SenderFlow() {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [rateChanged, setRateChanged] = useState<BuyLabelRateChangedError | null>(null);
-  const [usedGuestimator, setUsedGuestimator] = useState(false);
 
   useEffect(() => {
     if (!shortCode) {
@@ -298,19 +299,6 @@ export default function SenderFlow() {
 
   async function handleConfirm() {
     if (!linkData || !selectedRate || !parcel || !easypostShipmentId) return;
-    if (saveInfo) {
-      // "Save my information on this device" saves THEIR information. When the
-      // link supplied the ship-from address, `senderAddress` is the creator's
-      // — persisting it would prefill a stranger's street the next time this
-      // browser ships on a link that does ask. Keep whatever address they had
-      // (usually none) and save the email either way.
-      const originFromLink = plan?.answered.includes("origin") ?? false;
-      saveSender(
-        originFromLink ? (saved?.senderAddress ?? emptyAddress()) : senderAddress,
-        senderEmail,
-      );
-    }
-
     setSubmitting(true);
     setSubmitError(null);
     try {
@@ -481,7 +469,6 @@ export default function SenderFlow() {
                     answered(p);
                   }}
                   onBack={history.length > 0 ? goBack : undefined}
-                  onGuestimatorUsed={() => setUsedGuestimator(true)}
                 />
               </motion.div>
             )}
@@ -498,7 +485,6 @@ export default function SenderFlow() {
                   onContinue={() => goTo("review")}
                   onBack={goBack}
                   onRetry={() => parcel && handleFetchRates(parcel)}
-                  usedGuestimator={usedGuestimator}
                 />
               </motion.div>
             )}
@@ -513,8 +499,6 @@ export default function SenderFlow() {
                   selectedRate={selectedRate}
                   senderEmail={senderEmail}
                   onSenderEmailChange={setSenderEmail}
-                  saveInfo={saveInfo}
-                  onSaveInfoChange={setSaveInfo}
                   shareContact={shareContact}
                   onShareContactChange={setShareContact}
                   onEditOrigin={() => editQuestion("origin")}

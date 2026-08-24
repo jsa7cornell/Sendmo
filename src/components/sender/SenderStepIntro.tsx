@@ -43,30 +43,24 @@ export default function SenderStepIntro({ linkData, questions, onContinue }: Pro
     },
   ];
 
-  // Said once, up front: the creator already answered everything else.
-  const alreadySet = questions.length === 1
-    ? "Everything else is already set."
-    : questions.length === 0
-      ? "Everything is already set."
-      : null;
-
   const cityState = linkData.recipient_city && linkData.recipient_state
     ? `${linkData.recipient_city}, ${linkData.recipient_state}`
     : null;
 
   return (
     <div className="space-y-6">
+      {/* No badge, no supporting line (2026-08-24). "SendMo Label Link" named
+          the artifact to someone who arrived by tapping it, and the header
+          already says whose page this is. The recipient flow shed the same
+          two devices on 2026-08-23. The destination line stays: it is a fact
+          about the shipment, not a caption for the headline. */}
       <div className="text-center space-y-2">
-        <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-primary/10 text-primary">
-          SendMo Label Link
-        </span>
         <h1 className="text-2xl font-bold text-foreground">{headline}</h1>
         {cityState && (
           <p className="text-muted-foreground flex items-center justify-center gap-1.5 text-sm">
             <MapPin className="w-3.5 h-3.5" /> Shipping to {cityState}
           </p>
         )}
-        {alreadySet && <p className="text-sm text-muted-foreground">{alreadySet}</p>}
       </div>
 
       <div className="bg-card rounded-2xl border border-border shadow-sm p-5 space-y-4">

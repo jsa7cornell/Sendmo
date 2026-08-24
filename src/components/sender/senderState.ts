@@ -87,47 +87,12 @@ export interface SenderParcel {
   packaging: PackagingType;
 }
 
-// localStorage versioning per author-response non-blocking nit. Bump VERSION
-// when the shape changes; reads tolerate version mismatch by returning null.
-//
-// v2 (2026-05-19): `phone` became a required field on AddressInput. A v1
-// payload saved before that change has a senderAddress with no `phone` key —
-// rehydrating it would seed a phone-less address into the sender flow. The
-// version bump makes loadSavedSender discard those stale entries so the user
-// re-enters (and the form collects) a phone. See finding 4,
-// 2026-05-20_phone-required-flow-audit.md.
-const STORAGE_KEY = "sendmo:sender:v1";
-const STORAGE_VERSION = 2;
-
-interface StoredSender {
-  version: number;
-  senderAddress: AddressInput;
-  senderEmail: string;
-}
-
-export function loadSavedSender(): { senderAddress: AddressInput; senderEmail: string } | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as StoredSender;
-    if (parsed.version !== STORAGE_VERSION) return null;
-    return { senderAddress: parsed.senderAddress, senderEmail: parsed.senderEmail };
-  } catch {
-    return null;
-  }
-}
-
-export function saveSender(senderAddress: AddressInput, senderEmail: string): void {
-  if (typeof window === "undefined") return;
-  try {
-    const payload: StoredSender = { version: STORAGE_VERSION, senderAddress, senderEmail };
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
-  } catch {
-    // localStorage may be unavailable (Safari private mode, quota exceeded).
-    // Silent — the save is a nice-to-have, not load-bearing.
-  }
-}
+// The saved-sender localStorage store (v1/v2, 2026-05-19) is gone as of
+// 2026-08-24, with the "Save my information on this device" checkbox that fed
+// it and the ship-again CTA that read it. On a link that supplied the
+// ship-from address it persisted the CREATOR's address as this browser's "my
+// information", and most senders use a link once. Browser autofill covers the
+// repeat case; nothing in the flow reads a saved sender any more.
 
 // "Preferred by {recipient}" badge: a rate is preferred if its EasyPost
 // service matches the link's preferred_speed tier. Re-uses the canonical

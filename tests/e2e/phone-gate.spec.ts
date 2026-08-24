@@ -354,12 +354,14 @@ test.describe("phone gate — sender flow on a phoneless link", () => {
     await page.locator('[id="Sender address-phone"]').fill("4155550100");
     await page.getByRole("button", { name: /Continue/i }).click();
 
-    // Parcel question.
+    // Parcel question — the shared <ParcelQuestion> keeps the fields behind
+    // "or fill in manually" until the Guestimator fills them.
     await expect(page.getByRole("heading", { name: /What are you shipping\?/i })).toBeVisible({ timeout: 8000 });
-    await page.getByPlaceholder("Length").fill("10");
-    await page.getByPlaceholder("Width").fill("10");
-    await page.getByPlaceholder("Height").fill("10");
-    await page.getByPlaceholder("e.g. 5").fill("5");
+    await page.getByRole("button", { name: /or fill in manually/i }).click();
+    await page.getByPlaceholder("L", { exact: true }).fill("10");
+    await page.getByPlaceholder("W", { exact: true }).fill("10");
+    await page.getByPlaceholder("H", { exact: true }).fill("10");
+    await page.getByPlaceholder("lbs", { exact: true }).fill("5");
 
     // Request rates → the mocked 400 fires.
     await page.getByRole("button", { name: /See shipping options/i }).click();

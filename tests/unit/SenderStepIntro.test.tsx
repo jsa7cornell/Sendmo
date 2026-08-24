@@ -59,7 +59,9 @@ describe("SenderStepIntro", () => {
     expect(screen.getByText(/Tell us where it's going/i)).toBeInTheDocument();
     expect(screen.queryByText(/Tell us about your package/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/Tell us where it's shipping from/i)).not.toBeInTheDocument();
-    expect(screen.getByText(/Everything else is already set/i)).toBeInTheDocument();
+    // No supporting line under the headline (2026-08-24) — and no badge.
+    expect(screen.queryByText(/already set/i)).not.toBeInTheDocument();
+    expect(screen.queryByText("SendMo Label Link")).not.toBeInTheDocument();
   });
 
   it("asks for everything when the link left everything open", () => {

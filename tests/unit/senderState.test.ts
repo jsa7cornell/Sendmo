@@ -1,62 +1,14 @@
-import { describe, it, expect, beforeEach, beforeAll } from "vitest";
+import { describe, it, expect } from "vitest";
 
-// JSDOM's localStorage implementation in this project's vitest config is
-// incomplete (no setItem/clear). Install an in-memory polyfill before any
-// senderState helpers (which call window.localStorage) are exercised.
-beforeAll(() => {
-  const store = new Map<string, string>();
-  const mock = {
-    getItem: (k: string) => store.has(k) ? store.get(k)! : null,
-    setItem: (k: string, v: string) => { store.set(k, String(v)); },
-    removeItem: (k: string) => { store.delete(k); },
-    clear: () => { store.clear(); },
-    key: (i: number) => Array.from(store.keys())[i] ?? null,
-    get length() { return store.size; },
-  };
-  Object.defineProperty(globalThis, "localStorage", { value: mock, writable: true, configurable: true });
-  Object.defineProperty(window, "localStorage", { value: mock, writable: true, configurable: true });
-});
+// The localStorage polyfill and its round-trip block went with the saved-sender
+// store itself (2026-08-24) — nothing in senderState touches storage now.
 import {
-  loadSavedSender, saveSender,
   speedTierForService, isPreferredRate, dropOffCopy, isValidEmail,
 } from "../../src/components/sender/senderState";
 import type { ShippingRate } from "../../src/lib/types";
 import type { LinkData } from "../../src/lib/api";
 
 describe("senderState helpers", () => {
-  describe("localStorage round-trip", () => {
-    beforeEach(() => {
-      // JSDOM provides localStorage as a property but `.clear()` is sometimes
-      // missing in older versions; remove the one key we touch by name.
-      try { globalThis.localStorage.removeItem("sendmo:sender:v1"); } catch { /* noop */ }
-    });
-
-    it("returns null when storage is empty", () => {
-      expect(loadSavedSender()).toBeNull();
-    });
-
-    it("round-trips sender address + email", () => {
-      const addr = { name: "Jane", street: "1 A St", city: "SF", state: "CA", zip: "94107", phone: "4155550100" };
-      saveSender(addr, "jane@example.com");
-      const loaded = loadSavedSender();
-      expect(loaded).not.toBeNull();
-      expect(loaded?.senderAddress).toEqual(addr);
-      expect(loaded?.senderEmail).toBe("jane@example.com");
-    });
-
-    it("ignores stored payloads with mismatched version", () => {
-      globalThis.localStorage.setItem("sendmo:sender:v1", JSON.stringify({
-        version: 999, senderAddress: {}, senderEmail: "x@y.z",
-      }));
-      expect(loadSavedSender()).toBeNull();
-    });
-
-    it("tolerates malformed JSON without throwing", () => {
-      globalThis.localStorage.setItem("sendmo:sender:v1", "{not json");
-      expect(loadSavedSender()).toBeNull();
-    });
-  });
-
   describe("speedTierForService (delegates to canonical classifySpeedTier)", () => {
     it("classifies express services", () => {
       expect(speedTierForService("UPS", "NextDayAir")).toBe("express");
