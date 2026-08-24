@@ -12,6 +12,21 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-23] Resume offer removed — /onboarding always starts a new shipment
+
+**Category:** fix | onboarding
+**Cross-link:** replaces the Continue / Start fresh banner added 2026-08-18 (review finding 1)
+
+**What changed:** `OnboardingEntry` in `src/App.tsx` no longer reads a draft or renders the "You have a shipment in progress" banner. It now does one thing: `clearFlow()` then redirect to `/onboarding/full-label/destination`. Clicking to create a shipment always starts blank.
+
+**Why the clear stays:** the provider hydrates whatever `loadPersisted()` returns, so dropping the banner without clearing storage would silently rehydrate the last shipment's addresses and resolved sender into a "new" flow — the exact bug the 2026-08-18 door was built to prevent. Removing the *offer* is not the same as removing the *reset*.
+
+**Left in place:** `loadResumable` and `startFreshFlow` in `src/lib/recipientFlowStorage.ts` now have no production callers (unit tests still cover them). Not deleted in this change — out of scope, and they document the TTL/finished-draft semantics.
+
+**Browser-verified:**
+- spec: `tests/e2e/onboarding.spec.ts` — 15/15 passed
+- variants-covered: fresh entry with no draft; entry with a finished draft in localStorage (asserts no banner + blank destination fields); deep-linked step entry
+
 ### [2026-08-23] Worktree graveyard cleared — 96MB, 39 branches, and one rescued migration
 
 **Category:** chore | repo-hygiene
