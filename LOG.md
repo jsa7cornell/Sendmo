@@ -12,6 +12,17 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-23] Worktree graveyard cleared — 96MB, 39 branches, and one rescued migration
+
+**Category:** chore | repo-hygiene
+**Cross-link:** follows the ESLint-ignores finding in the CI truth-up entry below; WISHLIST "rescued from the worktree graveyard"
+
+**What was cleared:** all 15 stale worktrees under `.claude/worktrees/` (96MB — 12 orphaned May dirs git no longer registered, plus 3 registered ones verified clean/pushed before `git worktree remove`), the external `sendmo-who-sending-wt` worktree (clean, its design-brief commit pushed, the UX-refresh it briefed shipped as PRs #94–97), and **39 local branches fully merged into main** (`git branch -d` only — the 49 survivors hold unmerged commits and need human judgment, not a sweep).
+
+**The rescue (the reason this wasn't just `rm -rf`):** the `priceless-cray-b8a429` worktree held real never-landed work from 2026-07-05 — a draft migration adding `is_test => NOT p_is_live` to the viewer-link INSERT in `admin_insert_shipment`, plus its LOG entry. It missed its window and migration number 036 was later taken by cron sweeps. Preserved at `proposals/2026-07-05_draft-migration_admin-insert-shipment-link-is-test.sql` with a WISHLIST entry carrying the landing checklist (re-verify canonical body, renumber, schema-gate through John). **Lesson: an abandoned worktree is not junk until its diff says so — this one contained the only copy of a correct fix.**
+
+**Left in place, deliberately:** the two scratchpad worktrees serving open PRs #89 + #93 (unmerged flow-redesign work from 2026-08-20), and 23 fully-merged **remote** branches (bulk remote deletion blocked by the permission layer; command handed to John — or flip GitHub's "Automatically delete head branches" setting).
+
 ### [2026-08-23] CI truth-up — the e2e "debt" was already paid; actions bumped v4 → v7
 
 **Category:** chore | ci
