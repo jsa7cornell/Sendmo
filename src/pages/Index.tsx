@@ -1,23 +1,15 @@
 import { Link2, Shield, Zap, ArrowRight, CheckCircle2, Users, CreditCard, Package } from "lucide-react";
-import { Navigate } from "react-router-dom";
-import SendMoLogo from "@/components/SendMoLogo";
 import { Button } from "@/components/ui/button";
 import AppHeader from "@/components/AppHeader";
-import { useAuth } from "@/contexts/AuthContext";
+import SiteFooter from "@/components/SiteFooter";
 import { SELLER_LINK_VISIBLE, SELLER_LINK_LIVE } from "@/lib/featureFlags";
 
 export default function Index() {
-  // T3-3: signed-in users land on their dashboard, not the marketing homepage.
-  // Gate on `!loading` so we never flash-bounce while the session is resolving
-  // (loading starts true; a premature redirect would strand a returning visitor
-  // before auth settles). Signed-out visitors always get the marketing page.
-  const { user, loading } = useAuth();
-  if (!loading && user) {
-    return <Navigate to="/dashboard" replace />;
-  }
-
+  // Everyone lands here at sendmo.co — signed in or not. (Reverses T3-3, which
+  // bounced signed-in visitors to /dashboard; the dashboard is now one click
+  // away in the header user menu instead of a forced destination.)
   return (
-    <div className="min-h-screen bg-gradient-to-b from-background to-muted/50">
+    <div className="min-h-screen bg-gradient-to-b from-background to-muted/50 flex flex-col">
       <AppHeader />
 
       {/* Hero */}
@@ -223,21 +215,7 @@ export default function Index() {
         </div>
       </section>
 
-      {/* Footer */}
-      <footer className="border-t border-border bg-card">
-        <div className="container max-w-5xl mx-auto px-4 py-8 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-2">
-            <SendMoLogo className="w-5 h-5" />
-            <span className="text-sm text-muted-foreground">SendMo — Prepaid shipping made easy</span>
-          </div>
-          <div className="flex items-center gap-4 text-sm text-muted-foreground">
-            <a href="/faq" className="hover:text-foreground transition-colors">FAQ</a>
-            <a href="/privacy" className="hover:text-foreground transition-colors">Privacy</a>
-            <a href="/terms" className="hover:text-foreground transition-colors">Terms</a>
-            <a href="mailto:support@sendmo.co" className="hover:text-foreground transition-colors">Support</a>
-          </div>
-        </div>
-      </footer>
+      <SiteFooter />
     </div>
   );
 }

@@ -26,7 +26,8 @@ describe("App Routing", () => {
     it("renders the FAQ page on /faq", () => {
         window.history.pushState({}, "Test page", "/faq");
         render(<App />);
-        expect(screen.getByText("FAQ")).toBeInTheDocument();
+        // "FAQ" also appears as a header nav button — match the page heading.
+        expect(screen.getByRole("heading", { name: "FAQ" })).toBeInTheDocument();
     });
 
     it("redirects unauthenticated users from /dashboard to /login", async () => {

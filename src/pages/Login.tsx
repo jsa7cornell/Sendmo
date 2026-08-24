@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from "react";
-import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
+import { Link, Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { Mail, ArrowRight, CheckCircle2, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -7,6 +7,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/lib/supabase";
+import SendMoLogo from "@/components/SendMoLogo";
+import SiteFooter from "@/components/SiteFooter";
 
 export default function Login() {
   const { session, loading: authLoading, signIn, signInWithGoogle } = useAuth();
@@ -129,16 +131,20 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-background to-muted/50 flex items-center justify-center px-4">
+    <div className="min-h-screen bg-gradient-to-b from-background to-muted/50 flex flex-col">
+      <div className="flex-1 flex items-center justify-center px-4 py-10">
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3 }}
         className="w-full max-w-sm"
       >
-        {/* Logo / brand */}
+        {/* Logo / brand — clicks home, like the header does everywhere else */}
         <div className="text-center mb-8">
-          <h1 className="text-2xl font-bold text-foreground">SendMo</h1>
+          <Link to="/" className="inline-flex items-center gap-2 hover:opacity-80 transition-opacity">
+            <SendMoLogo className="w-8 h-8" />
+            <span className="text-2xl font-bold text-foreground">SendMo</span>
+          </Link>
           <p className="text-sm text-muted-foreground mt-1">Prepaid shipping made easy</p>
         </div>
 
@@ -326,11 +332,14 @@ export default function Login() {
         </div>
 
         <p className="text-center text-xs text-muted-foreground mt-6">
-          <a href="/" className="hover:text-foreground transition-colors">
+          <Link to="/" className="hover:text-foreground transition-colors">
             Back to home
-          </a>
+          </Link>
         </p>
       </motion.div>
+      </div>
+
+      <SiteFooter />
     </div>
   );
 }

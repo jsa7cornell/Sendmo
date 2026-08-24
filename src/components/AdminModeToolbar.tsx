@@ -8,9 +8,8 @@ import { useAuth, type AdminMode } from "@/contexts/AuthContext";
 //   - Live Comp    (amber): EasyPost LIVE, no Stripe charge
 //   - Live Charge  (red): EasyPost LIVE + real Stripe charge
 //
-// Rendered in two surfaces because the app has two header conventions:
-//   (a) AppHeader.tsx for pages that use the shared shell
-//   (b) Dashboard.tsx (and similar) which have their own inline header
+// Rendered once, in AppHeader.tsx — every page now mounts the shared header,
+// so there is no second inline-header surface to duplicate it into.
 //
 // Self-gates on isAdmin — renders nothing for non-admins.
 export default function AdminModeToolbar() {

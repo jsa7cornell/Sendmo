@@ -1,6 +1,6 @@
-// T3-3: signed-in users landing on `/` are redirected to `/dashboard`;
-// signed-out users (and the auth-loading window) still see the marketing page.
-// Covers the three variants of the guard in src/pages/Index.tsx.
+// `/` is the marketing homepage for everyone — signed in or not. This reverses
+// T3-3, which bounced signed-in visitors to /dashboard; the dashboard is now
+// reached from the header user menu instead. Covers all three auth states.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
@@ -31,7 +31,7 @@ beforeEach(() => {
   mockAuth = { user: null, loading: false };
 });
 
-describe("Index landing redirect (T3-3)", () => {
+describe("Index landing (no auth redirect)", () => {
   it("signed-out visitor sees the marketing homepage (no redirect)", () => {
     mockAuth = { user: null, loading: false };
     renderAt();
@@ -47,10 +47,10 @@ describe("Index landing redirect (T3-3)", () => {
     expect(screen.queryByText("DASHBOARD PAGE")).not.toBeInTheDocument();
   });
 
-  it("signed-in visitor is redirected to /dashboard", () => {
+  it("signed-in visitor also sees the marketing homepage (no bounce)", () => {
     mockAuth = { user: { id: "u1" }, loading: false };
     renderAt();
-    expect(screen.getByText("DASHBOARD PAGE")).toBeInTheDocument();
-    expect(screen.queryAllByText(/Prepaid shipping made easy/i).length).toBe(0);
+    expect(screen.getAllByText(/Prepaid shipping made easy/i).length).toBeGreaterThan(0);
+    expect(screen.queryByText("DASHBOARD PAGE")).not.toBeInTheDocument();
   });
 });

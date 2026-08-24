@@ -12,6 +12,23 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-23] Sitewide chrome — one header, one footer, and `/` is the homepage for everyone
+
+**Category:** fix | chrome
+**Cross-link:** reverses T3-3 (signed-in landing redirect); new `src/components/SiteFooter.tsx`
+
+**What changed:**
+- **`/` is the marketing homepage for everyone.** `Index.tsx` no longer bounces a signed-in visitor to `/dashboard`. The dashboard is reached from the header user menu instead of being a forced destination. Test `tests/unit/IndexRedirect.test.tsx` renamed to `IndexLanding.test.tsx` and its third case inverted.
+- **The footer is shared and everywhere.** The homepage's inline `<footer>` became `SiteFooter.tsx` (brand mark + FAQ / Privacy / Terms / Support, all `<Link>`s now, `mt-auto` so it sits at the bottom of short pages). Mounted on `/`, `/dashboard`, `/login`, `/faq`, `/privacy`, `/terms`, `/onboarding/*`, `/s/:shortCode`, `/sell`, `/links/new`, `/links/:id/edit`, `/t/:code`, and 404.
+- **The logo is everywhere and always goes home.** The dashboard had its own bespoke header with no brand mark; it now mounts the shared `AppHeader` and drops its duplicate user menu + `AdminModeToolbar` (both already live in `AppHeader`). `/privacy` and `/terms` had no chrome at all; `/faq` was a bare stub and got a real page body. `/login` keeps its centered card but its wordmark is now a clickable logo.
+- **Signing out lands on `/`.** `AuthContext.signOut` now does `window.location.assign("/")` after `supabase.auth.signOut()`. Before this, signing out from `/dashboard` left the user on a protected route and `ProtectedRoute` bounced them to `/login` — the sign-out flow ended on a sign-in page. A full document load (not a router navigate) also clears per-page state from the signed-in session.
+
+**Deliberately excluded from the chrome:** `/t/:code/print` (print surface — chrome would print), the `/admin*` pages, and `/label-test` / the `*-preview` routes (internal tools).
+
+**Browser-verified:**
+- spec: `tests/e2e/site-chrome.spec.ts` — 11/11 passed; full mocked e2e suite 104 passed / 6 skipped; unit 750/750
+- variants-covered: signed-out `{/, /faq, /privacy, /terms, /onboarding, /login, 404}` × {logo visible, footer visible}; logo-click-to-home from an interior page; footer-logo-click-to-home; signed-in `/dashboard` {header logo, footer}; sign-out from `/dashboard` → lands on `/` with the hero visible
+
 ### [2026-08-23] Resume offer removed — /onboarding always starts a new shipment
 
 **Category:** fix | onboarding

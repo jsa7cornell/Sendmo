@@ -190,6 +190,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signOut = useCallback(async () => {
     await supabase.auth.signOut();
+    // Land on the homepage, not wherever the user happened to be. A signed-out
+    // user sitting on /dashboard would otherwise get bounced by ProtectedRoute
+    // to /login. A full document load (rather than a router navigate) also
+    // clears any per-page state left over from the signed-in session.
+    window.location.assign("/");
   }, []);
 
   // Admin toolbar setter — calls the server-side RPC (Phase B B2 fix).
