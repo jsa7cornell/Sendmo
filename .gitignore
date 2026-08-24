@@ -53,3 +53,7 @@ supabase/.temp/
 *.xlsx
 *.pptx
 .vercel
+
+# Archived embedded repos — not real submodules (no .gitmodules); keep out of status
+_archive/backend/
+_archive/frontend/
