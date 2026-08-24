@@ -758,10 +758,10 @@ nothing left to type, under a sticky header reading "Shipping to *this prepaid
 link*".
 
 ### Step 0: Intro
-- Badge: "SendMo Label Link"
+- No badge, no supporting line (2026-08-24) — "SendMo Label Link" named the artifact to someone who arrived by tapping it.
 - Title: "You're sending a package to {recipientName}" — title-cased for display via [`src/lib/name.ts`](src/lib/name.ts) `displayName()`, so a casually typed "john anderson" reads "John Anderson". Display only: the stored address and the printed label keep what the recipient entered. Applies to every sender-facing use of the name (Intro, Rates, Review).
 - Insurance banner (conditional): green badge if recipient enabled protection
-- How it works: one numbered line per question **this** link asks, then "Choose a shipping method" and "Print the label and ship". With a single open question it also says "Everything else is already set."
+- How it works: one numbered line per question **this** link asks, then "Choose a shipping method" and "Print the label and ship".
 - **CTA**: "Get Started"
 
 ### Step 1a: "Where is it going?" (destination-deferred links only)
@@ -772,10 +772,8 @@ link*".
 - **Creator-carried prefills (2026-08-18, PR #68)** — a flexible link's GET payload may include `origin_prefill` (full ship-from address) and `package_prefill` (dims + weight). Both are **null for seller links** — there the origin is the seller's and the reader is a stranger buyer, so it stays city/state. Trade-off, stated: anyone holding a flexible link's URL can see the street the creator entered (extends the existing flex-payload stance).
 
 ### Step 1c: "What are you shipping?" (when the link didn't answer it)
-- **Sendmo Package Guestimator** -- Same AI pre-filler as full label path
-- **Item description** -- Optional
-- **Packaging type** -- 3-option grid (Box, Envelope, Tube)
-- **Package dimensions** -- L x W x H, **weight** in pounds
+- **The same component the creator answers this with** — [`components/shipment/ParcelQuestion.tsx`](src/components/shipment/ParcelQuestion.tsx), shared by both flows since 2026-08-24 (the sender's own four-card version is gone). Describe-the-product first; the fields (description, packaging, dimensions, pounds + ounces) stay behind "or fill in manually" until the Guestimator fills them, a value is already present, or a validation error names one.
+- Each flow adapts its own state to `ParcelDraft` ([`parcelDraft.ts`](src/components/shipment/parcelDraft.ts)) at the boundary: the creator to `RecipientFlowState`, the sender to `SenderParcel`.
 - **Validation**: Same try-then-show pattern. Red borders, summary list.
 - **CTA**: "Continue" while questions remain, "See shipping options" on the last one
 
@@ -783,6 +781,8 @@ link*".
 - Radio-style cards: carrier + service + delivery estimate
 - **No pricing shown** (recipient pays)
 - "Preferred by {recipientName}" badge on methods matching recipient's speed tier
+- **"Most economical option for {recipientName}"** on the cheapest rate (2026-08-24). The sender can't see prices, so the one kindness they can do the payer has to be said in words; the $-tier column shows relative cost but never says which option is cheapest.
+- No Guestimator beta note — it described how the dimensions were arrived at, on a screen about choosing a carrier.
 - Default selection: first method matching `standard` speed tier
 - **Rate Filtering (Production)**: Methods filtered by recipient's speed preference, price cap, and distance. Methods exceeding cap shown disabled.
 - **CTA**: "Continue"
@@ -791,8 +791,8 @@ link*".
 - **The same Shipment Details card the link's creator saw before paying** — [`components/shipment/ShipmentDetailsCard.tsx`](src/components/shipment/ShipmentDetailsCard.tsx), a presentational 2×2 of FROM / TO / PARCEL / VIA with a pencil on each editable cell. Each side builds its own cells: the creator's from `RecipientFlowState` ([`recipient/ShipmentDetails.tsx`](src/components/recipient/ShipmentDetails.tsx), which adds the estimated-cost cell and the total row), the sender's from the link plus what they entered. **The sender's copy carries no price** — no estimate cell, no total; just "Shipping is prepaid by {recipient} — you're not charged."
 - Editing a cell re-opens that one question and walks back out **through the rates step**, because a changed address or parcel re-prices the shipment.
 - The TO cell is editable only on a destination-deferred link; on an ordinary flex link the sender may not see or change that address (Rule 7 — city/state only).
-- **Email input** for tracking updates
-- **Checkboxes**: "Save my information" (checked), "Share contact info" (unchecked)
+- **Email input** for tracking updates (required — the cancel flow's durable auth surface)
+- **Checkbox**: "Share contact info with {recipient}" (unchecked). **"Save my information on this device" is gone (2026-08-24)**, with the `sendmo:sender` localStorage store behind it: on a link that supplied the ship-from address it persisted the CREATOR's address as that browser's "my information", most senders use a link once, and browser autofill covers the repeat case.
 - **CTA**: "Confirm and generate label" -> AlertDialog confirmation
 - **Validation**: Email format validated inline if entered
 

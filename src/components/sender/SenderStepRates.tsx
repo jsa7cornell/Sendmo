@@ -16,20 +16,18 @@ interface Props {
   onContinue: () => void;
   onBack: () => void;
   onRetry: () => void;
-  usedGuestimator?: boolean;
 }
 
 // SPEC §8 Step 2. NO prices visible — recipient pays. "Preferred by {name}"
 // badge marks rates whose service tier matches the link's preferred_speed.
 export default function SenderStepRates({
-  linkData, rates, loading, error, selectedRate, onSelectRate, onContinue, onBack, onRetry, usedGuestimator,
+  linkData, rates, loading, error, selectedRate, onSelectRate, onContinue, onBack, onRetry,
 }: Props) {
   if (loading) {
     return (
       <div className="text-center py-16 space-y-3">
         <Loader2 className="w-8 h-8 text-primary animate-spin mx-auto" />
         <p className="text-foreground font-medium">Finding shipping options…</p>
-        <p className="text-sm text-muted-foreground">Checking rates from available carriers</p>
       </div>
     );
   }
@@ -75,26 +73,26 @@ export default function SenderStepRates({
 
   const recipient = displayName(linkData.recipient_name) || "the recipient";
 
+  // The sender doesn't see prices, so "cheapest" has to be said in words —
+  // it is the one thing they can do for the person paying. Named rather than
+  // left to the $-tier column, which shows relative cost but never says which
+  // option is kindest to the payer.
+  const cheapestId = rates.reduce(
+    (min, r) => (r.display_price_cents < min.display_price_cents ? r : min),
+    rates[0],
+  ).id;
+
   return (
     <div className="space-y-5">
       <div className="text-center">
         <h1 className="text-2xl font-bold text-foreground">Choose a shipping option</h1>
-        <p className="text-muted-foreground mt-1 text-sm">
-          Prepaid by {recipient}. Pick the speed that works best.
-        </p>
       </div>
-
-      {usedGuestimator && (
-        <p className="text-[11px] text-muted-foreground leading-snug rounded-xl bg-muted/40 border border-border px-3 py-2">
-          Magic Guestimator is in beta. Shipping options shown are based on the AI's predicted package
-          dimensions and weight — the carrier may adjust if measurements differ at the warehouse.
-        </p>
-      )}
 
       <div className="space-y-3">
         {sortRatesForSender(rates, linkData).map((rate) => {
           const isSelected = selectedRate?.id === rate.id;
           const preferred = isPreferredRate(rate, linkData);
+          const cheapest = rate.id === cheapestId;
           const tier = priceTierSymbol(rate.display_price_cents);
           return (
             <button
@@ -117,6 +115,14 @@ export default function SenderStepRates({
                     {preferred && (
                       <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-primary/10 text-primary whitespace-nowrap">
                         Preferred by {recipient}
+                      </span>
+                    )}
+                    {cheapest && (
+                      // emerald, not `success`: --success is a CSS variable
+                      // with no Tailwind color mapped to it, so bg-success/10
+                      // renders nothing at all.
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-100 text-emerald-700 whitespace-nowrap">
+                        Most economical option for {recipient}
                       </span>
                     )}
                   </div>

@@ -51,7 +51,7 @@ curl -s -u "$(op read op://Secrets/EASYPOST_TEST_API_KEY/credential):" \
 Helpers live in [`_shared/easypost-rates.ts`](supabase/functions/_shared/easypost-rates.ts) rather than inline, for the reason `pricing.ts` and `ledger.ts` do: `labels/index.ts` calls `Deno.serve` at module load, so nothing in it is reachable from Vitest. `fetch` is injected so the tests drive every branch offline.
 
 **Browser-verified:**
-- spec: `tests/unit/easypostRates.test.ts` — 17/17 pass, covering both lookup surfaces, rate-absent, rerate match/no-match, carrier-AND-service matching, the price cap at the incident's real $19.91, and the comp exemption
+- spec: `tests/unit/easypostRates.test.ts` — 17/17 pass (suite 765/765 on the merged tree), covering both lookup surfaces, rate-absent, rerate match/no-match, carrier-AND-service matching, the price cap at the incident's real $19.91, and the comp exemption
 - variants-covered: rate resolvable / absent / unparseable; rerate recovers / service gone / over cap / rerate call fails; comp vs charged
 - **Not covered, stated plainly:** the orchestration *inside* `labels/index.ts` (404 → rerate → retry → fall through to refund) has no executing test — `labels/index.ts` cannot be imported under Vitest, and reproducing a real EasyPost 404 in a browser is not something this session could stage. The helpers it calls are covered; the wiring between them is read-verified only. Closing that needs the integration harness, tracked with the sibling gap below.
 
@@ -76,7 +76,26 @@ The badge is rendered by **Stripe's own Payment Element**. SendMo passes `automa
 
 So a customer paying by bank is debited, gets no label, sees copy inviting a retry, and never reaches the EasyPost buy — which means the auto-refund never runs either. No test covers `us_bank_account` anywhere in `tests/`. Until ACH is deliberately supported, the bank method should be turned off in the Stripe Dashboard (or the PI restricted to `card`).
 
-**Test state at time of writing:** unit 762/762 pass; e2e 108 passed / 5 skipped; integration api 36 passed / 1 failed / 4 skipped. The one failure is a **stale test, not a product bug** — `tests/integration/recipient-flow-api.test.ts:69` posts `{from, to}` to `/rates`, which has required `from_address`/`to_address` plus a phone on both since 2026-05-19, so it gets a 400.
+**Test state at time of writing:** unit 762/762 pass on the pre-merge branch (765/765 after merging origin/main, which retired the ShipAgainCTA specs); e2e 108 passed / 5 skipped; integration api 36 passed / 1 failed / 4 skipped. The one failure is a **stale test, not a product bug** — `tests/integration/recipient-flow-api.test.ts:69` posts `{from, to}` to `/rates`, which has required `from_address`/`to_address` plus a phone on both since 2026-05-19, so it gets a 400.
+### [2026-08-24] Sender flow polish — one parcel component for both flows, and three devices deleted
+
+**Category:** fix | sender-flow
+**Cross-link:** follows #105 (one question per step) and #106 (the save-info bug); John's punch list
+
+Six changes, all narrowing what the sender is shown to what they actually need:
+
+1. **The parcel question is now literally the same component in both flows** — [`components/shipment/ParcelQuestion.tsx`](src/components/shipment/ParcelQuestion.tsx) plus its `ParcelDraft` boundary type. The creator's side got the describe-it-first, fields-revealed-after shape on 2026-08-23; the sender's kept a four-card stack with every field visible. Each flow adapts its own state at the boundary (`RecipientFlowState` ⇄ draft ⇄ `SenderParcel`); the recipient's rendering is byte-identical, which is why its e2e specs are untouched and green.
+2. **Shipping-option step:** the Guestimator beta note is gone (it explained where the dimensions came from, on a screen about carriers), and the cheapest rate now carries **"Most economical option for {recipient}"**. The sender sees no prices, so the one kindness they can do the payer has to be said in words.
+3. **Intro:** the "SendMo Label Link" badge is gone — it named the artifact to someone who arrived by tapping it.
+4. **Every heading's supporting line is gone**, matching the recipient flow's 2026-08-23 pass: "Prepaid by X. Pick the speed that works best.", "One last look before we generate the label.", "Checking rates from available carriers", "Everything else is already set." Field-level hints stay.
+5. **"Save my information on this device" is gone**, and the `sendmo:sender` localStorage store with it (`loadSavedSender` / `saveSender`, their unit tests, and the version-2 migration). It was a small convenience with a real footgun — see the #106 entry — and most senders use a link once. Browser autofill covers the repeat case.
+6. **The ship-again CTA is gone** (`ShipAgainCTA`, its visibility predicate and its test). "Ship another package to the same recipient?" invited a second label on someone else's prepaid link from anyone holding the URL.
+
+**Gotcha worth keeping:** `--success` is a CSS variable in `index.css` with **no Tailwind color mapped to it** — `bg-success/10 text-success` compiles to nothing and renders an unstyled span. Caught by looking at the screenshot, not by tsc or the test (which asserted the text, which was there). The badge uses `emerald-100/700`, as SellerBuilder does. Note `text-success` appears elsewhere in the app (Dashboard, TrackingPage) and is silently inert there too — not fixed here, flagged for whoever owns that sweep.
+
+**Browser-verified:**
+- spec: `tests/e2e/sender-questions.spec.ts` — 8/8 (new: the cheapest-option badge lands on the USPS card and not the UPS one, no beta note, no heading subtext); `phone-gate.spec.ts` updated for the shared reveal; full mocked e2e 107 passed; unit 748/748
+- variants-covered: rates step {cheapest badge on the right card, absent beta note}; parcel question {collapsed by default, revealed by "or fill in manually", prefilled values reveal it}; intro {no badge, no supporting line}; review {no save-info checkbox}; recipient package step unchanged (its own specs green)
 
 ### [2026-08-24] "Save my information" was saving someone else's information
 

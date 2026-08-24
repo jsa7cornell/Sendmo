@@ -6,7 +6,6 @@ import { Package, Truck, CheckCircle2, AlertCircle, Clock, ArrowLeft, MapPin, Ex
 import { carrierTrackingUrl } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase as supabaseClient } from "@/lib/supabase";
-import ShipAgainCTA from "@/components/tracking/ShipAgainCTA";
 import CancelLabelDialog from "@/components/tracking/CancelLabelDialog";
 import CancelledShipmentBanner from "@/components/tracking/CancelledShipmentBanner";
 import DetailsCard from "@/components/tracking/DetailsCard";
@@ -194,7 +193,7 @@ function isTerminalStatus(status: string): boolean {
 export default function TrackingPage() {
   const { code } = useParams<{ code: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { user, isAdmin, profileLoaded } = useAuth();
+  const { isAdmin, profileLoaded } = useAuth();
   const navigate = useNavigate();
 
   // ?fresh=1 → just landed here from the sender/recipient flow's Confirm.
@@ -884,14 +883,12 @@ export default function TrackingPage() {
                 </>
               )}
 
-              {/* Ship-Again upsell — visibility per the layered signal in ShipAgainCTA */}
-              <ShipAgainCTA
-                isFresh={showCelebration}
-                isAuthenticated={!!user}
-                viewerIsRecipient={data.viewer_is_recipient}
-                linkShortCode={data.link_short_code}
-                recipientName={null}
-              />
+              {/* No ship-again upsell (2026-08-24). "Ship another package to
+                  the same recipient?" invited a second label on someone else's
+                  prepaid link from anyone holding the URL — an abuse surface
+                  for the payer and a confusing offer for the sender, in
+                  exchange for a re-ship case that is rare and served by the
+                  link itself. */}
 
               <Link to="/" className="inline-flex items-center gap-1 text-sm text-primary hover:underline">
                 <ArrowLeft className="w-4 h-4" /> Back to SendMo
