@@ -44,6 +44,7 @@ export default function SavedAddressPicker({ onSelect, label = "Use a saved addr
   useEffect(() => {
     if (!user) return;
     let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- standard fetch-effect loading flag; the codebase has no query library to own this.
     setLoading(true);
 
     (async () => {

@@ -19,9 +19,8 @@
 
 import { requireAdmin } from "../_shared/auth.ts";
 import { log } from "../_shared/logger.ts";
-import { resolveRecovery } from "../_shared/adjustments.ts";
 import { createAdjustmentRecharge } from "../_shared/stripe.ts";
-import type { AdjustmentShipment, AdjustmentPaymentContext } from "../_shared/adjustments.ts";
+import type { AdjustmentShipment } from "../_shared/adjustments.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",

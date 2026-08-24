@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/refs -- this provider deliberately reads directionRef during render: the animation direction is set by the same navigation action that triggers the render, and making it state would re-render every consumer a second time just to animate. The rule's data-flow tracking flags every downstream use of the value, so a per-line disable cannot scope it — this is the one sanctioned ref-in-render in the file. */
 import { createContext, useContext, useCallback, useEffect, useState, useRef } from "react";
 import { flushSync } from "react-dom";
 import { useNavigate, useParams } from "react-router-dom";
@@ -410,6 +411,7 @@ export function RecipientFlowProvider({ children }: { children: React.ReactNode 
 
 // ─── Hook ───────────────────────────────────────────────────
 
+// eslint-disable-next-line react-refresh/only-export-components -- context-module pattern: the hook lives beside its provider; splitting it out would churn every consumer for HMR granularity alone.
 export function useRecipientFlowContext() {
   const ctx = useContext(RecipientFlowContext);
   if (!ctx) throw new Error("useRecipientFlowContext must be used within RecipientFlowProvider");

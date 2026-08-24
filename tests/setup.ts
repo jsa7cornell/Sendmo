@@ -40,5 +40,5 @@ if (typeof window.PointerEvent === 'undefined') {
             this.isPrimary = params.isPrimary || false;
         }
     }
-    (window as any).PointerEvent = PointerEvent;
+    Object.assign(window, { PointerEvent });
 }

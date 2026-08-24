@@ -74,6 +74,7 @@ export default function RecipientStepContact({ state, onUpdate, onContinue, onBa
     const authEmail = user.email;
     if (authEmail.toLowerCase() !== (email || "").toLowerCase()) {
       onUpdate({ email: authEmail, verification_email: authEmail, email_verified: true });
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- syncing UI copy from an external auth event; the oauthLockApplied ref guarantees this runs once.
       setInfo(`Signed in as ${authEmail}. Shipment notifications will go to that address.`);
     } else {
       onUpdate({ email_verified: true });
@@ -87,7 +88,9 @@ export default function RecipientStepContact({ state, onUpdate, onContinue, onBa
   // (auth events, ?confirmed=1 strip, info toast) clear and restart the 1s
   // timer, delaying the advance indefinitely under load.
   const onContinueRef = useRef(onContinue);
-  onContinueRef.current = onContinue;
+  useEffect(() => {
+    onContinueRef.current = onContinue;
+  });
   useEffect(() => {
     if (state.email_verified) {
       const timer = setTimeout(() => onContinueRef.current(), 1000);

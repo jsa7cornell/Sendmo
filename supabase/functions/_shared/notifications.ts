@@ -11,6 +11,9 @@
 import { sendEmail } from "./resend.ts";
 import { trackingUpdateEmail, labelConfirmationEmail, senderLabelReadyEmail } from "./email-templates.ts";
 import { log } from "./logger.ts";
+// Type-only: erased by Vitest's TS transform so unit tests never resolve the
+// URL import (same load-bearing pattern as ledger.ts/budget.ts — keep `type`).
+import type { SupabaseClient } from "jsr:@supabase/supabase-js@2.97.0";
 
 // Event type for the one-time label-creation confirmation (payer only).
 // Distinct from the tracking-status events (in_transit/out_for_delivery/
@@ -122,7 +125,7 @@ const channelHandlers: Record<string, ChannelHandler> = {
  * Fire-and-forget: never throws, logs all outcomes.
  */
 export async function dispatchNotifications(
-  supabase: any,
+  supabase: SupabaseClient,
   shipmentId: string,
   eventType: string,
   ctx: NotificationContext,

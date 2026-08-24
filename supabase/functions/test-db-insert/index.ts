@@ -32,7 +32,7 @@ Deno.serve(async (req: Request) => {
         const testUserId = "b0000000-0000-0000-0000-000000000000"; // unique, valid uuid
 
         // Create mock user in auth.users first to satisfy foreign keys
-        const { data: authData, error: authError } = await supabase.auth.admin.createUser({
+        const { error: authError } = await supabase.auth.admin.createUser({
             id: testUserId,
             email: "test_label_generator@example.com",
             password: "TestPassword123!@",
@@ -112,8 +112,9 @@ Deno.serve(async (req: Request) => {
         }
 
         return new Response(JSON.stringify({ success: true }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
-    } catch (err: any) {
+    } catch (err) {
         console.error("Test DB insert error:", err);
-        return new Response(JSON.stringify({ error: err.message || "Failed to insert test records" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        const message = (err as { message?: string })?.message || "Failed to insert test records";
+        return new Response(JSON.stringify({ error: message }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 });

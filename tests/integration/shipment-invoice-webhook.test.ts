@@ -22,6 +22,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 // Mock all side-effect modules before importing.
 vi.mock("../../supabase/functions/_shared/stripe.ts", () => ({
@@ -286,9 +287,8 @@ describe("shipment.invoice webhook arm — payload parsing + UPSERT shape", () =
             user_id: SHIPMENT_FIXTURE.user_id,
             customer_id: "cus_test_1",
         };
-        // deno-lint-ignore no-explicit-any
         const resolution = await resolveRecovery({
-            supabase: client as any,
+            supabase: client as unknown as SupabaseClient,
             sessionId: "test-session",
             shipment,
             carrierAdjustmentId: "carradj-uuid-1",
@@ -403,9 +403,8 @@ describe("shipment.invoice webhook arm — payload parsing + UPSERT shape", () =
             user_id: SHIPMENT_FIXTURE.user_id,
             customer_id: "cus_test_1",
         };
-        // deno-lint-ignore no-explicit-any
         const resolution = await resolveRecovery({
-            supabase: client as any,
+            supabase: client as unknown as SupabaseClient,
             sessionId: "test-session",
             shipment,
             carrierAdjustmentId: "carradj-uuid-3",
@@ -437,9 +436,8 @@ describe("shipment.invoice webhook arm — payload parsing + UPSERT shape", () =
             user_id: SHIPMENT_FIXTURE.user_id,
             customer_id: "cus_test_1",
         };
-        // deno-lint-ignore no-explicit-any
         const resolution = await resolveRecovery({
-            supabase: client as any,
+            supabase: client as unknown as SupabaseClient,
             sessionId: "test-session",
             shipment,
             carrierAdjustmentId: "carradj-uuid-4",
@@ -470,9 +468,8 @@ describe("shipment.invoice webhook arm — payload parsing + UPSERT shape", () =
             user_id: compShipment.user_id,
             customer_id: null,
         };
-        // deno-lint-ignore no-explicit-any
         const resolution = await resolveRecovery({
-            supabase: client as any,
+            supabase: client as unknown as SupabaseClient,
             sessionId: "test-session",
             shipment,
             carrierAdjustmentId: "carradj-uuid-5",

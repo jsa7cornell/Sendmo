@@ -96,6 +96,7 @@ export default function LabelPrintPage() {
 
   useEffect(() => {
     if (!code) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- standard fetch-effect loading flag; the codebase has no query library to own this.
     setLoading(true);
     (async () => {
       const { data: { session } } = await supabaseClient.auth.getSession();

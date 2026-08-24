@@ -1,5 +1,4 @@
 import { test, expect } from '@playwright/test';
-import * as fs from 'fs';
 
 test('Test buying a label on the existing local host', async ({ page }) => {
     // Collect console logs and network response errors

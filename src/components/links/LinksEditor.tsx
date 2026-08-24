@@ -22,6 +22,7 @@ export interface FlexFormValue {
   size_hint: "envelope" | "smallbox" | "largebox" | null;
 }
 
+// eslint-disable-next-line react-refresh/only-export-components -- the form's default-value factory belongs beside its FlexFormValue type; LinksNew/LinksEdit import it from here.
 export function defaultFlexValue(): FlexFormValue {
   return {
     address: emptyAddress(),

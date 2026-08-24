@@ -1,4 +1,5 @@
 import { createClient } from "jsr:@supabase/supabase-js@2.97.0";
+import type { SupabaseClient } from "jsr:@supabase/supabase-js@2.97.0";
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { log } from "../_shared/logger.ts";
 import { sendEmail } from "../_shared/resend.ts";
@@ -65,8 +66,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 //   2026-05-22_reconciliation-and-carrier-adjustments §3 + ## Decision D1
 //   (full-label save-card extension).
 async function getOrCreateCustomerForUser(
-    // deno-lint-ignore no-explicit-any
-    supabase: any,
+    supabase: SupabaseClient,
     userId: string,
     email: string | null,
     liveMode: boolean,

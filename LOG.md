@@ -49,6 +49,24 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 **Browser-verified:**
 - spec: `tests/e2e/site-chrome.spec.ts` — 11/11 passed; full mocked e2e suite 104 passed / 6 skipped; unit 750/750
 - variants-covered: signed-out `{/, /faq, /privacy, /terms, /onboarding, /login, 404}` × {logo visible, footer visible}; logo-click-to-home from an interior page; footer-logo-click-to-home; signed-in `/dashboard` {header logo, footer}; sign-out from `/dashboard` → lands on `/` with the hero visible
+### [2026-08-23] Lint debt cleared 57 → 0; lint is now a merge gate
+
+**Category:** chore | ci | code-quality
+**Cross-link:** WISHLIST "Clean up lint errors" (closed); eslint.config.js; scripts/predeploy.sh; .github/workflows/test.yml
+
+**Browser-verified:**
+  spec: mocked e2e suite in the lint-cleanup worktree — 95 passed / 6 skipped / 0 failed (1.7m), CI mock env; plus 750 unit tests + `tsc -b` clean
+  variants-covered: onboarding contact auto-advance (the one behavioral edit — ref-mirror moved into an effect) via onboarding/auth e2e specs; admin, tracking, links, payment surfaces via their existing specs; edge-function changes are type-only (Deno strips annotations at runtime).
+
+**How 57 errors resolved — the mix matters more than the count:**
+- **~13 were a config gap, not code:** the codebase already used the `_`-prefix convention for intentionally-unused bindings; `no-unused-vars` was never told (`argsIgnorePattern`/`varsIgnorePattern: '^_'`).
+- **~14 genuinely dead:** unused imports across test files, an abandoned `buildSupabaseMock`, and a `transactionsChain` sitting directly above the `transactionsChainV2` that replaced it.
+- **16 `any`s → real types.** Edge functions now take `SupabaseClient` via the load-bearing `import type` pattern (ledger.ts's — the `type` keyword keeps Vitest from resolving the jsr: URL). Catch-blocks narrow instead of assuming.
+- **1 real behavioral fix:** RecipientStepContact wrote a ref during render (`onContinueRef.current = onContinue`); moved into an effect — same semantics, rule-clean.
+- **11 deliberate patterns suppressed WITH REASONS, not rewritten:** reset-on-open modal effects (RefundModal, AddCardModal — the latter is the BUG-A regression magnet; its disable comment says "do not restructure casually"), fetch-effect `setLoading(true)` (no query library owns this), context-module hook exports (useAuth, useRecipientFlowContext), a test-only visibility predicate export, and RecipientFlowContext's direction ref (file-level single-rule disable — the react-hooks/refs data-flow tracking flags every downstream use, so per-line can't scope it). shadcn `ui/` files are exempt from `react-refresh` (their variant exports are the library's documented surface).
+- **Left as warnings, deliberately:** 2 admin-page `exhaustive-deps` (fixing = `useCallback` refactors with re-fetch risk; warnings don't gate).
+
+**The flip:** `npm run lint` is now bare in test.yml (no `|| true`, no `continue-on-error`) and blocking in predeploy.sh. The suppression comments are the contract: new errors block merges, and a suppressed pattern needs a written reason.
 
 ### [2026-08-23] Resume offer removed — /onboarding always starts a new shipment
 
@@ -76,6 +94,8 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 **The rescue (the reason this wasn't just `rm -rf`):** the `priceless-cray-b8a429` worktree held real never-landed work from 2026-07-05 — a draft migration adding `is_test => NOT p_is_live` to the viewer-link INSERT in `admin_insert_shipment`, plus its LOG entry. It missed its window and migration number 036 was later taken by cron sweeps. Preserved at `proposals/2026-07-05_draft-migration_admin-insert-shipment-link-is-test.sql` with a WISHLIST entry carrying the landing checklist (re-verify canonical body, renumber, schema-gate through John). **Lesson: an abandoned worktree is not junk until its diff says so — this one contained the only copy of a correct fix.**
 
 **Left in place, deliberately:** the two scratchpad worktrees serving open PRs #89 + #93 (unmerged flow-redesign work from 2026-08-20), and 23 fully-merged **remote** branches (bulk remote deletion blocked by the permission layer; command handed to John — or flip GitHub's "Automatically delete head branches" setting).
+
+**Post-merge addendum (2026-08-23, same night): the shared-checkout hazard ran BOTH directions, and PR #100's diff is wider than its message claims.** While this cleanup session and a concurrent onboarding session both worked in the primary checkout: (1) this session's `git add -A` swept the other session's uncommitted `src/App.tsx` edit (70 lines — the onboarding resume-offer removal) into `f64ebc8`, so **#100 silently shipped that feature**; its LOG entry landed separately as PR #101. (2) The other session's commit landed on this session's checked-out branch. (3) Worst of the three, from the other session's own report: it ran `git push -q origin main` while HEAD was on the wrong branch — which pushes the **stale local `main` ref**, does nothing, and **exits 0**, so it falsely reported its work "pushed to main." Three rules fall out: **concurrent sessions work in `git worktree`s, never the shared checkout; stage explicit paths (`git add <file>…`), never `-A`, when the checkout could be shared; and after any push, verify with `git log origin/<branch>` — exit 0 is not proof.**
 
 ### [2026-08-23] CI truth-up — the e2e "debt" was already paid; actions bumped v4 → v7
 

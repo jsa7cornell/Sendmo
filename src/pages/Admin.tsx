@@ -285,7 +285,7 @@ export default function Admin() {
             const rows: ReportRow[] = [];
 
             for (const link of (rawData || [])) {
-                const email = Array.isArray(link.profiles) ? link.profiles[0]?.email : (link.profiles as any)?.email;
+                const email = Array.isArray(link.profiles) ? link.profiles[0]?.email : (link.profiles as { email?: string } | null)?.email;
                 const shs = Array.isArray(link.shipments) ? link.shipments : (link.shipments ? [link.shipments] : []);
 
                 if (shs.length === 0) {
@@ -374,8 +374,8 @@ export default function Admin() {
                 }
             }
             setData(rows);
-        } catch (err: any) {
-            setError(err.message);
+        } catch (err) {
+            setError(err instanceof Error ? err.message : String(err));
         } finally {
             setLoading(false);
         }

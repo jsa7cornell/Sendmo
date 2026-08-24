@@ -144,7 +144,7 @@ Deno.serve(async (req: Request) => {
           estDelivery = tracker.est_delivery_date || null;
 
           trackingEvents = (tracker.tracking_details || [])
-            .map((d: any) => ({
+            .map((d: { message?: string; status?: string; datetime?: string; tracking_location?: { city?: string; state?: string } }) => ({
               message: d.message || "",
               status: d.status || "",
               datetime: d.datetime || "",

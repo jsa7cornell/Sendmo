@@ -16,7 +16,7 @@
  *   2026-05-23 H4 reconciliation entry — original Path B introduction.
  */
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { resolvePiContextWithFallback } from "../../supabase/functions/_shared/intents.ts";
 
 type Maybe<T> = { data: T | null; error: null };

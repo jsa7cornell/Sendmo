@@ -20,8 +20,7 @@
  *   proposals/2026-05-23_pre-launch-handoff-plan.md §Package H5
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { SupabaseClient } from "@supabase/supabase-js";
+import { describe, it, expect, vi } from "vitest";
 
 // ── Mock builders ────────────────────────────────────────────────────────────
 
