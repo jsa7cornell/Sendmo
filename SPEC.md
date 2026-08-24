@@ -708,9 +708,11 @@ discounted = amount x 0.95 (for Balance tab)
 
 ---
 
-## 8. Sender Flow (/send/:linkId)
+## 8. Sender Flow (/s/:shortCode)
 
-5-step linear wizard. Sender never pays. Progress bar is NOT clickable.
+Linear wizard, **one question per step, and only the questions the link leaves
+open** (2026-08-24). Sender never pays, and never sees the price. There is no
+progress bar — it went the way the recipient flow's did, for the same reason.
 
 ### Step -1: Link Preview (how `/s/:shortCode` unfurls in iMessage / WhatsApp / Slack)
 
@@ -729,24 +731,53 @@ Card stays `summary_large_image` on the shared brand image (`/og-image.png`) —
 
 `seller_link` keeps the neutral copy on purpose: the **buyer** pays there, so "already covered" would be false. Revisit when that flow launches.
 
+### Which questions get asked — `planSenderSteps`
+
+The creator of a flexible link may already have answered the ship-from address
+and the parcel; the destination may be theirs (never shown — Rule 7) or
+deliberately deferred to the sender. [`senderState.planSenderSteps`](src/components/sender/senderState.ts)
+turns the link's GET payload into the list of questions this sender is asked:
+
+| Question | Asked when |
+|---|---|
+| Destination | `needs_destination` — the creator deferred it |
+| Ship from | no `origin_prefill`, **or** a prefill without a usable phone (the carriers reject a phone-less from-address, so a half-answer is still a question) |
+| Parcel | no `package_prefill`, or one missing dims/weight |
+
+A question the LINK answers is never asked. A saved address in the sender's own
+browser is *not* an answer — it prefills a question that is still theirs.
+`origin_prefill` **wins over** the saved address (changed 2026-08-24): it is the
+link's answer, and the step that would have let the sender correct it is now
+skipped, so deferring to stale localStorage there would ship the package from
+whatever address that browser used last.
+
+Before this the flow showed every sender the same "Package Details" mega-step —
+destination, ship-from and parcel on one screen — so a sender whose link had
+answered two of the three scrolled past pre-filled cards to reach a form with
+nothing left to type, under a sticky header reading "Shipping to *this prepaid
+link*".
+
 ### Step 0: Intro
 - Badge: "SendMo Label Link"
-- Title: "You're sending a package to {recipientName}" — title-cased for display via [`src/lib/name.ts`](src/lib/name.ts) `displayName()`, so a casually typed "john anderson" reads "John Anderson". Display only: the stored address and the printed label keep what the recipient entered. Applies to every sender-facing use of the name (Intro, Package, Rates, Review).
+- Title: "You're sending a package to {recipientName}" — title-cased for display via [`src/lib/name.ts`](src/lib/name.ts) `displayName()`, so a casually typed "john anderson" reads "John Anderson". Display only: the stored address and the printed label keep what the recipient entered. Applies to every sender-facing use of the name (Intro, Rates, Review).
 - Insurance banner (conditional): green badge if recipient enabled protection
-- How it works: 3 numbered steps in styled cards
+- How it works: one numbered line per question **this** link asks, then "Choose a shipping method" and "Print the label and ship". With a single open question it also says "Everything else is already set."
 - **CTA**: "Get Started"
 
-### Step 1: Origin & Package Details
-- **Destination display** -- "Shipping to {recipientName} -- {address}"
-- **Ship from** -- Address input with auto-verification
-- **Creator-carried prefills (2026-08-18, PR #68)** — a flexible link's GET payload may include `origin_prefill` (full ship-from address) and `package_prefill` (dims + weight) when the creator answered those questions before deferring the rest. `SenderFlow` seeds the address and parcel from them; anything the sender typed, or a saved-sender draft, wins. Both are **null for seller links** — there the origin is the seller's and the reader is a stranger buyer, so it stays city/state. Trade-off, stated: anyone holding a flexible link's URL can see the street the creator entered (extends the existing flex-payload stance).
+### Step 1a: "Where is it going?" (destination-deferred links only)
+- Full address + phone, same completeness bar as every address the carriers see.
+
+### Step 1b: "Where's it shipping from?" (when the link didn't answer it)
+- Address input with auto-verification; phone required (FedEx/UPS reject the label without one).
+- **Creator-carried prefills (2026-08-18, PR #68)** — a flexible link's GET payload may include `origin_prefill` (full ship-from address) and `package_prefill` (dims + weight). Both are **null for seller links** — there the origin is the seller's and the reader is a stranger buyer, so it stays city/state. Trade-off, stated: anyone holding a flexible link's URL can see the street the creator entered (extends the existing flex-payload stance).
+
+### Step 1c: "What are you shipping?" (when the link didn't answer it)
 - **Sendmo Package Guestimator** -- Same AI pre-filler as full label path
 - **Item description** -- Optional
 - **Packaging type** -- 3-option grid (Box, Envelope, Tube)
-- **Package dimensions** -- L x W x H
-- **Package weight** -- Pounds + Ounces
-- **Validation**: Same try-then-show pattern. Red borders, "Required" labels, summary list.
-- **CTA**: "See rates"
+- **Package dimensions** -- L x W x H, **weight** in pounds
+- **Validation**: Same try-then-show pattern. Red borders, summary list.
+- **CTA**: "Continue" while questions remain, "See shipping options" on the last one
 
 ### Step 2: Choose Shipping Method
 - Radio-style cards: carrier + service + delivery estimate
@@ -757,8 +788,9 @@ Card stays `summary_large_image` on the shared brand image (`/og-image.png`) —
 - **CTA**: "Continue"
 
 ### Step 3: Review & Confirm
-- **Package summary** card with "Edit" button -> back to step 1
-- **Shipping method** card with "Edit" button -> back to step 2 (includes insurance status)
+- **The same Shipment Details card the link's creator saw before paying** — [`components/shipment/ShipmentDetailsCard.tsx`](src/components/shipment/ShipmentDetailsCard.tsx), a presentational 2×2 of FROM / TO / PARCEL / VIA with a pencil on each editable cell. Each side builds its own cells: the creator's from `RecipientFlowState` ([`recipient/ShipmentDetails.tsx`](src/components/recipient/ShipmentDetails.tsx), which adds the estimated-cost cell and the total row), the sender's from the link plus what they entered. **The sender's copy carries no price** — no estimate cell, no total; just "Shipping is prepaid by {recipient} — you're not charged."
+- Editing a cell re-opens that one question and walks back out **through the rates step**, because a changed address or parcel re-prices the shipment.
+- The TO cell is editable only on a destination-deferred link; on an ordinary flex link the sender may not see or change that address (Rule 7 — city/state only).
 - **Email input** for tracking updates
 - **Checkboxes**: "Save my information" (checked), "Share contact info" (unchecked)
 - **CTA**: "Confirm and generate label" -> AlertDialog confirmation

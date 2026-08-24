@@ -3,7 +3,8 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog";
-import { Package, Truck, ArrowLeft, Loader2, AlertCircle, Pencil } from "lucide-react";
+import { ArrowLeft, Loader2, AlertCircle } from "lucide-react";
+import ShipmentDetailsCard, { type DetailCell } from "@/components/shipment/ShipmentDetailsCard";
 import type { LinkData } from "@/lib/api";
 import type { AddressInput, ShippingRate } from "@/lib/types";
 import { carrierDisplayName, serviceDisplayName } from "@/lib/utils";
@@ -23,6 +24,8 @@ interface Props {
   onSaveInfoChange: (v: boolean) => void;
   shareContact: boolean;
   onShareContactChange: (v: boolean) => void;
+  onEditOrigin: () => void;
+  onEditDestination?: () => void;
   onEditPackage: () => void;
   onEditRate: () => void;
   onConfirm: () => Promise<void>;
@@ -30,13 +33,20 @@ interface Props {
   submitError: string | null;
 }
 
-// SPEC §8 Step 3: Review & Confirm. Edit buttons on summary cards;
-// email-for-tracking field; two checkboxes; AlertDialog-equivalent confirm.
+// SPEC §8 Step 3: Review & Confirm — the last screen before a label exists.
+//
+// The summary is the SAME block the link's creator saw before they paid
+// (components/shipment/ShipmentDetailsCard). Two bespoke cards used to state
+// the same four facts in a different shape on this side, which meant the two
+// halves of one shipment described it differently. What the sender's copy
+// omits is price: they never see what the shipment costs, so there is no
+// estimate cell and no total row.
 export default function SenderStepReview({
   linkData, senderAddress, destinationOverride, parcel, selectedRate,
   senderEmail, onSenderEmailChange,
   saveInfo, onSaveInfoChange, shareContact, onShareContactChange,
-  onEditPackage, onEditRate, onConfirm, submitting, submitError,
+  onEditOrigin, onEditDestination, onEditPackage, onEditRate,
+  onConfirm, submitting, submitError,
 }: Props) {
   const [confirmOpen, setConfirmOpen] = useState(false);
   // Email is required (decided 2026-05-12 — cancel-flow proposal). The cancel
@@ -46,18 +56,52 @@ export default function SenderStepReview({
   const emailFormatBad = senderEmail.length > 0 && !isValidEmail(senderEmail);
   const emailInvalid = emailMissing || emailFormatBad;
 
-  // Phase 3: on a destination-deferred link the "To" line is the address the
+  // Phase 3: on a destination-deferred link the "to" cell is the address the
   // SENDER just entered — linkData carries none. `recipient` (the payer who
   // prepaid) keeps its linkData meaning in the other copy.
   const recipient = displayName(linkData.recipient_name) || "the recipient";
-  const cityState = destinationOverride?.city && destinationOverride.state
-    ? `${destinationOverride.city}, ${destinationOverride.state}`
+  const toDeferred = !!destinationOverride;
+  const toPrimary = toDeferred
+    ? (displayName(destinationOverride.name) || destinationOverride.name || "—")
+    : recipient;
+  // Rule 7: on an ordinary flex link the sender never sees the delivery
+  // street — city/state only. A destination they typed themselves is theirs.
+  const toSecondary = toDeferred
+    ? destinationOverride.street || ""
     : linkData.recipient_city && linkData.recipient_state
       ? `${linkData.recipient_city}, ${linkData.recipient_state}`
-      : "this prepaid link";
-  const toName = destinationOverride?.name
-    ? displayName(destinationOverride.name) || destinationOverride.name
-    : recipient;
+      : "";
+
+  const parcelWeightLbs = parcel.weightOz / 16;
+  const cells: DetailCell[] = [
+    {
+      key: "from",
+      primary: senderAddress.name || "—",
+      secondary: senderAddress.street || "",
+      onEdit: onEditOrigin,
+    },
+    {
+      key: "to",
+      primary: toPrimary,
+      secondary: toSecondary,
+      // Only editable when the sender is the one who supplied it.
+      onEdit: toDeferred ? onEditDestination : undefined,
+    },
+    {
+      key: "parcel",
+      primary: `${parcel.length}×${parcel.width}${parcel.packaging !== "envelope" ? `×${parcel.height}` : ""} in`,
+      secondary: `${Number(parcelWeightLbs.toFixed(2))} lb`,
+      onEdit: onEditPackage,
+    },
+    {
+      key: "via",
+      primary: `${carrierDisplayName(selectedRate.carrier)} ${serviceDisplayName(selectedRate.service)}`,
+      secondary: selectedRate.estimated_days
+        ? `${selectedRate.estimated_days} business day${selectedRate.estimated_days > 1 ? "s" : ""}`
+        : "",
+      onEdit: onEditRate,
+    },
+  ];
 
   async function handleConfirm() {
     setConfirmOpen(false);
@@ -73,59 +117,10 @@ export default function SenderStepReview({
         </p>
       </div>
 
-      {/* Package summary */}
-      <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
-        <div className="flex items-start justify-between mb-3">
-          <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
-            <Package className="w-4 h-4" /> Your package
-          </h3>
-          <button
-            type="button"
-            onClick={onEditPackage}
-            className="text-xs text-primary hover:underline inline-flex items-center gap-1"
-          >
-            <Pencil className="w-3 h-3" /> Edit
-          </button>
-        </div>
-        <dl className="text-sm space-y-1.5">
-          <div className="flex justify-between"><dt className="text-muted-foreground">From</dt>
-            <dd className="font-medium text-foreground text-right">{senderAddress.city}, {senderAddress.state}</dd></div>
-          <div className="flex justify-between"><dt className="text-muted-foreground">To</dt>
-            <dd className="font-medium text-foreground text-right">{toName} · {cityState}</dd></div>
-          <div className="flex justify-between"><dt className="text-muted-foreground">Packaging</dt>
-            <dd className="font-medium text-foreground capitalize">{parcel.packaging}</dd></div>
-          <div className="flex justify-between"><dt className="text-muted-foreground">Dimensions</dt>
-            <dd className="font-medium text-foreground">{parcel.length} × {parcel.width} × {parcel.height} in</dd></div>
-          <div className="flex justify-between"><dt className="text-muted-foreground">Weight</dt>
-            <dd className="font-medium text-foreground">{(parcel.weightOz / 16).toFixed(2)} lb</dd></div>
-          {parcel.description && (
-            <div className="flex justify-between"><dt className="text-muted-foreground">Item</dt>
-              <dd className="font-medium text-foreground truncate ml-2 max-w-[60%]">{parcel.description}</dd></div>
-          )}
-        </dl>
-      </div>
-
-      {/* Shipping method summary */}
-      <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
-        <div className="flex items-start justify-between mb-3">
-          <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
-            <Truck className="w-4 h-4" /> Shipping method
-          </h3>
-          <button
-            type="button"
-            onClick={onEditRate}
-            className="text-xs text-primary hover:underline inline-flex items-center gap-1"
-          >
-            <Pencil className="w-3 h-3" /> Edit
-          </button>
-        </div>
-        <p className="text-sm font-medium text-foreground">
-          {carrierDisplayName(selectedRate.carrier)} {serviceDisplayName(selectedRate.service)}
-        </p>
-        <p className="text-xs text-muted-foreground mt-0.5">
-          {selectedRate.estimated_days
-            ? `${selectedRate.estimated_days} business day${selectedRate.estimated_days > 1 ? "s" : ""}`
-            : "Estimated delivery TBD"} · Prepaid by {recipient}
+      <div className="space-y-2">
+        <ShipmentDetailsCard title="Shipment Details" cells={cells} />
+        <p className="max-w-md text-xs text-muted-foreground">
+          Shipping is prepaid by {recipient} — you're not charged.
         </p>
       </div>
 

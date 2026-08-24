@@ -14,18 +14,29 @@ import type { LinkData } from "@/lib/api";
 import type { AddressInput, ShippingRate } from "@/lib/types";
 import { emptyAddress } from "@/lib/utils";
 
-import SenderProgressBar from "@/components/sender/SenderProgressBar";
 import SenderStepIntro from "@/components/sender/SenderStepIntro";
+import SenderStepDestination from "@/components/sender/SenderStepDestination";
+import SenderStepOrigin from "@/components/sender/SenderStepOrigin";
 import SenderStepPackage from "@/components/sender/SenderStepPackage";
 import SenderStepRates from "@/components/sender/SenderStepRates";
 import SenderStepReview from "@/components/sender/SenderStepReview";
 import {
-  type SenderStep, type SenderParcel,
+  type SenderStep, type SenderParcel, type SenderQuestion,
   loadSavedSender, saveSender, sortRatesForSender, pickBestPerCarrier,
+  planSenderSteps, destinationErrors, originErrors,
 } from "@/components/sender/senderState";
 
-// 5-step sender wizard for flex shipping links. See SPEC §8 and
-// proposals/2026-05-11_sender-flow-wizard...md for the canonical spec.
+// The sender wizard for flex shipping links. See SPEC §8 and
+// proposals/2026-05-11_sender-flow-wizard...md for the original spec.
+//
+// 2026-08-24: it asks ONE question per step, and only the questions the link
+// leaves open (planSenderSteps). Before this it showed every sender the same
+// "Package Details" mega-step — destination, ship-from and parcel on one
+// screen — so a sender whose link had specced the parcel and the ship-from
+// address scrolled past two pre-answered cards to reach a form with nothing
+// left to type. The review step then summarises the whole shipment in the
+// same card its creator saw. Mirrors the recipient flow's 2026-08-22/23
+// paradigm; the progress bar went for the same reason theirs did.
 export default function SenderFlow() {
   const { shortCode } = useParams<{ shortCode: string }>();
   const navigate = useNavigate();
@@ -50,16 +61,20 @@ export default function SenderFlow() {
   const saved = useMemo(() => loadSavedSender(), []);
   const [senderAddress, setSenderAddress] = useState<AddressInput>(saved?.senderAddress ?? emptyAddress());
   // Prefill the ship-from address from the link when its creator already knew
-  // it (flexible only — `origin_prefill` is null for seller links). Anything
-  // the sender has already typed, or a resumed draft, wins: this fills a blank
-  // form, it never overwrites. Without it the creator's typed address was
-  // discarded and the sender retyped their own.
+  // it (flexible only — `origin_prefill` is null for seller links).
+  //
+  // The link WINS over a saved address (changed 2026-08-24). It used to lose,
+  // on the reasoning that the sender's own typing shouldn't be overwritten —
+  // but a creator-supplied origin is the link's ANSWER to the ship-from
+  // question, and the flow now skips that question entirely when it has one.
+  // Deferring to a stale localStorage address there would have shipped the
+  // package from whatever address this browser used last. Only fires once, and
+  // only before the sender reaches the form; every field stays editable.
   const prefilledOriginRef = useRef(false);
   useEffect(() => {
     if (prefilledOriginRef.current) return;
     const p = linkData?.origin_prefill;
     if (!p?.street1) return;
-    if (senderAddress.street || saved?.senderAddress?.street) return;
     prefilledOriginRef.current = true;
     setSenderAddress({
       name: p.name ?? "",
@@ -70,7 +85,7 @@ export default function SenderFlow() {
       phone: p.phone ?? "",
       verified: p.verified === true,
     });
-  }, [linkData, senderAddress.street, saved?.senderAddress?.street]);
+  }, [linkData]);
   const [senderEmail, setSenderEmail] = useState(saved?.senderEmail ?? "");
   const [saveInfo, setSaveInfo] = useState(true);
   const [shareContact, setShareContact] = useState(false);
@@ -85,6 +100,20 @@ export default function SenderFlow() {
   const [ratesLoading, setRatesLoading] = useState(false);
   const [ratesError, setRatesError] = useState<string | null>(null);
   const [selectedRate, setSelectedRate] = useState<ShippingRate | null>(null);
+
+  // Which questions this link leaves open, and which the creator answered.
+  const plan = useMemo(
+    () => (linkData ? planSenderSteps(linkData) : null),
+    [linkData],
+  );
+  // Questions still to ask on this pass. Re-opening one from the review card
+  // sets a queue of exactly that question, so an edit walks back out through
+  // the rates step — a changed parcel or address re-prices the shipment.
+  const [queue, setQueue] = useState<SenderQuestion[]>([]);
+  // Steps to unwind on Back, most recent last.
+  const [history, setHistory] = useState<SenderStep[]>([]);
+  // `tried` for the address steps — the try-then-show pattern (PLAYBOOK).
+  const [tried, setTried] = useState(false);
 
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -159,6 +188,62 @@ export default function SenderFlow() {
         setStep("error");
       });
   }, [shortCode, navigate]);
+
+  // ── Step navigation ───────────────────────────────────────
+  // One question per step, in flow order, and only the open ones. `history`
+  // is what Back unwinds, so an edit opened from the review card returns the
+  // way it came instead of dropping the sender at the start of the flow.
+
+  function goTo(next: SenderStep) {
+    setHistory((h) => [...h, step as SenderStep]);
+    setTried(false);
+    setStep(next);
+  }
+
+  function goBack() {
+    const prev = history[history.length - 1];
+    if (!prev) return;
+    setHistory(history.slice(0, -1));
+    setTried(false);
+    setStep(prev);
+  }
+
+  /** Ask `qs` in order; when they run out, price the shipment. */
+  function askQuestions(qs: SenderQuestion[], parcelNow: SenderParcel | null = parcel) {
+    if (qs.length > 0) {
+      setQueue(qs.slice(1));
+      goTo(qs[0]);
+      return;
+    }
+    if (!parcelNow) {
+      // Defensive: no parcel and nothing left to ask means the link's package
+      // prefill was malformed. Ask rather than fetch rates for a null parcel.
+      setQueue([]);
+      goTo("package");
+      return;
+    }
+    setHistory((h) => [...h, step as SenderStep]);
+    setTried(false);
+    void handleFetchRates(parcelNow);
+  }
+
+  /** Continue from a question step. */
+  function answered(parcelNow: SenderParcel | null = parcel) {
+    const [next, ...rest] = queue;
+    if (next) {
+      setQueue(rest);
+      goTo(next);
+      return;
+    }
+    askQuestions([], parcelNow);
+  }
+
+  /** Re-open one already-answered question from the review card. */
+  function editQuestion(q: SenderQuestion) {
+    askQuestions([q]);
+  }
+
+  const continueLabel = queue.length > 0 ? "Continue" : "See shipping options";
 
   async function handleFetchRates(p: SenderParcel) {
     if (!linkData) return;
@@ -305,9 +390,9 @@ export default function SenderFlow() {
             </div>
           )}
 
-          {step !== "loading" && step !== "error" && (
-            <SenderProgressBar step={step} />
-          )}
+          {/* No progress bar (2026-08-24) — the recipient flow dropped its own
+              for the same reason: it narrated position instead of stating what
+              had been decided. The review card states that. */}
 
           <AnimatePresence mode="wait">
             {step === "loading" && (
@@ -331,27 +416,60 @@ export default function SenderFlow() {
               </motion.div>
             )}
 
-            {step === "intro" && linkData && (
+            {step === "intro" && linkData && plan && (
               <motion.div key="intro" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} transition={{ duration: 0.25 }}>
-                <SenderStepIntro linkData={linkData} onContinue={() => setStep("package")} />
+                <SenderStepIntro
+                  linkData={linkData}
+                  questions={plan.questions}
+                  onContinue={() => askQuestions(plan.questions)}
+                />
               </motion.div>
             )}
 
-            {step === "package" && linkData && (
+            {step === "destination" && (
+              <motion.div key="destination" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} transition={{ duration: 0.25 }}>
+                <SenderStepDestination
+                  value={destinationAddress}
+                  onChange={setDestinationAddress}
+                  tried={tried}
+                  continueLabel={continueLabel}
+                  onContinue={() => {
+                    setTried(true);
+                    if (destinationErrors(destinationAddress).length > 0) return;
+                    answered();
+                  }}
+                  onBack={history.length > 0 ? goBack : undefined}
+                />
+              </motion.div>
+            )}
+
+            {step === "origin" && (
+              <motion.div key="origin" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} transition={{ duration: 0.25 }}>
+                <SenderStepOrigin
+                  value={senderAddress}
+                  onChange={setSenderAddress}
+                  tried={tried}
+                  continueLabel={continueLabel}
+                  onContinue={() => {
+                    setTried(true);
+                    if (originErrors(senderAddress).length > 0) return;
+                    answered();
+                  }}
+                  onBack={history.length > 0 ? goBack : undefined}
+                />
+              </motion.div>
+            )}
+
+            {step === "package" && (
               <motion.div key="package" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} transition={{ duration: 0.25 }}>
                 <SenderStepPackage
-                  linkData={linkData}
-                  senderAddress={senderAddress}
-                  onAddressChange={setSenderAddress}
-                  needsDestination={linkData.needs_destination === true}
-                  destinationAddress={destinationAddress}
-                  onDestinationChange={setDestinationAddress}
                   initialParcel={parcel}
+                  continueLabel={continueLabel}
                   onSubmit={(p) => {
                     setParcel(p);
-                    handleFetchRates(p);
+                    answered(p);
                   }}
-                  onBack={() => setStep("intro")}
+                  onBack={history.length > 0 ? goBack : undefined}
                   onGuestimatorUsed={() => setUsedGuestimator(true)}
                 />
               </motion.div>
@@ -366,8 +484,8 @@ export default function SenderFlow() {
                   error={ratesError}
                   selectedRate={selectedRate}
                   onSelectRate={setSelectedRate}
-                  onContinue={() => setStep("review")}
-                  onBack={() => setStep("package")}
+                  onContinue={() => goTo("review")}
+                  onBack={goBack}
                   onRetry={() => parcel && handleFetchRates(parcel)}
                   usedGuestimator={usedGuestimator}
                 />
@@ -388,8 +506,10 @@ export default function SenderFlow() {
                   onSaveInfoChange={setSaveInfo}
                   shareContact={shareContact}
                   onShareContactChange={setShareContact}
-                  onEditPackage={() => setStep("package")}
-                  onEditRate={() => setStep("rates")}
+                  onEditOrigin={() => editQuestion("origin")}
+                  onEditDestination={linkData.needs_destination ? () => editQuestion("destination") : undefined}
+                  onEditPackage={() => editQuestion("package")}
+                  onEditRate={goBack}
                   onConfirm={handleConfirm}
                   submitting={submitting}
                   submitError={submitError}

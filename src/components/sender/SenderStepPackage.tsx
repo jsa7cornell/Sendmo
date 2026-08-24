@@ -1,29 +1,17 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Package, Mail, ScrollText, ArrowLeft, ArrowRight, MapPin } from "lucide-react";
-import SmartAddressInput from "@/components/ui/SmartAddressInput";
+import { Package, Mail, ScrollText, ArrowLeft, ArrowRight } from "lucide-react";
 import MagicGuestimator from "@/components/recipient/MagicGuestimator";
-import type { LinkData } from "@/lib/api";
-import type { AddressInput, GuestimatorResult } from "@/lib/types";
-import { isUsablePhone } from "@/lib/phone";
-import { displayName } from "@/lib/name";
+import StepQuestionHeader from "@/components/recipient/StepQuestionHeader";
+import type { GuestimatorResult } from "@/lib/types";
 import type { SenderParcel, PackagingType } from "./senderState";
 
 interface Props {
-  linkData: LinkData;
-  senderAddress: AddressInput;
-  onAddressChange: (a: AddressInput) => void;
   initialParcel: SenderParcel | null;
-  /**
-   * Phase 3: the link creator deferred the destination, so the sender enters
-   * it here. All three destination props travel together.
-   */
-  needsDestination?: boolean;
-  destinationAddress?: AddressInput;
-  onDestinationChange?: (addr: AddressInput) => void;
   onSubmit: (parcel: SenderParcel) => void;
-  onBack: () => void;
+  onBack?: () => void;
   onGuestimatorUsed?: () => void;
+  continueLabel: string;
 }
 
 const PACKAGING_OPTIONS: { value: PackagingType; label: string; Icon: typeof Package }[] = [
@@ -32,13 +20,15 @@ const PACKAGING_OPTIONS: { value: PackagingType; label: string; Icon: typeof Pac
   { value: "tube", label: "Tube / Irregular", Icon: ScrollText },
 ];
 
-// SPEC §8 Step 1: Origin + Package in one step. Sticky destination header
-// keeps "shipping to {recipient}" always visible. Packaging type is a 3-option
-// grid; height is hidden for envelopes.
+// One question: what's in the box, and how big is it.
+//
+// This step used to carry the destination and the ship-from address too, on a
+// screen headed "Package Details" — so a sender whose link already answered
+// both scrolled past two pre-filled address cards to reach the only fields
+// that were theirs. Each address is its own step now, and neither is shown at
+// all when the link answered it (2026-08-24).
 export default function SenderStepPackage({
-  linkData, senderAddress, onAddressChange, initialParcel,
-  needsDestination, destinationAddress, onDestinationChange,
-  onSubmit, onBack, onGuestimatorUsed,
+  initialParcel, onSubmit, onBack, onGuestimatorUsed, continueLabel,
 }: Props) {
   const [tried, setTried] = useState(false);
   const [packaging, setPackaging] = useState<PackagingType>(initialParcel?.packaging ?? "box");
@@ -64,96 +54,19 @@ export default function SenderStepPackage({
     const w = parseFloat(width);
     const h = packaging === "envelope" ? 1 : parseFloat(height);  // envelope height defaults to 1in
     const wt = parseFloat(weightLbs);
-    if (!senderAddress.street || !senderAddress.city || !senderAddress.state || !senderAddress.zip) return;
-    // Phone required — FedEx/UPS reject labels without it.
-    if (!isUsablePhone(senderAddress.phone)) return;
-    // Destination, when the creator deferred it (Phase 3): same completeness
-    // + phone bar as every other address the carriers see.
-    if (needsDestination) {
-      const d = destinationAddress;
-      if (!d?.street || !d.city || !d.state || !d.zip) return;
-      if (!isUsablePhone(d.phone)) return;
-    }
     if (!l || !w || !h || !wt) return;
 
-    onSubmit({
-      length: l, width: w, height: h,
-      weightOz: wt * 16,
-      description,
-      packaging,
-    });
+    onSubmit({ length: l, width: w, height: h, weightOz: wt * 16, description, packaging });
   }
 
-  const addrIncomplete = tried && (!senderAddress.street || !senderAddress.city || !senderAddress.state || !senderAddress.zip);
-  const destIncomplete = tried && !!needsDestination &&
-    (!destinationAddress?.street || !destinationAddress.city || !destinationAddress.state || !destinationAddress.zip || !isUsablePhone(destinationAddress.phone));
-  const phoneIncomplete = tried && !isUsablePhone(senderAddress.phone);
   const dimsIncomplete = tried && (!length || !width || (packaging !== "envelope" && !height) || !weightLbs);
-  const recipient = displayName(linkData.recipient_name);
-  const cityState = linkData.recipient_city && linkData.recipient_state
-    ? `${linkData.recipient_city}, ${linkData.recipient_state}`
-    : null;
 
   return (
     <div className="space-y-5">
-      {/* Sticky destination card — always visible while scrolling */}
-      <div className="sticky top-0 z-10 -mx-4 px-4 py-2 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 border-b border-border">
-        <div className="flex items-center gap-2 text-sm">
-          <MapPin className="w-4 h-4 text-primary flex-shrink-0" />
-          <span className="text-muted-foreground">Shipping to</span>
-          <span className="font-medium text-foreground truncate">
-            {recipient ?? "this prepaid link"}
-            {cityState && <span className="text-muted-foreground"> · {cityState}</span>}
-          </span>
-        </div>
-      </div>
+      <StepQuestionHeader question="What are you shipping?" />
 
-      <div className="text-center">
-        <h1 className="text-3xl font-bold text-foreground leading-tight">
-          Package
-          <br />
-          Details
-        </h1>
-      </div>
-
-      {/* Destination — only when the creator deferred it (Phase 3): they said
-          "the sender picks the destination", and that sender is you. */}
-      {needsDestination && onDestinationChange && (
-        <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
-          <h3 className="text-sm font-semibold text-foreground mb-3">Where is the package going?</h3>
-          <p className="text-xs text-muted-foreground mb-3">
-            The link's creator left the delivery address up to you.
-          </p>
-          <SmartAddressInput
-            label="Delivery address"
-            nameLabel="Recipient's name"
-            nameHint="who it's going to"
-            addressLabel="Delivery address"
-            value={destinationAddress ?? { name: "", street: "", city: "", state: "", zip: "", phone: "", verified: false }}
-            onChange={onDestinationChange}
-            error={destIncomplete ? "Please enter a complete delivery address, including a phone number" : undefined}
-          />
-        </div>
-      )}
-
-      {/* Origin address */}
-      <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
-        <h3 className="text-sm font-semibold text-foreground mb-3">Where is the package shipping from?</h3>
-        <SmartAddressInput
-          label="Sender address"
-          nameLabel="Your name"
-          nameHint="your name"
-          addressLabel="Origin address"
-          value={senderAddress}
-          onChange={onAddressChange}
-          error={addrIncomplete ? "Please enter a complete address" : undefined}
-        />
-      </div>
-
-      {/* Magic Guestimator */}
       <MagicGuestimator onResult={handleGuestimate} />
 
-      {/* Package form */}
       <div className="bg-card rounded-2xl border border-border shadow-sm p-5 space-y-4">
         {/* Packaging type */}
         <div>
@@ -223,27 +136,27 @@ export default function SenderStepPackage({
             className={`w-full rounded-xl border ${tried && !weightLbs ? "border-destructive" : "border-border"} bg-background px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary`} />
         </div>
 
-        {(addrIncomplete || phoneIncomplete || dimsIncomplete) && (
+        {dimsIncomplete && (
           <div className="rounded-xl border border-destructive/50 bg-destructive/5 px-4 py-3 text-sm text-destructive space-y-1">
             <p className="font-medium">Please fix these before continuing:</p>
             <ul className="list-disc list-inside text-xs">
-              {addrIncomplete && <li>Complete sender address</li>}
-              {phoneIncomplete && <li>Phone number — the shipping carriers require it</li>}
-              {tried && !length && <li>Length</li>}
-              {tried && !width && <li>Width</li>}
-              {tried && packaging !== "envelope" && !height && <li>Height</li>}
-              {tried && !weightLbs && <li>Weight</li>}
+              {!length && <li>Length</li>}
+              {!width && <li>Width</li>}
+              {packaging !== "envelope" && !height && <li>Height</li>}
+              {!weightLbs && <li>Weight</li>}
             </ul>
           </div>
         )}
       </div>
 
       <div className="flex gap-3">
-        <Button variant="outline" onClick={onBack} className="rounded-xl">
-          <ArrowLeft className="w-4 h-4 mr-1" /> Back
-        </Button>
+        {onBack && (
+          <Button variant="outline" onClick={onBack} className="rounded-xl">
+            <ArrowLeft className="w-4 h-4 mr-1" /> Back
+          </Button>
+        )}
         <Button onClick={handleContinue} className="flex-1 rounded-xl shadow-sm">
-          See shipping options
+          {continueLabel}
           <ArrowRight className="w-4 h-4 ml-1" />
         </Button>
       </div>
