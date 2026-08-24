@@ -1,5 +1,6 @@
 import { useParams, useSearchParams, Link, useNavigate } from "react-router-dom";
 import AppHeader from "@/components/AppHeader";
+import SiteFooter from "@/components/SiteFooter";
 import { useState, useEffect } from "react";
 import { Package, Truck, CheckCircle2, AlertCircle, Clock, ArrowLeft, MapPin, ExternalLink, FlaskConical, Printer, Download, Check } from "lucide-react";
 import { carrierTrackingUrl } from "@/lib/utils";
@@ -573,7 +574,7 @@ export default function TrackingPage() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-background flex flex-col">
       {/* AppHeader renders its default UserMenu / Sign In affordance — don't
           override `actions`. The page body already labels itself; the prior
           "Track Package" header label was duplicative and hid the user menu. */}
@@ -909,6 +910,8 @@ export default function TrackingPage() {
           );
         })()}
       </main>
+
+      <SiteFooter />
     </div>
   );
 }

@@ -5,6 +5,7 @@ import {
   Loader2, AlertCircle, SlidersHorizontal, PackageCheck, Repeat, LogIn,
 } from "lucide-react";
 import AppHeader from "@/components/AppHeader";
+import SiteFooter from "@/components/SiteFooter";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import SmartAddressInput from "@/components/ui/SmartAddressInput";
@@ -48,9 +49,10 @@ function defaultConstraint(): FlexPreferencesValue {
 // ── Layout shell: emerald "Sell & Ship" branding + AppHeader ──
 function Shell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-screen bg-gradient-to-b from-background to-muted/50">
+    <div className="min-h-screen bg-gradient-to-b from-background to-muted/50 flex flex-col">
       <AppHeader />
-      <div className="max-w-2xl mx-auto px-4 py-8 space-y-6">{children}</div>
+      <div className="max-w-2xl mx-auto px-4 py-8 space-y-6 w-full">{children}</div>
+      <SiteFooter />
     </div>
   );
 }

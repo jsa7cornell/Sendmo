@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useAuth } from "@/contexts/AuthContext";
 import { useRecipientFlowContext } from "@/contexts/RecipientFlowContext";
 import AppHeader from "@/components/AppHeader";
+import SiteFooter from "@/components/SiteFooter";
 import {
   canAccessStep,
   firstIncompleteUrl,
@@ -113,7 +114,7 @@ export default function RecipientOnboarding() {
   const variants = getVariants(direction);
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-background to-muted/50">
+    <div className="min-h-screen bg-gradient-to-b from-background to-muted/50 flex flex-col">
       <AppHeader />
 
       <div className="container max-w-2xl mx-auto px-4 py-8">
@@ -250,6 +251,7 @@ export default function RecipientOnboarding() {
         </AnimatePresence>
       </div>
 
+      <SiteFooter />
     </div>
   );
 }

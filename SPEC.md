@@ -131,6 +131,27 @@ SendMo keeps 10%
 /*                      → 404 Not Found
 ```
 
+### Sitewide chrome (2026-08-23)
+
+Every user-facing page mounts the same two pieces:
+
+- **`AppHeader`** (`src/components/AppHeader.tsx`) — brand mark on the left, always
+  a link to `/`; the admin mode toolbar and the user menu (My Account / Sign Out)
+  or the signed-out FAQ + Sign In pair on the right. `/login` is the one exception:
+  it shows the brand mark centered above its card instead of a header bar, because
+  a "Sign In" button on the sign-in page is noise.
+- **`SiteFooter`** (`src/components/SiteFooter.tsx`) — brand mark (also links home)
+  plus FAQ / Privacy / Terms / Support.
+
+Excluded on purpose: `/t/:code/print` (print surface), `/admin*`, `/label-test`,
+and the `*-preview` routes — internal tools, not product surface.
+
+**`/` is the homepage for everyone, signed in or not.** An earlier behavior (T3-3)
+redirected signed-in visitors to `/dashboard`; that is gone. The dashboard is one
+click away in the header user menu. **Signing out returns to `/`** — before this,
+signing out from `/dashboard` ended on `/login`, because `ProtectedRoute` caught
+the now-anonymous user still sitting on a protected route.
+
 ---
 
 ## 6. Design System
