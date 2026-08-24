@@ -11,7 +11,7 @@ export default function FAQ() {
         <p className="text-sm text-muted-foreground">
           Answers are on their way. In the meantime, email{" "}
           <a className="text-primary hover:underline" href="mailto:support@sendmo.co">support@sendmo.co</a>{" "}
-          and we\'ll help.
+          and we'll help.
         </p>
       </main>
 
