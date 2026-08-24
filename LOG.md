@@ -12,6 +12,31 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-24] Audit: the same failure shape is running in production right now, in three other places
+
+**Category:** investigation | payments | reliability
+**Cross-link:** prompted by John's "if we have this we have other failures" after the checkout 404 (entry below) — the suspicion was correct
+
+The checkout 404's real lesson is not EasyPost. It is a **shape**: *a guard fails, the code degrades instead of stopping, and the degradation is silent.* Searching production `event_logs` for that shape by severity found three live instances. All are still firing.
+
+**1. The carrier-adjustment spend caps have never been enforced. `adjustment.cap_lock_rpc_unavailable` × 41, last 2026-08-24 04:00.**
+
+The event carries its own cause: Postgres `42703 — column si.stripe_payment_intent_id does not exist`. [`033_resolve_recovery_lock_rpc.sql:87`](supabase/migrations/033_resolve_recovery_lock_rpc.sql) joins `stripe_intents si ON si.stripe_payment_intent_id = t.stripe_intent_id`, but that table's column is **`stripe_intent_id`** — verified against `information_schema`. So the RPC throws on every call.
+
+[`_shared/adjustments.ts:466`](supabase/functions/_shared/adjustments.ts) then does exactly what the labels gate did: *"RPC is missing or errored — fall through to unlocked path"*, and the per-card 24h and per-user 7d caps *"degrade to best-effort"*. They are not best-effort — under a broken RPC they are **off**, and have been since 033 deployed. The per-shipment cap still holds, which is why nothing has escaped; the two outer caps are decorative. One-word column fix.
+
+**2. `adjustment.cap_breach` × 41 — identical count, identical timestamps.** Same `shipment_id` (`23d16eb3-476e-4511-87e4-75483cb271c5`), same `delta_cents: 500`, `blocked_by: shipment_lifetime`, every night. The daily sweep is re-attempting one permanently-blocked adjustment forever. Harmless to money, but it means the alert channel for cap breaches is 100% noise — the signal that matters is buried under a stuck row.
+
+**3. Refund ledger accuracy. `recon.zero_amount_easypost_refund_tx` × 147 and `recon.duplicate_easypost_refund_tx` × 48, both last 2026-08-24 04:00.** SPEC §Amount-sourcing says 0¢ rows are *"suppressed once a backfill row exists on the shipment"* — they are still firing, so either the backfill never ran or the suppression does not work. The duplicates carry `non_zero_row_count: 2` on an **append-only** ledger, so refund totals are double-counted and the net-margin identity is wrong by that amount. Not investigated further here.
+
+**4. `recon.weekly_report_create_failed` × 7, last 2026-08-23.** EasyPost is explicit: `REPORT.PARAMS.INVALID — end_date: Report including today covers more than 4 days`. A deterministic off-by-window in the weekly report's date range. Fires every week; nobody has a weekly EasyPost report.
+
+**5. Our own tests are writing to production error logs.** The newest of 183 `payment.intent_error` rows is a Stripe idempotency collision on key `pi_create_shp_mock123` — a mock shipment id. Test runs hit the deployed functions against real Stripe, so `payment.intent_error` is contaminated with test noise and mock keys are burned permanently in Stripe. Worth separating before anyone trusts that counter.
+
+**None of these are fixed in this session.** They are recorded because the pattern is the point: SendMo has several money-adjacent guards that log a warning and continue. A guard that degrades silently is indistinguishable from a guard that works, right up until the day it matters — which is precisely how a $19.91 checkout came to show a customer "The requested resource could not be found."
+
+**Suggested order if these get picked up:** (1) the column typo — one word, restores two spend caps; (4) the report window — deterministic and trivial; (3) the ledger accuracy — real money, needs investigation; (2) and (5) are hygiene.
+
 ### [2026-08-24] Checkout 404: EasyPost refused the buy after the card was charged — auto-refund held
 
 **Category:** investigation | payments | easypost
