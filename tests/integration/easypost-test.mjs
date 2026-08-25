@@ -575,32 +575,57 @@ async function main() {
     let labelResults = [];
 
     if (!RATES_ONLY) {
-        // Collect all rates for label purchase
-        // IMPORTANT: We can only buy ONE rate per shipment (buying a rate = buying the shipment)
-        // So for each shipment (address pair), we buy the CHEAPEST rate only
+        // Collect all rates for label purchase.
+        // IMPORTANT: We can only buy ONE rate per shipment (buying a rate = buying
+        // the shipment), so each address pair contributes exactly one purchase.
+        //
+        // We ROTATE which carrier that purchase targets, instead of always taking
+        // the cheapest (2026-08-24). Cheapest-only meant this harness bought USPS
+        // GroundAdvantage on essentially every pair: across 200 pairs it exercised
+        // one carrier's buy path and left UPS and FedEx with ZERO buy coverage.
+        // That is exactly how a UPS 3 Day Select purchase reached production and
+        // came back 404 NOT_FOUND after the customer had been charged — the
+        // harness was thorough on the address axis and blind on the service axis.
+        //
+        // Rotation keeps one purchase per pair (same EasyPost spend as before) but
+        // spreads it across every carrier the rate shop returned.
         const labelTasks = [];
         const seenShipments = new Set();
+
+        const carrierRotation = [...new Set(
+            rateResults.flatMap((r) => (r.rates || []).map((rate) => rate.carrier))
+        )].sort();
+        let rotationIdx = 0;
 
         for (const r of rateResults) {
             if (!r.rateSuccess || r.rates.length === 0) continue;
 
-            // Find cheapest rate for this shipment
-            const cheapest = r.rates.reduce((min, rate) =>
+            // Whose turn is it? Fall back to the overall cheapest when this pair
+            // has no rate from the targeted carrier, so no pair is ever skipped.
+            const cheapestOf = (rates) => rates.reduce((min, rate) =>
                 rate.display_price < min.display_price ? rate : min
             );
+            let chosen = null;
+            if (carrierRotation.length > 0) {
+                const target = carrierRotation[rotationIdx % carrierRotation.length];
+                rotationIdx++;
+                const ofTarget = r.rates.filter((rate) => rate.carrier === target);
+                if (ofTarget.length > 0) chosen = cheapestOf(ofTarget);
+            }
+            if (!chosen) chosen = cheapestOf(r.rates);
 
             // Avoid buying the same shipment twice
-            if (seenShipments.has(cheapest.easypost_shipment_id)) continue;
-            seenShipments.add(cheapest.easypost_shipment_id);
+            if (seenShipments.has(chosen.easypost_shipment_id)) continue;
+            seenShipments.add(chosen.easypost_shipment_id);
 
             labelTasks.push({
-                ...cheapest,
+                ...chosen,
                 pairLabel: r.pairLabel,
             });
         }
 
         console.log(`━━━ Phase 2: Label Purchases ━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-        console.log(`  📝 Purchasing ${labelTasks.length} labels (cheapest rate per pair)...`);
+        console.log(`  📝 Purchasing ${labelTasks.length} labels (rotating across ${carrierRotation.length} carriers: ${carrierRotation.join(", ")})...`);
         console.log("");
 
         let completedLabels = 0;

@@ -12,6 +12,178 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-24] Fixed three of the five audit findings — and one of them nearly became a $16 accounting lie
+
+**Category:** fix | payments | reliability
+**Cross-link:** acts on the audit entry below | [043 migration](supabase/migrations/043_fix_resolve_recovery_lock_discriminator.sql) | [adjustments.ts](supabase/functions/_shared/adjustments.ts) | [reconciliation-sweep](supabase/functions/reconciliation-sweep/index.ts)
+
+**1. The adjustment spend caps — two defects, not one.**
+
+The audit found migration 033 joining `si.stripe_payment_intent_id`, a column that does not exist (`stripe_intents` has `stripe_intent_id`; the author almost certainly had `shipments.stripe_payment_intent_id` in mind, which is real). Postgres 42703 on every call, 41 nightly `adjustment.cap_lock_rpc_unavailable` rows.
+
+Fixing the column alone would have been worse than leaving it broken. Both cap queries also selected adjustment charges with `idempotency_key LIKE 'adjustment\_%'` — and **that prefix is the Stripe idempotency key** minted by `createAdjustmentRecharge` for the PaymentIntent. The ledger's charge rows are keyed `stripe.evt_<id>:charge` by stripe-webhook. Two namespaces, conflated. Verified against production: **zero rows in `transactions` match that prefix, across every transaction type.** So the repaired RPC would have returned `card_24h = 0` and `user_7d = 0` forever, and the caps would have gone from *loudly* broken to *silently* absent — the exact failure mode this whole audit was chasing.
+
+The durable discriminator is `stripe_intents.intent_role = 'carrier_adjustment'`, which `createAdjustmentRecharge` stamps as PI metadata and stripe-webhook persists on the same write path as the charge row. Migration 043 rebuilds the RPC on it. `_shared/adjustments.ts` had the identical prefix bug in its *unlocked fallback* — the path that runs whenever the RPC is down, i.e. every night for the last month — so that is fixed too (two queries; PostgREST cannot express the join).
+
+Net: the per-card-24h and per-user-7d caps go from never-enforced to enforced. The per-shipment cap was always fine (`type='carrier_adjustment' + shipment_id`), which is why no recharge actually escaped.
+
+**2. The weekly EasyPost report could never have succeeded.** `runWeeklySweep` asked for 31 days ending **today**. EasyPost caps any range that includes the current day at 4 days and rejects the rest with `REPORT.PARAMS.INVALID`. Not flaky — impossible. Window now ends yesterday, which is what makes 31 days legal. Costs nothing: adjustment data settles days late and same-day shipments are covered by the daily sweep.
+
+**3. The zero-amount refund alarm — where I was about to do real damage.**
+
+147 `recon.zero_amount_easypost_refund_tx` warnings turned out to be **4 rows** re-flagged nightly since 2026-07-07. The obvious "fix" was the one SPEC documents: book a backfill row at the shipment's `rate_cents`. I had the amounts ready ($5.24 + $5.48 + $5.28) before checking `refund_status`.
+
+All three are **`not_applicable`** — EasyPost never refunded those cancelled labels. SendMo genuinely ate the cost, and `0` is the *correct* amount. Backfilling `rate_cents` would have invented $16.00 of refunds that never happened and flattered net margin by exactly that much, in live mode, in an append-only ledger where it could not be undone.
+
+So the bug was never the data — it was the **audit's suppression rule**, which skipped a 0¢ row only when a sibling non-zero row existed. It now also skips when the shipment's own `refund_status` says no refund was due (`not_applicable` / `rejected`). Three nightly false alarms gone; the alert can be trusted again.
+
+**4. Caught in review: my own fix had the same shape.** Both the repaired RPC and the repaired fallback scope the per-user-7d cap by `user_id` — and `createAdjustmentRecharge` never stamped `sendmo_user_id` in the PI metadata. `stripe-webhook`'s `resolveIdsFromMetadata` reads **only** that key, so `stripe_intents.user_id` and `transactions.user_id` would have been NULL on every adjustment intent and the 7d cap would have summed to 0 — a cap born broken, in precisely the manner of the 033 bug it was replacing. Confirmed against production: all 41 existing intents have `user_id` populated, because their PIs *do* stamp it; adjustment PIs are the only kind that didn't. Zero adjustment intents exist yet, so nothing needs backfilling. `userId` is now a required param on `createAdjustmentRecharge`, stamped as `sendmo_user_id`, and pinned by a test that is red without it.
+
+The lesson repeats: three separate times in this one area, a cap looked correct and silently evaluated to zero. Anything that filters the ledger on a value written elsewhere deserves a test that asserts the **filter**, not the sum — a sum-only test passes whenever the expected answer happens to be 0, which for a cap is most of the time.
+
+**Not fixed, deliberately:**
+
+- **The stuck `cap_breach` (41×, shipment `23d16eb3`).** One adjustment from 2026-07-15, permanently blocked by the *lifetime* per-shipment cap, re-fired nightly by the N1 drift detector. Making it stop requires deciding what state a permanently-capped adjustment should hold. `pending` is currently load-bearing — it is what surfaces the row in the Reconciliation tab — and the existing terminal values don't fit (`rejected` means "carrier refused", which is false here). A lifetime-cap block is permanent while a 24h/7d block is temporary, so "stop retrying" is not one rule. **That is a product decision, not a typo**, and I am not inventing ledger semantics on the money path to silence an alert.
+- **Tests writing to production error logs.** The newest of 183 `payment.intent_error` rows is a Stripe idempotency collision on `pi_create_shp_mock123`. Integration tests run against the deployed functions and real Stripe, so that counter is contaminated and mock keys are permanently burned. Fixing it means a separate Stripe/Supabase target for integration runs — worth doing, out of scope here.
+
+**Still outstanding as a data question:** shipment `24W301E` (`14d59d37`) carries two `easypost_refund` rows of 1300 each for one 1300 refund — a genuine 1300 over-credit, from a webhook `shp_fallback` row racing a tracking `rfnd` row 30 seconds apart on 2026-07-07. The shipment-scoped dedupe guard added to `ledger.ts` that same day prevents recurrence, so **no code fix is needed**; correcting the existing row needs a compensating entry, which is John's call on an append-only ledger.
+
+**Browser-verified:**
+- spec: `tests/unit/adjustments.test.ts` — 31/31 (4 new). The load-bearing one is *"per-user-7d cap resolves adjustment PIs by intent_role, not an idempotency-key prefix"*, which asserts the **filters used**, not the sum — confirmed red against the pre-fix file. Noted honestly: the two sibling behaviour tests pass against the old code too, because the mock returns its configured rows regardless of filter; they pin behaviour, not the regression.
+- variants-covered: intent_role discriminator present / prefix filter absent; 7d cap blocks over $50; empty-intent-list short-circuit; sendmo_user_id stamped on the recharge PI (red without it)
+- n/a-category: pure-logic — migration 043 (SQL function body, verified against `information_schema` for both the column name and the `intent_role` values) and the reconciliation-sweep window/suppression changes are server-only with no rendered surface. The sweep changes have no executing test; `reconciliation-sweep` is not importable under Vitest for the same `Deno.serve` reason as `labels/index.ts`.
+
+**Deploy note:** migration 043 is **not applied** — this project applies migrations by hand, and no CI workflow does it. Until it runs, the RPC stays broken and the (now-fixed) unlocked fallback carries the caps. Merging without it is safe; it is strictly an improvement over the current state.
+
+### [2026-08-24] How the checkout 404 reached a customer: the label-purchase harness has been dead since May
+
+**Category:** investigation | testing
+**Cross-link:** answers John's "how did this come about?" on the checkout 404 (entry below) | [`tests/integration/easypost-test.mjs`](tests/integration/easypost-test.mjs) | `90aebca` (2026-05-10, PR #30)
+
+**SendMo has had zero automated coverage of label purchase for three and a half months.** Not thin coverage — none.
+
+`tests/integration/easypost-test.mjs` is the harness built for exactly this: 205 address pairs, three parcel sizes, "Rates + Labels". Its last good report (committed 2026-02-25) reads **192 / 201 labels purchased**, including UPSDAP. Run today:
+
+```
+Phase 1: Rate Generation   ✅ Rates succeeded: 10
+Phase 2: Label Purchases   ❌ Labels failed: 10
+                           ❌ Missing required field: payment_intent_id  (×10)
+```
+
+`90aebca` (2026-05-10, "real Stripe Payment Intents + label auth gate") made `payment_intent_id` mandatory on `/labels`. The harness was never updated, so **every** Phase 2 has failed 100% since that day. Nothing caught it because the harness is excluded from CI *and* from `npm test` (it burns EasyPost calls), so the only signal is a human reading its output — and its Phase 1 still prints a wall of green ticks above the failures.
+
+**This is the whole provenance of the 404.** The buy path had no executing test, so nothing exercised it; the customer did, and got EasyPost's raw string back.
+
+**A second, narrower blindness, found while reading the same file and fixed here.** Phase 2 could only ever buy the **cheapest** rate per pair — and the cheapest is essentially always USPS GroundAdvantage. So even when it worked, 200 pairs exercised *one carrier's* buy path; UPS and FedEx purchase had no coverage at any point. It now **rotates the target carrier across pairs** (same one-purchase-per-shipment constraint, same EasyPost spend, coverage spread across every carrier the rate shop returns). The failure John hit was UPS 3 Day Select — a non-cheapest service, on the axis the harness was blind to.
+
+That the production `shipments` table shows *every* successful test-mode buy since 2026-05-20 as USPS GroundAdvantage is the same fact from the other side.
+
+**The rotation fix does not make the harness work** — Phase 2 still cannot buy anything until it can supply a `payment_intent_id`. Two ways to restore it, not chosen here:
+- **Comp path** — authenticate as admin (`SENDMO_TEST_EMAIL` / `SENDMO_TEST_PASSWORD`, already referenced by `vitest.integration.config.ts`) and buy with `comp: true`. Cheap, and exercises the whole EasyPost leg — end shipper, buy, rerate recovery, DB persist. Does not exercise the price gate, which comp exempts.
+- **Full payment path** — `/payments` → confirm the PI server-side with a Stripe test PM → `/labels`. Slower and more moving parts, but it is the real customer path and the only one that covers the gate.
+
+**Rule to take from this:** a harness excluded from CI needs its own liveness signal. This one printed "Labels failed: 10" for three months into a file nobody opened. A non-zero exit on total Phase 2 failure would have caught it the first time anyone ran it.
+
+### [2026-08-24] Audit: the same failure shape is running in production right now, in three other places
+
+**Category:** investigation | payments | reliability
+**Cross-link:** prompted by John's "if we have this we have other failures" after the checkout 404 (entry below) — the suspicion was correct
+
+The checkout 404's real lesson is not EasyPost. It is a **shape**: *a guard fails, the code degrades instead of stopping, and the degradation is silent.* Searching production `event_logs` for that shape by severity found three live instances. All are still firing.
+
+**1. The carrier-adjustment spend caps have never been enforced. `adjustment.cap_lock_rpc_unavailable` × 41, last 2026-08-24 04:00.**
+
+The event carries its own cause: Postgres `42703 — column si.stripe_payment_intent_id does not exist`. [`033_resolve_recovery_lock_rpc.sql:87`](supabase/migrations/033_resolve_recovery_lock_rpc.sql) joins `stripe_intents si ON si.stripe_payment_intent_id = t.stripe_intent_id`, but that table's column is **`stripe_intent_id`** — verified against `information_schema`. So the RPC throws on every call.
+
+[`_shared/adjustments.ts:466`](supabase/functions/_shared/adjustments.ts) then does exactly what the labels gate did: *"RPC is missing or errored — fall through to unlocked path"*, and the per-card 24h and per-user 7d caps *"degrade to best-effort"*. They are not best-effort — under a broken RPC they are **off**, and have been since 033 deployed. The per-shipment cap still holds, which is why nothing has escaped; the two outer caps are decorative. One-word column fix.
+
+**2. `adjustment.cap_breach` × 41 — identical count, identical timestamps.** Same `shipment_id` (`23d16eb3-476e-4511-87e4-75483cb271c5`), same `delta_cents: 500`, `blocked_by: shipment_lifetime`, every night. The daily sweep is re-attempting one permanently-blocked adjustment forever. Harmless to money, but it means the alert channel for cap breaches is 100% noise — the signal that matters is buried under a stuck row.
+
+**3. Refund ledger accuracy. `recon.zero_amount_easypost_refund_tx` × 147 and `recon.duplicate_easypost_refund_tx` × 48, both last 2026-08-24 04:00.** SPEC §Amount-sourcing says 0¢ rows are *"suppressed once a backfill row exists on the shipment"* — they are still firing, so either the backfill never ran or the suppression does not work. The duplicates carry `non_zero_row_count: 2` on an **append-only** ledger, so refund totals are double-counted and the net-margin identity is wrong by that amount. Not investigated further here.
+
+**4. `recon.weekly_report_create_failed` × 7, last 2026-08-23.** EasyPost is explicit: `REPORT.PARAMS.INVALID — end_date: Report including today covers more than 4 days`. A deterministic off-by-window in the weekly report's date range. Fires every week; nobody has a weekly EasyPost report.
+
+**5. Our own tests are writing to production error logs.** The newest of 183 `payment.intent_error` rows is a Stripe idempotency collision on key `pi_create_shp_mock123` — a mock shipment id. Test runs hit the deployed functions against real Stripe, so `payment.intent_error` is contaminated with test noise and mock keys are burned permanently in Stripe. Worth separating before anyone trusts that counter.
+
+**None of these are fixed in this session.** They are recorded because the pattern is the point: SendMo has several money-adjacent guards that log a warning and continue. A guard that degrades silently is indistinguishable from a guard that works, right up until the day it matters — which is precisely how a $19.91 checkout came to show a customer "The requested resource could not be found."
+
+**Suggested order if these get picked up:** (1) the column typo — one word, restores two spend caps; (4) the report window — deterministic and trivial; (3) the ledger accuracy — real money, needs investigation; (2) and (5) are hygiene.
+
+### [2026-08-24] Checkout 404: EasyPost refused the buy after the card was charged — auto-refund held
+
+**Category:** investigation | payments | easypost
+**Cross-link:** [labels/index.ts:1592](supabase/functions/labels/index.ts) (`/buy` handler) | [StripePaymentForm.tsx](src/components/recipient/StripePaymentForm.tsx) | [payments/index.ts](supabase/functions/payments/index.ts) | prior identical NOT_FOUND on 2026-05-12
+
+**The report:** `sendmo.co/onboarding/full-label/payment`, Test mode, UPS 3 Day Select, $19.91. "The requested resource could not be found." rendered twice — inline in the payment card and again in the page-level error band.
+
+**What actually happened** (reconstructed from `event_logs` + `function_edge_logs`, `pi_2U86OtxS6gsndgF32b3CL2gc`):
+
+| time (UTC) | event |
+|---|---|
+| 22:30:52 | `rate.fetched` — `shp_f030258aa7be49aab7f155277ec18bdc`, 17 rates, USPS/UPSDAP/FedExDefault |
+| 22:31:32 | `payment.intent_created` — 1991¢, test mode |
+| 22:31:54 | `stripe.payment_succeeded` + `ledger.fee_stripe_recorded` (−88¢) |
+| 22:31:55 | `label.buy_error` — EasyPost `POST /shipments/{id}/buy` → **404 `NOT_FOUND`**, rate `rate_0f7f0aee10734b118437a2f42d7ab29c` |
+| 22:31:56 | `label.auto_refund_issued` — `re_2U86OtxS6gsndgF32r2lAqs3`, 1991¢ |
+| 22:31:57 | `stripe.charge_refunded` — refund booked |
+
+The message is EasyPost's, not ours; the frontend surfaces `data.error` verbatim, which is why it reads like a routing 404. **The safety net worked** — customer was made whole in ~2s, and the ledger is exactly right: `charge +1991`, `fee_stripe −88`, `refund −1991`. SendMo eats the 88¢ Stripe fee on a failed buy (Stripe does not return it on refund). Not a money-loss incident.
+
+**Root cause — narrowed, not closed.** EasyPost's own docs confirm this exact 404 is what an unpurchasable rate returns, and name the remedy: *"you should re-rate that Shipment or create a new Shipment"* ([rate retention policy](https://www.easypost.com/blog/2020-04-15-rate-retention-change), [rerate endpoint](https://docs.easypost.com/docs/shipments/rates)). But retention is **28 days**, so plain expiry does not explain a 63-second gap — the timing correlation with the 2026-05-12 failure (88s, vs ~13s for every success in that window) is suggestive but its mechanism is wrong. The other documented 404 cause is *"referencing a deleted or non-existent carrier account"*, which fits better: **every** successful test-mode buy since 2026-05-20 is USPS GroundAdvantage, the last successful UPSDAP test buy was 2026-05-20, and both 404s are on shipments where UPSDAP was quoted. A re-provisioned UPSDAP test carrier account would produce exactly this.
+
+Not closed because proving it needs one EasyPost call this session could not make — `op` is blocked from the agent shell, and reading `.env.local` is barred by global rule 1. **John can close it in one command:**
+```bash
+curl -s -u "$(op read op://Secrets/EASYPOST_TEST_API_KEY/credential):" \
+  https://api.easypost.com/v2/shipments/shp_f030258aa7be49aab7f155277ec18bdc | grep -c rate_0f7f0aee10734b118437a2f42d7ab29c
+```
+`0` → the rate is gone (stale-rate cause). Non-zero → the rate is still there and the missing resource is the EndShipper or the carrier account.
+
+**The fix does not depend on which.** Under every one of those causes the right server behaviour is the same, and none of it was happening:
+
+1. **Rerate-and-retry** ([labels/index.ts](supabase/functions/labels/index.ts), buy path). On a 404 the function now calls `POST /shipments/:id/rerate` — EasyPost's documented remedy — re-matches the **same carrier+service**, re-checks the fresh price against the cap the customer's payment supports, and retries the buy once. A recoverable failure now produces a label instead of a refund. Never substitutes a different service, even a cheaper one: the customer chose and paid for that one. Cannot double-buy — the branch is only reachable when EasyPost *refused* the first buy, and a shipment already carrying a `postage_label` is refused on any further attempt.
+2. **The silent gate skip is closed.** The rate lookup now runs once, before the gate, and a `null` (rate absent) emits `label.buy_time_rate_unresolvable` instead of skipping the price cap with no trace. That blind spot is the reason this incident needed a whole session to characterise.
+3. **`label.buy_error` now names the resource.** A bare `NOT_FOUND` identifies neither of the two ids the buy body carries. The event now records `end_shipper_id`, `carrier`, `service`, `rate_present_before_buy`, and `rerate_outcome` — the next occurrence is one query, not one session.
+4. **Honest customer copy.** "The requested resource could not be found." is now *"That shipping option is no longer available at the price we quoted. Your card has been refunded in full. Go back and choose a shipping option to get a fresh quote."* — branched so it never claims a refund on the comp/flex legs where no charge existed.
+
+Helpers live in [`_shared/easypost-rates.ts`](supabase/functions/_shared/easypost-rates.ts) rather than inline, for the reason `pricing.ts` and `ledger.ts` do: `labels/index.ts` calls `Deno.serve` at module load, so nothing in it is reachable from Vitest. `fetch` is injected so the tests drive every branch offline.
+
+**Browser-verified:**
+- spec: `tests/unit/easypostRates.test.ts` — 17/17 pass (suite 765/765 on the merged tree), covering both lookup surfaces, rate-absent, rerate match/no-match, carrier-AND-service matching, the price cap at the incident's real $19.91, and the comp exemption
+- variants-covered: rate resolvable / absent / unparseable; rerate recovers / service gone / over cap / rerate call fails; comp vs charged
+- **Not covered, stated plainly:** the orchestration *inside* `labels/index.ts` (404 → rerate → retry → fall through to refund) has no executing test — `labels/index.ts` cannot be imported under Vitest, and reproducing a real EasyPost 404 in a browser is not something this session could stage. The helpers it calls are covered; the wiring between them is read-verified only. Closing that needs the integration harness, tracked with the sibling gap below.
+
+**Coverage gap (unchanged):** nothing in `tests/` executes the "buy fails after the card was charged → auto-refund" path. `tests/unit/alert.test.ts` only *mentions* `label.buy_error` in a comment. The path that ran in production today is still untested end-to-end.
+
+**Ruled out — the phone-number hypothesis.** John's guess was a missing sender phone. The logs disprove it: a missing phone at buy time produces `SHIPMENT.POSTAGE.FAILURE` / `PHONENUMBER.EMPTY` at **HTTP 422** (there is one on record, 2026-05-19), not a 404. And `rates/index.ts:273-283` refuses to quote at all unless `isUsablePhone` passes on **both** addresses — the quote succeeded at 22:30:52, so both phones were present.
+
+### [2026-08-24] Checkout offers a bank tab and a "$5 back" badge that SendMo does not implement
+
+**Category:** investigation | payments | risk
+**Cross-link:** [_shared/stripe.ts:180](supabase/functions/_shared/stripe.ts) (`automatic_payment_methods`) | [StripePaymentForm.tsx](src/components/recipient/StripePaymentForm.tsx)
+
+**Question asked:** is the "$5 back" on the Bank tab real?
+
+**Answer: there is no $5 discount in SendMo.** A repo-wide sweep for `$5 back` / `bankDiscount` / `incentive` / `us_bank` returns nothing in the checkout path. The only `incentive` token anywhere is the `balance_topup_bonus` ledger type reserved in migration 017 §3.6 for a future top-up bonus — unimplemented and unrelated. `payments/index.ts` creates the PI at `amount_cents` = the quoted total with **no branch on payment-method type**, so the customer is charged the same $19.91 whichever tab they pick.
+
+The badge is rendered by **Stripe's own Payment Element**. SendMo passes `automatic_payment_methods: { enabled: true, allow_redirects: "never" }`, i.e. whatever is switched on in the Stripe Dashboard appears — nobody chose to offer ACH here. Whether that incentive is genuinely configured and Stripe-funded is a **Dashboard question**, not a code question: check Payment methods → US bank account.
+
+**CORRECTION (same day, after reading the Stripe Dashboard).** The paragraph that stood here claimed ACH was enabled and that a bank payer would be debited, get no label, and never reach the auto-refund — and called it the higher-severity of the two findings. **That was wrong, and it was wrong because it was inferred from a screenshot instead of checked.** In the Dashboard:
+
+| Method | Test | Live |
+|---|---|---|
+| **ACH Direct Debit** | Disabled | Disabled |
+| **Bank Transfers** | Disabled | — |
+| **Link** | **Enabled** | Enabled |
+
+`us_bank_account` is off in **both** modes, so the async-settlement path cannot be reached. Production agrees: across all 41 rows in `stripe_intents`, `funding_source` is `card` every time and **no intent has ever been in `processing`** — zero `us_bank_account`, ever.
+
+What survives from the original finding, unchanged: **SendMo implements no $5 discount** — no `$5 back` / `bankDiscount` / `incentive` anywhere in the checkout path, and `payments/index.ts` creates the PI at the quoted total with **no branch on payment-method type**. And there is still no `us_bank_account` coverage in `tests/`, which is now moot rather than urgent.
+
+**What the "Bank" tab and "$5 back" actually are: narrowed to Link, not proven.** With ACH Direct Debit and Bank Transfers both disabled, Link is the only enabled method that can present a bank funding source, and Stripe runs its own incentives on Link bank payments. That is inference from elimination, not evidence. Proving it takes one look at the resolved payment-method types on a real PI — worth doing before anyone acts on it, because the only lever that would remove that tab is **disabling Link**, and Link is also the card wallet (a live buyer used it on the 2026-08-17 incident above). That is a conversion decision, not a safety fix, and nothing was changed in Stripe.
+
+**Method note for next time:** "the UI shows a Bank tab" was treated as "ACH is enabled" and escalated to a same-day recommendation. The Dashboard was two clicks away. Check the setting before assigning severity to it.
+
+**Test state at time of writing:** unit 762/762 pass on the pre-merge branch (765/765 after merging origin/main, which retired the ShipAgainCTA specs); e2e 108 passed / 5 skipped; integration api 36 passed / 1 failed / 4 skipped. The one failure is a **stale test, not a product bug** — `tests/integration/recipient-flow-api.test.ts:69` posts `{from, to}` to `/rates`, which has required `from_address`/`to_address` plus a phone on both since 2026-05-19, so it gets a 400.
 ### [2026-08-24] Sender flow polish — one parcel component for both flows, and three devices deleted
 
 **Category:** fix | sender-flow

@@ -281,6 +281,7 @@ export async function resolveRecovery(
             attempt,
             paymentMethodId: paymentContext.payment_method_id,
             customerId: paymentContext.customer_id,
+            userId: paymentContext.user_id,
             reason: reasonText,
             liveMode: !shipment.is_test,
         });
@@ -386,15 +387,18 @@ export async function resolveRecovery(
 //   SELECT COALESCE(SUM(amount_cents), 0) FROM transactions
 //     WHERE type='carrier_adjustment'
 //       AND shipment_id = :ship_id;     -- per-shipment
-//   SELECT COALESCE(SUM(amount_cents), 0) FROM transactions
-//     WHERE type='charge'
-//       AND idempotency_key LIKE 'adjustment\_%'
-//       AND stripe_intent_id IN (SELECT pi from cards last 24h);
-//   SELECT COALESCE(SUM(amount_cents), 0) FROM transactions
-//     WHERE type='charge'
-//       AND idempotency_key LIKE 'adjustment\_%'
-//       AND user_id = :user_id
-//       AND created_at > now() - interval '7 days';
+//   SELECT COALESCE(SUM(t.amount_cents), 0) FROM transactions t
+//     JOIN stripe_intents si ON si.stripe_intent_id = t.stripe_intent_id
+//     WHERE t.type='charge'
+//       AND si.intent_role='carrier_adjustment'
+//       AND si.payment_method_id = :pm_id
+//       AND t.created_at > now() - interval '24 hours';
+//   SELECT COALESCE(SUM(t.amount_cents), 0) FROM transactions t
+//     JOIN stripe_intents si ON si.stripe_intent_id = t.stripe_intent_id
+//     WHERE t.type='charge'
+//       AND si.intent_role='carrier_adjustment'
+//       AND t.user_id = :user_id
+//       AND t.created_at > now() - interval '7 days';
 //   COMMIT;
 //
 // In the absence of that RPC (e.g. fresh migration state), the helper falls
@@ -518,14 +522,38 @@ async function checkCapsWithLock(params: {
     }
 
     // Best-effort per-user-7d (no per-card window without the RPC's join shape).
+    //
+    // Discriminated by stripe_intents.intent_role, NOT by an
+    // `idempotency_key LIKE 'adjustment\_%'` prefix. That prefix is the STRIPE
+    // idempotency key minted by createAdjustmentRecharge for the PaymentIntent;
+    // it never reaches transactions.idempotency_key, whose charge rows are keyed
+    // `stripe.evt_<id>:charge` by stripe-webhook. Conflating the two namespaces
+    // made this sum a constant 0 — verified against production, where zero rows
+    // in `transactions` match that prefix across every type. Same defect as
+    // migration 033's, repaired there in 043; fixed here too because this path
+    // runs whenever the RPC is unavailable. Two queries because PostgREST
+    // cannot express the join.
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-    const { data: userRows } = await supabase
-        .from("transactions")
-        .select("amount_cents")
-        .eq("type", "charge")
+    const { data: adjIntents } = await supabase
+        .from("stripe_intents")
+        .select("stripe_intent_id")
+        .eq("intent_role", "carrier_adjustment")
         .eq("user_id", userId)
-        .like("idempotency_key", "adjustment\\_%")
         .gte("created_at", sevenDaysAgo);
+
+    const adjIntentIds = (adjIntents ?? [])
+        .map((r) => (r as { stripe_intent_id: string }).stripe_intent_id)
+        .filter(Boolean);
+
+    const { data: userRows } = adjIntentIds.length === 0
+        ? { data: [] }
+        : await supabase
+            .from("transactions")
+            .select("amount_cents")
+            .eq("type", "charge")
+            .eq("user_id", userId)
+            .in("stripe_intent_id", adjIntentIds)
+            .gte("created_at", sevenDaysAgo);
 
     const userAbs = (userRows ?? [])
         .reduce((acc, r) => acc + Math.abs(Number((r as { amount_cents: number }).amount_cents)), 0);

@@ -1117,6 +1117,8 @@ The `transactions` ledger is now fully bidirectional — it records both the cus
 
 **Idempotency:** `easypost_refund` rows are keyed on the EasyPost Refund object id (`rfnd_…`), not the shipment id — so a re-void, a webhook retry, and a concurrent tracking poll all resolve to the same row with a safe UNIQUE collision (B4 fix, decided proposal 2026-05-22).
 
+**Zero-amount rows are not always wrong (2026-08-24).** A 0¢ `easypost_refund` row is the CORRECT amount when the carrier declined to refund a cancelled label — SendMo ate that cost. The daily audit therefore skips a 0¢ row when the shipment's `refund_status` is `not_applicable` or `rejected`, in addition to the pre-existing skip for a sibling non-zero (backfill) row. Before this, three such rows were flagged nightly as "under-stated EP credit" and the documented remedy — backfill at `rate_cents` — would have booked $16.00 of refunds that never occurred, irreversibly, in an append-only live ledger. Check `refund_status` before treating a 0¢ row as a defect.
+
 **Amount sourcing:** EasyPost Refund objects carry **no `amount` field** (confirmed empirically 2026-07-06), so the norm-case amount is the shipment's `rate_cents` (declared label cost at buy time — the exact mirror of the `label_cost` row, so the pair cancels in the net-margin identity). Sourcing lives in ONE place: `resolveEasypostRefundAmountCents` inside `_shared/ledger.ts`'s `writeEasypostRefund`, which prefers a payload `amount` only when present, numeric, and > 0. All **three** writers (`webhooks`, `tracking`, `cron-refund-sweep`) pass the raw payload amount + `rate_cents` and cannot re-implement the fallback. Before 2026-07-06, sourcing was inlined per-writer and two of three were broken (webhook fell back to 0¢; tracking's fallback read an unselected column) — the daily reconciliation sweep now audits the ledger directly (Step 4b, window-independent) and flags live 0¢ rows (`recon.zero_amount_easypost_refund_tx`, suppressed once a backfill row exists on the shipment) and duplicate non-zero rows per shipment (`recon.duplicate_easypost_refund_tx`), since ledger rows are append-only.
 
 **Net-margin identity** (foundation for H4 reconciliation dashboard):
@@ -1191,10 +1193,19 @@ buy_time_rate_cents > display_price_cents × (1 − STRIPE_FEE_PCT − MIN_NET_M
 Defaults: `STRIPE_FEE_PCT = 0.029`, `STRIPE_FEE_FLAT_CENTS = 30`, `MIN_NET_MARGIN_PCT = 0.05` (env-overridable via `LABEL_BUY_GATE_MIN_NET_MARGIN_PCT`).
 
 **Flow on a gate trip:**
-1. Re-fetch the rate from EasyPost (`/shipments/<id>/rates/<rate_id>` with fallback to `/shipments/<id>`) BEFORE calling `/buy`. No EasyPost label is ever created for a refused buy — no carrier-side artifact, no `shipments` row, no `label_cost` ledger row.
+1. Re-fetch the rate from EasyPost (`/shipments/<id>/rates/<rate_id>` with fallback to `/shipments/<id>`) BEFORE calling `/buy`. Shared helper `lookupRate` in [`_shared/easypost-rates.ts`](supabase/functions/_shared/easypost-rates.ts). No EasyPost label is ever created for a refused buy — no carrier-side artifact, no `shipments` row, no `label_cost` ledger row.
 2. Refund the captured PaymentIntent via Stripe `createRefund` with idempotency key `refund_<eps_id>_buy_time_rate_exceeded`.
 3. Return HTTP 409 with `error: "rate_changed"` and the new buy-time rate. The client (`RecipientStepPayment` / `SenderFlow`) catches `BuyLabelRateChangedError`, renders `RateChangedDialog`, lets the buyer re-shop at the new price or cancel.
 4. **Middle-path refund-failure handling**: if the Stripe refund itself fails, the 409 response carries `refunded: false` + `refund_error`. The dialog renders honest copy: "we tried, our team is on it, reference: <pi_id>". An `auto_refund_failed` event_logs row with `requires_manual_intervention: true` is the admin signal to manually process the refund. No automatic retry queue yet — fast-follow when real-world data demands it.
+
+**When the rate is ABSENT rather than merely expensive** (added 2026-08-24): `lookupRate` returning `null` means the rate is on neither surface, which reliably predicts a 404 `NOT_FOUND` from `/buy` — EasyPost's message for that is the bare *"The requested resource could not be found."* Two rules follow, both learned from the 2026-08-24 incident (LOG):
+
+- **A `null` is never a reason to skip the price cap silently.** Before the fix, `buyTimeRateCents` stayed `null` and the gate simply didn't run — no event, no alert — so the incident left no trace of *why*. It now emits `label.buy_time_rate_unresolvable` (severity `warn`).
+- **A 404 from `/buy` triggers one rerate recovery, not an immediate refund.** The labels function calls `POST /shipments/<id>/rerate` (EasyPost's documented remedy for an unpurchasable rate), re-matches the **same carrier+service** via `rerateAndMatch`, re-checks the fresh price against `rerateRetryCapCents` — the identical cap formula above — and retries the buy once. Outcomes are logged as `label.rerate_retry` (`recovered` | `service_unavailable_after_rerate` | `retry_buy_failed`) or `label.rerate_over_cap`.
+
+  **Known limit — recovery needs the rate OBJECT to still exist.** The rerate must re-match a carrier+service, and the only server-trusted source for that is the rate object itself: SendMo never persists the selected rate before purchase, and the client does not send carrier/service. If the rate is gone entirely (EasyPost retains unpurchased rates 28 days, so this means a very old or purged rate) there is nothing to re-match and recovery cannot run — the request falls straight through to the refund path and emits `label.rerate_impossible` (severity `error`). Closing this would require persisting carrier+service at PI-creation time; not done, because the 28-day retention makes the resolvable case the common one.
+
+  **Invariants:** the service is never substituted, even for a cheaper one — the customer chose and paid for that service. The retry cannot produce two labels: it is only reachable when EasyPost *refused* the first buy, and a shipment already carrying a `postage_label` is refused on any further attempt. A failed retry leaves the original 404 as the reported error, so the refund path reports the real cause. Exhausted recovery falls through to the standard refund path with customer-facing copy that names the situation instead of echoing EasyPost's string.
 
 **Soft warning band:** if the buy-time rate drifted >5% from the back-derived quoted rate but still passes the gate, emits a `label.buy_time_rate_drift` event_logs row (severity `warn`) with carrier/service/drift_pct/margin_remaining for telemetry. Doesn't block the buy. Threshold env-tunable via `LABEL_BUY_GATE_SOFT_DRIFT_PCT`.
 
@@ -1203,6 +1214,8 @@ Defaults: `STRIPE_FEE_PCT = 0.029`, `STRIPE_FEE_FLAT_CENTS = 30`, `MIN_NET_MARGI
 **Complements §13.4** (carrier-adjustment recovery, H2): §13.4 handles POST-pickup drift (USPS reweighs, dim/address surcharges discovered at the carrier scan); §13.6 handles BUY-TIME drift between rate-shop quote and `/buy` commit. They are not redundant — they catch different rate-divergence classes at different lifecycle points.
 
 **Why auto-capture and not auth-then-capture:** SendMo currently uses `capture_method='automatic'` on the PaymentIntent — money moves at customer confirmation, BEFORE `/labels` runs. The gate is consequently a *check-then-refund* design rather than an *auth-then-capture* design. The latter would eliminate the refund path entirely but requires `/payments` + client confirmation flow rework (~2-3h). Deferred until real-world data shows >1 hard refund per week sustained (audit at decision time: 0 live losses across 32 shipments → not warranted for launch).
+
+**Adjustment spend caps — how adjustment charges are identified (repaired 2026-08-24).** The per-card-24h and per-user-7d caps select adjustment charges by joining `stripe_intents` on `stripe_intent_id` and filtering `intent_role = 'carrier_adjustment'`. They must NOT filter `transactions.idempotency_key LIKE 'adjustment\_%'` — that prefix is the **Stripe** idempotency key for the PaymentIntent and never reaches the ledger, whose charge rows are keyed `stripe.evt_<id>:charge`. Migration 033 used the prefix (and a non-existent column) and both caps were consequently unenforced from deploy until migration 043. The per-shipment cap keys off `type='carrier_adjustment' + shipment_id` and was unaffected. The same discriminator governs the unlocked fallback in `_shared/adjustments.ts`.
 
 Reference: [proposals/2026-05-23_buy-time-rate-gate.md](proposals/2026-05-23_buy-time-rate-gate.md). Companion service denylist constant in `rates/index.ts` (`SERVICE_DENYLIST`) suppresses carrier+service pairs with known systematic quote/buy divergence (currently: FedEx Smart Post).
 
@@ -1492,7 +1505,7 @@ SendMo uses a **structured event log** in Supabase (`event_logs` table) as a deb
 |---|---|
 | `addresses` | `address.verified`, `address.soft_warning`, `address.hard_error`, `address.google_fallback` |
 | `rates` | `rate.fetched`, `rate.no_results`, `rate.error` |
-| `labels` | `label.created`, `label.buy_error`, `label.endshipper_error` |
+| `labels` | `label.created`, `label.buy_error`, `label.endshipper_error`, `label.buy_time_rate_unresolvable`, `label.rerate_retry`, `label.rerate_over_cap`, `label.rerate_impossible`, `label.rerate_comp_price_jump` |
 
 ### Retention Policy
 

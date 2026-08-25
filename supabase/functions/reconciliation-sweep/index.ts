@@ -355,6 +355,13 @@ async function runDailySweep(supabase: ReturnType<typeof createClient>, sessionI
   //      the pre-2026-07-06 webhook fallback, or a rate_cents-less write).
   //      A shipment with a sibling non-zero row is skipped: that's the
   //      backfill-remediation signature (e.g. YPPY9AK), already handled.
+  //      ALSO skipped (2026-08-24): a shipment whose refund_status says no
+  //      carrier refund was ever due. A 0¢ row is the CORRECT amount when
+  //      EasyPost declined to refund the cancelled label — SendMo genuinely
+  //      ate that label cost. Flagging those as "under-stated" invited a
+  //      backfill that would have invented refunds which never happened
+  //      (RA2W2NG/NEC7J3E/RPSAZXG, $16.00 total, all refund_status=
+  //      'not_applicable'). They had been re-flagged nightly since 2026-07-07.
   //   2. No shipment may carry more than one non-zero easypost_refund row
   //      (double-counted EP credit — divergent idempotency keys, e.g. a
   //      webhook shp_fallback row racing a tracking rfnd row).
@@ -365,6 +372,28 @@ async function runDailySweep(supabase: ReturnType<typeof createClient>, sessionI
       .eq("type", "easypost_refund")
       .eq("mode", "live")
       .limit(2000);
+
+    // refund_status per shipment — a 0¢ row is legitimate when no carrier
+    // refund was owed, so the audit needs the shipment's own verdict, not
+    // just the ledger's shape.
+    const zeroShipmentIds = [...new Set(
+      (refundTxs ?? [])
+        .filter((tx) => tx.amount_cents === 0 && tx.shipment_id)
+        .map((tx) => tx.shipment_id as string),
+    )];
+    const noRefundDue = new Set<string>();
+    if (zeroShipmentIds.length > 0) {
+      const { data: statusRows } = await supabase
+        .from("shipments")
+        .select("id, refund_status")
+        .in("id", zeroShipmentIds);
+      for (const r of statusRows ?? []) {
+        const st = (r as { refund_status: string | null }).refund_status;
+        if (st === "not_applicable" || st === "rejected") {
+          noRefundDue.add((r as { id: string }).id);
+        }
+      }
+    }
 
     const nonZeroByShipment = new Map<string, number>();
     for (const tx of refundTxs ?? []) {
@@ -377,7 +406,11 @@ async function runDailySweep(supabase: ReturnType<typeof createClient>, sessionI
     }
 
     for (const tx of refundTxs ?? []) {
-      if (tx.amount_cents === 0 && !nonZeroByShipment.has(tx.shipment_id as string)) {
+      if (
+        tx.amount_cents === 0 &&
+        !nonZeroByShipment.has(tx.shipment_id as string) &&
+        !noRefundDue.has(tx.shipment_id as string)
+      ) {
         mismatches++;
         await log({
           event_type: "recon.zero_amount_easypost_refund_tx",
@@ -433,9 +466,22 @@ async function runWeeklySweep(supabase: ReturnType<typeof createClient>, session
   let adjustmentsMatched = 0;
   let mismatches = 0;
 
-  // Generate EasyPost shipment report for the last 31 days (max window).
-  const endDate = new Date();
-  const startDate = new Date(endDate.getTime() - 31 * 24 * 60 * 60 * 1000);
+  // Generate EasyPost shipment report for a 31-day window ending YESTERDAY.
+  //
+  // Not today: EasyPost caps any report whose range includes the current day at
+  // 4 days, and rejects anything wider with
+  //   422 REPORT.PARAMS.INVALID — "end_date: Report including today covers more
+  //   than 4 days"
+  // So a 31-day window ending today is not merely unlucky, it can never be
+  // valid — this sweep has failed on every run since it was written (7 recorded
+  // `recon.weekly_report_create_failed` rows, most recently 2026-08-23) and has
+  // never produced a report. Ending the window yesterday leaves today out of
+  // range, which is what makes the 31 days permissible.
+  //
+  // Excluding today costs nothing here: carrier adjustment data settles days
+  // late, and same-day shipments are covered by the daily sweep above.
+  const endDate = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const startDate = new Date(endDate.getTime() - 30 * 24 * 60 * 60 * 1000);
 
   const startStr = startDate.toISOString().slice(0, 10);
   const endStr = endDate.toISOString().slice(0, 10);

@@ -373,6 +373,12 @@ export function createAdjustmentRecharge(params: {
     attempt: number;                     // 1 on first try; bump on retry
     paymentMethodId: string;             // pre-attached saved PM
     customerId: string;                  // Stripe Customer (owner of the PM)
+    // SendMo user UUID. Load-bearing, not decorative: stripe-webhook resolves
+    // stripe_intents.user_id / transactions.user_id from metadata.sendmo_user_id
+    // ONLY, so omitting it leaves both NULL — and the per-user-7d adjustment cap,
+    // which scopes by user_id, silently sums to 0. That is the same
+    // fails-quietly shape as the 033 cap bug (see LOG 2026-08-24).
+    userId: string;
     reason?: string;                     // EasyPost adjustment_reason
     liveMode: boolean;
 }): Promise<PaymentIntent> {
@@ -387,6 +393,10 @@ export function createAdjustmentRecharge(params: {
         metadata: {
             source: "carrier_adjustment_recharge",
             intent_role: "carrier_adjustment",
+            // Read by stripe-webhook's resolveIdsFromMetadata → persisted to
+            // stripe_intents.user_id + transactions.user_id. The per-user-7d
+            // cap keys off it.
+            sendmo_user_id: params.userId,
             // txn_kind — Radar/Fraud-Teams discriminator (B2 from risk-intel).
             txn_kind: "mit_adjustment",
             shipment_id: params.shipmentId,
