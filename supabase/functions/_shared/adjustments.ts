@@ -281,6 +281,7 @@ export async function resolveRecovery(
             attempt,
             paymentMethodId: paymentContext.payment_method_id,
             customerId: paymentContext.customer_id,
+            userId: paymentContext.user_id,
             reason: reasonText,
             liveMode: !shipment.is_test,
         });

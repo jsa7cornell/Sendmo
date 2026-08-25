@@ -681,6 +681,31 @@ describe("resolveRecovery — race-condition guard (N2)", () => {
         expect(r.decision).toBe("recharge");
     });
 
+    it("stamps sendmo_user_id on the recharge PI — without it the 7d cap is dead", async () => {
+        // stripe-webhook resolves stripe_intents.user_id / transactions.user_id
+        // from metadata.sendmo_user_id ONLY. Omit it and both are NULL, so the
+        // per-user-7d cap — which scopes by user_id — sums to 0 no matter how
+        // many adjustments the user has been charged for. The cap would have
+        // been born broken in exactly the way migration 033's was.
+        (createAdjustmentRecharge as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+            id: "pi_adj", status: "succeeded", amount: 300,
+            currency: "usd", client_secret: "", capture_method: "automatic",
+        });
+        const supabase = makeMockSupabase({
+            rpcResult: { shipment_lifetime: 0, card_24h: 0, user_7d: 0 },
+        });
+        await resolveRecovery({
+            supabase,
+            ...BASE_PARAMS,
+            shipment: BASE_SHIPMENT,
+            deltaCents: 200,
+            paymentContext: BASE_PAYMENT_CTX,
+        });
+        expect(createAdjustmentRecharge).toHaveBeenCalledWith(
+            expect.objectContaining({ userId: BASE_PAYMENT_CTX.user_id }),
+        );
+    });
+
     it("unlocked fallback STILL blocks when per-shipment cap is breached", async () => {
         // Per-shipment is $9 (sum from unlocked transactions read); +$2+$1 = $12 → blocked.
         const supabase = makeMockSupabase({
