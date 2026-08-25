@@ -12,6 +12,43 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-25] Applied 043 to production — and the fix opened a hole that 044 closed
+
+**Category:** fix | security | payments | prod-write
+**Cross-link:** applies [043](supabase/migrations/043_fix_resolve_recovery_lock_discriminator.sql) | adds [044](supabase/migrations/044_lock_down_resolve_recovery_lock_grants.sql) | Rule 0.5 disclosure
+
+**Prod writes performed** (target stated before running, per Rule 0.5). Project `fkxykvzsqdjzhurntgah` — **SendMo production**, db `postgres`, verified via `get_project_url` + `current_database()`:
+
+1. `043_fix_resolve_recovery_lock_discriminator` — one `CREATE OR REPLACE FUNCTION public.resolve_recovery_lock(UUID, TEXT, UUID)` plus its `COMMENT` and the `REVOKE`/`GRANT` pair. No table read or written, no rows changed.
+2. `044_lock_down_resolve_recovery_lock_grants` — three `REVOKE EXECUTE` statements. No rows changed.
+
+**Before/after, measured not assumed:**
+
+| | before | after |
+|---|---|---|
+| `pg_get_functiondef` md5 | `c91753f8…` (1468 b) | `1a3d1c58…` (2159 b) |
+| contains `si.stripe_payment_intent_id` | yes | no |
+| contains a `LIKE` clause | yes | **no** (`strpos` = 0) |
+| calling it | Postgres `42703` | `{shipment_lifetime: -500, card_24h: 0, user_7d: 0}` |
+
+`shipment_lifetime` is signed by design (033's contract: "summed by `abs()` in app code"), and `_shared/adjustments.ts` does exactly that. `card_24h`/`user_7d` are legitimately 0 — no `intent_role='carrier_adjustment'` intents exist yet.
+
+**Verification gotcha worth keeping:** my first check used `pg_get_functiondef(...) LIKE '%idempotency_key%'` and came back **true**, which read like the dead prefix filter had survived. It hadn't — `_` is a single-character wildcard in `LIKE`, so the pattern matched the prose "idempotency key" in a comment. `strpos()` is the literal test. A LIKE-based assertion about a string containing an underscore is not an assertion.
+
+**The part that matters: repairing the function created a live exposure.**
+
+Checking grants after applying 043 — rather than trusting them — showed `anon` and `authenticated` holding `EXECUTE` on `resolve_recovery_lock`. Both 033 and 043 end with `REVOKE ALL ... FROM PUBLIC` and 033 even comments *"service_role can call; anon and authenticated cannot."* **That was never true.** Supabase's default privileges grant EXECUTE on new public-schema functions to `anon` and `authenticated` *directly*, and `REVOKE ... FROM PUBLIC` does not touch a role-specific grant.
+
+`resolve_recovery_lock` is `SECURITY DEFINER`, reads `transactions` and `stripe_intents`, and has **no internal caller check** — it trusts its three arguments. Exposed via PostgREST as `POST /rest/v1/rpc/resolve_recovery_lock` with the anon key that ships in the frontend bundle, it would have let anyone read adjustment spend sums for any shipment / payment method / user they could enumerate, and take a `FOR UPDATE` lock on an arbitrary `shipments` row.
+
+It was harmless only because it threw `42703` on every call. **Fixing the function armed it.** 044 revokes `anon` + `authenticated`; `service_role` keeps EXECUTE.
+
+Swept the other four `SECURITY DEFINER` functions while there. `set_account_budget` was also anon-granted but is **not** vulnerable — it checks `auth.uid()` and requires `profiles.role='admin'`, so an anon caller always hits "Not authenticated". Revoked anon anyway (it can never legitimately succeed). `admin_insert_shipment`, `handle_new_user`, `set_admin_active_mode` were already correct. Final state, all five verified with `has_function_privilege`: anon `false` everywhere; `authenticated` only on the two functions that self-guard and need it.
+
+**Contract for future `SECURITY DEFINER` functions here:** `REVOKE ... FROM PUBLIC` is not sufficient and never was. Name `anon` and `authenticated` explicitly, then *verify with `has_function_privilege()`* instead of assuming the REVOKE did it. A comment asserting a grant state is not a grant state.
+
+**Now closed:** the per-card-24h cap is enforced for the first time (it exists only in the RPC — the unlocked fallback never implemented it), and `adjustment.cap_lock_rpc_unavailable` should stop appearing after tonight's sweep. Worth confirming on the next run rather than assuming.
+
 ### [2026-08-24] Fixed three of the five audit findings — and one of them nearly became a $16 accounting lie
 
 **Category:** fix | payments | reliability
