@@ -53,7 +53,11 @@ The lesson repeats: three separate times in this one area, a cap looked correct 
 - variants-covered: intent_role discriminator present / prefix filter absent; 7d cap blocks over $50; empty-intent-list short-circuit; sendmo_user_id stamped on the recharge PI (red without it)
 - n/a-category: pure-logic — migration 043 (SQL function body, verified against `information_schema` for both the column name and the `intent_role` values) and the reconciliation-sweep window/suppression changes are server-only with no rendered surface. The sweep changes have no executing test; `reconciliation-sweep` is not importable under Vitest for the same `Deno.serve` reason as `labels/index.ts`.
 
+**Deployed 2026-08-24** — PR [#108](https://github.com/jsa7cornell/Sendmo/pull/108) squash-merged to `main`; "Provide Tests" and "Deploy Supabase Edge Functions" both green, so `labels`, `reconciliation-sweep`, and the `_shared` changes are live.
+
 **Deploy note:** migration 043 is **not applied** — this project applies migrations by hand, and no CI workflow does it. Until it runs, the RPC stays broken and the (now-fixed) unlocked fallback carries the caps. Merging without it is safe; it is strictly an improvement over the current state.
+
+**What remains unenforced until 043 runs:** the per-user-7d cap now works through the repaired fallback, but the **per-card-24h cap does not** — the fallback has never had it (`no per-card window without the RPC's join shape`), and the RPC is the only place it exists. `adjustment.cap_lock_rpc_unavailable` will also keep firing nightly. One `CREATE OR REPLACE FUNCTION` closes both.
 
 ### [2026-08-24] How the checkout 404 reached a customer: the label-purchase harness has been dead since May
 
