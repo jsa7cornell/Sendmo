@@ -55,9 +55,18 @@ interface MockSupabaseConfig {
     // unlocked-fallback transactions read result (for fallback path test)
     unlockedShipmentRows?: Array<{ amount_cents: number }>;
     unlockedUserRows?: Array<{ amount_cents: number }>;
+    /** stripe_intents rows with intent_role='carrier_adjustment' for this user. */
+    adjustmentIntents?: Array<{ stripe_intent_id: string }>;
 }
 
 function makeMockSupabase(cfg: MockSupabaseConfig = {}) {
+    // Filter spy — lets a test assert WHICH discriminator the cap query used,
+    // not merely that it returned a number.
+    const calls = {
+        stripeIntentEqs: [] as Array<{ col: string; val: unknown }>,
+        transactionLikeCols: [] as string[],
+        transactionInCols: [] as Array<{ col: string; vals: unknown[] }>,
+    };
     cfg.notifLogInserts = cfg.notifLogInserts ?? [];
 
     const carrierAdjustmentsChain = {
@@ -102,7 +111,12 @@ function makeMockSupabase(cfg: MockSupabaseConfig = {}) {
                     eqs.push({ col, val });
                     return node;
                 },
-                like() {
+                like(col: string) {
+                    calls.transactionLikeCols.push(col);
+                    return node;
+                },
+                in(col: string, vals: unknown[]) {
+                    calls.transactionInCols.push({ col, vals });
                     return node;
                 },
                 gte() {
@@ -124,11 +138,36 @@ function makeMockSupabase(cfg: MockSupabaseConfig = {}) {
         },
     };
 
+    // stripe_intents — the unlocked per-user-7d path resolves adjustment PIs
+    // here first (intent_role discriminator), then sums the matching charge
+    // rows. Before 2026-08-24 it filtered transactions on an
+    // `idempotency_key LIKE 'adjustment\\_%'` prefix that is Stripe-side and
+    // never reaches that table, so the sum was a constant 0.
+    const stripeIntentsChain = {
+        select: () => {
+            const node: Record<string, unknown> = {
+                eq(col: string, val: unknown) {
+                    calls.stripeIntentEqs.push({ col, val });
+                    return node;
+                },
+                gte() {
+                    return Promise.resolve({
+                        data: cfg.adjustmentIntents ?? [],
+                        error: null,
+                    });
+                },
+            };
+            return node;
+        },
+    };
+
     return {
+        __calls: calls,
         from(table: string) {
             if (table === "carrier_adjustments") return carrierAdjustmentsChain;
             if (table === "notifications_log") return notifLogChain;
             if (table === "transactions") return transactionsChain;
+            if (table === "stripe_intents") return stripeIntentsChain;
             throw new Error(`makeMockSupabase: unexpected table '${table}'`);
         },
         rpc(_name: string, _args: unknown) {
@@ -551,6 +590,94 @@ describe("resolveRecovery — race-condition guard (N2)", () => {
             deltaCents: 200,
             paymentContext: BASE_PAYMENT_CTX,
         });
+        expect(r.decision).toBe("recharge");
+    });
+
+    // ── Regression: the per-user-7d cap discriminator (2026-08-24) ───────────
+    //
+    // The unlocked fallback selected adjustment charges with
+    //   .like("idempotency_key", "adjustment\\_%")
+    // That prefix is the STRIPE idempotency key minted by
+    // createAdjustmentRecharge for the PaymentIntent; the ledger's charge rows
+    // are keyed `stripe.evt_<id>:charge` by stripe-webhook. Two different
+    // namespaces, so the filter matched nothing and the cap summed to 0 —
+    // confirmed against production, where zero rows in `transactions` match
+    // that prefix across every type. Same defect as migration 033's, which
+    // additionally joined a column that does not exist. See LOG [2026-08-24].
+    //
+    // These pin the DISCRIMINATOR, not just the arithmetic: a test that only
+    // checked the returned sum would pass against the broken version whenever
+    // the expected sum happened to be 0.
+
+    it("per-user-7d cap resolves adjustment PIs by intent_role, not an idempotency-key prefix", async () => {
+        const supabase = makeMockSupabase({
+            rpcError: { code: "PGRST202", message: "n/a" },
+            unlockedShipmentRows: [],
+            adjustmentIntents: [{ stripe_intent_id: "pi_adj_1" }],
+            unlockedUserRows: [],
+        });
+        await resolveRecovery({
+            supabase,
+            ...BASE_PARAMS,
+            shipment: BASE_SHIPMENT,
+            deltaCents: 200,
+            paymentContext: BASE_PAYMENT_CTX,
+        });
+
+        const calls = (supabase as unknown as { __calls: {
+            stripeIntentEqs: Array<{ col: string; val: unknown }>;
+            transactionLikeCols: string[];
+            transactionInCols: Array<{ col: string; vals: unknown[] }>;
+        } }).__calls;
+
+        // Discriminates on the PI's role...
+        expect(calls.stripeIntentEqs).toContainEqual({ col: "intent_role", val: "carrier_adjustment" });
+        // ...scoped to this user...
+        expect(calls.stripeIntentEqs.some((c) => c.col === "user_id")).toBe(true);
+        // ...and sums the charge rows for exactly those intents.
+        expect(calls.transactionInCols).toContainEqual({ col: "stripe_intent_id", vals: ["pi_adj_1"] });
+        // The dead prefix filter is gone.
+        expect(calls.transactionLikeCols).not.toContain("idempotency_key");
+    });
+
+    it("per-user-7d cap blocks when prior adjustment charges exceed $50", async () => {
+        const supabase = makeMockSupabase({
+            rpcError: { code: "PGRST202", message: "n/a" },
+            unlockedShipmentRows: [],
+            adjustmentIntents: [{ stripe_intent_id: "pi_adj_1" }, { stripe_intent_id: "pi_adj_2" }],
+            // $49.50 already recharged this week; +$2 delta +$1 fee = $52.50 > $50.
+            unlockedUserRows: [{ amount_cents: -4950 }],
+        });
+        const r = await resolveRecovery({
+            supabase,
+            ...BASE_PARAMS,
+            shipment: BASE_SHIPMENT,
+            deltaCents: 200,
+            paymentContext: BASE_PAYMENT_CTX,
+        });
+        expect(r.decision).toBe("flag");
+        expect(r.blocked_by_cap).toBe("7d_user");
+    });
+
+    it("skips the transactions query entirely when the user has no adjustment PIs", async () => {
+        const supabase = makeMockSupabase({
+            rpcError: { code: "PGRST202", message: "n/a" },
+            unlockedShipmentRows: [],
+            adjustmentIntents: [],
+        });
+        const r = await resolveRecovery({
+            supabase,
+            ...BASE_PARAMS,
+            shipment: BASE_SHIPMENT,
+            deltaCents: 200,
+            paymentContext: BASE_PAYMENT_CTX,
+        });
+        const calls = (supabase as unknown as { __calls: {
+            transactionInCols: Array<{ col: string; vals: unknown[] }>;
+        } }).__calls;
+        // No intents → no `.in()` with an empty list (PostgREST would match nothing
+        // but the round trip is pointless), and the cap must not block.
+        expect(calls.transactionInCols).toHaveLength(0);
         expect(r.decision).toBe("recharge");
     });
 

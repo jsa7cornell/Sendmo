@@ -12,6 +12,45 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-24] Fixed three of the five audit findings — and one of them nearly became a $16 accounting lie
+
+**Category:** fix | payments | reliability
+**Cross-link:** acts on the audit entry below | [043 migration](supabase/migrations/043_fix_resolve_recovery_lock_discriminator.sql) | [adjustments.ts](supabase/functions/_shared/adjustments.ts) | [reconciliation-sweep](supabase/functions/reconciliation-sweep/index.ts)
+
+**1. The adjustment spend caps — two defects, not one.**
+
+The audit found migration 033 joining `si.stripe_payment_intent_id`, a column that does not exist (`stripe_intents` has `stripe_intent_id`; the author almost certainly had `shipments.stripe_payment_intent_id` in mind, which is real). Postgres 42703 on every call, 41 nightly `adjustment.cap_lock_rpc_unavailable` rows.
+
+Fixing the column alone would have been worse than leaving it broken. Both cap queries also selected adjustment charges with `idempotency_key LIKE 'adjustment\_%'` — and **that prefix is the Stripe idempotency key** minted by `createAdjustmentRecharge` for the PaymentIntent. The ledger's charge rows are keyed `stripe.evt_<id>:charge` by stripe-webhook. Two namespaces, conflated. Verified against production: **zero rows in `transactions` match that prefix, across every transaction type.** So the repaired RPC would have returned `card_24h = 0` and `user_7d = 0` forever, and the caps would have gone from *loudly* broken to *silently* absent — the exact failure mode this whole audit was chasing.
+
+The durable discriminator is `stripe_intents.intent_role = 'carrier_adjustment'`, which `createAdjustmentRecharge` stamps as PI metadata and stripe-webhook persists on the same write path as the charge row. Migration 043 rebuilds the RPC on it. `_shared/adjustments.ts` had the identical prefix bug in its *unlocked fallback* — the path that runs whenever the RPC is down, i.e. every night for the last month — so that is fixed too (two queries; PostgREST cannot express the join).
+
+Net: the per-card-24h and per-user-7d caps go from never-enforced to enforced. The per-shipment cap was always fine (`type='carrier_adjustment' + shipment_id`), which is why no recharge actually escaped.
+
+**2. The weekly EasyPost report could never have succeeded.** `runWeeklySweep` asked for 31 days ending **today**. EasyPost caps any range that includes the current day at 4 days and rejects the rest with `REPORT.PARAMS.INVALID`. Not flaky — impossible. Window now ends yesterday, which is what makes 31 days legal. Costs nothing: adjustment data settles days late and same-day shipments are covered by the daily sweep.
+
+**3. The zero-amount refund alarm — where I was about to do real damage.**
+
+147 `recon.zero_amount_easypost_refund_tx` warnings turned out to be **4 rows** re-flagged nightly since 2026-07-07. The obvious "fix" was the one SPEC documents: book a backfill row at the shipment's `rate_cents`. I had the amounts ready ($5.24 + $5.48 + $5.28) before checking `refund_status`.
+
+All three are **`not_applicable`** — EasyPost never refunded those cancelled labels. SendMo genuinely ate the cost, and `0` is the *correct* amount. Backfilling `rate_cents` would have invented $16.00 of refunds that never happened and flattered net margin by exactly that much, in live mode, in an append-only ledger where it could not be undone.
+
+So the bug was never the data — it was the **audit's suppression rule**, which skipped a 0¢ row only when a sibling non-zero row existed. It now also skips when the shipment's own `refund_status` says no refund was due (`not_applicable` / `rejected`). Three nightly false alarms gone; the alert can be trusted again.
+
+**Not fixed, deliberately:**
+
+- **The stuck `cap_breach` (41×, shipment `23d16eb3`).** One adjustment from 2026-07-15, permanently blocked by the *lifetime* per-shipment cap, re-fired nightly by the N1 drift detector. Making it stop requires deciding what state a permanently-capped adjustment should hold. `pending` is currently load-bearing — it is what surfaces the row in the Reconciliation tab — and the existing terminal values don't fit (`rejected` means "carrier refused", which is false here). A lifetime-cap block is permanent while a 24h/7d block is temporary, so "stop retrying" is not one rule. **That is a product decision, not a typo**, and I am not inventing ledger semantics on the money path to silence an alert.
+- **Tests writing to production error logs.** The newest of 183 `payment.intent_error` rows is a Stripe idempotency collision on `pi_create_shp_mock123`. Integration tests run against the deployed functions and real Stripe, so that counter is contaminated and mock keys are permanently burned. Fixing it means a separate Stripe/Supabase target for integration runs — worth doing, out of scope here.
+
+**Still outstanding as a data question:** shipment `24W301E` (`14d59d37`) carries two `easypost_refund` rows of 1300 each for one 1300 refund — a genuine 1300 over-credit, from a webhook `shp_fallback` row racing a tracking `rfnd` row 30 seconds apart on 2026-07-07. The shipment-scoped dedupe guard added to `ledger.ts` that same day prevents recurrence, so **no code fix is needed**; correcting the existing row needs a compensating entry, which is John's call on an append-only ledger.
+
+**Browser-verified:**
+- spec: `tests/unit/adjustments.test.ts` — 30/30 (3 new). The load-bearing one is *"per-user-7d cap resolves adjustment PIs by intent_role, not an idempotency-key prefix"*, which asserts the **filters used**, not the sum — confirmed red against the pre-fix file. Noted honestly: the two sibling behaviour tests pass against the old code too, because the mock returns its configured rows regardless of filter; they pin behaviour, not the regression.
+- variants-covered: intent_role discriminator present / prefix filter absent; 7d cap blocks over $50; empty-intent-list short-circuit
+- n/a-category: pure-logic — migration 043 (SQL function body, verified against `information_schema` for both the column name and the `intent_role` values) and the reconciliation-sweep window/suppression changes are server-only with no rendered surface. The sweep changes have no executing test; `reconciliation-sweep` is not importable under Vitest for the same `Deno.serve` reason as `labels/index.ts`.
+
+**Deploy note:** migration 043 is **not applied** — this project applies migrations by hand, and no CI workflow does it. Until it runs, the RPC stays broken and the (now-fixed) unlocked fallback carries the caps. Merging without it is safe; it is strictly an improvement over the current state.
+
 ### [2026-08-24] How the checkout 404 reached a customer: the label-purchase harness has been dead since May
 
 **Category:** investigation | testing
