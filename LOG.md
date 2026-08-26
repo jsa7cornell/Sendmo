@@ -12,6 +12,35 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-25] PR #93 rebased down to what survived; #89 closed as superseded
+
+**Category:** chore | flow-cleanup
+**Cross-link:** closes the two open PRs from the 2026-08-20 flow-redesign series (#89, #93); [`proposals/2026-08-19_shipping-flow-redesign`](proposals/2026-08-19_shipping-flow-redesign_reviewed-2026-08-19.md)
+
+Both PRs had sat five days, both were CONFLICTING — which per PLAYBOOK Rule 21 means **no Actions run had ever been created for them**: their checks read as "fine" because nothing tested them. Rather than merge five-day-old flow code onto a flow that has been rewritten twice since (the recipient overhaul on 08-22/23, the sender rework on 08-24), each was audited against current `main` file by file.
+
+**#89 — closed, superseded.** Its core idea landed differently: `senderScenario.ts` derived what a given sender owes, and `planSenderSteps` (#105) now does that job from the link payload — the same "implied by what the link carries, not stored as flags" reasoning. Everything else it touched was rewritten underneath it: `SenderProgressBar.tsx` no longer exists, `SenderStepPackage` is parcel-only over the shared `ParcelQuestion`, and `SenderFlow` is built around the question queue. **One piece is worth rescuing separately: `senderDelivery.ts`** — the hedged "Estimated Aug 21–23" estimate that returns `null` when the carrier gives none, with 7 tests. Nothing on `main` does that; the rates step still prints a bare "N business days". Branch `feat/sender-flow-refresh` is left in place.
+
+**#93 — two of its seven items survived**, and they are what this PR carries:
+
+| # | Item | Verdict |
+|---|---|---|
+| 1 | Guestimator: drop the green banner + the button caption | **Ported** |
+| 5 | Pin the saved-address prefill rule with a test | **Ported** |
+| 2 | Delete `RecipientStepEmailVerifyFlex`, one component for both paths | Moot — neither that file nor its twin exists on `main`; `RecipientStepContact` replaced both |
+| 3 | `RecipientStepPaymentSummary` on both paths | Superseded by the shared `ShipmentDetailsCard` (08-23/24), which is on both payment steps |
+| 4 | Identity off step 1 | Already done — `RecipientStepAddress` has no email or Google button |
+| — | Copy corrections in `senderTodo.ts` | Already true, differently: `FlexPaymentStep` says "We'll charge your card each time a sender uses your link", the per-use framing #93 argued for. The false "up to $100, never more" is gone from `main` |
+| — | Two e2e race fixes | `progress-bar.spec.ts` was deleted with the progress bar; the auth-OTP rewrite targets the pre-08-22 flow |
+
+**On the ported test:** it exercised `sender='self'` → origin. Since 08-23 nothing writes `'self'` (the "use my address" chips became a saved-address picker, which implies nothing about who ships), so it was re-aimed at the live path — `deferToSender` writing `'other'` → destination. Same guard (`targetTouched` in `RecipientFlowContext`), which was **untested on `main`**: `recipientFlowContext.test.tsx` mocks a null session precisely so that effect never runs. Verified to have teeth — with both halves of the guard disabled, the don't-clobber test fails and the fills-an-empty-slot test still passes.
+
+**One inert-CSS usage removed in passing:** the deleted success banner was styled `bg-success/10 border-success/30 text-success`, none of which render — `--success` is a CSS variable with no Tailwind color mapped to it (see the 08-24 entry). It had never actually been green.
+
+**Browser-verified:**
+- spec: `tests/e2e/onboarding.spec.ts` — 15/15 (the Guestimator test now asserts the reveal-and-fill as the confirmation, plus the banner's absence); full mocked e2e 107 passed; unit 771/771 including the ported `recipientFlowPrefill.test.tsx`
+- variants-covered: Guestimator {successful run reveals filled fields, no banner; "or fill in manually" path unchanged}; prefill {empty slot fills, typed slot survives}
+
 ### [2026-08-25] Applied 043 to production — and the fix opened a hole that 044 closed
 
 **Category:** fix | security | payments | prod-write

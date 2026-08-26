@@ -612,14 +612,15 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
     await page.locator("textarea").fill("a laptop");
     await page.getByRole("button", { name: /I'm Feeling Lucky/i }).click();
 
-    // Success confirmation, and the estimate REVEALS the fields it filled —
-    // an auto-filled guess the user cannot see is a guess they cannot correct.
-    await expect(
-      page.getByText(/Auto-filled packaging, dimensions/i),
-    ).toBeVisible({ timeout: 8000 });
+    // The estimate REVEALS the fields it filled — an auto-filled guess the
+    // user cannot see is a guess they cannot correct. That reveal IS the
+    // confirmation now: the "Auto-filled packaging, dimensions & weight"
+    // banner went on 2026-08-25 (John: "no green, just keep it normal"), since
+    // it announced values that are on screen, filled in, one line below it.
     await expect(
       page.getByRole("textbox", { name: "L", exact: true }),
-    ).toHaveValue("15");
+    ).toHaveValue("15", { timeout: 8000 });
+    await expect(page.getByText(/Auto-filled packaging/i)).toHaveCount(0);
   });
 
   test("Step 14: 'or fill in manually' opens the parcel fields without the Guestimator", async ({
