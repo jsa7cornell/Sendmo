@@ -1,6 +1,8 @@
 import { Button } from "@/components/ui/button";
-import { Package2, MapPin, Printer, Truck, ArrowRight } from "lucide-react";
-import type { LinkData } from "@/lib/api";
+import { ArrowRight } from "lucide-react";
+import ShipmentDetailsCard, { type DetailCell } from "@/components/shipment/ShipmentDetailsCard";
+import { formatCents, type LinkData } from "@/lib/api";
+import { carrierDisplayName, speedDisplayName } from "@/lib/utils";
 import { displayName } from "@/lib/name";
 import type { SenderQuestion } from "./senderState";
 
@@ -11,76 +13,107 @@ interface Props {
   onContinue: () => void;
 }
 
-// SPEC §8 Step 0. City/state is the only location detail shown — Rule 7:
-// never show street/zip in sender UI text. The printed label is the only
-// address surface.
+// SPEC §8 Step 0.
 //
-// 2026-08-24: "How it works" lists the steps THIS link has, not a fixed three.
-// A link whose creator specced the parcel and the ship-from address was still
-// promising "tell us about your package" — and then showed a screen of
-// pre-answered fields to back the promise up.
+// 2026-08-26: the intro states the shipment instead of narrating the flow. It
+// used to open on a headline, a city, and a numbered list of the questions
+// still to come — so everything the creator had already decided (the parcel,
+// the ship-from address, the speed and the cap they're paying for) stayed
+// invisible until the review step, five taps later.
+//
+// The card is the same block the creator saw before they paid and the same one
+// the sender sees again on review (components/shipment/ShipmentDetailsCard), so
+// the sender's first and last screen are one object. Half of it is blank on
+// arrival, and the blanks ARE the questions — the creator's copy says "Sender
+// fills in", this one says "You'll add this", in the same italic. That is why
+// the numbered list is gone: it named the same open questions, in the same
+// order, a second time.
+//
+// Rule 7 still holds — the TO cell is city/state, never the delivery street.
+// The price cap is deliberately an exception to Rule 7's sibling (the payer's
+// money is not the sender's business): a cap is not what the recipient is
+// spending, it is the budget they granted, and a sender who can see it can
+// understand why a too-expensive parcel gets turned away at the rates step.
+// Exact rates stay hidden.
 export default function SenderStepIntro({ linkData, questions, onContinue }: Props) {
   const recipientName = displayName(linkData.recipient_name);
-  const headline = linkData.needs_destination
-    ? "You're sending a package — you choose where it goes"
-    : recipientName
-      ? `You're sending a package to ${recipientName}`
-      : "You're sending a package via this prepaid link";
+  const recipient = recipientName || "the recipient";
+  const headline = recipientName
+    ? `${recipientName} shared a prepaid shipping label with you`
+    : "You've been sent a prepaid shipping label";
 
-  // One line per question the sender will actually be asked, then the two
-  // steps every sender has.
-  const questionLines: Record<SenderQuestion, { icon: typeof Package2; text: string }> = {
-    destination: { icon: MapPin, text: "Tell us where it's going" },
-    origin: { icon: MapPin, text: "Tell us where it's shipping from" },
-    package: { icon: Package2, text: "Tell us about your package" },
-  };
-  const steps = [
-    ...questions.map((q) => questionLines[q]),
-    { icon: Truck, text: "Choose a shipping method" },
-    {
-      icon: Printer,
-      text: `Print the label and ship${recipientName ? ` — ${recipientName} already paid` : " — shipping is prepaid"}`,
-    },
-  ];
+  const asks = new Set(questions);
 
+  // ── FROM ──────────────────────────────────────────────────
+  const origin = linkData.origin_prefill;
+  const fromCell: DetailCell = asks.has("origin") || !origin?.street1
+    ? { key: "from", deferred: "You'll add this" }
+    : { key: "from", primary: displayName(origin.name) || origin.name || "—", secondary: origin.street1 };
+
+  // ── TO ────────────────────────────────────────────────────
+  // Deferred destinations are the sender's to choose; everything else is the
+  // creator's own address, shown as city/state only.
   const cityState = linkData.recipient_city && linkData.recipient_state
     ? `${linkData.recipient_city}, ${linkData.recipient_state}`
+    : "";
+  const toCell: DetailCell = linkData.needs_destination
+    ? { key: "to", deferred: "You choose" }
+    : { key: "to", primary: recipient, secondary: cityState };
+
+  // ── PARCEL ────────────────────────────────────────────────
+  const pkg = linkData.package_prefill;
+  const parcelCell: DetailCell = asks.has("package") || !pkg
+    ? { key: "parcel", deferred: "You'll describe it" }
+    : {
+        key: "parcel",
+        primary: `${pkg.length_in}×${pkg.width_in}${pkg.height_in ? `×${pkg.height_in}` : ""} in`,
+        // Weight only, exactly as the review step prints it. "set by <name>"
+        // was tried here and cut: three possessives in one small card, and
+        // what actually makes a sender notice someone else guessed their box
+        // is seeing the dimensions, not being told whose they are.
+        secondary: pkg.weight_oz ? `${Number((pkg.weight_oz / 16).toFixed(2))} lb` : "",
+      };
+
+  // ── VIA ───────────────────────────────────────────────────
+  // "or faster" is literal, not softening: the rates endpoint filters to the
+  // preferred tier AND everything quicker (rates/index.ts speedRank check).
+  const speed = linkData.preferred_speed
+    ? `${speedDisplayName(linkData.preferred_speed)} or faster`
     : null;
+  const carrier = linkData.preferred_carrier && linkData.preferred_carrier !== "any"
+    ? `${carrierDisplayName(linkData.preferred_carrier)} only`
+    : null;
+  const viaCell: DetailCell = speed
+    ? { key: "via", primary: speed, secondary: carrier ?? `${recipient}'s preference` }
+    : carrier
+      ? { key: "via", primary: carrier, secondary: `${recipient}'s preference` }
+      : { key: "via", deferred: "You'll pick" };
+
+  const cells: DetailCell[] = [fromCell, toCell, parcelCell, viaCell];
+
+  // Full width, last — same slot and same treatment the creator's card gives
+  // its estimated-cost range, which is the other number in this product that
+  // needs the room. Absent on any link without a cap.
+  if (linkData.max_price_cents > 0) {
+    cells.push({
+      key: "cap",
+      label: "prepaid up to",
+      wide: true,
+      primary: formatCents(linkData.max_price_cents),
+    });
+  }
 
   return (
     <div className="space-y-6">
-      {/* No badge, no supporting line (2026-08-24). "SendMo Label Link" named
-          the artifact to someone who arrived by tapping it, and the header
-          already says whose page this is. The recipient flow shed the same
-          two devices on 2026-08-23. The destination line stays: it is a fact
-          about the shipment, not a caption for the headline. */}
-      <div className="text-center space-y-2">
+      <div className="text-center">
         <h1 className="text-2xl font-bold text-foreground">{headline}</h1>
-        {cityState && (
-          <p className="text-muted-foreground flex items-center justify-center gap-1.5 text-sm">
-            <MapPin className="w-3.5 h-3.5" /> Shipping to {cityState}
-          </p>
-        )}
       </div>
 
-      <div className="bg-card rounded-2xl border border-border shadow-sm p-5 space-y-4">
-        <h3 className="text-sm font-semibold text-foreground">How it works</h3>
-        <ol className="space-y-3">
-          {steps.map((step, i) => {
-            const Icon = step.icon;
-            return (
-              <li key={i} className="flex items-start gap-3">
-                <span className="flex-shrink-0 w-7 h-7 rounded-full bg-primary/10 text-primary text-xs font-semibold flex items-center justify-center">
-                  {i + 1}
-                </span>
-                <div className="flex-1 flex items-center gap-2">
-                  <Icon className="w-4 h-4 text-muted-foreground" />
-                  <span className="text-sm text-foreground">{step.text}</span>
-                </div>
-              </li>
-            );
-          })}
-        </ol>
+      <div className="space-y-2">
+        <ShipmentDetailsCard title="Shipment Details" cells={cells} />
+        <p className="max-w-md text-xs text-muted-foreground">
+          Shipping is prepaid by {recipient} — you're not charged.
+        </p>
       </div>
 
       <Button
