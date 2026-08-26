@@ -12,6 +12,68 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-26] Sender intro states the shipment; "Back to SendMo" off the shipment page
+
+**Category:** ship | fix
+**Cross-link:** [`previews/sender-intro-personalization-concepts.html`](previews/sender-intro-personalization-concepts.html) (three options, four preconfiguration levels; A shipped)
+
+**The sender intro shows the label instead of describing the flow.** `/s/<code>` used to open on a headline, a city,
+and a numbered list of the questions still to come — so everything the creator had already decided (the parcel, the
+ship-from address, the speed and the cap they were paying for) stayed invisible until the review step, five taps later.
+It now renders the shared `ShipmentDetailsCard`: same block the creator saw before they paid, same one the sender sees
+again on review, so the sender's first and last screen are one object. Half of it is blank on arrival and **the blanks
+are the questions** — the creator's copy says "Sender fills in", this one says "You'll add this", in the same italic.
+That is why the numbered list is gone: it named the same open questions, in the same order, a second time.
+
+Headline: **"{name} shared a prepaid shipping label with you"**, falling back to "You've been sent a prepaid shipping
+label" when the link carries no recipient name. The "Shipping to {city}, {state}" line under it went — the TO cell says
+it once.
+
+**The cap is now visible to the sender, deliberately.** A fifth full-width cell, `PREPAID UP TO $25.00`, on any link
+with `max_price_cents > 0`. This is a considered exception to Rule 7's sibling (the payer's money is not the sender's
+business): a cap is not what the recipient is *spending*, it is the budget they *granted*, and a sender who can see it
+can understand why an over-budget parcel gets turned away at the rates step. **Exact rates stay hidden** — the rates
+step still shows `$`-tiers, not prices. Rule 7 itself is untouched: the TO cell is city/state, never the street.
+
+**Two display helpers were wrong and are fixed** (`src/lib/utils.ts`), both surfaced by building the VIA cell:
+- `speedDisplayName`'s map was keyed `no_rush`, a value nothing has produced for a long time. The picker writes
+  `SpeedTier` (`economy | standard | express`), so **the economy tier rendered as the raw lowercase "economy"** — on
+  the creator's card too, not just the new one. `tests/unit/ShipmentDetails.test.tsx` had been pinning `no_rush`,
+  which is why nothing caught it.
+- `carrierDisplayName` matched `CARRIER_NAMES` exactly, so EasyPost's `"FedExDefault"` resolved but a link's
+  `preferred_carrier` — stored lowercase by the creator's picker as `"usps"` — missed every key and rendered raw.
+  Now falls back to a lowercased index.
+
+**"Back to SendMo" is gone from `/t/<public_code>`.** It sat outside all four lifecycle branches (families 1/2/3 and
+the unknown-status fallback), so one deletion covers every loaded shipment. The reader of that page is usually the
+sender — a stranger with no SendMo account — and the link pointed them at a marketing homepage that has nothing for
+them. The header wordmark and site footer remain. **Kept on the error state** (`TrackingPage.tsx:594`), where a
+"tracking not found" dead end genuinely needs an exit.
+
+**Designed, not built: "No options for this one" should say why.** The rates function already computes the reason and
+already returns half of it — `rates/index.ts:540` ships `messages` with the comment *"Surface carrier messages so the
+UI can explain 'no rates available'"*, and `RatesResponse` (`src/lib/api.ts:52`) doesn't declare the field, so
+`fetchSenderRates` drops it. One sentence therefore covers six causes: price cap, carrier filter, speed filter,
+platform cap, service denylist, and outright carrier rejection — which has nothing to do with the link at all. Worse,
+**"try adjusting the size or weight" is an instruction to misdescribe the package**: a sender who shaves a pound to
+get past the screen ships a mis-rated label, and the carrier's post-delivery adjustment lands on the payer's card.
+Proposed: `blocked_by` + `quoted_count` on the rates response, reason-specific copy, one action per screen
+(**Edit package details** — no "ask the recipient" button; decided 2026-08-26, it buys a rate-limiting problem and a
+privacy question for something two people who know each other sort out by text).
+
+**Browser-verified:**
+```
+  mcp-session: scratchpad/intro-{L0,L1,L2,L3,nocap}.png — Playwright route-mocked link fixtures, 520px viewport
+  variants-covered: [L0 needs_destination + no recipient_name, L1 destination only, L2 destination+parcel, L3 destination+parcel+origin+carrier, no-cap (max_price_cents=0, economy speed)]
+```
+Plus `tests/e2e/tracking-lifecycle-states.spec.ts` for the tracking change
+(`[F1 label_created, F2 in_transit, F2 delivered, F2 out_for_delivery, F3 cancelled]`) and `/t/CVCGF4P` loaded in a
+real browser — no "Back to SendMo" in the DOM, footer nav intact.
+
+Full suite after: **776/776 unit** (5 new on `SenderStepIntro`), **108 passed / 5 skipped / 0 failed e2e**.
+
+---
+
 ### [2026-08-25] PR #93 rebased down to what survived; #89 closed as superseded
 
 **Category:** chore | flow-cleanup
