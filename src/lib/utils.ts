@@ -16,8 +16,22 @@ const CARRIER_NAMES: Record<string, string> = {
   Lasership: "LaserShip", OnTrac: "OnTrac",
 };
 
+// Lowercased index over CARRIER_NAMES so the same helper serves both sources
+// of a carrier string: EasyPost's mixed-case service values ("FedExDefault")
+// and a link's `preferred_carrier`, which the creator's picker stores lowercase
+// ("usps"). Before this, the lowercase form missed every key and rendered raw.
+const CARRIER_NAMES_LC: Record<string, string> = Object.fromEntries(
+  Object.entries(CARRIER_NAMES).map(([k, v]) => [k.toLowerCase(), v]),
+);
+
 export function carrierDisplayName(raw: string): string {
-  return CARRIER_NAMES[raw] ?? raw;
+  // Guard before .toLowerCase(): the old exact-match lookup was total — a null
+  // carrier returned null and rendered as nothing. Callers disagree about
+  // whether it can be null (EtaBanner types it `string`, DetailsCard types the
+  // same server field `string | null`), so the helper stays total rather than
+  // throwing inside a render on the one page where they differ.
+  if (!raw) return raw;
+  return CARRIER_NAMES[raw] ?? CARRIER_NAMES_LC[raw.toLowerCase()] ?? raw;
 }
 
 // Known EasyPost service names → human-readable display names
@@ -150,8 +164,12 @@ export function carrierTrackingUrl(carrier: string | null | undefined, tracking:
  * reason carrierDisplayName and serviceDisplayName live here.
  */
 export function speedDisplayName(raw: string): string {
+  // Keyed to SpeedTier ('economy' | 'standard' | 'express'), which is what the
+  // creator's picker writes and what `preferred_speed` carries. The map used to
+  // say `no_rush` — a value nothing has produced for a long time — so the
+  // economy tier fell through and rendered as the raw lowercase "economy".
   const LABELS: Record<string, string> = {
-    no_rush: "No rush · cheapest",
+    economy: "Economy",
     standard: "Standard",
     express: "Express",
   };

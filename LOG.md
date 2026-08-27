@@ -12,6 +12,99 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-26] Sender intro states the shipment; "Back to SendMo" off the shipment page
+
+**Category:** ship | fix
+**Cross-link:** [`previews/sender-intro-personalization-concepts.html`](previews/sender-intro-personalization-concepts.html) (three options, four preconfiguration levels; A shipped)
+
+**The sender intro shows the label instead of describing the flow.** `/s/<code>` used to open on a headline, a city,
+and a numbered list of the questions still to come — so everything the creator had already decided (the parcel, the
+ship-from address, the speed and the cap they were paying for) stayed invisible until the review step, five taps later.
+It now renders the shared `ShipmentDetailsCard`: same block the creator saw before they paid, same one the sender sees
+again on review, so the sender's first and last screen are one object. Half of it is blank on arrival and **the blanks
+are the questions** — the creator's copy says "Sender fills in", this one says "You'll add this", in the same italic.
+That is why the numbered list is gone: it named the same open questions, in the same order, a second time.
+
+Headline: **"{name} shared a prepaid shipping label with you"**, falling back to "You've been sent a prepaid shipping
+label" when the link carries no recipient name. The "Shipping to {city}, {state}" line under it went — the TO cell says
+it once.
+
+**The cap is now visible to the sender, deliberately.** A fifth full-width cell, `PREPAID UP TO $25.00`, on any link
+with `max_price_cents > 0`. This is a considered exception to Rule 7's sibling (the payer's money is not the sender's
+business): a cap is not what the recipient is *spending*, it is the budget they *granted*, and a sender who can see it
+can understand why an over-budget parcel gets turned away at the rates step. **Exact rates stay hidden** — the rates
+step still shows `$`-tiers, not prices. Rule 7 itself is untouched: the TO cell is city/state, never the street.
+
+**Two display helpers were wrong and are fixed** (`src/lib/utils.ts`), both surfaced by building the VIA cell:
+- `speedDisplayName`'s map was keyed `no_rush`, a value nothing has produced for a long time. The picker writes
+  `SpeedTier` (`economy | standard | express`), so **the economy tier rendered as the raw lowercase "economy"** — on
+  the creator's card too, not just the new one. `tests/unit/ShipmentDetails.test.tsx` had been pinning `no_rush`,
+  which is why nothing caught it.
+- `carrierDisplayName` matched `CARRIER_NAMES` exactly, so EasyPost's `"FedExDefault"` resolved but a link's
+  `preferred_carrier` — stored lowercase by the creator's picker as `"usps"` — missed every key and rendered raw.
+  Now falls back to a lowercased index.
+
+**"Back to SendMo" is gone from `/t/<public_code>`.** It sat outside all four lifecycle branches (families 1/2/3 and
+the unknown-status fallback), so one deletion covers every loaded shipment. The reader of that page is usually the
+sender — a stranger with no SendMo account — and the link pointed them at a marketing homepage that has nothing for
+them. The header wordmark and site footer remain. **Kept on the error state** (`TrackingPage.tsx:594`), where a
+"tracking not found" dead end genuinely needs an exit.
+
+**Designed, not built: "No options for this one" should say why.** The rates function already computes the reason and
+already returns half of it — `rates/index.ts:540` ships `messages` with the comment *"Surface carrier messages so the
+UI can explain 'no rates available'"*, and `RatesResponse` (`src/lib/api.ts:52`) doesn't declare the field, so
+`fetchSenderRates` drops it. One sentence therefore covers six causes: price cap, carrier filter, speed filter,
+platform cap, service denylist, and outright carrier rejection — which has nothing to do with the link at all. Worse,
+**"try adjusting the size or weight" is an instruction to misdescribe the package**: a sender who shaves a pound to
+get past the screen ships a mis-rated label, and the carrier's post-delivery adjustment lands on the payer's card.
+Proposed: `blocked_by` + `quoted_count` on the rates response, reason-specific copy, one action per screen
+(**Edit package details** — no "ask the recipient" button; decided 2026-08-26, it buys a rate-limiting problem and a
+privacy question for something two people who know each other sort out by text).
+
+**Code review found three real defects in the above; all fixed in the same PR.**
+
+1. **The cap cell printed the exact price on a `full_label` link.** `max_price_cents` is a ceiling the
+   recipient chose *only* on a flex link — on `full_label` it is the amount already charged (prod values include
+   `703`, a real USPS rate, not a round cap). Such links redirect to `/t/<public_code>` before the intro renders,
+   but that guard needs a `public_code`, and `links/index.ts:406` resolves it to `null` for a `full_label` link
+   with no shipment row — which then falls through every remaining guard in `SenderFlow` to `setStep("intro")`.
+   **Confirmed reachable against prod: 1 of 41 `full_label` rows currently has no bound shipment.** The cell is
+   now gated on `link_type === "flexible"`.
+2. **`carrierDisplayName` became non-total.** Adding the lowercase fallback meant calling `raw.toLowerCase()`
+   unguarded, where the old exact-match returned a null carrier harmlessly. `EtaBanner` types the field `string`
+   and `DetailsCard` types the same server field `string | null` and guards it — the codebase disagrees with
+   itself, and the throw would have landed inside the pre-dropoff tracking page's render. Guard restored.
+3. **The intro and the review still described one parcel two ways.** A prefill with `height_in: null` rendered
+   `12×9 in` on the intro while `SenderFlow:178` seeds the flow's parcel with `height_in ?? 1` and packaging
+   `"box"`, so review printed `12×9×1 in` — the exact failure the "first and last screen are one object"
+   argument exists to prevent. Root cause: parcel formatting written three times with three height rules.
+   `formatParcelDims` + `formatParcelWeightLb` now live in the existing `components/shipment/parcelDraft.ts`
+   (extending the shared parcel module rather than inventing one) and all three cards call them. The creator's
+   card keeps its `lb + oz` weight deliberately — it echoes the two boxes they typed.
+
+Also closed from the review: direct regression tests for both display helpers in `tests/unit/utils.test.ts`
+(which covered only `cn`, so both bugs had been invisible to the file they lived in), the two anti-regression
+assertions from 2026-08-24 that the test rewrite had dropped, and PLAYBOOK's Price Cap section. Left open and
+recorded rather than silently dropped: an unconstrained `preferred_speed` still renders raw (`"overnight or
+faster"` — verified no such rows exist in prod), the FROM cell shows a blank on a phone-less prefill the next
+screen fills in, the TO cell can print the literal words "the recipient", and the destination deferral is
+derived twice instead of coming from `planSenderSteps`.
+
+**Browser-verified:**
+```
+  mcp-session: scratchpad/intro-{L0,L1,L2,L3,nocap}.png — Playwright route-mocked link fixtures, 520px viewport
+  variants-covered: [L0 needs_destination + no recipient_name, L1 destination only, L2 destination+parcel, L3 destination+parcel+origin+carrier, no-cap (max_price_cents=0, economy speed)]
+```
+Plus `tests/e2e/tracking-lifecycle-states.spec.ts` for the tracking change
+(`[F1 label_created, F2 in_transit, F2 delivered, F2 out_for_delivery, F3 cancelled]`) and `/t/CVCGF4P` loaded in a
+real browser — no "Back to SendMo" in the DOM, footer nav intact.
+
+Post-review re-verified: `fix-{flex-cap,fulllabel-nocap,heightless}.png` — the cap holds on a flex link, is absent on a `full_label` link, and a heightless prefill prints `12×9×1 in`.
+
+Full suite after: **783/783 unit** (12 new), **108 passed / 5 skipped / 0 failed e2e**, `tsc -b --noEmit` and eslint clean.
+
+---
+
 ### [2026-08-25] PR #93 rebased down to what survived; #89 closed as superseded
 
 **Category:** chore | flow-cleanup

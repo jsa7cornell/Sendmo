@@ -890,9 +890,12 @@ export default function TrackingPage() {
                   exchange for a re-ship case that is rare and served by the
                   link itself. */}
 
-              <Link to="/" className="inline-flex items-center gap-1 text-sm text-primary hover:underline">
-                <ArrowLeft className="w-4 h-4" /> Back to SendMo
-              </Link>
+              {/* No "Back to SendMo" link (2026-08-26). The reader of a
+                  shipment page is usually the sender — a stranger with no
+                  SendMo account — and the link pointed them at a marketing
+                  homepage that has nothing for them. Anyone who does want it
+                  has the wordmark in the header. Kept on the error state,
+                  where a dead end genuinely needs an exit. */}
 
               {/* Admin-only inline debug panel (Ask 4, decided 2026-05-13).
                   Replaces the earlier AdminAffordanceFooter stub. Collapsible,

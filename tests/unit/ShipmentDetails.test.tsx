@@ -89,12 +89,14 @@ describe("ShipmentDetails", () => {
     // ("Up to $25" above $9–$38).
     render(
       <ShipmentDetails
-        state={makeState({ path: "flexible", price_cap: 25, speed_preference: "no_rush" })}
+        state={makeState({ path: "flexible", price_cap: 25, speed_preference: "economy" })}
         totalCents={null}
         onEdit={() => {}}
       />,
     );
-    expect(screen.getByText(/No rush/)).toBeInTheDocument();
+    // 'economy' is what the picker writes; speedDisplayName's map was keyed
+    // 'no_rush' until 2026-08-26, so this cell rendered a raw lowercase word.
+    expect(screen.getByText("Economy")).toBeInTheDocument();
     expect(screen.queryByText(/\$25/)).toBeNull();
     expect(screen.queryByText("Total")).toBeNull();
   });

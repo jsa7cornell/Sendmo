@@ -5,6 +5,7 @@ import {
 } from "@/components/ui/dialog";
 import { ArrowLeft, Loader2, AlertCircle } from "lucide-react";
 import ShipmentDetailsCard, { type DetailCell } from "@/components/shipment/ShipmentDetailsCard";
+import { formatParcelDims, formatParcelWeightLb } from "@/components/shipment/parcelDraft";
 import type { LinkData } from "@/lib/api";
 import type { AddressInput, ShippingRate } from "@/lib/types";
 import { carrierDisplayName, serviceDisplayName } from "@/lib/utils";
@@ -69,7 +70,6 @@ export default function SenderStepReview({
       ? `${linkData.recipient_city}, ${linkData.recipient_state}`
       : "";
 
-  const parcelWeightLbs = parcel.weightOz / 16;
   const cells: DetailCell[] = [
     {
       key: "from",
@@ -86,8 +86,8 @@ export default function SenderStepReview({
     },
     {
       key: "parcel",
-      primary: `${parcel.length}×${parcel.width}${parcel.packaging !== "envelope" ? `×${parcel.height}` : ""} in`,
-      secondary: `${Number(parcelWeightLbs.toFixed(2))} lb`,
+      primary: formatParcelDims(parcel),
+      secondary: formatParcelWeightLb(parcel.weightOz),
       onEdit: onEditPackage,
     },
     {

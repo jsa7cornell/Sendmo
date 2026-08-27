@@ -147,6 +147,7 @@ Never show the SendMo fee separately. Single "Shipping" price.
 - Recipients set max they'll pay (default $100)
 - Cap applies to display price (includes margin)
 - Senders see only methods where display price ≤ cap
+- Senders see the **cap amount** on the sender intro (2026-08-26) — the budget the recipient granted, not what they spend. **Flexible links only**: on a `full_label` link `max_price_cents` is the exact charge, so showing it would disclose the price. Exact rates are still never shown to a sender.
 
 ### Payment Flows
 - **Full label**: Stripe charges immediately (`capture_method: 'automatic'`)

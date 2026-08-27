@@ -759,9 +759,20 @@ link*".
 
 ### Step 0: Intro
 - No badge, no supporting line (2026-08-24) — "SendMo Label Link" named the artifact to someone who arrived by tapping it.
-- Title: "You're sending a package to {recipientName}" — title-cased for display via [`src/lib/name.ts`](src/lib/name.ts) `displayName()`, so a casually typed "john anderson" reads "John Anderson". Display only: the stored address and the printed label keep what the recipient entered. Applies to every sender-facing use of the name (Intro, Rates, Review).
+- Title: **"{recipientName} shared a prepaid shipping label with you"** (2026-08-26), falling back to "You've been sent a prepaid shipping label" when the link carries no name. Title-cased for display via [`src/lib/name.ts`](src/lib/name.ts) `displayName()`, so a casually typed "john anderson" reads "John Anderson". Display only: the stored address and the printed label keep what the recipient entered. Applies to every sender-facing use of the name (Intro, Rates, Review).
 - Insurance banner (conditional): green badge if recipient enabled protection
-- How it works: one numbered line per question **this** link asks, then "Choose a shipping method" and "Print the label and ship".
+- **The shared [`ShipmentDetailsCard`](src/components/shipment/ShipmentDetailsCard.tsx), half-blank (2026-08-26)** — replaces the numbered "How it works" list, which named the same open questions the card already blanks, in the same order. FROM / TO / PARCEL / VIA, where a cell shows the creator's answer or the sender's blank:
+
+  | Cell | Answered | Left open |
+  |---|---|---|
+  | FROM | `origin_prefill` name + street | *"You'll add this"* |
+  | TO | recipient name + **city/state only** (Rule 7) | *"You choose"* (`needs_destination`) |
+  | PARCEL | `L×W×H in` + weight in lb | *"You'll describe it"* |
+  | VIA | `{speed} or faster` + `{carrier} only` / *"{name}'s preference"* | *"You'll pick"* |
+
+  "or faster" is literal: the rates endpoint keeps the preferred tier and everything quicker. The blanks reuse `ShipmentDetailsCard`'s `deferred` styling — the mirror of the creator's "Sender fills in".
+- **PREPAID UP TO {cap}** — a fifth full-width cell when `link_type === "flexible"` and `max_price_cents > 0`. **Flexible only**: on a `full_label` link `max_price_cents` is the exact amount already charged, not a ceiling, so rendering it would print the shipment's real price under a label reading "prepaid up to". Such links normally redirect to `/t/<public_code>` first, but that guard needs a `public_code`, and a `full_label` link whose shipment row is missing resolves it to `null` and falls through to the intro. A considered exception to "the payer's money is not the sender's business": a cap is the budget the recipient *granted*, not what they are *spending*, and a sender who can see it can understand why an over-budget parcel is turned away at the rates step. **Exact rates stay hidden** — Step 2 still shows `$`-tiers, never prices.
+- Under the card: "Shipping is prepaid by {recipientName} — you're not charged." The "three questions, then…" line is gone (2026-08-26).
 - **CTA**: "Get Started"
 
 ### Step 1a: "Where is it going?" (destination-deferred links only)
