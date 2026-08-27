@@ -1,6 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { ArrowRight } from "lucide-react";
 import ShipmentDetailsCard, { type DetailCell } from "@/components/shipment/ShipmentDetailsCard";
+import { formatParcelDims, formatParcelWeightLb } from "@/components/shipment/parcelDraft";
 import { formatCents, type LinkData } from "@/lib/api";
 import { carrierDisplayName, speedDisplayName } from "@/lib/utils";
 import { displayName } from "@/lib/name";
@@ -66,12 +67,22 @@ export default function SenderStepIntro({ linkData, questions, onContinue }: Pro
     ? { key: "parcel", deferred: "You'll describe it" }
     : {
         key: "parcel",
-        primary: `${pkg.length_in}×${pkg.width_in}${pkg.height_in ? `×${pkg.height_in}` : ""} in`,
+        // `height_in ?? 1` and `packaging: "box"` are not defaults chosen here
+        // — they are what SenderFlow actually seeds the parcel with from this
+        // same prefill, so the review step two screens later prints the same
+        // string. Reading the height off the prefill directly made the intro
+        // say "12×9 in" for a parcel the flow was about to rate as 12×9×1.
+        primary: formatParcelDims({
+          length: pkg.length_in,
+          width: pkg.width_in,
+          height: pkg.height_in ?? 1,
+          packaging: "box",
+        }),
         // Weight only, exactly as the review step prints it. "set by <name>"
         // was tried here and cut: three possessives in one small card, and
         // what actually makes a sender notice someone else guessed their box
         // is seeing the dimensions, not being told whose they are.
-        secondary: pkg.weight_oz ? `${Number((pkg.weight_oz / 16).toFixed(2))} lb` : "",
+        secondary: pkg.weight_oz ? formatParcelWeightLb(pkg.weight_oz) : "",
       };
 
   // ── VIA ───────────────────────────────────────────────────
@@ -93,8 +104,17 @@ export default function SenderStepIntro({ linkData, questions, onContinue }: Pro
 
   // Full width, last — same slot and same treatment the creator's card gives
   // its estimated-cost range, which is the other number in this product that
-  // needs the room. Absent on any link without a cap.
-  if (linkData.max_price_cents > 0) {
+  // needs the room.
+  //
+  // FLEXIBLE ONLY. `max_price_cents` is a ceiling the recipient chose only on a
+  // flex link; on a full_label link it is the exact amount already charged, so
+  // rendering it here would print the shipment's real price under a label
+  // reading "prepaid up to" — both a lie and the disclosure this whole card is
+  // careful not to make. A full_label link normally redirects to /t/<code>
+  // before the intro renders, but SenderFlow's guard needs a public_code, and a
+  // full_label link whose shipment row is missing resolves that to null and
+  // falls through to here.
+  if (linkData.link_type === "flexible" && linkData.max_price_cents > 0) {
     cells.push({
       key: "cap",
       label: "prepaid up to",

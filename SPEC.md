@@ -771,7 +771,7 @@ link*".
   | VIA | `{speed} or faster` + `{carrier} only` / *"{name}'s preference"* | *"You'll pick"* |
 
   "or faster" is literal: the rates endpoint keeps the preferred tier and everything quicker. The blanks reuse `ShipmentDetailsCard`'s `deferred` styling — the mirror of the creator's "Sender fills in".
-- **PREPAID UP TO {cap}** — a fifth full-width cell when `max_price_cents > 0`. A considered exception to "the payer's money is not the sender's business": a cap is the budget the recipient *granted*, not what they are *spending*, and a sender who can see it can understand why an over-budget parcel is turned away at the rates step. **Exact rates stay hidden** — Step 2 still shows `$`-tiers, never prices.
+- **PREPAID UP TO {cap}** — a fifth full-width cell when `link_type === "flexible"` and `max_price_cents > 0`. **Flexible only**: on a `full_label` link `max_price_cents` is the exact amount already charged, not a ceiling, so rendering it would print the shipment's real price under a label reading "prepaid up to". Such links normally redirect to `/t/<public_code>` first, but that guard needs a `public_code`, and a `full_label` link whose shipment row is missing resolves it to `null` and falls through to the intro. A considered exception to "the payer's money is not the sender's business": a cap is the budget the recipient *granted*, not what they are *spending*, and a sender who can see it can understand why an over-budget parcel is turned away at the rates step. **Exact rates stay hidden** — Step 2 still shows `$`-tiers, never prices.
 - Under the card: "Shipping is prepaid by {recipientName} — you're not charged." The "three questions, then…" line is gone (2026-08-26).
 - **CTA**: "Get Started"
 

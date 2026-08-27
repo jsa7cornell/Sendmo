@@ -25,6 +25,12 @@ const CARRIER_NAMES_LC: Record<string, string> = Object.fromEntries(
 );
 
 export function carrierDisplayName(raw: string): string {
+  // Guard before .toLowerCase(): the old exact-match lookup was total — a null
+  // carrier returned null and rendered as nothing. Callers disagree about
+  // whether it can be null (EtaBanner types it `string`, DetailsCard types the
+  // same server field `string | null`), so the helper stays total rather than
+  // throwing inside a render on the one page where they differ.
+  if (!raw) return raw;
   return CARRIER_NAMES[raw] ?? CARRIER_NAMES_LC[raw.toLowerCase()] ?? raw;
 }
 

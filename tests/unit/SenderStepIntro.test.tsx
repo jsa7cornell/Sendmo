@@ -79,6 +79,9 @@ describe("SenderStepIntro", () => {
     expect(screen.getByText("Maya Torres")).toBeInTheDocument();
     expect(screen.getByText("12×9×4 in")).toBeInTheDocument();
     expect(screen.getByText("2 lb")).toBeInTheDocument();
+    // Carried over from the 2026-08-24 cleanup: neither device may come back.
+    expect(screen.queryByText("SendMo Label Link")).not.toBeInTheDocument();
+    expect(screen.queryByText(/already set/i)).not.toBeInTheDocument();
   });
 
   it("blanks everything the link left open", () => {
@@ -94,6 +97,37 @@ describe("SenderStepIntro", () => {
     render(<SenderStepIntro linkData={makeLink({ max_price_cents: 2500 })} questions={["package"]} onContinue={() => {}} />);
     expect(screen.getByText("prepaid up to")).toBeInTheDocument();
     expect(screen.getByText("$25.00")).toBeInTheDocument();
+  });
+
+  // max_price_cents is a ceiling the recipient chose ONLY on a flex link. On a
+  // full_label link it is the exact amount already charged, so printing it
+  // would disclose the shipment's real price under a "prepaid up to" label.
+  // Such a link normally redirects to /t/<code>, but that guard needs a
+  // public_code and a full_label link with no shipment row resolves it null.
+  it("never states a cap on a full_label link, where it is the exact amount paid", () => {
+    render(
+      <SenderStepIntro
+        linkData={makeLink({ link_type: "full_label", max_price_cents: 703 })}
+        questions={["package"]}
+        onContinue={() => {}}
+      />,
+    );
+    expect(screen.queryByText("prepaid up to")).not.toBeInTheDocument();
+    expect(screen.queryByText("$7.03")).not.toBeInTheDocument();
+  });
+
+  // The intro and the review step describe one parcel; a prefill with no
+  // height used to render "12×9 in" here and "12×9×1 in" two screens later,
+  // because SenderFlow seeds the flow's parcel with `height_in ?? 1`.
+  it("prints the height the flow will actually use when the prefill has none", () => {
+    render(
+      <SenderStepIntro
+        linkData={makeLink({ package_prefill: { ...PARCEL, height_in: null } })}
+        questions={[]}
+        onContinue={() => {}}
+      />,
+    );
+    expect(screen.getByText("12×9×1 in")).toBeInTheDocument();
   });
 
   it("omits the cap cell entirely when there is no cap", () => {

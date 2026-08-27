@@ -61,6 +61,35 @@ Proposed: `blocked_by` + `quoted_count` on the rates response, reason-specific c
 (**Edit package details** — no "ask the recipient" button; decided 2026-08-26, it buys a rate-limiting problem and a
 privacy question for something two people who know each other sort out by text).
 
+**Code review found three real defects in the above; all fixed in the same PR.**
+
+1. **The cap cell printed the exact price on a `full_label` link.** `max_price_cents` is a ceiling the
+   recipient chose *only* on a flex link — on `full_label` it is the amount already charged (prod values include
+   `703`, a real USPS rate, not a round cap). Such links redirect to `/t/<public_code>` before the intro renders,
+   but that guard needs a `public_code`, and `links/index.ts:406` resolves it to `null` for a `full_label` link
+   with no shipment row — which then falls through every remaining guard in `SenderFlow` to `setStep("intro")`.
+   **Confirmed reachable against prod: 1 of 41 `full_label` rows currently has no bound shipment.** The cell is
+   now gated on `link_type === "flexible"`.
+2. **`carrierDisplayName` became non-total.** Adding the lowercase fallback meant calling `raw.toLowerCase()`
+   unguarded, where the old exact-match returned a null carrier harmlessly. `EtaBanner` types the field `string`
+   and `DetailsCard` types the same server field `string | null` and guards it — the codebase disagrees with
+   itself, and the throw would have landed inside the pre-dropoff tracking page's render. Guard restored.
+3. **The intro and the review still described one parcel two ways.** A prefill with `height_in: null` rendered
+   `12×9 in` on the intro while `SenderFlow:178` seeds the flow's parcel with `height_in ?? 1` and packaging
+   `"box"`, so review printed `12×9×1 in` — the exact failure the "first and last screen are one object"
+   argument exists to prevent. Root cause: parcel formatting written three times with three height rules.
+   `formatParcelDims` + `formatParcelWeightLb` now live in the existing `components/shipment/parcelDraft.ts`
+   (extending the shared parcel module rather than inventing one) and all three cards call them. The creator's
+   card keeps its `lb + oz` weight deliberately — it echoes the two boxes they typed.
+
+Also closed from the review: direct regression tests for both display helpers in `tests/unit/utils.test.ts`
+(which covered only `cn`, so both bugs had been invisible to the file they lived in), the two anti-regression
+assertions from 2026-08-24 that the test rewrite had dropped, and PLAYBOOK's Price Cap section. Left open and
+recorded rather than silently dropped: an unconstrained `preferred_speed` still renders raw (`"overnight or
+faster"` — verified no such rows exist in prod), the FROM cell shows a blank on a phone-less prefill the next
+screen fills in, the TO cell can print the literal words "the recipient", and the destination deferral is
+derived twice instead of coming from `planSenderSteps`.
+
 **Browser-verified:**
 ```
   mcp-session: scratchpad/intro-{L0,L1,L2,L3,nocap}.png — Playwright route-mocked link fixtures, 520px viewport
@@ -70,7 +99,9 @@ Plus `tests/e2e/tracking-lifecycle-states.spec.ts` for the tracking change
 (`[F1 label_created, F2 in_transit, F2 delivered, F2 out_for_delivery, F3 cancelled]`) and `/t/CVCGF4P` loaded in a
 real browser — no "Back to SendMo" in the DOM, footer nav intact.
 
-Full suite after: **776/776 unit** (5 new on `SenderStepIntro`), **108 passed / 5 skipped / 0 failed e2e**.
+Post-review re-verified: `fix-{flex-cap,fulllabel-nocap,heightless}.png` — the cap holds on a flex link, is absent on a `full_label` link, and a heightless prefill prints `12×9×1 in`.
+
+Full suite after: **783/783 unit** (12 new), **108 passed / 5 skipped / 0 failed e2e**, `tsc -b --noEmit` and eslint clean.
 
 ---
 
