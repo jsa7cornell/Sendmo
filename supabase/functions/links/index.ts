@@ -4,6 +4,7 @@ import { isUsablePhone } from "../_shared/phone.ts";
 import { resolveLiveMode } from "../_shared/mode.ts";
 import { checkLiveChargeAllowed } from "../_shared/allowlist.ts";
 import { log } from "../_shared/logger.ts";
+import { checkRateLimit, clientIpKey } from "../_shared/ratelimit.ts";
 
 // ─── Short code generator ───────────────────────────────────
 const SAFE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
@@ -329,6 +330,34 @@ Deno.serve(async (req: Request) => {
             return new Response(
                 JSON.stringify({ error: "Missing ?code= parameter" }),
                 { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+
+        // Rate limit — SPEC §14 has specified 30/min/IP for GET-by-code since
+        // 2026-07-04; never implemented until PR2 (seller-link launch). The
+        // in-memory limiter is the right weight here (anonymous read, no
+        // money moves). TWO keys (review PR2-#4):
+        //
+        //   • viewer key (30/min) — x-sendmo-client-ip when present, else the
+        //     transport IP. The Vercel OG middleware calls this server-side
+        //     on EVERY /s/ page view, so keying only on transport IP would
+        //     pool all unfurl traffic into a few Vercel egress IPs (N2). The
+        //     header is an unauthenticated hint (the anon key is public, so
+        //     it cannot be signed) — which is why it is not the only key.
+        //
+        //   • transport key (600/min) — clientIpKey (LAST x-forwarded-for
+        //     hop, spoof-resistant). A single client randomizing the header
+        //     still hits this ceiling, so short-code enumeration cannot run
+        //     unlimited; the ceiling is high enough that a busy Vercel egress
+        //     IP relaying honest page views never touches it.
+        const viewerIp = req.headers.get("x-sendmo-client-ip")?.trim().slice(0, 64) || clientIpKey(req);
+        if (
+            checkRateLimit(`links-get:${viewerIp}`, { max: 30, windowMs: 60_000 }) ||
+            checkRateLimit(`links-get-transport:${clientIpKey(req)}`, { max: 600, windowMs: 60_000 })
+        ) {
+            return new Response(
+                JSON.stringify({ error: "Too many requests. Please wait a moment and try again." }),
+                { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
             );
         }
 

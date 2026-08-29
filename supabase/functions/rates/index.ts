@@ -518,6 +518,11 @@ Deno.serve(async (req: Request) => {
                     easypost_shipment_id: shipmentData.id ?? null,
                     rate_count: rates.length,
                     carrier_messages: epMessages.length > 0 ? epMessages : undefined,
+                    // Per-link quote volume (PR2, seller-link launch): a public
+                    // seller link's traffic shows up as quote count per code —
+                    // the number that tells you a Marketplace post is hot (or
+                    // being farmed) before any money telemetry would.
+                    link_short_code: link_short_code ?? null,
                     from_zip: from_address?.zip ?? null,
                     to_zip: to_address?.zip ?? null,
                     // Log parcel dims alongside weight — FedEx Smart Post is

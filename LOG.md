@@ -12,6 +12,21 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-29] PR2 — a rate limiter that actually counts on the money paths
+
+**Category:** fix | security
+**Cross-link:** [`proposals/2026-08-28_seller-link-launch_reviewed-2026-08-28_decided-2026-08-29.md`](proposals/2026-08-28_seller-link-launch_reviewed-2026-08-28_decided-2026-08-29.md) §3 PR2 (+ review N2) · SPEC §14 amended
+
+**Browser-verified:** n/a-category: `infra` · n/a-reason: rate-limit plumbing + telemetry; no DOM consumer changes (429 bodies reuse the existing error-copy path already exercised by e2e).
+
+The in-memory limiter is per-isolate by its own admission, so it cannot hold on paths where each request spends money or EasyPost quota. PR2 adds `rate_limit_hit` (migration 046: fixed-window counter table + SECURITY DEFINER RPC, grants per the 044 contract, self-cleaning per key) behind [`_shared/dbratelimit.ts`](supabase/functions/_shared/dbratelimit.ts) — **fail-open** (a limiter must never take down the buy path; failures log `ratelimit.db_check_failed_open`). Wired: labels flex confirm (same 5/60s budget, in-memory speed bump kept in front) and seller-checkout (NEW — 10/min per IP+code, before its Stripe PI create and real EasyPost GET, which previously ran ungated). `links` GET-by-code gets the SPEC-1250 30/min/IP limit it never had — keyed on `x-sendmo-client-ip`, an unauthenticated per-viewer hint the OG middleware now forwards, because keying on transport IP would pool every sendmo.co page view into a few Vercel egress IPs and rate-limit our own unfurls (review N2). `rate.fetched` telemetry now carries `link_short_code`, so per-link quote volume is countable before any money telemetry.
+
+**Not done, on purpose:** the quote-class endpoints (rates/addresses/etc.) stay on the in-memory limiter — per-isolate is an acceptable speed bump where a request costs an API call, not money. Escalate per endpoint if abuse shows up in the new telemetry.
+
+**The in-session review reshaped this PR (6 findings, all applied):** the limiter key was being built from an unvalidated `link_short_code` and the client-prependable FIRST x-forwarded-for hop (now: early format guard + `clientIpKey`'s last-hop); the shared counter would have 429'd exactly the charged-buyer retry PR1's idempotency exists to serve (now: an about-to-reject request whose shipment already has a row bypasses the limit — it spends nothing); the per-key self-clean never reclaimed one-off keys (now: 1%-of-calls global sweep); the client-ip hint alone would have nulled the links limit (now dual-keyed with a 600/min transport ceiling); per-(IP,code) alone didn't bound card-testing volume (now an IP-wide 30/min ceiling on seller-checkout); and fail-open needed a once-per-isolate admin alert, not a warn per request — **deploy migration 046 before or with the functions**, or the money paths run on the speed bump alone.
+
+---
+
 ### [2026-08-29] PR1 — the label buy is un-replayable; every post-charge failure now refunds or pages
 
 **Category:** fix | security

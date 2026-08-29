@@ -1255,6 +1255,23 @@ Reference: [proposals/2026-05-23_buy-time-rate-gate.md](proposals/2026-05-23_buy
 > cancel-label / labels-flex / refunds / label-print. Buckets are per-isolate
 > (speed bump, not a hard guarantee). Email OTP limits are handled by Supabase
 > Auth since the 2026-05-11/15 migration to `signInWithOtp`.
+>
+> Amended 2026-08-29 (PR2, seller-link launch): the MONEY paths — labels flex
+> confirm and seller-checkout — additionally run a shared DB-backed
+> fixed-window counter (`rate_limit_hit` RPC, migration 046, via
+> `_shared/dbratelimit.ts`; fail-open, logged as
+> `ratelimit.db_check_failed_open`), because the per-isolate bucket cannot
+> hold where each request spends money or EasyPost quota. seller-checkout:
+> 10/min per (IP, short_code) **plus a code-independent 30/min per IP**
+> (card testing is PI-create volume from one actor, so N scraped codes must
+> not mean N× budget). The labels flex limiter exempts requests whose
+> shipment already has a row — those resolve idempotently (PR1) and spend
+> nothing. The `GET /links?code=` 30/min/IP limit above is now actually
+> implemented (in-memory), dual-keyed: 30/min on `x-sendmo-client-ip` (an
+> unauthenticated per-viewer hint forwarded by the Vercel OG middleware —
+> without it every page view pools into a few egress IPs) AND 600/min on
+> the spoof-resistant transport IP, so header-randomizing enumeration still
+> hits a ceiling.
 
 ---
 

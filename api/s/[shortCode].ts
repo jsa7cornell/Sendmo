@@ -20,13 +20,17 @@ import {
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL ?? "";
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY ?? "";
 
-async function fetchLinkData(shortCode: string): Promise<OgLinkPayload | null> {
+async function fetchLinkData(shortCode: string, viewerIp?: string): Promise<OgLinkPayload | null> {
   if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return null;
   try {
     const res = await fetch(
       `${SUPABASE_URL}/functions/v1/links?code=${encodeURIComponent(shortCode)}`,
       {
         headers: {
+          // Parity with middleware.ts (PR2): per-viewer bucketing hint for
+          // the links GET rate limit, so this path never pools page views
+          // into one server IP if it ever goes live again.
+          ...(viewerIp ? { "x-sendmo-client-ip": viewerIp } : {}),
           apikey: SUPABASE_ANON_KEY,
           Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
         },
@@ -49,7 +53,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const canonicalUrl = `${baseUrl}/s/${shortCode}`;
 
   // Fetch link personalisation data (best-effort — falls back to defaults)
-  const link = await fetchLinkData(shortCode);
+  const viewerIp = (Array.isArray(req.headers["x-forwarded-for"])
+    ? req.headers["x-forwarded-for"][0]
+    : req.headers["x-forwarded-for"])?.split(",")[0]?.trim();
+  const link = await fetchLinkData(shortCode, viewerIp);
   const { title, description } = buildOgStrings(link);
 
   // Fetch index.html from the same deployment (CDN, not this function)
