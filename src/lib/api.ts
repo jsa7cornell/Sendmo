@@ -778,6 +778,27 @@ export async function rotateLinkUrl(linkId: string, accessToken: string): Promis
   return data as RotateLinkResult;
 }
 
+export interface CloseLinkResult {
+  id: string;
+  short_code: string;
+  status: "closed";
+}
+
+// Auth'd, seller links only (PR5). The seller's off switch: active → closed.
+// Idempotent on an already-closed link; 409 on any other state (a sold
+// single-use link is already unbuyable — nothing to close).
+export async function closeSellerLink(linkId: string, accessToken: string): Promise<CloseLinkResult> {
+  const res = await fetch(`${BASE_URL}/functions/v1/links/${encodeURIComponent(linkId)}/close`, {
+    method: "POST",
+    headers: { ...headers(), Authorization: `Bearer ${accessToken}` },
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || `Close failed (${res.status})`);
+  }
+  return data as CloseLinkResult;
+}
+
 export interface ActivateLinkResult {
   id: string;
   short_code: string;

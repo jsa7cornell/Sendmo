@@ -217,6 +217,93 @@ Deno.serve(async (req: Request) => {
         );
     }
 
+    // ── POST /links/:id/close — Authenticated: the seller's off switch ──
+    // PR5 (seller-link launch, Q1): with no inventory counting, an unlimited
+    // link never self-closes — the seller's hand on this switch IS the
+    // inventory control. Writes the dedicated 'closed' status (migration
+    // 048; disjoint from the webhook's 'completed' and rotate's 'cancelled').
+    // Buyer side needs nothing: GET-by-code already 410s any non-active
+    // seller link and the client renders "This item has already sold".
+    if (req.method === "POST" && pathLinkId && pathAction === "close") {
+        const authHeader = req.headers.get("Authorization") || "";
+        const token = authHeader.replace("Bearer ", "");
+        const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+        if (authError || !user) {
+            return new Response(
+                JSON.stringify({ error: "Unauthorized" }),
+                { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+        const { data: existing, error: linkErr } = await supabase
+            .from("sendmo_links")
+            .select("id, user_id, short_code, link_type, status")
+            .eq("id", pathLinkId)
+            .maybeSingle();
+        if (linkErr || !existing) {
+            return new Response(
+                JSON.stringify({ error: "Link not found" }),
+                { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+        if (existing.user_id !== user.id) {
+            return new Response(
+                JSON.stringify({ error: "Not your link" }),
+                { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+        if (existing.link_type !== "seller_link") {
+            return new Response(
+                JSON.stringify({ error: "Only seller links can be closed" }),
+                { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+        if (existing.status === "closed") {
+            // Idempotent — already closed, just acknowledge.
+            return new Response(
+                JSON.stringify({ id: existing.id, short_code: existing.short_code, status: "closed" }),
+                { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+        if (existing.status !== "active") {
+            // A sold single-use link sits at in_use/completed — nothing left
+            // to close, and overwriting those states would erase what the
+            // lifecycle writers recorded.
+            return new Response(
+                JSON.stringify({ error: `Cannot close a ${existing.status} link` }),
+                { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+        // Guarded UPDATE (active → closed only) so a concurrent buyer's
+        // single-use claim and this close can't clobber each other.
+        const { data: closedRow, error: closeErr } = await supabase
+            .from("sendmo_links")
+            // updated_at set explicitly — no trigger maintains it, and the
+            // Dashboard orders the Links tab by it (activate/PATCH do the same).
+            .update({ status: "closed", updated_at: new Date().toISOString() })
+            .eq("id", existing.id)
+            .eq("status", "active")
+            .select("id, short_code, status")
+            .maybeSingle();
+        if (closeErr || !closedRow) {
+            return new Response(
+                JSON.stringify({ error: "The link changed state while closing — refresh and try again" }),
+                { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+        log({
+            event_type: "link.closed",
+            session_id: req.headers.get("x-session-id") || "unknown",
+            severity: "info",
+            entity_type: "sendmo_link",
+            entity_id: existing.id,
+            properties: { short_code: existing.short_code },
+        });
+        return new Response(
+            JSON.stringify({ id: closedRow.id, short_code: closedRow.short_code, status: closedRow.status }),
+            { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+    }
+
     // ── POST /links/:id/activate — Authenticated: flip draft → active using
     // the user's existing default PM (no Stripe call needed; the PM is already
     // attached server-side from a prior SetupIntent). Used by FlexPaymentStep

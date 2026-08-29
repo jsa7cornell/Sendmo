@@ -17,7 +17,7 @@ import LinksTab from "@/components/dashboard/LinksTab";
 import AddCardModal from "@/components/dashboard/AddCardModal";
 import AppHeader from "@/components/AppHeader";
 import SiteFooter from "@/components/SiteFooter";
-import { removePaymentMethod, rotateLinkUrl } from "@/lib/api";
+import { removePaymentMethod, rotateLinkUrl, closeSellerLink } from "@/lib/api";
 
 // ─── Types ──────────────────────────────────────────────────
 
@@ -213,6 +213,9 @@ export default function Dashboard() {
   // longer authenticates any direct API calls beyond the existing supabase
   // client (which is already JWT-aware via AuthContext).
 
+  // Bumped after a mutation (e.g. closing a listing) to refetch the lists.
+  const [dashRefresh, setDashRefresh] = useState(0);
+
   useEffect(() => {
     async function fetchData() {
       if (!user) return;
@@ -266,7 +269,7 @@ export default function Dashboard() {
     }
 
     fetchData();
-  }, [user]);
+  }, [user, dashRefresh]);
 
   // Phase B saved cards — read from Stripe directly via /payment-methods GET
   // (source of truth). The local payment_methods table can silently drift if
@@ -426,6 +429,14 @@ export default function Dashboard() {
   // already ordered by created_at DESC, so the slice keeps the most recent.
   // Total counts use the full grouped count so the "View all N" overflow
   // affordance shows the true number.
+  // PR5: the seller's off switch. LinksTab owns the confirm dialog; this
+  // owns the call + refetch. Throws surface in the dialog's error line.
+  async function handleCloseLink(linkId: string) {
+    if (!session?.access_token) throw new Error("Your session expired — sign in again to close this listing.");
+    await closeSellerLink(linkId, session.access_token);
+    setDashRefresh((n) => n + 1);
+  }
+
   const linksWithChildren = allLinks.map((l) => {
     const children = shipments.filter((s) => s.link_id === l.id);
     return {
@@ -829,7 +840,7 @@ export default function Dashboard() {
 
         {/* Links tab content — gated by tab state */}
         {tab === "links" && (
-          <LinksTab links={linksWithChildren} loading={loadingAllLinks} />
+          <LinksTab links={linksWithChildren} loading={loadingAllLinks} onCloseLink={handleCloseLink} />
         )}
 
         {/* Shipments Table — gated by tab state */}

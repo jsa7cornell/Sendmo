@@ -200,6 +200,20 @@ test.describe("a sold seller link is a state, not an error", () => {
     await expect(page.getByText(/Hmm, that link didn't work/i)).toHaveCount(0);
   });
 
+  test("a CLOSED listing (the PR5 off switch) renders the same sold-out state", async ({ page }) => {
+    // 'closed' works because nothing enumerates statuses — the 410 fires on
+    // any non-active seller link. This pins that invariant so a future
+    // exhaustive status branch fails a test instead of shipping.
+    await mockLink(page, {});
+    await page.route(`${SUPABASE_URL}/functions/v1/links**`, r =>
+      r.fulfill({ status: 410, contentType: "application/json", body: JSON.stringify({
+        error: "This item is no longer available", status: "closed", link_type: "seller_link",
+      }) }));
+    await page.goto("/s/CLOSED01");
+
+    await expect(page.getByRole("heading", { name: /This item has already sold/i })).toBeVisible({ timeout: 10000 });
+  });
+
   test("a cancelled FLEX link keeps the ordinary error card", async ({ page }) => {
     await mockLink(page, {});
     await page.route(`${SUPABASE_URL}/functions/v1/links**`, r =>

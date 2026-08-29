@@ -12,6 +12,19 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-29] PR5 — the off switch: a seller can finally close a listing
+
+**Category:** ship
+**Cross-link:** [`proposals/2026-08-28_seller-link-launch_reviewed-2026-08-28_decided-2026-08-29.md`](proposals/2026-08-28_seller-link-launch_reviewed-2026-08-28_decided-2026-08-29.md) §2.2/§3 PR5 (Q1 decided: a new `closed` value) · WISHLIST "status enum cleanup" annotated stale
+
+**Browser-verified:**
+  spec: tests/unit/LinksTabClose.test.tsx (component: control gating, dialog gate, error surfacing)
+  variants-covered: [seller_link active (control shows) / flexible / seller closed (hidden); confirm-then-call; rejection stays in dialog]
+
+With no inventory counting, an unlimited listing never self-closes and the seller's hand on the switch IS the inventory control — and there was no switch anywhere. Now: **migration 048** adds a seventh `closed` status (new value because every existing one has another writer — `completed` belongs to the delivery webhook, `cancelled` to rotate, `expired` to time); **`POST /links/:id/close`** (owner-auth'd, seller links only, guarded `active → closed` UPDATE so a concurrent single-use claim can't be clobbered, idempotent on re-close, 409 otherwise); **"Close listing"** on the Dashboard card behind a confirm dialog that says exactly what buyers will see (Manage is hidden on seller links — listings are immutable by decision, and the flex editor it routed to dead-ended on a raw status string). Buyer side needed nothing: GET-by-code already 410s any non-active seller link, and PR3's `link_type`-carrying 410 renders it as "This item has already sold" — including in the unfurl; an e2e case now PINS `closed` → sold-out, since it works only because nothing enumerates statuses. Review also caught: `LinkStatus` union + 020's column COMMENT extended with `closed`; the close write sets `updated_at` (no trigger maintains it and the Dashboard sorts by it).
+
+---
+
 ### [2026-08-29] PR4 — no price cap on seller links, and honest "no options" copy for buyers
 
 **Category:** fix | ship
