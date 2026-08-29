@@ -714,6 +714,11 @@ Deno.serve(async (req: Request) => {
       // fully consumed (completed). Decided 2026-05-13 alongside dashboard
       // links-tab work.
       link_status: linkJoin?.status ?? null,
+      // PR11: after link rebinding, link_short_code is the REAL selling
+      // link's code — surfaces that key off it (e.g. PrintAnotherLabelCTA)
+      // gate on this so a buyer isn't offered "print another label" into a
+      // seller listing.
+      is_seller_sale: isSellerSale,
       link_type: linkJoin?.link_type ?? null,
       viewer_is_recipient: viewerIsRecipient,
       // viewerRole: "payer" | "sender_flex" | "anonymous" — server-derived.

@@ -2561,6 +2561,70 @@ Deno.serve(async (req: Request) => {
                     dbPublicCode = publicCode ?? null;
                     dbShortCode = shortCode ?? null;
 
+                    // ── Bind the shipment to the link that sold it (PR11/F1) ──
+                    // admin_insert_shipment mints a throwaway full_label link
+                    // per shipment and points shipments.link_id at it — so the
+                    // dashboard's per-link grouping matched nothing, every sale
+                    // rendered an orphan card named after the buyer, and
+                    // tracking/cancel/webhooks resolved the wrong link. Q2
+                    // decided the follow-up-UPDATE route (a defaulted p_link_id
+                    // param would mint a NEW OVERLOAD — the exact 018/019
+                    // ambiguity class), then DELETE the throwaway: after the
+                    // repoint it has no dependents (transactions.link_id
+                    // already points at the real link), and the FK on
+                    // shipments.link_id makes the delete fail-closed if
+                    // anything still references it. Full-label buys are
+                    // untouched — their minted link IS the viewer link.
+                    // Best-effort: a failure leaves the pre-PR11 state
+                    // (throwaway-bound), which every consumer already handles.
+                    if (shipmentId && resolvedLink) {
+                        try {
+                            const { data: mintedRow } = await supabase
+                                .from("shipments")
+                                .select("link_id")
+                                .eq("id", shipmentId)
+                                .single();
+                            const throwawayId = mintedRow?.link_id ?? null;
+                            if (throwawayId && throwawayId !== resolvedLink.id) {
+                                const { error: repointErr } = await supabase
+                                    .from("shipments")
+                                    .update({ link_id: resolvedLink.id })
+                                    .eq("id", shipmentId);
+                                if (repointErr) {
+                                    console.error("link_id repoint error:", repointErr);
+                                } else {
+                                    // The response's short_code should be the REAL
+                                    // link's, now that the row is bound to it.
+                                    dbShortCode = resolvedLink.short_code;
+                                    const { error: delErr } = await supabase
+                                        .from("sendmo_links")
+                                        .delete()
+                                        .eq("id", throwawayId)
+                                        .eq("link_type", "full_label")
+                                        .eq("user_id", resolvedLink.user_id);
+                                    if (delErr) {
+                                        // Orphan card persists — visible, non-fatal.
+                                        console.error("throwaway link delete error:", delErr);
+                                    }
+                                    log({
+                                        event_type: "label.link_rebound",
+                                        session_id: sessionId,
+                                        severity: "info",
+                                        entity_type: "shipment",
+                                        entity_id: shipmentId,
+                                        properties: {
+                                            link_id: resolvedLink.id,
+                                            link_type: resolvedLink.link_type,
+                                            throwaway_deleted: !delErr,
+                                        },
+                                    });
+                                }
+                            }
+                        } catch (rebindErr) {
+                            console.error("link rebind unexpected throw:", rebindErr);
+                        }
+                    }
+
                     // Comp marker (PR1): the RPC has no payment_method param,
                     // so comp rows land at the column's DEFAULT 'card'. The
                     // buy-idempotency decision uses payment_method='comp' to

@@ -51,6 +51,8 @@ interface TrackingData {
    * payloads → treat as printable.
    */
   can_print?: boolean;
+  /** PR11: true on seller sales — gates flex-flavored link CTAs. */
+  is_seller_sale?: boolean;
   link_short_code: string | null;
   // Parent link status — added 2026-05-13 evening alongside dashboard tabs.
   // Surfaced on F3 cancelled so users know whether the link is still reusable.
@@ -735,11 +737,13 @@ export default function TrackingPage() {
                   {/* F3 — parent link reference + forward CTA so the user
                       isn't stuck on a dead-end AND knows whether the link is
                       still reusable. */}
+                  {data.is_seller_sale !== true && (
                   <PrintAnotherLabelCTA
                     linkShortCode={data.link_short_code}
                     linkStatus={data.link_status ?? null}
                     status={data.status}
                   />
+                  )}
 
                   {/* Payer-only condensed receipt at bottom of F3.
                       refundStatus drives refund-aware copy ("Refunded $X

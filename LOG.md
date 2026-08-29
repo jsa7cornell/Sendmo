@@ -12,6 +12,21 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-29] PR11 — shipments bind to the link that sold them; the throwaway retires
+
+**Category:** fix
+**Cross-link:** [`proposals/2026-08-28_seller-link-launch_reviewed-2026-08-28_decided-2026-08-29.md`](proposals/2026-08-28_seller-link-launch_reviewed-2026-08-28_decided-2026-08-29.md) §2.5 (Q2 decided: follow-up UPDATE + delete) · WISHLIST "F1 root-cause" · **depends on PR6's guards — enforced by tests/unit/sellerLinkLifecycleGuards.test.ts, which is green on this branch**
+
+**Browser-verified:**
+  spec: tests/unit/sellerLinkLifecycleGuards.test.ts (the guards this PR makes load-bearing) — the rebind itself is a DB write verified by the §6 staging run; e2e mocks don't exercise persistence
+  variants-covered: [flex + seller buys rebind (resolvedLink present); full-label untouched (its minted link IS the viewer link); tracking is_seller_sale gates the flex-flavored CTA]
+
+`admin_insert_shipment` mints a throwaway `full_label` link per shipment and points `shipments.link_id` at it — so the dashboard's per-link child grouping matched nothing, every sale rendered an orphan card named after the buyer, and tracking echoed the wrong link. Now, for link-resolved buys (flex + seller), `labels/` repoints `link_id` to the REAL link post-insert and deletes the throwaway. **Q2's reasoning, recorded:** a `p_link_id` param with a DEFAULT mints a *new overload* — the literal 018/019 ambiguity class that took shipment persistence down for two months in 2026 — so the RPC body is untouched; after the repoint the throwaway has no dependents (`transactions.link_id` already points at the real link) and the FK on `shipments.link_id` makes the delete fail-closed. Best-effort: any failure leaves the pre-PR11 throwaway-bound state every consumer already handles. No backfill of historical rows (prod has zero seller sales; flex history keeps working as-is).
+
+Consequences that light up: the buy response's `short_code` is the real link's; tracking's `link_short_code`/`link_type` become truthful (Admin sale rows now badge correctly — closing PR6's stated gap); PR6's webhook/cancel-label guards go from inert to load-bearing (the mechanical test proves they're present); and the new `is_seller_sale` payload flag gates PrintAnotherLabelCTA so a buyer isn't offered "print another label" into a seller listing.
+
+---
+
 ### [2026-08-29] PR10 — a price before the wall: the seller-link band
 
 **Category:** ship
