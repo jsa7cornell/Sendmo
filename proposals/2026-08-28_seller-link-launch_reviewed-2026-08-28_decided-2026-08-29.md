@@ -8,7 +8,7 @@ created: 2026-08-28
 last_updated: 2026-08-29  # round-2 review + decision recorded; build begins
 reviewed: 2026-08-28
 decided: 2026-08-29
-executed: null
+executed: 2026-08-29 — PR1–PR13 implemented (PRs #114–#126, stacked, each in-session code-reviewed); PR14 remains gated on the B2 env read (see proposals/2026-08-29_seller-launch-runbook_PR14.md)
 pr: null
 author: Claude Opus 5 — drafted from John's request to "build SendMo for sellers", after discovering the feature was already merged and deployed behind a flag. Grounded against production (live bundle + read-only DB queries against fkxykvzsqdjzhurntgah), the live edge functions, and the decided 2026-07-17 seller-link proposal. Two multi-agent passes: a six-way implementation map with adversarial gap verification, and a five-way design pass with three adversarial reviewers on the money path.
 reviewer: Fresh Claude (Fable 5) session — loaded cold; re-verified every load-bearing code claim against the current checkout via three parallel verification passes (labels/, links/ + dashboard, buyer/tracking surfaces), read the 2026-07-17 decided proposal and the 2026-05-13 T2 decision in full, and checked PR14's env assumptions against PRE-LAUNCH.md and the LOG
