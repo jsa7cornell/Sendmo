@@ -12,6 +12,18 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-29] Buyer view rework — plain checkout landing with the listing, no step dots, consolidated review card
+
+**Category:** fix | ship
+**Cross-link:** same-day launch feedback from John (buyer side)
+
+**Browser-verified:** spec: `tests/e2e/buyer-flow.spec.ts` · variants-covered: landing description with seller name, listing card (item/package/origin/band), no progress dots, no rate-step subtitle, consolidated review card (item + one-line ship-to + method + total footer), plus the pre-existing empty-rates/band variants re-passing under the new headings.
+
+- **Landing** (`BuyerFlow` AddressStep): heading "Checkout" + one description — "Complete your checkout information to receive a shipment from {seller}." — and ONE listing card: item name, package dims/weight, "Ships from {city, ST}", price band. Replaces the centered hero + loose notes/band blurbs.
+- **Server** (`links/index.ts` GET-by-code): seller links now serve `seller_name` (origin address NAME only — never the street; it already prints on the label's return address) and `package_prefill` (previously flexible-only; a listed item's dims are the listing, not a secret).
+- **Step dots removed** (`BuyerProgressBar` deleted); **step subtitles removed** ("You pay for shipping — pick…", "One last look before you pay.", the old "Ships from" hero line).
+- **Review step** rebuilt as one consolidated card: item + package section, one-line ship-to (name / address / email · ships-from), method row with price, and a muted Total footer — replacing the roomy two-card stack with a floating total.
+
 ### [2026-08-29] /sell builder third pass — limit control out, John's link-type copy, header only on step 1
 
 **Category:** fix | ship

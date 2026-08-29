@@ -620,6 +620,11 @@ export interface LinkData {
   origin_city?: string | null;
   origin_state?: string | null;
   /**
+   * SELLER ONLY (2026-08-29). The seller's name (never the street) so the
+   * buyer landing can say who the shipment is from. Null otherwise.
+   */
+  seller_name?: string | null;
+  /**
    * FLEXIBLE ONLY (2026-08-18). The ship-from address the link creator already
    * knew, so the sender isn't asked to retype their own address. Null for
    * seller links — there the origin is the seller's and the reader is a
@@ -635,7 +640,7 @@ export interface LinkData {
     phone: string;
     verified: boolean;
   } | null;
-  /** FLEXIBLE ONLY. The parcel the creator specced, when they knew it. */
+  /** Flexible + seller links: the parcel the creator specced, when they knew it. */
   package_prefill?: {
     length_in: number;
     width_in: number;
