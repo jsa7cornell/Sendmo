@@ -12,6 +12,24 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-29] PR6 — a seller link looks like one, PATCH stops lying, and the lifecycle guards land before they're load-bearing
+
+**Category:** fix
+**Cross-link:** [`proposals/2026-08-28_seller-link-launch_reviewed-2026-08-28_decided-2026-08-29.md`](proposals/2026-08-28_seller-link-launch_reviewed-2026-08-28_decided-2026-08-29.md) §3 PR6 (+ review Pitfall 2) · the 2026-08-28 investigation's PATCH-guard finding
+
+**Browser-verified:**
+  spec: tests/unit/LinksTabClose.test.tsx (seller badge = "Seller", never "Flexible"; no Manage) + tests/unit/sellerLinkLifecycleGuards.test.ts
+  variants-covered: [LinksTab seller/flex badges; Admin report + links-table + shipment-detail labels (type-checked; sale rows stay "Full label" until PR11 by design); LinksEdit seller early-refusal; lifecycle guards asserted at source level for webhooks + cancel-label + labels' one legitimate reopen]
+
+Three fixes, one theme — the rest of the product now knows seller links exist:
+
+1. **Labels stop lying.** One shared `linkTypeLabel` map replaces FOUR two-branch link-type renderings (LinksTab badged every seller link "Flexible"; Admin's report row, Admin's `getLinkTypeBadge`, and AdminShipmentDetail each defaulted differently — the review found the second and third). Dashboard's `link_type` union gains `seller_link` so the cast can't hide the next missing branch. **Scope honestly:** seller LISTING rows now badge "Seller" everywhere; seller SALE rows still badge "Full label" until PR11 repoints `shipments.link_id` off the throwaway — that is the F1 defect, not a labeling one.
+2. **PATCH gets the guard its comment claimed.** `links/index.ts`'s PATCH handler selected no `link_type` and had NO type check — the comment saying "this handler already rejects non-flexible links above" was false (those guards belong to rotate/activate), so a prefs-only save on a seller link silently rewrote `preferred_speed`/`preferred_carrier`/`max_price_cents` — all of which bind what future buyers can pick and be charged. Now: `link_type !== "flexible"` → 400, and the stale comment is corrected in place.
+3. **A fifth writer, found by the review:** the public GET's auto-expire (`links/index.ts`) updated `status='expired'` unscoped — an anonymous fetch could clobber `in_use`/`closed` lifecycle states on any link with a past `expires_at`. Now scoped to `active`/`draft` only.
+4. **The lifecycle guards land while still inert.** The delivery webhook's `in_use → completed` flip and cancel-label's Stage-4 revival are scoped `.neq("link_type", "seller_link")` — a delivered sale must not close a listing, a cancelled sale must not re-open a sold single-use link. Both are inert today (shipments.link_id points at the throwaway) and become load-bearing the moment PR11 repoints it — so the "PR6 before PR11" ordering is **mechanical, not remembered**: `tests/unit/sellerLinkLifecycleGuards.test.ts` asserts the guards at source level (the functions call Deno.serve at module load, so a source-contract test is the deterministic alternative to nothing) and fails CI if either guard is ever removed.
+
+---
+
 ### [2026-08-29] PR5 — the off switch: a seller can finally close a listing
 
 **Category:** ship

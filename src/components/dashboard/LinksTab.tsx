@@ -22,6 +22,7 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { linkTypeLabel } from "@/lib/linkTypeLabel";
 
 interface ChildShipment {
   id: string;
@@ -149,7 +150,7 @@ export default function LinksTab({ links, loading, onCloseLink }: Props) {
                     <span className="font-mono text-base font-semibold text-foreground">{l.short_code}</span>
                     <Badge variant="outline" className={cn("text-[10px]", statusCfg.tone)}>{statusCfg.label}</Badge>
                     <Badge variant="outline" className="text-[10px] text-muted-foreground">
-                      {l.link_type === "full_label" ? "Full label" : "Flexible"}
+                      {linkTypeLabel(l.link_type)}
                     </Badge>
                   </div>
                   {recipientLine && (

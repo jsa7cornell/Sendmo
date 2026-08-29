@@ -23,9 +23,14 @@ function renderTab(link: Record<string, unknown>, onCloseLink = vi.fn(() => Prom
 }
 
 describe("LinksTab — Close listing", () => {
-  it("shows the control only on an ACTIVE seller link", () => {
+  it("shows the control only on an ACTIVE seller link — badged 'Seller', not 'Flexible' (PR6)", () => {
     renderTab({ link_type: "seller_link", status: "active" });
     expect(screen.getByRole("button", { name: /Close listing/i })).toBeInTheDocument();
+    // The old two-branch ternary rendered every seller link as "Flexible".
+    expect(screen.getByText("Seller")).toBeInTheDocument();
+    expect(screen.queryByText("Flexible")).toBeNull();
+    // And no Manage — seller listings are immutable (close-and-recreate).
+    expect(screen.queryByRole("link", { name: /Manage/i })).toBeNull();
   });
 
   it("hides it on flex links and non-active seller links", () => {

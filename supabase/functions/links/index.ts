@@ -506,7 +506,13 @@ Deno.serve(async (req: Request) => {
 
         if (link.expires_at && new Date(link.expires_at) < new Date()) {
             // Auto-expire
-            await supabase.from("sendmo_links").update({ status: "expired" }).eq("id", link.id);
+            // Status-scoped (PR6 review #5): the auto-expire fires on a
+            // PUBLIC GET, so it must only retire links still open — never
+            // clobber in_use/completed/closed lifecycle states another
+            // writer owns.
+            await supabase.from("sendmo_links").update({ status: "expired" })
+                .eq("id", link.id)
+                .in("status", ["active", "draft"]);
             return new Response(
                 JSON.stringify({ error: "This link has expired", status: "expired", link_type: link.link_type }),
                 { status: 410, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -1090,7 +1096,7 @@ Deno.serve(async (req: Request) => {
         const { data: existing, error: loadError } = await supabase
             .from("sendmo_links")
             .select(`
-                id, user_id, status, recipient_address_id,
+                id, user_id, status, link_type, recipient_address_id,
                 recipient_address:addresses!recipient_address_id (
                     id, name, street1, street2, city, state, zip, phone
                 )
@@ -1112,6 +1118,20 @@ Deno.serve(async (req: Request) => {
             return new Response(
                 JSON.stringify({ error: "Link not found" }),
                 { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+
+        // Type guard (PR6): the PATCH editor is the FLEX editor. A comment
+        // below used to claim "this handler already rejects non-flexible
+        // links above" — it never did (the !== "flexible" guards belong to
+        // rotate and activate), so a prefs-only save on a seller link
+        // silently rewrote preferred_speed/preferred_carrier/max_price_cents
+        // — all of which bind what future buyers can pick and be charged.
+        // Seller links are immutable by decision (N7): close-and-recreate.
+        if (existing.link_type !== "flexible") {
+            return new Response(
+                JSON.stringify({ error: "Only flexible links can be edited", link_type: existing.link_type }),
+                { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
             );
         }
 
@@ -1164,7 +1184,10 @@ Deno.serve(async (req: Request) => {
             // destination" after a draft link had already stored an address.
             // Absent-vs-null matters — absent means "don't touch", null means
             // "remove". Migration 042 permits a recipient-less flexible link
-            // (this handler already rejects non-flexible links above).
+            // (the link_type guard near the top of this handler — added PR6,
+            // 2026-08-29 — makes the "flexible only" premise actually true;
+            // the previous version of this comment claimed a guard that
+            // didn't exist).
             if (existing.recipient_address_id !== null) {
                 previousAddressId = existing.recipient_address_id;
                 updates.recipient_address_id = null;
