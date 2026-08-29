@@ -72,7 +72,7 @@ interface PaymentMethodRow {
 interface DashboardLinkRow {
   id: string;
   short_code: string;
-  link_type: "flexible" | "full_label";
+  link_type: "flexible" | "full_label" | "seller_link";
   status: "active" | "in_use" | "completed" | "used" | string;
   created_at: string;
   updated_at: string;

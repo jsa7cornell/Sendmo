@@ -571,11 +571,18 @@ Deno.serve(async (req: Request) => {
                 .neq("id", shipment.id)
                 .in("status", ["label_created", "in_transit", "out_for_delivery"]);
             if (!otherActive || otherActive.length === 0) {
+                // .neq link_type seller_link (PR6): a cancelled SALE must not
+                // re-open a sold single-use listing — the no-auto-reopen rule
+                // is decided (the seller relists by hand). Inert today
+                // (link_id points at the throwaway) but MUST land before PR11
+                // repoints it; enforced by
+                // tests/unit/sellerLinkLifecycleGuards.test.ts.
                 const { error: linkErr } = await supabase
                     .from("sendmo_links")
                     .update({ status: "active" })
                     .eq("id", linkRow.id)
-                    .eq("status", "in_use");
+                    .eq("status", "in_use")
+                    .neq("link_type", "seller_link");
                 if (!linkErr) linkRevived = true;
                 else console.error("Link revival error:", linkErr);
             }

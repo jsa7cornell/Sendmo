@@ -44,7 +44,7 @@ export default function LinksEdit() {
       const { data, error } = await supabase
         .from("sendmo_links")
         .select(`
-          id, status, preferred_speed, preferred_carrier, max_price_cents, size_hint,
+          id, status, link_type, preferred_speed, preferred_carrier, max_price_cents, size_hint,
           recipient_address:addresses!recipient_address_id (
             name, street1, street2, city, state, zip, phone, is_verified
           )
@@ -62,6 +62,13 @@ export default function LinksEdit() {
       }
 
       const row = data as unknown as LoadedRow;
+      // Seller links are immutable by decision (PR6): the server PATCH now
+      // 400s them, so say so at load instead of after a filled-out form.
+      if ((row as { link_type?: string }).link_type === "seller_link") {
+        setNotEditable("seller listing — listings can't be edited; close it and create a new one");
+        setLoading(false);
+        return;
+      }
       if (row.status !== "active" && row.status !== "draft") {
         setNotEditable(row.status);
         setLoading(false);

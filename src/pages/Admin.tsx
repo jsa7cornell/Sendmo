@@ -1,4 +1,5 @@
 import { useState, useEffect, type FormEvent } from "react";
+import { linkTypeLabel } from "@/lib/linkTypeLabel";
 import { Navigate, useSearchParams } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -66,7 +67,9 @@ type CancelTarget = {
 function getLinkTypeBadge(type: string) {
     if (type === "full_label") return <Badge className="bg-blue-500 hover:bg-blue-600 border-none">Full Label</Badge>;
     if (type === "flexible") return <Badge className="bg-purple-500 hover:bg-purple-600 border-none">Flexible</Badge>;
-    return <Badge variant="outline">{type}</Badge>;
+    if (type === "seller_link") return <Badge className="bg-emerald-500 hover:bg-emerald-600 border-none">Seller</Badge>;
+    // Fallback through the shared label map — never a raw enum value (PR6).
+    return <Badge variant="outline">{linkTypeLabel(type)}</Badge>;
 }
 
 function getLinkStatusBadge(status: string) {
@@ -749,11 +752,14 @@ export default function Admin() {
                                                                     {row.link_id}
                                                                     {row.is_test && <Badge variant="outline" className="ml-2 text-[10px] py-0 px-1 border-amber-300 text-amber-700 bg-amber-50">Test</Badge>}
                                                                 </td>
-                                                                {/* Source: "Flex link" vs "Full label" from link_type */}
+                                                                {/* Source badge — three-way map (PR6): the old two-branch
+                                                                    ternary rendered every seller sale as "Full label". */}
                                                                 <td className="px-4 py-3">
                                                                     {row.link_type === "flexible"
                                                                         ? <Badge className="bg-purple-100 text-purple-700 border border-purple-200 hover:bg-purple-100 text-[10px] py-0.5 px-2">Flex link</Badge>
-                                                                        : <Badge className="bg-blue-100 text-blue-700 border border-blue-200 hover:bg-blue-100 text-[10px] py-0.5 px-2">Full label</Badge>
+                                                                        : row.link_type === "seller_link"
+                                                                        ? <Badge className="bg-emerald-100 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 text-[10px] py-0.5 px-2">Seller</Badge>
+                                                                        : <Badge className="bg-blue-100 text-blue-700 border border-blue-200 hover:bg-blue-100 text-[10px] py-0.5 px-2">{linkTypeLabel(row.link_type)}</Badge>
                                                                     }
                                                                 </td>
                                                                 <td className="px-4 py-3" title={row.recipient_email}>{truncateEmail(row.recipient_email)}</td>

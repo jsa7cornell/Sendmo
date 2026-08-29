@@ -15,6 +15,7 @@
 //   proposals/2026-05-22_reconciliation-and-carrier-adjustments_reviewed-2026-05-22_decided-2026-05-22.md §2.5
 
 import { useState, useEffect } from "react";
+import { linkTypeLabel } from "@/lib/linkTypeLabel";
 import { useParams, Link, Navigate } from "react-router-dom";
 import { ArrowLeft, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -568,7 +569,10 @@ export default function AdminShipmentDetail() {
                 {detail.link_short_code && (
                   <div className="flex gap-3">
                     <span className="w-28 text-muted-foreground flex-none">
-                      {detail.link_type === "flexible" ? "Flex link" : "Full label link"}
+                      {/* Shared map (PR6) — the two-branch ternary here would
+                          label a seller sale "Full label link" once PR11
+                          repoints shipments.link_id. */}
+                      {`${linkTypeLabel(detail.link_type ?? "full_label")} link`}
                     </span>
                     <a
                       href={`/s/${detail.link_short_code}`}

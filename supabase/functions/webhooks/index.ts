@@ -885,11 +885,19 @@ Deno.serve(async (req: Request) => {
           .neq("id", shipment.id)
           .in("status", ["label_created", "in_transit", "out_for_delivery"]);
         if (!others || others.length === 0) {
+          // .neq link_type seller_link (PR6): a delivered SALE must not close
+          // the seller's listing — 'sold out' is the seller's call alone (the
+          // PR5 off switch), and a single-use link's post-sale 'in_use' is
+          // load-bearing state, not a lifecycle stage to advance. Inert today
+          // (shipments.link_id points at a throwaway full_label link) but
+          // MUST land before PR11 repoints link_id at the real seller link —
+          // the ordering is enforced by tests/unit/sellerLinkLifecycleGuards.test.ts.
           await supabase
             .from("sendmo_links")
             .update({ status: "completed" })
             .eq("id", linkId)
-            .eq("status", "in_use");  // idempotent
+            .eq("status", "in_use")  // idempotent
+            .neq("link_type", "seller_link");
         }
       }
     }
