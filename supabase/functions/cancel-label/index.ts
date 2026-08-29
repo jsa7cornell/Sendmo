@@ -2,7 +2,7 @@ import { createClient } from "jsr:@supabase/supabase-js@2.97.0";
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { log } from "../_shared/logger.ts";
 import { sendEmail } from "../_shared/resend.ts";
-import { refundSubmittedEmail } from "../_shared/email-templates.ts";
+import { sellerSaleCancelledEmail, refundSubmittedEmail } from "../_shared/email-templates.ts";
 import { checkRateLimit } from "../_shared/ratelimit.ts";
 import { resolveRefundStatus } from "../_shared/refunds.ts";
 import { sendAdminAlert } from "../_shared/alert.ts";
@@ -119,7 +119,7 @@ Deno.serve(async (req: Request) => {
         // ── Fetch shipment (with ownership join + cancel_token) ─────
         // public_code is UNIQUE; shipment_id is UUID PK. Either resolves
         // a single row.
-        const selectCols = "id, easypost_shipment_id, status, refund_status, is_test, carrier, tracking_number, rate_cents, created_at, link_id, cancel_token, stripe_payment_intent_id, public_code, buyer_email, sendmo_links!inner(id, short_code, user_id, status, link_type)";
+        const selectCols = "id, easypost_shipment_id, status, refund_status, is_test, carrier, tracking_number, rate_cents, created_at, link_id, cancel_token, stripe_payment_intent_id, public_code, buyer_email, item_description, sendmo_links!inner(id, short_code, user_id, status, link_type)";
         let shipmentQuery = supabase.from("shipments").select(selectCols);
         if (public_code) shipmentQuery = shipmentQuery.eq("public_code", public_code);
         else shipmentQuery = shipmentQuery.eq("id", bodyShipmentId);
@@ -469,11 +469,18 @@ Deno.serve(async (req: Request) => {
             if (payerEmail) {
                 // Determine who cancelled for the canceller-aware copy.
                 // actor is 'admin' | 'link_owner' | 'session_token' | 'email_token'
-                const cancellerIsPayer =
-                    actor === "link_owner" || actor === "session_token" || actor === "email_token";
-                const cancellerType: "payer" | "link_user" | "admin" =
+                // On a SELLER sale the payer is the BUYER (buyer_email), who
+                // acts via the cancel token — the link owner is the SELLER.
+                // The old unconditional link_owner→payer mapping rendered
+                // "you cancelled" to a buyer whose seller had cancelled
+                // (WISHLIST 2026-07-19 LOW; fixed here, PR13).
+                const cancellerIsPayer = buyerEmail
+                    ? (actor === "session_token" || actor === "email_token")
+                    : (actor === "link_owner" || actor === "session_token" || actor === "email_token");
+                const cancellerType: "payer" | "link_user" | "admin" | "seller" =
                     actor === "admin" ? "admin" :
-                    cancellerIsPayer ? "payer" : "link_user";
+                    cancellerIsPayer ? "payer" :
+                    buyerEmail ? "seller" : "link_user";
 
                 // Quote what the CUSTOMER paid (ledger +charge row), not
                 // shipments.rate_cents (SendMo's EasyPost cost — ~15%+$1
@@ -589,6 +596,93 @@ Deno.serve(async (req: Request) => {
                     .select("id");
                 if (linkErr) console.error("Link revival error:", linkErr);
                 else linkRevived = (revivedRows?.length ?? 0) === 1;
+            }
+        }
+
+        // ── Seller notice (PR13): a cancelled SALE must reach the seller ──
+        // Hooked to the CANCEL itself, not the refund outcome — whatever the
+        // refund state, the thing the seller must know is "don't ship it".
+        // A silent reversal means the seller posts an item that was never
+        // really paid for. Dedup mirrors the payer email (notifications_log,
+        // event_type cancel.seller_notice). Send failures never block the
+        // cancel response.
+        {
+            const sellerSaleBuyerEmail = (shipment as { buyer_email?: string | null }).buyer_email ?? null;
+            const sellerOwnerUserId = linkRow?.user_id ?? null;
+            // No notice when the SELLER cancelled their own sale (review #3):
+            // the copy is written for a surprised recipient, and confirming a
+            // person's own click is noise. Buyer- and admin-initiated cancels
+            // are the surprises this email exists for.
+            if (sellerSaleBuyerEmail && sellerOwnerUserId && actor !== "link_owner") {
+                try {
+                    const { data: sellerProfile } = await supabase
+                        .from("profiles")
+                        .select("email")
+                        .eq("id", sellerOwnerUserId)
+                        .maybeSingle();
+                    const sellerEmail = (sellerProfile as { email?: string | null } | null)?.email ?? null;
+                    if (sellerEmail) {
+                        const { error: noticeLogErr } = await supabase
+                            .from("notifications_log")
+                            .insert({
+                                shipment_id: shipment.id,
+                                contact_id: null,
+                                channel: "email",
+                                event_type: "cancel.seller_notice",
+                                status: "sent",
+                                provider_id: shipment.public_code,
+                            });
+                        // 23505 = the migration-035 dedup index fired (already
+                        // sent) — the expected skip. Anything else is a real
+                        // insert failure and must not vanish silently (review #5a).
+                        if (noticeLogErr && (noticeLogErr as { code?: string }).code !== "23505") {
+                            log({
+                                event_type: "cancel.seller_notice_log_error",
+                                session_id: sessionId,
+                                severity: "warn",
+                                source: "cancel-label",
+                                entity_type: "shipment",
+                                entity_id: shipment.id,
+                                properties: { error_message: noticeLogErr.message },
+                            });
+                        }
+                        if (!noticeLogErr) {
+                            const tpl = sellerSaleCancelledEmail({
+                                publicCode: shipment.public_code,
+                                itemDescription: (shipment as { item_description?: string | null }).item_description ?? null,
+                                cancelledBy: actor === "admin" ? "admin" : "buyer",
+                                trackingUrl: `https://sendmo.co/t/${shipment.public_code}`,
+                            });
+                            try {
+                                await sendEmail({ to: sellerEmail, subject: tpl.subject, html: tpl.html });
+                                log({
+                                    event_type: "cancel.seller_notice_sent",
+                                    session_id: sessionId,
+                                    severity: "info",
+                                    source: "cancel-label",
+                                    entity_type: "shipment",
+                                    entity_id: shipment.id,
+                                    properties: { public_code: shipment.public_code },
+                                });
+                            } catch (noticeErr) {
+                                // DELETE the dedup row on a failed send (review
+                                // #5b): the unique index has no status
+                                // predicate, so a 'failed' row would block the
+                                // retry forever.
+                                const msg = noticeErr instanceof Error ? noticeErr.message : String(noticeErr);
+                                console.error("[cancel-label] seller notice send failed:", msg);
+                                await supabase
+                                    .from("notifications_log")
+                                    .delete()
+                                    .eq("shipment_id", shipment.id)
+                                    .eq("event_type", "cancel.seller_notice")
+                                    .is("contact_id", null);
+                            }
+                        }
+                    }
+                } catch (noticeOuterErr) {
+                    console.error("[cancel-label] seller notice block error:", noticeOuterErr);
+                }
             }
         }
 

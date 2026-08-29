@@ -602,8 +602,8 @@ export function refundSubmittedEmail(params: {
   /** true  → payer cancelled their own label (omit canceller line)
    *  false → someone else cancelled (add "by the person using your shared link") */
   canceller_is_payer: boolean;
-  /** "admin" signals the admin cancelled — shows "by our team" instead of link-user copy */
-  canceller_type?: "payer" | "link_user" | "admin";
+  /** "admin" → "by our team"; "seller" → seller-sale buyer copy (PR13) */
+  canceller_type?: "payer" | "link_user" | "admin" | "seller";
 }): { subject: string; html: string } {
   const {
     amount_cents,
@@ -620,6 +620,10 @@ export function refundSubmittedEmail(params: {
     : canceller_type === "admin"
     ? `<p style="margin:0 0 16px;font-size:14px;color:${GRAY_600};line-height:1.5;">
         Your label was cancelled by our team.
+      </p>`
+    : canceller_type === "seller"
+    ? `<p style="margin:0 0 16px;font-size:14px;color:${GRAY_600};line-height:1.5;">
+        Your purchase was cancelled by the seller.
       </p>`
     : `<p style="margin:0 0 16px;font-size:14px;color:${GRAY_600};line-height:1.5;">
         Your label was cancelled by the person using your shared link.
@@ -644,6 +648,49 @@ export function refundSubmittedEmail(params: {
       </div>
       <p style="margin:0;font-size:12px;color:${GRAY_400};text-align:center;">
         SendMo tracking: <strong>${public_code}</strong>
+      </p>
+    `),
+  };
+}
+
+// ─── Seller notice — a sale on your listing was cancelled (PR13) ─────────────
+
+export function sellerSaleCancelledEmail(params: {
+  publicCode: string;
+  itemDescription: string | null;
+  /** Who cancelled — drives the attribution line (review #3). */
+  cancelledBy: "buyer" | "admin";
+  trackingUrl: string;
+}): { subject: string; html: string } {
+  // Subject is PLAIN TEXT (review #2): escaping there renders entities
+  // literally in the inbox ("&amp;quot;"). Escape only at the HTML sites.
+  const itemRaw = params.itemDescription?.trim()
+    ? (params.itemDescription.trim().length > 60
+        ? `${params.itemDescription.trim().slice(0, 60)}…`
+        : params.itemDescription.trim())
+    : null;
+  const itemHtml = itemRaw ? escapeEmailHtml(itemRaw) : null;
+  const whoLine = params.cancelledBy === "buyer"
+    ? "The buyer cancelled this sale and their payment is being refunded."
+    : "This sale was cancelled by our team and the buyer's payment is being refunded.";
+  return {
+    subject: itemRaw
+      ? `Sale cancelled — don't ship "${itemRaw}"`
+      : "A sale on your listing was cancelled — don't ship it",
+    html: layout(`
+      <h2 style="margin:0 0 8px;font-size:20px;font-weight:600;color:#111827;">Don't ship this one</h2>
+      <p style="margin:0 0 16px;font-size:14px;color:${GRAY_600};line-height:1.5;">
+        ${whoLine} If you've already printed the label, discard it — it's been voided.
+        ${itemHtml ? `<br/>Item: <strong>${itemHtml}</strong>` : ""}
+      </p>
+      <p style="margin:0 0 16px;font-size:14px;color:${GRAY_600};line-height:1.5;">
+        Your listing link isn't changed by this — if the item is still for sale, nothing to do.
+      </p>
+      <div style="text-align:center;margin:24px 0;">
+        <a href="${params.trackingUrl}" style="display:inline-block;background-color:${BRAND_BLUE};color:#ffffff;font-size:14px;font-weight:600;text-decoration:none;padding:12px 32px;border-radius:8px;">View the cancelled sale</a>
+      </div>
+      <p style="margin:0;font-size:12px;color:${GRAY_400};text-align:center;">
+        SendMo tracking: <strong>${params.publicCode}</strong>
       </p>
     `),
   };
