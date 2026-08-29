@@ -33,7 +33,18 @@ import { isValidEmail, isPreferredRate, pickBestPerCarrier } from "@/components/
 
 type BuyerStep = "address" | "rates" | "review";
 
-const STEP_ORDER: BuyerStep[] = ["address", "rates", "review"];
+// "12″ × 9″ × 4″ · 2 lb 4 oz" from the link's package prefill. Envelope-shaped
+// packages store height 1 (the carriers demand a number) — hide that axis.
+function packageLine(p: NonNullable<LinkData["package_prefill"]>): string {
+  const dims = p.height_in && p.height_in > 1
+    ? `${p.length_in}″ × ${p.width_in}″ × ${p.height_in}″`
+    : `${p.length_in}″ × ${p.width_in}″`;
+  if (!p.weight_oz) return dims;
+  const lbs = Math.floor(p.weight_oz / 16);
+  const oz = Math.round(p.weight_oz % 16);
+  const weight = lbs && oz ? `${lbs} lb ${oz} oz` : lbs ? `${lbs} lb` : `${oz} oz`;
+  return `${dims} · ${weight}`;
+}
 
 export default function BuyerFlow({ linkData }: { linkData: LinkData }) {
   const navigate = useNavigate();
@@ -183,8 +194,6 @@ export default function BuyerFlow({ linkData }: { linkData: LinkData }) {
 
       <div className="flex-1 py-8 px-4">
         <div className="container max-w-md mx-auto">
-          <BuyerProgressBar step={step} />
-
           <AnimatePresence mode="wait">
             {step === "address" && (
               <motion.div key="address" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} transition={{ duration: 0.25 }}>
@@ -222,6 +231,7 @@ export default function BuyerFlow({ linkData }: { linkData: LinkData }) {
             {step === "review" && selectedRate && (
               <motion.div key="review" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} transition={{ duration: 0.25 }}>
                 <ReviewStep
+                  linkData={linkData}
                   buyerAddress={buyerAddress}
                   buyerEmail={buyerEmail}
                   selectedRate={selectedRate}
@@ -245,30 +255,6 @@ export default function BuyerFlow({ linkData }: { linkData: LinkData }) {
   );
 }
 
-// ─── Progress bar (3 dots, non-clickable) ───────────────────
-
-function BuyerProgressBar({ step }: { step: BuyerStep }) {
-  const currentIdx = STEP_ORDER.indexOf(step);
-  return (
-    <nav aria-label="Progress" className="flex items-center justify-center gap-2 mb-6">
-      {STEP_ORDER.map((s, i) => {
-        const isDone = i < currentIdx;
-        const isCurrent = i === currentIdx;
-        return (
-          <span
-            key={s}
-            aria-current={isCurrent ? "step" : undefined}
-            className={
-              "h-2 rounded-full transition-all " +
-              (isCurrent ? "w-8 bg-primary" : isDone ? "w-2 bg-primary" : "w-2 bg-muted")
-            }
-          />
-        );
-      })}
-    </nav>
-  );
-}
-
 // ─── Step 1: destination address + receipt email ────────────
 
 function AddressStep({
@@ -285,33 +271,46 @@ function AddressStep({
   onContinue: () => void;
 }) {
   const emailError = tried && !emailValid;
+  const hasBand =
+    typeof linkData.est_min_cents === "number" && typeof linkData.est_max_cents === "number";
   return (
     <div className="space-y-5">
-      <div className="text-center">
-        <h1 className="text-2xl font-bold text-foreground">Where should this ship?</h1>
-        <p className="text-muted-foreground mt-1 text-sm">
-          {originLine ? `Ships from ${originLine}.` : "Enter your delivery address to see shipping options."}
+      {/* Landing intro (2026-08-29 buyer-view rework): one plain description
+          of what is happening, in the seller's name. No hero, no step dots. */}
+      <div className="space-y-1.5">
+        <h1 className="text-xl font-bold text-foreground">Checkout</h1>
+        <p className="text-sm text-muted-foreground">
+          {linkData.seller_name
+            ? `Complete your checkout information to receive a shipment from ${linkData.seller_name}.`
+            : "Complete your checkout information to receive your shipment."}
         </p>
       </div>
 
-      {linkData.notes && (
-        <p className="text-sm text-foreground rounded-xl bg-muted/40 border border-border px-4 py-3">
-          {linkData.notes}
-        </p>
-      )}
-
-      {/* Price band (PR10): a price BEFORE the wall — the whole reason a
-          Marketplace stranger can decide whether to type their address at
-          all. "Typically": three representative contiguous-US destinations,
-          not a quote; the exact price gates the purchase. */}
-      {typeof linkData.est_min_cents === "number" && typeof linkData.est_max_cents === "number" && (
-        <p className="text-sm text-foreground rounded-xl bg-primary/5 border border-primary/20 px-4 py-3">
-          Shipping typically costs{" "}
-          <span className="font-semibold">
-            {formatCents(linkData.est_min_cents)}–{formatCents(linkData.est_max_cents)}
-          </span>
-          {" "}— enter your address for your exact price.
-        </p>
+      {/* What's shipping — item, package, origin, and the price band (PR10:
+          a price BEFORE the wall; "typically" is representative, the exact
+          price gates the purchase). All in one card so the landing reads as
+          a listing, not a form. */}
+      {(linkData.notes || linkData.package_prefill || originLine || hasBand) && (
+        <div className="bg-card rounded-2xl border border-border shadow-sm p-5 space-y-1">
+          {linkData.notes && (
+            <p className="text-sm font-semibold text-foreground">{linkData.notes}</p>
+          )}
+          {linkData.package_prefill && (
+            <p className="text-sm text-muted-foreground">{packageLine(linkData.package_prefill)}</p>
+          )}
+          {originLine && (
+            <p className="text-sm text-muted-foreground">Ships from {originLine}</p>
+          )}
+          {hasBand && (
+            <p className="text-sm text-foreground pt-2 mt-2 border-t border-border">
+              Shipping typically costs{" "}
+              <span className="font-semibold">
+                {formatCents(linkData.est_min_cents!)}–{formatCents(linkData.est_max_cents!)}
+              </span>
+              {" "}— your exact price after the address.
+            </p>
+          )}
+        </div>
       )}
 
       <AddressForm value={address} tried={tried} onChange={onAddressChange} />
@@ -413,12 +412,7 @@ function RatesStep({
 
   return (
     <div className="space-y-5">
-      <div className="text-center">
-        <h1 className="text-2xl font-bold text-foreground">Choose a shipping option</h1>
-        <p className="text-muted-foreground mt-1 text-sm">
-          You pay for shipping — pick the speed and price that work for you.
-        </p>
-      </div>
+      <h1 className="text-xl font-bold text-foreground">Choose a shipping option</h1>
 
       {notice && (
         <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800 flex items-start gap-2">
@@ -491,9 +485,10 @@ function RatesStep({
 // ─── Step 3: review + on-session pay ────────────────────────
 
 function ReviewStep({
-  buyerAddress, buyerEmail, selectedRate, originLine, liveMode, easypostShipmentId,
+  linkData, buyerAddress, buyerEmail, selectedRate, originLine, liveMode, easypostShipmentId,
   paying, onStartPay, createIntent, onPaymentSuccess, onBack,
 }: {
+  linkData: LinkData;
   buyerAddress: AddressInput;
   buyerEmail: string;
   selectedRate: ShippingRate;
@@ -508,40 +503,48 @@ function ReviewStep({
 }) {
   return (
     <div className="space-y-5">
-      <div className="text-center">
-        <h1 className="text-2xl font-bold text-foreground">Review your order</h1>
-        <p className="text-muted-foreground mt-1 text-sm">
-          One last look before you pay.
-        </p>
-      </div>
+      <h1 className="text-xl font-bold text-foreground">Review your order</h1>
 
-      {/* Ship-to summary */}
-      <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
-        <h3 className="text-sm font-semibold text-foreground flex items-center gap-2 mb-3">
-          <MapPin className="w-4 h-4" /> Ship to
-        </h3>
-        <div className="text-sm text-foreground space-y-0.5">
-          {buyerAddress.name && <p className="font-medium">{buyerAddress.name}</p>}
-          <p>{buyerAddress.street}</p>
-          <p>{buyerAddress.city}, {buyerAddress.state} {buyerAddress.zip}</p>
-          <p className="text-muted-foreground">{buyerAddress.phone}</p>
-          <p className="text-muted-foreground">{buyerEmail}</p>
-        </div>
-        {originLine && (
-          <p className="text-xs text-muted-foreground mt-3 pt-3 border-t border-border">
-            Ships from {originLine}
-          </p>
+      {/* One consolidated order card (2026-08-29 buyer-view rework): item,
+          ship-to, method, total — sections divided, total as the card footer.
+          Replaces the loose stack of roomy cards + floating total. */}
+      <div className="bg-card rounded-2xl border border-border shadow-sm divide-y divide-border overflow-hidden">
+        {(linkData.notes || linkData.package_prefill) && (
+          <div className="px-5 py-4 flex items-start gap-3">
+            <Package className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />
+            <div className="min-w-0">
+              {linkData.notes && (
+                <p className="text-sm font-medium text-foreground">{linkData.notes}</p>
+              )}
+              {linkData.package_prefill && (
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {packageLine(linkData.package_prefill)}
+                </p>
+              )}
+            </div>
+          </div>
         )}
-      </div>
 
-      {/* Shipping method + price */}
-      <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
-        <h3 className="text-sm font-semibold text-foreground flex items-center gap-2 mb-3">
-          <Truck className="w-4 h-4" /> Shipping method
-        </h3>
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-sm font-medium text-foreground">
+        <div className="px-5 py-4 flex items-start gap-3">
+          <MapPin className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />
+          <div className="min-w-0 text-sm">
+            <p className="font-medium text-foreground">
+              {buyerAddress.name || "Ship to"}
+            </p>
+            <p className="text-muted-foreground">
+              {buyerAddress.street}, {buyerAddress.city}, {buyerAddress.state} {buyerAddress.zip}
+            </p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {buyerEmail}
+              {originLine ? ` · ships from ${originLine}` : ""}
+            </p>
+          </div>
+        </div>
+
+        <div className="px-5 py-4 flex items-center gap-3">
+          <Truck className="w-4 h-4 text-muted-foreground shrink-0" />
+          <div className="flex-1 min-w-0 text-sm">
+            <p className="font-medium text-foreground">
               {carrierDisplayName(selectedRate.carrier)} {serviceDisplayName(selectedRate.service)}
             </p>
             <p className="text-xs text-muted-foreground mt-0.5">
@@ -550,18 +553,17 @@ function ReviewStep({
                 : "Estimated delivery TBD"}
             </p>
           </div>
-          <span className="font-semibold text-foreground tabular-nums">
+          <span className="text-sm font-medium text-foreground tabular-nums">
             {formatCents(selectedRate.display_price_cents)}
           </span>
         </div>
-      </div>
 
-      {/* Total */}
-      <div className="flex items-center justify-between px-1">
-        <span className="text-sm font-medium text-foreground">Total</span>
-        <span className="text-lg font-bold text-foreground tabular-nums">
-          {formatCents(selectedRate.display_price_cents)}
-        </span>
+        <div className="px-5 py-3.5 bg-muted/40 flex items-center justify-between">
+          <span className="text-sm font-semibold text-foreground">Total</span>
+          <span className="text-base font-bold text-foreground tabular-nums">
+            {formatCents(selectedRate.display_price_cents)}
+          </span>
+        </div>
       </div>
 
       {paying ? (

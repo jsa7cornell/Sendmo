@@ -14,7 +14,8 @@ const SELLER_LINK = {
   size_hint: null, notes: "Vintage armchair", recipient_name: null, recipient_city: null,
   recipient_state: null, recipient_zip: null, recipient_address_complete: false,
   is_funded: true, public_code: null, origin_city: "San Francisco", origin_state: "CA",
-  package_prefill: null, origin_prefill: null, length_in: 20, width_in: 20, height_in: 20,
+  package_prefill: { length_in: 20, width_in: 20, height_in: 20, weight_oz: 320 },
+  origin_prefill: null, seller_name: "Jane Seller", length_in: 20, width_in: 20, height_in: 20,
   weight_hint_oz: 320,
 };
 
@@ -68,9 +69,15 @@ test.describe("buyer flow — no shipping options", () => {
     await mockBuyerFlow(page, { rates: [] });
     await page.goto("/s/SELLE2E9");
 
-    await expect(page.getByRole("heading", { name: /Where should this ship\?/i })).toBeVisible({ timeout: 10000 });
-    // The seller's item text is on the first screen.
+    await expect(page.getByRole("heading", { name: /^Checkout$/ })).toBeVisible({ timeout: 10000 });
+    // 2026-08-29 buyer-view rework: the landing states what is happening, in
+    // the seller's name, and shows the listing (item + package + origin).
+    await expect(page.getByText(/Complete your checkout information to receive a shipment from Jane Seller/)).toBeVisible();
     await expect(page.getByText("Vintage armchair")).toBeVisible();
+    await expect(page.getByText(/20\u2033 \u00d7 20\u2033 \u00d7 20\u2033 \u00b7 20 lb/)).toBeVisible();
+    await expect(page.getByText(/Ships from San Francisco, CA/)).toBeVisible();
+    // The step-dots progress bar is gone.
+    await expect(page.getByRole("navigation", { name: "Progress" })).toHaveCount(0);
 
     await fillBuyerAddress(page);
     await page.getByRole("button", { name: /See shipping options/i }).click();
@@ -86,7 +93,7 @@ test.describe("buyer flow — no shipping options", () => {
   test("the price band shows BEFORE any address is typed (PR10)", async ({ page }) => {
     await mockBuyerFlow(page, { rates: [] }, { est_min_cents: 1250, est_max_cents: 2410 });
     await page.goto("/s/SELLE2E9");
-    await expect(page.getByRole("heading", { name: /Where should this ship\?/i })).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole("heading", { name: /^Checkout$/ })).toBeVisible({ timeout: 10000 });
     // The whole point: a price with zero typing.
     await expect(page.getByText(/Shipping typically costs/i)).toBeVisible();
     await expect(page.getByText(/\$12\.50–\$24\.10/)).toBeVisible();
@@ -95,7 +102,7 @@ test.describe("buyer flow — no shipping options", () => {
   test("no band computed → no band line (and never NaN)", async ({ page }) => {
     await mockBuyerFlow(page, { rates: [] });
     await page.goto("/s/SELLE2E9");
-    await expect(page.getByRole("heading", { name: /Where should this ship\?/i })).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole("heading", { name: /^Checkout$/ })).toBeVisible({ timeout: 10000 });
     await expect(page.getByText(/Shipping typically/i)).toHaveCount(0);
     await expect(page.getByText(/NaN/)).toHaveCount(0);
   });
@@ -103,11 +110,43 @@ test.describe("buyer flow — no shipping options", () => {
   test("constrained link: the seller-preferences copy", async ({ page }) => {
     await mockBuyerFlow(page, { rates: [] }, { preferred_carrier: "USPS", preferred_speed: "standard" });
     await page.goto("/s/SELLE2E9");
-    await expect(page.getByRole("heading", { name: /Where should this ship\?/i })).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole("heading", { name: /^Checkout$/ })).toBeVisible({ timeout: 10000 });
     await fillBuyerAddress(page);
     await page.getByRole("button", { name: /See shipping options/i }).click();
 
     await expect(page.getByRole("heading", { name: /No options for this address/i })).toBeVisible({ timeout: 10000 });
     await expect(page.getByText(/seller's shipping preferences/i)).toBeVisible();
+  });
+});
+
+test.describe("buyer flow — rates and review (2026-08-29 rework)", () => {
+  const RATE = {
+    easypost_rate_id: "rate_1", easypost_shipment_id: "shp_1",
+    carrier: "FedEx", service: "FEDEX_GROUND", display_price: 18.48, delivery_days: 1,
+  };
+
+  test("no rate-step subtitle; review is one consolidated card with the item", async ({ page }) => {
+    await mockBuyerFlow(page, { rates: [RATE] });
+    await page.goto("/s/SELLE2E9");
+    await expect(page.getByRole("heading", { name: /^Checkout$/ })).toBeVisible({ timeout: 10000 });
+    await fillBuyerAddress(page);
+    await page.getByRole("button", { name: /See shipping options/i }).click();
+
+    // Rates step: heading only, the old subtitle is gone.
+    await expect(page.getByRole("heading", { name: /Choose a shipping option/i })).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText(/pick the speed and price that work for you/i)).toHaveCount(0);
+    await page.getByRole("button", { name: /Continue/ }).click();
+
+    // Review step: no "one last look" subtitle; the consolidated card carries
+    // item, package, one-line ship-to, method, and the total footer.
+    await expect(page.getByRole("heading", { name: /Review your order/i })).toBeVisible();
+    await expect(page.getByText(/One last look/)).toHaveCount(0);
+    await expect(page.getByText("Vintage armchair")).toBeVisible();
+    await expect(page.getByText(/20″ × 20″ × 20″ · 20 lb/)).toBeVisible();
+    await expect(page.getByText("Pat Buyer")).toBeVisible();
+    await expect(page.getByText(/149 New Montgomery St, San Francisco, CA 94105/)).toBeVisible();
+    await expect(page.getByText(/buyer@example\.com · ships from San Francisco, CA/)).toBeVisible();
+    await expect(page.getByText("Total")).toBeVisible();
+    await expect(page.getByText("$18.48").first()).toBeVisible();
   });
 });

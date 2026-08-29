@@ -605,6 +605,14 @@ Deno.serve(async (req: Request) => {
                 // + labels/ resolve the full origin server-side).
                 origin_city: (link.origin_address as unknown as { city?: string } | null)?.city ?? null,
                 origin_state: (link.origin_address as unknown as { state?: string } | null)?.state ?? null,
+                // Seller links: the seller's NAME (never the street) so the
+                // buyer landing can say who the shipment is from (2026-08-29
+                // buyer-view rework). The name already appears on the printed
+                // label's return address, so this exposes nothing new.
+                seller_name:
+                    link.link_type === "seller_link"
+                        ? ((link.origin_address as unknown as { name?: string } | null)?.name ?? null)
+                        : null,
                 // FLEXIBLE ONLY — the ship-from address the link creator already
                 // knew, so the sender doesn't retype their own address (and the
                 // creator's typing isn't discarded). Deliberately NOT sent for
@@ -629,9 +637,13 @@ Deno.serve(async (req: Request) => {
                               verified: (link.origin_address as unknown as { is_verified?: boolean }).is_verified === true,
                           }
                         : null,
-                // Package the creator specced, when they knew it. Same purpose.
+                // Package the creator specced, when they knew it. Flexible:
+                // same purpose as origin_prefill. Seller links too (2026-08-29
+                // buyer-view rework): the buyer landing shows the package
+                // details up front — dims/weight of a listed item are the
+                // listing, not a secret.
                 package_prefill:
-                    link.link_type === "flexible" && link.length_in && link.width_in
+                    (link.link_type === "flexible" || link.link_type === "seller_link") && link.length_in && link.width_in
                         ? {
                               length_in: Number(link.length_in),
                               width_in: Number(link.width_in),
