@@ -62,17 +62,22 @@ test.describe("Seller builder — stepped rework", () => {
 
     await expect(page.getByText(INTRO)).toBeVisible();
     await expect(page.getByRole("heading", { name: "How it works" })).toHaveCount(0);
-    // The old hero subtitle is gone too.
+    // The old hero subtitle and the "Buyer pays" chip are gone too.
     await expect(page.getByText(/your buyer does the rest/)).toHaveCount(0);
+    await expect(page.getByText("Buyer pays")).toHaveCount(0);
   });
 
   test("step 1 is quantity + origin; the parcel question is NOT on it", async ({ page }) => {
     await openBuilder(page);
 
-    await expect(page.getByText("How many can sell through this link?")).toBeVisible();
+    // Link-type copy is John's exact wording (2026-08-29 third pass).
+    await expect(page.getByText("I'm shipping just one item")).toBeVisible();
+    await expect(page.getByText("Shipping multiple identical items")).toBeVisible();
     await expect(page.getByText("Where does it ship from?")).toBeVisible();
-    // Quantity renders above the origin card.
-    const yQty = (await page.getByText("How many can sell through this link?").boundingBox())?.y ?? NaN;
+    // The shipping-limit control is removed for now.
+    await expect(page.getByText("Set a shipping limit")).toHaveCount(0);
+    // Link type renders above the origin card.
+    const yQty = (await page.getByRole("button", { name: /Single use/ }).boundingBox())?.y ?? NaN;
     const yOrigin = (await page.getByText("Where does it ship from?").boundingBox())?.y ?? NaN;
     expect(yQty).toBeLessThan(yOrigin);
     // The item step lives on its own screen.
@@ -124,11 +129,14 @@ test.describe("Seller builder — stepped rework", () => {
     await expect(page.getByText(/12″ × 9″ × 4″ · 2 lb/)).toBeVisible();
     await expect(page.getByText("Vintage armchair")).toBeVisible();
 
-    // Back from step 2 returns to step 1 with state intact.
+    // Back from step 2 returns to step 1 with state intact. The title and
+    // intro line render ONLY on step 1 (third-pass feedback).
     await page.getByRole("button", { name: "Back", exact: true }).click();
     await expect(page.getByRole("heading", { name: /What are you shipping\?/ })).toBeVisible();
+    await expect(page.getByText(INTRO)).toHaveCount(0);
     await page.getByRole("button", { name: "Back", exact: true }).click();
-    await expect(page.getByText("How many can sell through this link?")).toBeVisible();
+    await expect(page.getByText("I'm shipping just one item")).toBeVisible();
+    await expect(page.getByText(INTRO)).toBeVisible();
     await expect(page.getByLabel(/Your name/)).toHaveValue("Mum");
   });
 });

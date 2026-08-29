@@ -12,6 +12,17 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-29] /sell builder third pass — limit control out, John's link-type copy, header only on step 1
+
+**Category:** fix | ship
+**Cross-link:** continues the second pass below (same-day)
+
+**Browser-verified:** spec: `tests/e2e/seller-builder.spec.ts` · variants-covered: no shipping-limit control, no "Buyer pays" chip, exact link-type copy, intro on step 1 only (absent on step 2), state retention across back-navigation.
+
+- **Shipping-limit control removed "for now"** — no speed/carrier constraint UI; `createSellerLink` sends neither param (the server still accepts them if the control returns). The review's "Shipping options" row is now static: "Buyer picks the carrier & speed."
+- **Link-type copy is John's exact wording:** "Single use / I'm shipping just one item" and "Reusable link / Shipping multiple identical items"; the "How many can sell through this link?" heading is gone.
+- **Title + intro line render only on step 1**; steps 2/review/ready open straight into their content. The "Buyer pays" chip is removed.
+
 ### [2026-08-29] /sell builder second pass — stepped like the sender flow, hero collapsed to one line
 
 **Category:** fix | ship

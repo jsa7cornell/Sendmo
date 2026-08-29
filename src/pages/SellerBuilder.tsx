@@ -7,13 +7,11 @@ import {
 import AppHeader from "@/components/AppHeader";
 import SiteFooter from "@/components/SiteFooter";
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
 import SmartAddressInput from "@/components/ui/SmartAddressInput";
 import StepQuestionHeader from "@/components/recipient/StepQuestionHeader";
 import SavedAddressPicker from "@/components/recipient/SavedAddressPicker";
 import SenderStepPackage from "@/components/sender/SenderStepPackage";
 import type { SenderParcel } from "@/components/sender/senderState";
-import FlexPreferencesForm, { type FlexPreferencesValue } from "@/components/forms/FlexPreferencesForm";
 import LinkShareCard from "@/components/links/LinkShareCard";
 import { useAuth } from "@/contexts/AuthContext";
 import { SELLER_LINK_LIVE } from "@/lib/featureFlags";
@@ -28,12 +26,13 @@ import { emptyAddress } from "@/lib/utils";
  *
  * Decided proposal: proposals/2026-07-17_seller-link-buyer-pays_reviewed-2026-07-17_decided-2026-07-17.md
  *
- * A SELLER specs their ship-FROM origin + package (dims/weight) + an optional
- * carrier/speed constraint + single-use vs reusable, then creates a shareable
- * link. The BUYER later opens it, adds their destination, and pays.
+ * A SELLER specs their ship-FROM origin + package (dims/weight) + single-use
+ * vs reusable, then creates a shareable link. The BUYER later opens it, adds
+ * their destination, and pays. The carrier/speed limit control was removed
+ * 2026-08-29 ("for now" — the server still accepts the params if it returns).
  *
  * Stepped like the sender flow (2026-08-29, John's second-pass feedback):
- *   1. setup  — quantity + ship-from origin (+ optional shipping limit)
+ *   1. setup  — link type + ship-from origin
  *   2. item   — the shared <SenderStepPackage> (Guestimator + parcel fields),
  *               the exact step the sender flow uses, not a copy
  *   3. review — confirm, then create
@@ -50,10 +49,6 @@ const PACKAGING_LABELS: Record<PackagingType, string> = {
   envelope: "Envelope / Soft Pack",
   tube: "Tube / Irregular",
 };
-
-function defaultConstraint(): FlexPreferencesValue {
-  return { speed_preference: "standard", preferred_carrier: "any", price_cap: 100 };
-}
 
 function formatWeight(weightOz: number): string {
   const lbs = Math.floor(weightOz / 16);
@@ -74,16 +69,15 @@ function Shell({ children }: { children: React.ReactNode }) {
   );
 }
 
-// One compact line, not a hero (2026-08-29): title + badge + the pitch.
+// One compact line, not a hero (2026-08-29): title + the pitch. No badge, and
+// rendered only on the FIRST screen a visitor sees — later steps go straight
+// to their content (John's third-pass feedback).
 function SellHeader() {
   return (
     <div className="space-y-1.5">
       <div className="flex items-center gap-2.5">
         <Tag className="w-5 h-5 text-emerald-600" />
         <h1 className="text-xl font-bold text-foreground">Sell &amp; Ship</h1>
-        <span className="text-[10px] font-semibold uppercase tracking-wide text-emerald-700 bg-emerald-100 border border-emerald-200 px-2 py-0.5 rounded-full">
-          Buyer pays
-        </span>
       </div>
       <p className="text-sm text-muted-foreground">
         A SendMo shipping link allows your buyers to pay for shipping when they buy your products.
@@ -102,8 +96,6 @@ export default function SellerBuilder() {
   const [parcel, setParcel] = useState<SenderParcel | null>(null);
 
   const [singleUse, setSingleUse] = useState(true);
-  const [constraintOn, setConstraintOn] = useState(false);
-  const [constraint, setConstraint] = useState<FlexPreferencesValue>(defaultConstraint());
 
   const [tried, setTried] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -150,18 +142,11 @@ export default function SellerBuilder() {
       // single-use → closes after the first sale; reusable → omit (stays open).
       max_shipments: singleUse ? 1 : undefined,
       notes: parcel.description.trim() || undefined,
-    };
-    if (constraintOn) {
-      params.speed_preference = constraint.speed_preference;
-      // No price cap on seller links (PR4, decided): the buyer pays their own
-      // shipping on options they pick, so a cap protects nobody. The server
-      // writes max_price_cents NULL; rates/ falls back to the platform-wide
+      // No speed/carrier constraint and no price cap (PR4, decided): the buyer
+      // pays their own shipping on options they pick. The server writes
+      // max_price_cents NULL; rates/ falls back to the platform-wide
       // MAX_DISPLAY_PRICE ($200) runaway guard.
-      // "any" carrier = no carrier constraint — omit it.
-      if (constraint.preferred_carrier !== "any") {
-        params.preferred_carrier = constraint.preferred_carrier;
-      }
-    }
+    };
 
     setSubmitting(true);
     setError(null);
@@ -232,16 +217,13 @@ export default function SellerBuilder() {
   if (step === "ready" && result) {
     return (
       <Shell>
-        <SellHeader />
         <LinkShareCard
           shortCode={result.short_code}
           value={{
-            speed_preference: constraint.speed_preference,
-            preferred_carrier: constraintOn ? constraint.preferred_carrier : "any",
+            // No constraint UI (removed 2026-08-29): the buyer picks freely.
             // price_cap omitted — seller links carry no cap (PR4).
-            // Only surface the ship-from + constraint summary when the seller
-            // actually set a constraint (LinkShareCard couples them in one line).
-            address: constraintOn ? origin : undefined,
+            speed_preference: "standard",
+            preferred_carrier: "any",
           }}
           onDone={() => navigate("/dashboard")}
           doneLabel="Go to dashboard"
@@ -254,7 +236,6 @@ export default function SellerBuilder() {
   if (step === "review" && parcel) {
     return (
       <Shell>
-        <SellHeader />
         <StepQuestionHeader question="Everything look right?" />
 
         <div className="bg-card rounded-2xl border border-border shadow-sm divide-y divide-border">
@@ -271,24 +252,13 @@ export default function SellerBuilder() {
             {parcel.description.trim() && <div className="text-muted-foreground">{parcel.description.trim()}</div>}
           </ReviewRow>
 
-          <ReviewRow icon={singleUse ? PackageCheck : Repeat} label="Availability">
-            <div className="text-foreground font-medium">{singleUse ? "Single-use" : "Reusable"}</div>
-            <div>{singleUse ? "One item — closes after it sells" : "Multiple identical items — stays open"}</div>
+          <ReviewRow icon={singleUse ? PackageCheck : Repeat} label="Link type">
+            <div className="text-foreground font-medium">{singleUse ? "Single use" : "Reusable link"}</div>
+            <div>{singleUse ? "Just one item — closes after it sells" : "Multiple identical items — stays open"}</div>
           </ReviewRow>
 
           <ReviewRow icon={SlidersHorizontal} label="Shipping options">
-            {constraintOn ? (
-              <>
-                <div className="text-foreground font-medium capitalize">{constraint.speed_preference}</div>
-                <div>
-                  {constraint.preferred_carrier !== "any"
-                    ? constraint.preferred_carrier.toUpperCase()
-                    : "Any carrier"}
-                </div>
-              </>
-            ) : (
-              <div>Buyer picks the carrier &amp; speed</div>
-            )}
+            <div>Buyer picks the carrier &amp; speed</div>
           </ReviewRow>
         </div>
 
@@ -315,7 +285,6 @@ export default function SellerBuilder() {
   if (step === "item") {
     return (
       <Shell>
-        <SellHeader />
         <SenderStepPackage
           initialParcel={parcel}
           onSubmit={handleParcelSubmit}
@@ -339,9 +308,9 @@ export default function SellerBuilder() {
 
       <SellHeader />
 
-      {/* Quantity — first decision: one listing or a stack of identical ones. */}
+      {/* Link type — first decision: one listing or a stack of identical ones.
+          Copy is John's exact wording (2026-08-29). */}
       <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
-        <label className="text-sm font-semibold text-foreground mb-3 block">How many can sell through this link?</label>
         <div className="grid grid-cols-2 gap-2">
           <button
             type="button"
@@ -353,9 +322,9 @@ export default function SellerBuilder() {
           >
             <div className="flex items-center gap-2 mb-0.5">
               <PackageCheck className={"w-4 h-4 " + (singleUse ? "text-emerald-600" : "text-muted-foreground")} />
-              <span className="text-sm font-semibold text-foreground">One item</span>
+              <span className="text-sm font-semibold text-foreground">Single use</span>
             </div>
-            <p className="text-xs text-muted-foreground">Closes after it sells</p>
+            <p className="text-xs text-muted-foreground">I'm shipping just one item</p>
           </button>
           <button
             type="button"
@@ -367,9 +336,9 @@ export default function SellerBuilder() {
           >
             <div className="flex items-center gap-2 mb-0.5">
               <Repeat className={"w-4 h-4 " + (!singleUse ? "text-emerald-600" : "text-muted-foreground")} />
-              <span className="text-sm font-semibold text-foreground">Multiple identical items</span>
+              <span className="text-sm font-semibold text-foreground">Reusable link</span>
             </div>
-            <p className="text-xs text-muted-foreground">Stays open</p>
+            <p className="text-xs text-muted-foreground">Shipping multiple identical items</p>
           </button>
         </div>
       </div>
@@ -390,29 +359,6 @@ export default function SellerBuilder() {
         <div className="mt-4">
           <SavedAddressPicker onSelect={(addr) => setOrigin(addr)} />
         </div>
-      </div>
-
-      {/* Optional carrier/speed constraint */}
-      <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex items-start gap-3">
-            <div className="w-9 h-9 rounded-xl bg-emerald-500/15 flex items-center justify-center shrink-0">
-              <SlidersHorizontal className="w-4.5 h-4.5 text-emerald-600" />
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-foreground">Set a shipping limit</p>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                Optional — limit the carrier &amp; speed the buyer can pick. Off means the buyer chooses freely. The buyer always sees the price before paying.
-              </p>
-            </div>
-          </div>
-          <Switch checked={constraintOn} onCheckedChange={setConstraintOn} />
-        </div>
-        {constraintOn && (
-          <div className="mt-5">
-            <FlexPreferencesForm value={constraint} onChange={setConstraint} hideCap />
-          </div>
-        )}
       </div>
 
       {/* Validation summary */}
