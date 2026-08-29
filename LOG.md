@@ -12,6 +12,17 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-29] PR7 — the sale carries the item's name
+
+**Category:** fix
+**Cross-link:** [`proposals/2026-08-28_seller-link-launch_reviewed-2026-08-28_decided-2026-08-29.md`](proposals/2026-08-28_seller-link-launch_reviewed-2026-08-28_decided-2026-08-29.md) §2.4/§3 PR7
+
+**Browser-verified:** n/a-category: `pure-logic` · n/a-reason: a buy-time value source swap with no DOM change; the decision table is unit-tested (tests/unit/itemDescription.test.ts) and rendering surfaces (DetailsCard Item row, dashboard) already consume `item_description` unchanged.
+
+`shipments.item_description` was NULL on every seller sale, twice over: the persist read `parcel.description` (which the buyer's client never sends) and `sendmo_links.notes` — the seller's own item text, already shown to the buyer — was never read in `labels/`. Now `resolveItemDescription` (`_shared/item-description.ts`) feeds one value to the DB snapshot, the admin notice, and the label emails: request parcel first, listing notes on seller sales only (flex notes must NOT leak — unchanged behavior there, pinned by tests), snapshotted at buy time so later listing edits can't rewrite sale history. One description covers all of a link's sales — units are identical by construction.
+
+---
+
 ### [2026-08-29] PR6 — a seller link looks like one, PATCH stops lying, and the lifecycle guards land before they're load-bearing
 
 **Category:** fix
