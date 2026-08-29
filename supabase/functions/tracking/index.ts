@@ -587,15 +587,19 @@ Deno.serve(async (req: Request) => {
     shipmentCancelToken != null &&
     timingSafeEqual(cancelTokenFromRequest, shipmentCancelToken);
 
-  // Seller-link sales invert the payer mapping. A seller sale is identified by
-  // shipments.buyer_email being set (F1: the buy RPC mints a throwaway
-  // full_label link per shipment, so link_type is NEVER seller_link downstream —
-  // buyer_email presence is the only reliable discriminator). In that case the
-  // anonymous BUYER holds the cancel_token and is the paying party (sees the
-  // receipt), while the SELLER (link owner) is demoted to a non-receipt role.
-  // Admin still sees the receipt. Non-seller shipments (buyer_email null) keep
-  // the original mapping byte-for-byte.
-  const isSellerSale = ((shipment as { buyer_email?: string | null }).buyer_email ?? null) != null;
+  // Seller-link sales invert the payer mapping. TWO discriminators (PR11):
+  // buyer_email (the F1 marker) OR the joined link's link_type — post-PR11
+  // shipments.link_id points at the REAL selling link, so link_type IS
+  // reliable, and it catches the alerted-on window where the buyer_email
+  // follow-up write failed (previously the seller was shown the buyer's
+  // receipt until a human backfilled it). In that case the anonymous BUYER
+  // holds the cancel_token and is the paying party (sees the receipt), while
+  // the SELLER (link owner) is demoted to a non-receipt role. Admin still
+  // sees the receipt. Non-seller shipments keep the original mapping
+  // byte-for-byte.
+  const isSellerSale =
+    ((shipment as { buyer_email?: string | null }).buyer_email ?? null) != null ||
+    linkJoin?.link_type === "seller_link";
 
   const viewerRole: "payer" | "sender_flex" | "anonymous" =
     isSellerSale

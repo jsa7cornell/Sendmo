@@ -737,13 +737,15 @@ export default function TrackingPage() {
                   {/* F3 — parent link reference + forward CTA so the user
                       isn't stuck on a dead-end AND knows whether the link is
                       still reusable. */}
-                  {data.is_seller_sale !== true && (
+                  {/* Seller sales pass a null code (review #3): the component's
+                      own fallback renders "Start a new shipment" instead of
+                      offering "print another label" into a seller listing —
+                      unmounting it entirely left the buyer with no CTA. */}
                   <PrintAnotherLabelCTA
-                    linkShortCode={data.link_short_code}
+                    linkShortCode={data.is_seller_sale === true ? null : data.link_short_code}
                     linkStatus={data.link_status ?? null}
                     status={data.status}
                   />
-                  )}
 
                   {/* Payer-only condensed receipt at bottom of F3.
                       refundStatus drives refund-aware copy ("Refunded $X

@@ -54,16 +54,19 @@ describe("seller-link lifecycle guards (must exist before PR11 repoints shipment
     const chains = statusWriteChains(src, "completed");
     expect(chains.length).toBeGreaterThan(0);
     for (const chain of chains) {
-      expect(chain).toContain(`.neq("link_type", "seller_link")`);
+      // Positive scoping (PR11 review #6): .eq full_label, not
+      // .neq seller_link — the .neq form left flex links protected only by
+      // the "flex is never in_use" convention, enforced nowhere.
+      expect(chain).toContain(`.eq("link_type", "full_label")`);
     }
   });
 
-  it("cancel-label: every sendmo_links 'active' revival excludes seller links", () => {
+  it("cancel-label: every sendmo_links 'active' revival is scoped to full-label viewer links", () => {
     const src = functionSource("cancel-label");
     const chains = statusWriteChains(src, "active");
     expect(chains.length).toBeGreaterThan(0);
     for (const chain of chains) {
-      expect(chain).toContain(`.neq("link_type", "seller_link")`);
+      expect(chain).toContain(`.eq("link_type", "full_label")`);
     }
   });
 
