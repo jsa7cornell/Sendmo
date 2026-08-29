@@ -143,9 +143,13 @@ test.describe("buyer flow — rates and review (2026-08-29 rework)", () => {
     await expect(page.getByText(/One last look/)).toHaveCount(0);
     await expect(page.getByText("Vintage armchair")).toBeVisible();
     await expect(page.getByText(/20″ × 20″ × 20″ · 20 lb/)).toBeVisible();
+    // Ships-from section under the item: seller name + city/state, and the
+    // buyer's email is NOT on this page (2026-08-29 follow-up).
+    await expect(page.getByText("Jane Seller")).toBeVisible();
+    await expect(page.getByText(/Ships from San Francisco, CA/)).toBeVisible();
     await expect(page.getByText("Pat Buyer")).toBeVisible();
     await expect(page.getByText(/149 New Montgomery St, San Francisco, CA 94105/)).toBeVisible();
-    await expect(page.getByText(/buyer@example\.com · ships from San Francisco, CA/)).toBeVisible();
+    await expect(page.getByText(/buyer@example\.com/)).toHaveCount(0);
     await expect(page.getByText("Total")).toBeVisible();
     await expect(page.getByText("$18.48").first()).toBeVisible();
   });

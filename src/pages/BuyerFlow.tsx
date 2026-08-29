@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Loader2, AlertCircle, ArrowLeft, ArrowRight, Lock, MapPin, Truck, Package,
+  Loader2, AlertCircle, ArrowLeft, ArrowRight, Lock, MapPin, Truck, Package, Store,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import AppHeader from "@/components/AppHeader";
@@ -525,6 +525,22 @@ function ReviewStep({
           </div>
         )}
 
+        {/* Ships from — the seller's name + city/state, right under the item
+            (2026-08-29 follow-up). Never the street. */}
+        {(linkData.seller_name || originLine) && (
+          <div className="px-5 py-4 flex items-start gap-3">
+            <Store className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />
+            <div className="min-w-0 text-sm">
+              {linkData.seller_name && (
+                <p className="font-medium text-foreground">{linkData.seller_name}</p>
+              )}
+              {originLine && (
+                <p className="text-muted-foreground">Ships from {originLine}</p>
+              )}
+            </div>
+          </div>
+        )}
+
         <div className="px-5 py-4 flex items-start gap-3">
           <MapPin className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />
           <div className="min-w-0 text-sm">
@@ -533,10 +549,6 @@ function ReviewStep({
             </p>
             <p className="text-muted-foreground">
               {buyerAddress.street}, {buyerAddress.city}, {buyerAddress.state} {buyerAddress.zip}
-            </p>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              {buyerEmail}
-              {originLine ? ` · ships from ${originLine}` : ""}
             </p>
           </div>
         </div>
