@@ -558,7 +558,14 @@ Use **Supabase SQL Editor** (service role) to query this table for debugging.
 | `rate.error` | rates fn | EasyPost returned an error response |
 | `label.created` | labels fn | Label successfully purchased |
 | `label.buy_error` | labels fn | EasyPost label buy call failed |
-| `label.endshipper_error` | labels fn | EndShipper creation failed |
+| `label.endshipper_error` | labels fn | EndShipper creation failed (now refunds the verified PI — buy-idempotency PR, 2026-08-29) |
+| `label.buy_replayed_idempotent` | labels fn | Replayed buy returned the existing shipment (no re-buy, no refund) |
+| `label.buy_replay_binding_mismatch` | labels fn | Replayed buy whose payment doesn't match the row — 409; the request's own PI is refunded when present |
+| `label.replay_stitch_repaired` | labels fn | Replay repaired a missing `stripe_payment_intent_id` forward-stitch |
+| `label.idempotency_lookup_error` | labels fn | Pre-buy shipments lookup failed — buy refused with 503 |
+| `label.db_persist_duplicate_recovered` | labels fn | Insert hit the unique `easypost_shipment_id` index — returned the winner's row |
+| `label.pi_refund_check_skipped` | labels fn | Stripe charge read failed — refunded-PI guard skipped (fail-open, warn) |
+| `label.unhandled_error` | labels fn | Outer-catch 500; `charged` property says whether a PI was in flight |
 | `refund.admin_initiated` | refunds fn | Admin issued a Stripe refund via `/refunds` (H3 — info severity) |
 | `refund.admin_initiated_failed` | refunds fn | Admin refund Stripe call failed (H3 — error severity) |
 | `refund.failed` | stripe-webhook | Stripe `charge.refund.updated` with `status='failed'` — card couldn't accept refund (H3 D1 — error severity) |

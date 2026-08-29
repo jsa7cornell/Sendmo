@@ -150,6 +150,39 @@ test.describe("the review step summarises the shipment the way its creator saw i
   });
 });
 
+test.describe("a replayed buy is refused with the human copy, not the machine token", () => {
+  // labels PR1 (seller-link launch proposal): a buy for a shipment that
+  // already has a shipments row bound to a different payment returns 409
+  // { error: "already_purchased", code: "SHIPMENT_ALREADY_PURCHASED",
+  //   message: <support copy> }. The client must surface `message` — before
+  // the api.ts fix, the raw token "already_purchased" was what rendered.
+  test("shows the support copy from the 409 body", async ({ page }) => {
+    await start(page, { ...LINK, origin_prefill: ORIGIN, package_prefill: PARCEL });
+    // Re-register the labels mock so it wins over mockLink's happy-path one
+    // (Playwright checks routes most-recent-first).
+    await page.route(`${SUPABASE_URL}/functions/v1/labels**`, r =>
+      r.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({
+        error: "already_purchased",
+        code: "SHIPMENT_ALREADY_PURCHASED",
+        refunded: true,
+        message: "This shipment has already been purchased — your charge for this attempt has been refunded. If you believe this is an error, contact support@sendmo.co with reference shp_test",
+      }) }));
+
+    await expect(page.getByText(/USPS/i).first()).toBeVisible({ timeout: 15000 });
+    await page.getByRole("button", { name: /continue|review/i }).first().click();
+    await expect(page.getByText("Shipment Details")).toBeVisible({ timeout: 10000 });
+
+    await page.locator("#sender-email").fill("sender@example.com");
+    await page.getByRole("button", { name: /Confirm and generate label/i }).click();
+    await page.getByRole("button", { name: /^Generate label$/i }).click();
+
+    await expect(page.getByText(/Couldn't generate the label/i)).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText(/contact support@sendmo\.co with reference/i)).toBeVisible();
+    // The bare machine token must not be the rendered copy.
+    await expect(page.getByText(/^already_purchased$/)).toHaveCount(0);
+  });
+});
+
 test.describe("the shipping-option step", () => {
   test("names the cheapest option for the person paying, and drops the Guestimator note", async ({ page }) => {
     await start(page, { ...LINK, origin_prefill: ORIGIN, package_prefill: PARCEL });

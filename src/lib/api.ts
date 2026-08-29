@@ -425,6 +425,12 @@ export async function buyLabel(
   if (res.status === 409 && data?.error === "rate_changed") {
     throw new BuyLabelRateChangedError(data);
   }
+  // Replay refusal (labels PR1): `error` is the machine token, the human copy
+  // (with the support reference, and whether this attempt was refunded) is in
+  // `message` — surface that, not the token.
+  if (res.status === 409 && data?.code === "SHIPMENT_ALREADY_PURCHASED") {
+    throw new Error(data.message || "This shipment has already been purchased.");
+  }
   if (!res.ok) {
     throw new Error(data.error || data.message || `API error ${res.status}`);
   }
@@ -926,6 +932,10 @@ export async function buyLabelSeller(params: {
   const data = await res.json();
   if (res.status === 409 && data?.error === "rate_changed") {
     throw new BuyLabelRateChangedError(data);
+  }
+  // Replay refusal (labels PR1) — surface the human copy, not the token.
+  if (res.status === 409 && data?.code === "SHIPMENT_ALREADY_PURCHASED") {
+    throw new Error(data.message || "This shipment has already been purchased.");
   }
   if (!res.ok) {
     throw new Error(data.error || data.message || `API error ${res.status}`);
