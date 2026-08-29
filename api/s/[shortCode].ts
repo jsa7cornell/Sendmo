@@ -36,7 +36,9 @@ async function fetchLinkData(shortCode: string, viewerIp?: string): Promise<OgLi
         },
       }
     );
-    if (!res.ok) return null;
+    // 410 bodies carry {link_type, status} — a sold seller link unfurls as
+    // sold, not as the prepaid fallback (parity with middleware.ts, PR3).
+    if (!res.ok && res.status !== 410) return null;
     return (await res.json()) as OgLinkPayload;
   } catch {
     return null;

@@ -183,6 +183,36 @@ test.describe("a replayed buy is refused with the human copy, not the machine to
   });
 });
 
+test.describe("a sold seller link is a state, not an error", () => {
+  // PR3 (seller-link launch): the links function 410s a non-active seller
+  // link with { error, status, link_type } and the client renders "already
+  // sold" — card styling, no destructive error framing. On a public
+  // Marketplace post this is the most-visited screen after the first sale.
+  test("renders 'This item has already sold' without the error card", async ({ page }) => {
+    await mockLink(page, {});
+    await page.route(`${SUPABASE_URL}/functions/v1/links**`, r =>
+      r.fulfill({ status: 410, contentType: "application/json", body: JSON.stringify({
+        error: "This item is no longer available", status: "in_use", link_type: "seller_link",
+      }) }));
+    await page.goto("/s/SOLDOUT1");
+
+    await expect(page.getByRole("heading", { name: /This item has already sold/i })).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText(/Hmm, that link didn't work/i)).toHaveCount(0);
+  });
+
+  test("a cancelled FLEX link keeps the ordinary error card", async ({ page }) => {
+    await mockLink(page, {});
+    await page.route(`${SUPABASE_URL}/functions/v1/links**`, r =>
+      r.fulfill({ status: 410, contentType: "application/json", body: JSON.stringify({
+        error: "This link is no longer active", status: "cancelled", link_type: "flexible",
+      }) }));
+    await page.goto("/s/GONEFLEX1");
+
+    await expect(page.getByText(/Hmm, that link didn't work/i)).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText(/This link is no longer active/i)).toBeVisible();
+  });
+});
+
 test.describe("the shipping-option step", () => {
   test("names the cheapest option for the person paying, and drops the Guestimator note", async ({ page }) => {
     await start(page, { ...LINK, origin_prefill: ORIGIN, package_prefill: PARCEL });

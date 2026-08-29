@@ -697,12 +697,36 @@ export async function updateFlexLink(
   return data as UpdateLinkResult;
 }
 
+/**
+ * A link that exists but can no longer be used (HTTP 410). Carries what the
+ * server said so the UI can render the right STATE — for a sold seller link
+ * that's "This item has already sold", not an error card (PR3: on a public
+ * Marketplace post this is the most-visited state after the first sale).
+ */
+export class LinkGoneError extends Error {
+  linkStatus: string | null;
+  linkType: string | null;
+  constructor(message: string, linkStatus: string | null, linkType: string | null) {
+    super(message);
+    this.name = "LinkGoneError";
+    this.linkStatus = linkStatus;
+    this.linkType = linkType;
+  }
+}
+
 export async function fetchLink(shortCode: string): Promise<LinkData> {
   const res = await fetch(`${BASE_URL}/functions/v1/links?code=${encodeURIComponent(shortCode)}`, {
     method: "GET",
     headers: headers(),
   });
   const data = await res.json();
+  if (res.status === 410) {
+    throw new LinkGoneError(
+      data.error || "This link is no longer active",
+      data.status ?? null,
+      data.link_type ?? null,
+    );
+  }
   if (!res.ok) {
     throw new Error(data.error || `Link not found (${res.status})`);
   }

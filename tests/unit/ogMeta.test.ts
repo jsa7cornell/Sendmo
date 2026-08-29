@@ -13,8 +13,11 @@ import { resolve } from "node:path";
 import {
   buildOgStrings,
   injectOgTags,
+  sanitizeItemLabel,
   DEFAULT_TITLE,
   DEFAULT_DESC,
+  SELLER_TITLE,
+  SELLER_DESC,
 } from "@/lib/ogMeta";
 import { titleCaseName, displayName } from "@/lib/name";
 
@@ -93,11 +96,47 @@ describe("buildOgStrings", () => {
     });
   });
 
-  it("keeps the generic copy for seller links (the buyer pays there)", () => {
-    expect(buildOgStrings({ ...JOHN, link_type: "seller_link" })).toEqual({
-      title: DEFAULT_TITLE,
-      description: DEFAULT_DESC,
-    });
+  // Seller links (PR3, seller-link launch): the BUYER pays, so the card must
+  // say so — the old "cost is already covered" fallback was a lie on the
+  // first thing every Marketplace buyer reads.
+  it("tells the truth on a seller link: buyer-pays copy, never the prepaid fallback", () => {
+    const og = buildOgStrings({ ...JOHN, link_type: "seller_link" });
+    expect(og).toEqual({ title: SELLER_TITLE, description: SELLER_DESC });
+    expect(og.description).not.toMatch(/already covered|already paid/i);
+  });
+
+  it("names the item on a seller link when the seller wrote one (typographic quotes — inch-marks are common in listings)", () => {
+    const og = buildOgStrings({ ...JOHN, link_type: "seller_link", notes: `12" vinyl record` });
+    expect(og.title).toBe(`Get “12" vinyl record” shipped to you`);
+    expect(og.description).toBe(SELLER_DESC);
+  });
+
+  it("a SOLD seller link unfurls as sold, never as any pays-copy (the 410 body carries status)", () => {
+    const og = buildOgStrings({ ...JOHN, link_type: "seller_link", status: "in_use", notes: "Couch" });
+    expect(og.title).toBe("This item has already sold");
+    expect(og.description).not.toMatch(/pay|covered|shipped to you/i);
+  });
+
+  it("sanitizes seller item text for the branded card: URLs stripped, length capped, surrogate-safe", () => {
+    expect(sanitizeItemLabel("Check https://scam.example/x my   couch")).toBe("Check my couch");
+    expect(sanitizeItemLabel("visit www.totally-legit.biz now")).toBe("visit now");
+    expect(sanitizeItemLabel("  ")).toBe(null);
+    expect(sanitizeItemLabel("https://only-a-url.example")).toBe(null);
+    const long = "a".repeat(80);
+    expect(sanitizeItemLabel(long)).toHaveLength(60);
+    expect(sanitizeItemLabel(long)!.endsWith("…")).toBe(true);
+    // Emoji straddling the cut must never yield a lone surrogate (U+FFFD on the card).
+    const emojiHeavy = "🛋️".repeat(40);
+    const cut = sanitizeItemLabel(emojiHeavy)!;
+    expect(cut.endsWith("…")).toBe(true);
+    expect(cut).not.toContain("�");
+    for (let i = 0; i < cut.length; i++) {
+      const c = cut.charCodeAt(i);
+      if (c >= 0xd800 && c <= 0xdbff) {
+        const next = cut.charCodeAt(i + 1);
+        expect(next >= 0xdc00 && next <= 0xdfff).toBe(true);
+      }
+    }
   });
 });
 
@@ -161,11 +200,12 @@ describe("destination-deferred links (Phase 3)", () => {
     expect(og.description).toMatch(/you choose where it goes/i);
   });
 
-  it("seller links still win the neutral copy even if flags are weird", () => {
+  it("seller links still win the seller copy even if flags are weird", () => {
     const og = buildOgStrings({
       recipient_name: "Pat", recipient_city: "Oakland", recipient_state: "CA",
       link_type: "seller_link", needs_destination: true,
     });
-    expect(og.title).toBe(DEFAULT_TITLE);
+    expect(og.title).toBe(SELLER_TITLE);
+    expect(og.title).not.toBe(DEFAULT_TITLE);
   });
 });

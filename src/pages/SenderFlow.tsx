@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import AppHeader from "@/components/AppHeader";
 import SiteFooter from "@/components/SiteFooter";
 import {
-  fetchLink, fetchSenderRates, buyLabel, BuyLabelRateChangedError,
+  fetchLink, fetchSenderRates, buyLabel, BuyLabelRateChangedError, LinkGoneError,
 } from "@/lib/api";
 import { RateChangedDialog } from "@/components/RateChangedDialog";
 import BuyerFlow from "@/pages/BuyerFlow";
@@ -43,7 +43,7 @@ export default function SenderFlow() {
 
   const [linkData, setLinkData] = useState<LinkData | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [step, setStep] = useState<SenderStep | "loading" | "error">("loading");
+  const [step, setStep] = useState<SenderStep | "loading" | "error" | "sold_out">("loading");
 
   // "Cancel & start over" banner — set by TrackingPage when a Change action
   // redirects back to /s/<short_code>. Read once, then cleared.
@@ -185,6 +185,13 @@ export default function SenderFlow() {
         setStep("intro");
       })
       .catch((err) => {
+        // A sold seller link is a STATE, not an error (PR3): on a public
+        // Marketplace post it's the most-visited screen after the first
+        // sale, and "Hmm, that link didn't work" reads as breakage.
+        if (err instanceof LinkGoneError && err.linkType === "seller_link") {
+          setStep("sold_out");
+          return;
+        }
         setLoadError(err.message || "We looked everywhere, but this link doesn't seem to exist. Double-check the URL?");
         setStep("error");
       });
@@ -375,10 +382,14 @@ export default function SenderFlow() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-background to-muted/50 flex flex-col">
       <AppHeader actions={
-        <span className="text-sm text-muted-foreground flex items-center gap-1.5">
-          <Shield className="w-3.5 h-3.5" />
-          Prepaid shipping
-        </span>
+        // No "Prepaid shipping" badge on a sold seller listing — nothing on
+        // that screen is prepaid, and the badge would contradict the state.
+        step === "sold_out" ? undefined : (
+          <span className="text-sm text-muted-foreground flex items-center gap-1.5">
+            <Shield className="w-3.5 h-3.5" />
+            Prepaid shipping
+          </span>
+        )
       } />
 
       <div className="flex-1 py-8 px-4">
@@ -412,6 +423,19 @@ export default function SenderFlow() {
                 <Button variant="outline" className="w-full rounded-xl mt-5" onClick={() => (window.location.href = "/")}>
                   Back to SendMo
                 </Button>
+              </motion.div>
+            )}
+
+            {step === "sold_out" && (
+              // A sold seller link: an outcome, not a failure — card styling,
+              // no destructive colors (PR3).
+              <motion.div key="sold_out" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}>
+                <div className="bg-card rounded-2xl border border-border shadow-sm p-6 text-center">
+                  <h2 className="text-lg font-bold text-foreground mb-2">This item has already sold</h2>
+                  <p className="text-sm text-muted-foreground">
+                    Someone beat you to it — the seller closed this listing. If you think that's a mistake, check back with the seller.
+                  </p>
+                </div>
               </motion.div>
             )}
 

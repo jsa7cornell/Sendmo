@@ -22,6 +22,14 @@ export interface OgLinkPayload {
   link_type?: string | null;
   /** Phase 3: the creator deferred the destination — the sender picks it. */
   needs_destination?: boolean | null;
+  /** Seller links: the seller's item text, shown on the card (sanitized). */
+  notes?: string | null;
+  /**
+   * Link lifecycle status, carried by the 410 body for gone links (PR3
+   * review #1): a sold seller link must unfurl as sold, not fall through to
+   * the prepaid fallback.
+   */
+  status?: string | null;
 }
 
 export interface OgStrings {
@@ -29,12 +37,33 @@ export interface OgStrings {
   description: string;
 }
 
-// Shown when the link isn't found, has no address on file, or is a seller link
-// (where the buyer pays — "already covered" would be wrong, so the neutral copy
-// stands until that flow launches).
+// Shown when the link isn't found or has no address on file.
 export const DEFAULT_TITLE = "You've been sent a prepaid shipping label";
 export const DEFAULT_DESC =
   "Someone has set up a prepaid shipping label for you. Tap to ship your package — the cost is already covered.";
+
+// Seller links: the BUYER pays for shipping, so the prepaid copy above would
+// be a lie on the first thing every buyer reads (seller-link launch PR3).
+export const SELLER_TITLE = "Enter your address to get this shipped";
+export const SELLER_DESC =
+  "The seller set up shipping with SendMo. Enter your delivery address, pick a speed, and pay for shipping — the seller ships it right to you.";
+
+// The seller's item text, made safe for a branded unfurl (review N8): the
+// card renders under sendmo.co, so seller-controlled text must not carry
+// links or run long. Plain text only — escapeHtml happens at injection.
+export function sanitizeItemLabel(notes: string | null | undefined): string | null {
+  if (!notes) return null;
+  const cleaned = notes
+    .replace(/https?:\/\/\S+|www\.\S+/gi, "") // no URLs in a branded card
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!cleaned) return null;
+  // Code-POINT slice, not code units (review #4): Marketplace text is
+  // emoji-dense, and a .slice() through a surrogate pair puts a lone
+  // surrogate in og:title (U+FFFD on the card).
+  const points = Array.from(cleaned);
+  return points.length > 60 ? points.slice(0, 59).join("").trimEnd() + "…" : cleaned;
+}
 
 export const OG_IMAGE_URL = "https://sendmo.co/og-image.png";
 
@@ -47,10 +76,27 @@ export function escapeHtml(str: string): string {
 }
 
 export function buildOgStrings(link: OgLinkPayload | null): OgStrings {
-  // Seller links reverse who pays — keep the neutral copy rather than promising
-  // prepaid postage. Revisit when that flow launches.
+  // Seller links reverse who pays: buyer-pays copy, naming the item when the
+  // seller wrote one. Never the prepaid fallback — "the cost is already
+  // covered" on a buyer-pays link was the knowingly-parked placeholder this
+  // replaces (seller-link launch PR3).
   if (link?.link_type === "seller_link") {
-    return { title: DEFAULT_TITLE, description: DEFAULT_DESC };
+    // Sold/closed listing (carried by the 410 body — review #1): the re-share
+    // of a sold item is the most-visited card after the first sale, and it
+    // must not fall through to any pays-related copy.
+    if (link.status && link.status !== "active") {
+      return {
+        title: "This item has already sold",
+        description: "The seller closed this listing on SendMo.",
+      };
+    }
+    const item = sanitizeItemLabel(link.notes);
+    return {
+      // Typographic quotes (review #5): inch-marks are everywhere in listing
+      // text (`12" vinyl`), and straight quotes around them break visibly.
+      title: item ? `Get “${item}” shipped to you` : SELLER_TITLE,
+      description: SELLER_DESC,
+    };
   }
 
   // Destination-deferred link (Phase 3): "prepaid label to X" would be wrong —
