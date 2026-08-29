@@ -12,7 +12,16 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
-### [2026-08-29] PR13 — the seller hears about a reversed sale; the buyer stops being told they cancelled
+### [2026-08-29] Seller link LAUNCHED — stack #114–#127 merged, flag flipped, live-verified
+
+**Category:** ship
+**Cross-link:** [`proposals/2026-08-29_seller-launch-runbook_PR14.md`](proposals/2026-08-29_seller-launch-runbook_PR14.md) · [`proposals/2026-08-28_seller-link-launch_reviewed-2026-08-28_decided-2026-08-29.md`](proposals/2026-08-28_seller-link-launch_reviewed-2026-08-28_decided-2026-08-29.md)
+
+**Browser-verified:** mcp-session: 2026-08-29 sendmo.co live · variants-covered: landing "SendMo for Sellers" button renders live (no "Soon" badge); /sell renders the builder behind sign-in.
+
+- All 14 PRs of the seller-link stack merged to `main` in order (#114→#127, squash). Edge functions auto-deployed per main push; migrations 045–050 were applied to prod earlier the same day (see entries below). Launch delta per the PR14 runbook: `VITE_ENABLE_SELLER_LINK` overridden to `true` in Vercel Production, then `vercel redeploy --scope john-andersons-projects-89a4aa08` → aliased to sendmo.co.
+- **Stacked-PR + squash-merge gotcha (institutional):** after squash-merging a parent PR, GitHub marks the child `CONFLICTING` (main has the squash commit; the child branch has the original commits) and **a conflicting PR never fires `pull_request` workflows** — the empty-commit CI nudge does nothing. Fix without force-push: `git merge -X ours origin/main` on the child (safe because each child fully contains its parent's content — verify with `git diff <pre-merge-head> HEAD --stat` == empty), push, CI fires. Also: merge the parent **without** `--delete-branch`, retarget the child to `main` first, then delete the parent branch — deleting first auto-closes the child (#115 needed a branch restore + reopen to recover).
+- Test fixtures `SELLE2E01`/`SELLTEST01` still in prod — delete only after John's §6 verification run (post-050 the RESTRICT FK blocks the delete while shipments reference them).
 
 **Category:** fix | ship
 **Cross-link:** [`proposals/2026-08-28_seller-link-launch_reviewed-2026-08-28_decided-2026-08-29.md`](proposals/2026-08-28_seller-link-launch_reviewed-2026-08-28_decided-2026-08-29.md) §3 PR13 · WISHLIST 2026-07-19 "cancel-label refund-email copy says 'you cancelled' when the SELLER cancels" (fixed)
