@@ -12,6 +12,16 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-29] Buyer review follow-up — Ships-from section (seller name + city/state), email off the page
+
+**Category:** fix | ship
+**Cross-link:** continues the buyer-view rework below (same-day)
+
+**Browser-verified:** spec: `tests/e2e/buyer-flow.spec.ts` · variants-covered: ships-from section renders seller name + "Ships from {city, ST}" between item and ship-to; buyer email absent from the review card.
+
+- Review card gains a **Ships from** section directly under the item: the seller's name (from `seller_name`) + city/state. Never the street.
+- The buyer's **email is removed from the review display** (it still rides the PI/receipt path unchanged).
+
 ### [2026-08-29] Buyer view rework — plain checkout landing with the listing, no step dots, consolidated review card
 
 **Category:** fix | ship
