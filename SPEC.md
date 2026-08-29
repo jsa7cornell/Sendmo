@@ -723,13 +723,15 @@ The preview is the first thing a sender sees — before the page, inside someone
 | name + city/state | `You're sending a package to {First} — {City}, {ST}` | `{Full Name} already paid the postage. Tap to tell us about your package and print the prepaid label — it costs you nothing.` |
 | name, no city | `You're sending a package to {First}` | same |
 | city/state, no name | `You're sending a package to {City}, {ST}` | `The postage is already paid. …` |
-| no data, or `seller_link` | `You've been sent a prepaid shipping label` | generic fallback |
+| no data | `You've been sent a prepaid shipping label` | generic fallback |
+| `seller_link`, no notes | `Enter your address to get this shipped` | buyer-pays copy (`SELLER_DESC`) |
+| `seller_link` + notes | `Get "{item}" shipped to you` (notes sanitized: URLs stripped, 60-char cap) | buyer-pays copy |
 
 **Invariant — exactly one of each preview tag.** `index.html` ships generic marketing `og:*`/`twitter:*` tags for the root domain, so the middleware **strips them before injecting**: appending alone leaves duplicates and crawlers unfurl the generic SendMo card (the 2026-08-10 bug). [`tests/unit/ogMeta.test.ts`](tests/unit/ogMeta.test.ts) asserts the counts against the real `index.html`, so adding a static tag there without teaching `ogMeta.ts` to strip it turns the suite red.
 
 Card stays `summary_large_image` on the shared brand image (`/og-image.png`) — the personalisation is in the text.
 
-`seller_link` keeps the neutral copy on purpose: the **buyer** pays there, so "already covered" would be false. Revisit when that flow launches.
+`seller_link` copy revised 2026-08-29 (PR3): the buyer-pays card above, naming the item when `notes` is set — the neutral-fallback placeholder is retired.
 
 ### Which questions get asked — `planSenderSteps`
 

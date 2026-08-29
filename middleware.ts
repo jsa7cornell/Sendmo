@@ -74,7 +74,10 @@ export default async function middleware(request: Request): Promise<Response | u
           },
         }
       );
-      if (res.ok) link = (await res.json()) as OgLinkPayload;
+      // 410 bodies carry {link_type, status} so a SOLD seller link unfurls
+      // as sold instead of falling through to the prepaid fallback (PR3
+      // review #1 — the re-share of a sold item is the most-visited card).
+      if (res.ok || res.status === 410) link = (await res.json()) as OgLinkPayload;
     } catch {
       // Best-effort — fall through to default OG copy
     }

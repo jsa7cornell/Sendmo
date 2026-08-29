@@ -12,6 +12,23 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-29] PR3 — the Marketplace card tells the truth; a sold link stops looking broken
+
+**Category:** fix | ship
+**Cross-link:** [`proposals/2026-08-28_seller-link-launch_reviewed-2026-08-28_decided-2026-08-29.md`](proposals/2026-08-28_seller-link-launch_reviewed-2026-08-28_decided-2026-08-29.md) §3 PR3 (+ review N8) · SPEC §12 OG table updated
+
+**Browser-verified:**
+  spec: tests/e2e/sender-questions.spec.ts ("a sold seller link is a state, not an error")
+  variants-covered: [seller_link 410 → sold-out state; flex cancelled 410 → ordinary error card; unfurl copy variants in tests/unit/ogMeta.test.ts (seller no-notes, seller+notes, sanitization, seller-beats-needs_destination)]
+
+The unfurl for a seller link said *"the cost is already covered"* — the recipient-pays message on a buyer-pays link, locked in by two passing tests and SPEC §12 as a knowingly-parked placeholder. All three now say the same true thing: buyer-pays copy (`SELLER_TITLE`/`SELLER_DESC`), naming the item when the seller wrote one. `notes` is seller-controlled text on a sendmo.co-branded card, so it's sanitized (`sanitizeItemLabel`: URLs stripped, whitespace collapsed, 60-char cap — review N8) with escaping still at the injection layer.
+
+And a sold-out link stops rendering as breakage: EVERY links 410 body now carries `link_type` (the review caught that encoding the decision in branch ordering would have let PR5's close action silently regress this), `fetchLink` throws a typed `LinkGoneError`, and SenderFlow renders **"This item has already sold"** as a plain card — no destructive styling, no "Prepaid shipping" badge, no "Hmm, that link didn't work" — for seller links only (a cancelled flex link keeps the ordinary error card).
+
+**The in-session review closed the loop the first draft missed:** the OG paths treated a 410 as no-data, so the re-share of a SOLD item — the most-visited card after the first sale — still unfurled with the prepaid lie. Both OG paths now parse the 410 body and render "This item has already sold". Also from the review: the race-losing buyer at seller-checkout gets honest copy instead of `Link not active (status=in_use)`; `sanitizeItemLabel` slices code points (emoji-safe); the item title uses typographic quotes (inch-marks are everywhere in listing text).
+
+---
+
 ### [2026-08-29] PR2 — a rate limiter that actually counts on the money paths
 
 **Category:** fix | security

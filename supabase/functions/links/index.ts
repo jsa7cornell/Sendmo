@@ -386,19 +386,24 @@ Deno.serve(async (req: Request) => {
             );
         }
 
-        // Check link is usable
+        // Check link is usable. link_type rides on EVERY 410 body (PR3 review
+        // #2): the client and the OG unfurl decide how to render a gone link
+        // — encoding that decision in branch ordering here silently regressed
+        // the seller sold-out state for cancelled/expired statuses.
         if (link.status === "cancelled" || link.status === "expired") {
             return new Response(
-                JSON.stringify({ error: "This link is no longer active", status: link.status }),
+                JSON.stringify({ error: "This link is no longer active", status: link.status, link_type: link.link_type }),
                 { status: 410, headers: { ...corsHeaders, "Content-Type": "application/json" } }
             );
         }
 
         // Seller links: only 'active' is buyable. A single-use link that has sold
         // closes to 'in_use'/'completed'; a reusable link stays 'active'.
+        // link_type rides along (PR3) so the client can render "already sold"
+        // as a state instead of the generic that-link-didn't-work error.
         if (link.link_type === "seller_link" && link.status !== "active") {
             return new Response(
-                JSON.stringify({ error: "This item is no longer available", status: link.status }),
+                JSON.stringify({ error: "This item is no longer available", status: link.status, link_type: link.link_type }),
                 { status: 410, headers: { ...corsHeaders, "Content-Type": "application/json" } }
             );
         }
@@ -416,7 +421,7 @@ Deno.serve(async (req: Request) => {
             // Auto-expire
             await supabase.from("sendmo_links").update({ status: "expired" }).eq("id", link.id);
             return new Response(
-                JSON.stringify({ error: "This link has expired", status: "expired" }),
+                JSON.stringify({ error: "This link has expired", status: "expired", link_type: link.link_type }),
                 { status: 410, headers: { ...corsHeaders, "Content-Type": "application/json" } }
             );
         }

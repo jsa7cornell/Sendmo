@@ -219,7 +219,15 @@ Deno.serve(async (req: Request) => {
             return jsonResponse({ error: "Link not found" }, 404);
         }
         if (link.status !== "active") {
-            return jsonResponse({ error: `Link not active (status=${link.status})` }, 410);
+            // Friendly copy (PR3 review #3): the buyer who loses the race sees
+            // this string verbatim under their card field — StripePaymentForm
+            // renders err.message. "Link not active (status=in_use)" is a log
+            // line, not a message to someone holding a filled-in checkout.
+            return jsonResponse({
+                error: "This item has just sold to another buyer — your card was not charged.",
+                code: "SELLER_LINK_NOT_ACTIVE",
+                status: link.status,
+            }, 410);
         }
         if (link.link_type !== "seller_link") {
             return jsonResponse({ error: "Link is not a seller link" }, 403);
