@@ -24,6 +24,7 @@ import { resolveGateBasisCents, effectiveLinkCapCents as sharedEffectiveLinkCapC
 import { runInBackground } from "../_shared/background.ts";
 import { lookupRate, rerateAndMatch, rerateRetryCapCents, safeFetchJson } from "../_shared/easypost-rates.ts";
 import { decideBuyReplay } from "../_shared/buy-idempotency.ts";
+import { resolveItemDescription } from "../_shared/item-description.ts";
 
 // Pricing markup MUST stay in sync with supabase/functions/rates/index.ts.
 // Server-derives display_price_cents from EasyPost rate for the flex-link
@@ -252,6 +253,7 @@ Deno.serve(async (req: Request) => {
             link_type: string;
             preferred_carrier: string | null;
             max_shipments: number | null;
+            notes: string | null;
         } | null = null;
         if (link_short_code) {
             if (typeof link_short_code !== "string" || !link_short_code.match(/^[a-zA-Z0-9]{1,20}$/)) {
@@ -269,7 +271,7 @@ Deno.serve(async (req: Request) => {
             const { data: link, error: linkErr } = await supabase
                 .from("sendmo_links")
                 .select(`
-                    id, short_code, user_id, status, link_type, max_price_cents, is_test, preferred_carrier, max_shipments,
+                    id, short_code, user_id, status, link_type, max_price_cents, is_test, preferred_carrier, max_shipments, notes,
                     recipient_address:addresses!recipient_address_id (
                         name, street1, street2, city, state, zip, country, phone
                     ),
@@ -542,6 +544,7 @@ Deno.serve(async (req: Request) => {
                 link_type: link.link_type,
                 preferred_carrier: (link.preferred_carrier as string | null) ?? null,
                 max_shipments: (link.max_shipments as number | null) ?? null,
+                notes: (link.notes as string | null) ?? null,
             };
 
             // Link-derived mode (T1-1, review B2): link.is_test is the
@@ -2574,6 +2577,17 @@ Deno.serve(async (req: Request) => {
                         }
                     }
 
+                    // Item description source (PR7): the request parcel's when
+                    // present; else, on seller sales, the seller's own listing
+                    // text (the buyer's client sends no parcel, so every sale
+                    // used to persist NULL while notes sat unread). One value
+                    // feeds the DB snapshot, the admin notice, and the emails.
+                    const itemDescriptionSource: string | null = resolveItemDescription({
+                        parcelDescription: parcel?.description,
+                        linkType: resolvedLink?.link_type ?? null,
+                        linkNotes: resolvedLink?.notes ?? null,
+                    });
+
                     // ── Admin notice: every label creation (John's ask) ──────
                     // Operational FYI to SENDMO_ADMIN_EMAIL on EVERY successful
                     // label — test, comp, and live — so John sees each one. Uses
@@ -2605,7 +2619,7 @@ Deno.serve(async (req: Request) => {
                             carrier,
                             service,
                             eta: noticeEta,
-                            itemDescription: typeof parcel?.description === "string" ? parcel.description : null,
+                            itemDescription: itemDescriptionSource,
                             weightOz: Number(buyData.parcel?.weight ?? parcel?.weight_oz ?? 0) || null,
                             lengthIn: Number(buyData.parcel?.length ?? parcel?.length_in ?? 0) || null,
                             widthIn: Number(buyData.parcel?.width ?? parcel?.width_in ?? 0) || null,
@@ -2749,10 +2763,14 @@ Deno.serve(async (req: Request) => {
                         // brittle RPC-signature pattern that bit the
                         // 2026-05-13 orphan-shipment incident. Skipped when
                         // description is absent / empty.
-                        if (shipmentId && parcel?.description && typeof parcel.description === 'string' && parcel.description.trim().length > 0) {
+                        // Persist the snapshot (PR7): a stored copy, not a
+                        // live join, so later listing edits can't rewrite the
+                        // history of past sales. Units on a link are identical
+                        // by construction — one description covers all sales.
+                        if (shipmentId && itemDescriptionSource && itemDescriptionSource.trim().length > 0) {
                             const { error: descErr } = await supabase
                                 .from('shipments')
-                                .update({ item_description: parcel.description.trim().slice(0, 500) })
+                                .update({ item_description: itemDescriptionSource.trim().slice(0, 500) })
                                 .eq('id', shipmentId);
                             if (descErr) {
                                 // Non-fatal — label still shipped, just no description stored.
@@ -2927,7 +2945,7 @@ Deno.serve(async (req: Request) => {
                                 // stays true so routing is unchanged; this only picks the copy.
                                 is_seller_link: isSellerLink,
                                 sender_name: from_address?.name ?? null,
-                                item_description: typeof parcel?.description === "string" ? parcel.description : null,
+                                item_description: itemDescriptionSource,
                                 // For a seller sale the "You paid" (buyer) / "Shipping paid by
                                 // buyer" (seller) amount must be what the buyer ACTUALLY paid —
                                 // use the server-verified PI amount, not the client body value.

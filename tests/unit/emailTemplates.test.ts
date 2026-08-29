@@ -381,3 +381,24 @@ describe("seller-link email copy variants", () => {
     expect(r.html).not.toContain("item you bought");
   });
 });
+
+// PR7 review (2026-08-29, HIGH): itemDescription became cross-party — the
+// SELLER writes listing notes, the BUYER receives them in a SendMo-branded
+// email — so user text must never enter the HTML raw.
+import { labelConfirmationEmail as _lce } from "../../supabase/functions/_shared/email-templates";
+
+describe("email HTML injection guard (PR7 review)", () => {
+  it("escapes markup in itemDescription and senderName", () => {
+    const tpl = _lce({
+      publicCode: "PC1", carrierTracking: "1Z", carrier: "UPS", eta: "2 days",
+      trackingUrl: "https://sendmo.co/t/PC1",
+      senderName: `<img src=x onerror=1>`,
+      itemDescription: `<a href="//evil.co">Track here`,
+      displayPriceCents: 1500,
+      variant: "seller_link",
+    });
+    expect(tpl.html).not.toContain(`<a href="//evil.co"`);
+    expect(tpl.html).not.toContain("<img src=x");
+    expect(tpl.html).toContain("&lt;a href=");
+  });
+});
