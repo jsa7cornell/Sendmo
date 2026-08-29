@@ -12,6 +12,17 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-29] /sell builder second pass — stepped like the sender flow, hero collapsed to one line
+
+**Category:** fix | ship
+**Cross-link:** supersedes the same-day single-page rework below (John: "this needs more work")
+
+**Browser-verified:** spec: `tests/e2e/seller-builder.spec.ts` · variants-covered: compact intro (no hero/how-it-works), step-1 quantity+origin with saved-address fill, step-1 validation gate, step-2 = SenderStepPackage, review carries both steps, back-navigation state retention.
+
+- The builder is now **stepped**: 1) quantity + ship-from (+ optional shipping limit) → 2) the item → 3) review. Step 2 is the sender flow's `<SenderStepPackage>` reused as-is (question header, Guestimator, parcel fields, back/continue) — not a copy, so the two flows cannot drift.
+- The hero (big icon + subtitle + badge stack) and the same-day "How it works" card are **gone**; the intro is one line: "A SendMo shipping link allows your buyers to pay for shipping when they buy your products."
+- The morning entry's how-it-works strip lived for about six hours. Lesson recorded: for a page John will look at, a screenshot-first pass beats shipping the plausible layout — the second round was fully specified only after he saw the first.
+
 ### [2026-08-29] /sell builder rework — how-it-works up top, shared ParcelQuestion + SavedAddressPicker
 
 **Category:** fix | ship

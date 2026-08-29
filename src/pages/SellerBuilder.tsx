@@ -9,9 +9,10 @@ import SiteFooter from "@/components/SiteFooter";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import SmartAddressInput from "@/components/ui/SmartAddressInput";
-import ParcelQuestion from "@/components/shipment/ParcelQuestion";
-import { type ParcelDraft, EMPTY_PARCEL_DRAFT } from "@/components/shipment/parcelDraft";
+import StepQuestionHeader from "@/components/recipient/StepQuestionHeader";
 import SavedAddressPicker from "@/components/recipient/SavedAddressPicker";
+import SenderStepPackage from "@/components/sender/SenderStepPackage";
+import type { SenderParcel } from "@/components/sender/senderState";
 import FlexPreferencesForm, { type FlexPreferencesValue } from "@/components/forms/FlexPreferencesForm";
 import LinkShareCard from "@/components/links/LinkShareCard";
 import { useAuth } from "@/contexts/AuthContext";
@@ -31,16 +32,18 @@ import { emptyAddress } from "@/lib/utils";
  * carrier/speed constraint + single-use vs reusable, then creates a shareable
  * link. The BUYER later opens it, adds their destination, and pays.
  *
- * Deliberately its OWN page with local step state — NOT the recipient
- * RecipientFlowContext state machine (review N5). Mirrors the lightweight
- * local-`useState` step pattern in components/links/LinksEditor.tsx.
+ * Stepped like the sender flow (2026-08-29, John's second-pass feedback):
+ *   1. setup  — quantity + ship-from origin (+ optional shipping limit)
+ *   2. item   — the shared <SenderStepPackage> (Guestimator + parcel fields),
+ *               the exact step the sender flow uses, not a copy
+ *   3. review — confirm, then create
+ * The big icon/subtitle/how-it-works header is gone; the intro is one line.
  *
- * The parcel question (Guestimator + fields) and the saved-address shortcut
- * are the shared components both other flows use — <ParcelQuestion> and
- * <SavedAddressPicker> — not seller-specific copies (2026-08-29 UI rework).
+ * Still deliberately its OWN page with local step state — NOT the recipient
+ * RecipientFlowContext state machine (review N5).
  */
 
-type Step = "details" | "review" | "ready";
+type Step = "setup" | "item" | "review" | "ready";
 
 const PACKAGING_LABELS: Record<PackagingType, string> = {
   box: "Box / Rigid",
@@ -71,45 +74,20 @@ function Shell({ children }: { children: React.ReactNode }) {
   );
 }
 
-function SellHeader({ subtitle }: { subtitle: string }) {
+// One compact line, not a hero (2026-08-29): title + badge + the pitch.
+function SellHeader() {
   return (
-    <div className="text-center space-y-3">
-      <div className="w-14 h-14 rounded-2xl bg-emerald-500/15 flex items-center justify-center mx-auto">
-        <Tag className="w-7 h-7 text-emerald-600" />
+    <div className="space-y-1.5">
+      <div className="flex items-center gap-2.5">
+        <Tag className="w-5 h-5 text-emerald-600" />
+        <h1 className="text-xl font-bold text-foreground">Sell &amp; Ship</h1>
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-emerald-700 bg-emerald-100 border border-emerald-200 px-2 py-0.5 rounded-full">
+          Buyer pays
+        </span>
       </div>
-      <h1 className="text-2xl font-bold text-foreground">Sell &amp; Ship</h1>
-      <p className="text-muted-foreground max-w-md mx-auto">{subtitle}</p>
-      <span className="inline-block text-xs font-semibold uppercase tracking-wide text-emerald-700 bg-emerald-100 border border-emerald-200 px-2.5 py-1 rounded-full">
-        Buyer pays
-      </span>
-    </div>
-  );
-}
-
-// ── "How it works" — the pitch, compressed to one card (2026-08-29) ──
-const HOW_IT_WORKS: { title: string; desc: string }[] = [
-  { title: "Describe your item", desc: "Package size, weight, and where it ships from." },
-  { title: "Post your link", desc: "Marketplace, eBay, a DM — anywhere your buyer is." },
-  { title: "Buyer pays, you ship", desc: "They cover shipping at checkout. You print the label and send it." },
-];
-
-function HowItWorks() {
-  return (
-    <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
-      <h2 className="text-sm font-semibold text-foreground mb-4">How it works</h2>
-      <ol className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        {HOW_IT_WORKS.map((s, i) => (
-          <li key={s.title} className="flex sm:flex-col items-start gap-3 sm:gap-2">
-            <span className="w-7 h-7 rounded-full bg-emerald-500/15 text-emerald-700 text-sm font-bold flex items-center justify-center shrink-0">
-              {i + 1}
-            </span>
-            <div>
-              <p className="text-sm font-semibold text-foreground">{s.title}</p>
-              <p className="text-xs text-muted-foreground mt-0.5">{s.desc}</p>
-            </div>
-          </li>
-        ))}
-      </ol>
+      <p className="text-sm text-muted-foreground">
+        A SendMo shipping link allows your buyers to pay for shipping when they buy your products.
+      </p>
     </div>
   );
 }
@@ -119,12 +97,9 @@ export default function SellerBuilder() {
   const { session, loading, isAdmin } = useAuth();
 
   // ── Step + form state (local; no shared flow context) ──
-  const [step, setStep] = useState<Step>("details");
+  const [step, setStep] = useState<Step>("setup");
   const [origin, setOrigin] = useState<AddressInput>(emptyAddress());
-
-  // One draft for the whole parcel question — the shared <ParcelQuestion>
-  // shape, adapted to numbers only at submit (same boundary as SenderStepPackage).
-  const [draft, setDraft] = useState<ParcelDraft>(EMPTY_PARCEL_DRAFT);
+  const [parcel, setParcel] = useState<SenderParcel | null>(null);
 
   const [singleUse, setSingleUse] = useState(true);
   const [constraintOn, setConstraintOn] = useState(false);
@@ -135,36 +110,25 @@ export default function SellerBuilder() {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<CreateLinkResult | null>(null);
 
-  // Parsed parcel, or null if any dim is missing/zero. Envelope height → 1in.
-  function computeParcel(): { length: number; width: number; height: number; weightOz: number } | null {
-    const l = parseFloat(draft.length);
-    const w = parseFloat(draft.width);
-    const h = draft.packaging === "envelope" ? 1 : parseFloat(draft.height);
-    const wt = (parseFloat(draft.weightLbs) || 0) * 16 + (parseFloat(draft.weightOz) || 0);
-    if (!l || !w || !h || !wt) return null;
-    return { length: l, width: w, height: h, weightOz: wt };
-  }
-
   const addrComplete = !!origin.street && !!origin.city && !!origin.state && !!origin.zip;
   const phoneOk = isUsablePhone(origin.phone);
-  const parcel = computeParcel();
-
-  const weightMissing = !((parseFloat(draft.weightLbs) || 0) * 16 + (parseFloat(draft.weightOz) || 0));
   const addrIncomplete = tried && !addrComplete;
   const phoneIncomplete = tried && !phoneOk;
-  const dimsIncomplete = tried &&
-    (!draft.length || !draft.width || (draft.packaging !== "envelope" && !draft.height) || weightMissing);
 
-  function handleReview() {
+  function handleSetupContinue() {
     setTried(true);
-    if (!addrComplete || !phoneOk || !computeParcel()) return;
+    if (!addrComplete || !phoneOk) return;
     setError(null);
+    setStep("item");
+  }
+
+  function handleParcelSubmit(p: SenderParcel) {
+    setParcel(p);
     setStep("review");
   }
 
   async function handleCreate() {
-    const p = computeParcel();
-    if (!p) { setStep("details"); return; }
+    if (!parcel) { setStep("item"); return; }
     if (!session?.access_token) {
       setError("You're signed out — please sign in again.");
       return;
@@ -179,13 +143,13 @@ export default function SellerBuilder() {
         phone: origin.phone,
         verified: origin.verified,
       },
-      length_in: p.length,
-      width_in: p.width,
-      height_in: p.height,
-      weight_oz: p.weightOz,
+      length_in: parcel.length,
+      width_in: parcel.width,
+      height_in: parcel.height,
+      weight_oz: parcel.weightOz,
       // single-use → closes after the first sale; reusable → omit (stays open).
       max_shipments: singleUse ? 1 : undefined,
-      notes: draft.description.trim() || undefined,
+      notes: parcel.description.trim() || undefined,
     };
     if (constraintOn) {
       params.speed_preference = constraint.speed_preference;
@@ -231,7 +195,7 @@ export default function SellerBuilder() {
   if (!SELLER_LINK_LIVE && !isAdmin) {
     return (
       <Shell>
-        <SellHeader subtitle="A link you post so the buyer pays for shipping — you just print the label." />
+        <SellHeader />
         <div className="bg-card rounded-2xl border border-border shadow-sm p-6 text-center space-y-4">
           <span className="inline-block text-[10px] font-bold uppercase tracking-wide text-muted-foreground bg-muted border border-border rounded-full px-2 py-0.5">
             Coming soon
@@ -251,8 +215,7 @@ export default function SellerBuilder() {
   if (!session) {
     return (
       <Shell>
-        <SellHeader subtitle="Create a link, post it, and the buyer pays for shipping — you just print the label." />
-        <HowItWorks />
+        <SellHeader />
         <div className="bg-card rounded-2xl border border-border shadow-sm p-6 text-center space-y-4">
           <p className="text-sm text-muted-foreground">
             Sign in to create your Sell &amp; Ship link — we attach it to your account so you can manage it and print labels.
@@ -265,11 +228,11 @@ export default function SellerBuilder() {
     );
   }
 
-  // ── Step 3: ready ──────────────────────────────────────────
+  // ── Step 4: ready ──────────────────────────────────────────
   if (step === "ready" && result) {
     return (
       <Shell>
-        <SellHeader subtitle="Share your link — the buyer adds their address and pays, then you print the label." />
+        <SellHeader />
         <LinkShareCard
           shortCode={result.short_code}
           value={{
@@ -287,11 +250,12 @@ export default function SellerBuilder() {
     );
   }
 
-  // ── Step 2: review ─────────────────────────────────────────
+  // ── Step 3: review ─────────────────────────────────────────
   if (step === "review" && parcel) {
     return (
       <Shell>
-        <SellHeader subtitle="Double-check the details — the buyer will ship to their own address from here." />
+        <SellHeader />
+        <StepQuestionHeader question="Everything look right?" />
 
         <div className="bg-card rounded-2xl border border-border shadow-sm divide-y divide-border">
           <ReviewRow icon={MapPin} label="Ships from">
@@ -302,9 +266,9 @@ export default function SellerBuilder() {
           </ReviewRow>
 
           <ReviewRow icon={Package} label="Package">
-            <div className="text-foreground font-medium">{PACKAGING_LABELS[draft.packaging]}</div>
+            <div className="text-foreground font-medium">{PACKAGING_LABELS[parcel.packaging]}</div>
             <div>{parcel.length}″ × {parcel.width}″ × {parcel.height}″ · {formatWeight(parcel.weightOz)}</div>
-            {draft.description.trim() && <div className="text-muted-foreground">{draft.description.trim()}</div>}
+            {parcel.description.trim() && <div className="text-muted-foreground">{parcel.description.trim()}</div>}
           </ReviewRow>
 
           <ReviewRow icon={singleUse ? PackageCheck : Repeat} label="Availability">
@@ -335,7 +299,7 @@ export default function SellerBuilder() {
         )}
 
         <div className="flex gap-3">
-          <Button variant="outline" onClick={() => setStep("details")} disabled={submitting} className="rounded-xl">
+          <Button variant="outline" onClick={() => setStep("item")} disabled={submitting} className="rounded-xl">
             <ArrowLeft className="w-4 h-4 mr-1" /> Back
           </Button>
           <Button onClick={handleCreate} disabled={submitting} className="flex-1 rounded-xl shadow-sm gap-1.5">
@@ -347,7 +311,22 @@ export default function SellerBuilder() {
     );
   }
 
-  // ── Step 1: details (default) ──────────────────────────────
+  // ── Step 2: item — the sender flow's package step, reused as-is ──
+  if (step === "item") {
+    return (
+      <Shell>
+        <SellHeader />
+        <SenderStepPackage
+          initialParcel={parcel}
+          onSubmit={handleParcelSubmit}
+          onBack={() => setStep("setup")}
+          continueLabel="Review your link"
+        />
+      </Shell>
+    );
+  }
+
+  // ── Step 1: setup — quantity + ship-from (default) ─────────
   return (
     <Shell>
       <button
@@ -358,12 +337,9 @@ export default function SellerBuilder() {
         <ArrowLeft className="w-4 h-4" /> Back to shipping options
       </button>
 
-      <SellHeader subtitle="Describe what you're selling and where it ships from — your buyer does the rest." />
+      <SellHeader />
 
-      <HowItWorks />
-
-      {/* Single-use vs reusable — the first decision, because it frames the
-          rest: is this ONE listing or a stack of identical ones? (2026-08-29) */}
+      {/* Quantity — first decision: one listing or a stack of identical ones. */}
       <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
         <label className="text-sm font-semibold text-foreground mb-3 block">How many can sell through this link?</label>
         <div className="grid grid-cols-2 gap-2">
@@ -397,21 +373,6 @@ export default function SellerBuilder() {
           </button>
         </div>
       </div>
-
-      {/* The parcel question — Guestimator + fields as ONE step, the same
-          shared <ParcelQuestion> the sender and creator flows use, replacing
-          the page's separate Guestimator card + hand-rolled fields (2026-08-29). */}
-      <ParcelQuestion
-        value={draft}
-        onChange={(patch) => setDraft((d) => ({ ...d, ...patch }))}
-        showErrors={dimsIncomplete}
-        invalid={{
-          length: tried && !parseFloat(draft.length),
-          width: tried && !parseFloat(draft.width),
-          height: tried && draft.packaging !== "envelope" && !parseFloat(draft.height),
-          weight: tried && weightMissing,
-        }}
-      />
 
       {/* Origin (ship-from) address */}
       <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
@@ -455,7 +416,7 @@ export default function SellerBuilder() {
       </div>
 
       {/* Validation summary */}
-      {(addrIncomplete || phoneIncomplete || dimsIncomplete) && (
+      {(addrIncomplete || phoneIncomplete) && (
         <div className="rounded-xl border border-destructive/50 bg-destructive/5 px-4 py-3 text-sm text-destructive space-y-1">
           <div className="flex items-center gap-2">
             <AlertCircle className="w-4 h-4" />
@@ -464,16 +425,12 @@ export default function SellerBuilder() {
           <ul className="list-disc list-inside text-xs ml-1">
             {addrIncomplete && <li>Complete ship-from address</li>}
             {phoneIncomplete && <li>Phone number — the shipping carriers require it</li>}
-            {tried && !draft.length && <li>Length</li>}
-            {tried && !draft.width && <li>Width</li>}
-            {tried && draft.packaging !== "envelope" && !draft.height && <li>Height</li>}
-            {tried && weightMissing && <li>Weight</li>}
           </ul>
         </div>
       )}
 
-      <Button onClick={handleReview} className="w-full rounded-xl shadow-sm gap-1.5">
-        Review your link <ArrowRight className="w-4 h-4" />
+      <Button onClick={handleSetupContinue} className="w-full rounded-xl shadow-sm gap-1.5">
+        Continue <ArrowRight className="w-4 h-4" />
       </Button>
     </Shell>
   );

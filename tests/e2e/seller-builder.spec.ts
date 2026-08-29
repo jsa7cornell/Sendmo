@@ -2,18 +2,20 @@ import { test, expect, type Page } from "@playwright/test";
 import { mockAdminAuth, ADMIN_USER_ID } from "./mock-admin-auth";
 import { SUPABASE_URL } from "./supabase-env";
 
-// ─── /sell builder — 2026-08-29 UI rework ────────────────────────────────────
+// ─── /sell builder — 2026-08-29 stepped rework (John's second pass) ──────────
 //
-// Four changes under test, all requested by John after launch day:
-//   1. a "How it works" strip at the top of the page,
-//   2. single vs multiple moved above the form,
-//   3. the Guestimator and the package fields combined into the shared
-//      <ParcelQuestion> (the same one the sender/creator flows use),
-//   4. a saved-address shortcut on the ship-from card (<SavedAddressPicker>).
+// Under test:
+//   1. the intro is ONE compact line (no hero icon, no "How it works" card),
+//   2. step 1 is quantity + ship-from origin (with <SavedAddressPicker>),
+//   3. step 2 is its own screen: the sender flow's <SenderStepPackage>
+//      (Guestimator + parcel fields) reused as-is,
+//   4. review follows, carrying both steps' answers.
 //
 // Runs under full mocks with the admin session harness: in dev the
 // VITE_ENABLE_SELLER_LINK flag is off, and admins are the one audience the
 // coming-soon gate lets through (SellerBuilder.tsx gate comment).
+
+const INTRO = /A SendMo shipping link allows your buyers to pay for shipping/;
 
 async function openBuilder(page: Page): Promise<void> {
   await mockAdminAuth(page);
@@ -46,66 +48,87 @@ async function openBuilder(page: Page): Promise<void> {
   await expect(page.getByRole("heading", { name: "Sell & Ship" })).toBeVisible({ timeout: 15_000 });
 }
 
-test.describe("Seller builder — 2026-08-29 rework", () => {
-  test("How it works renders up top, above the availability choice, above the parcel question", async ({ page }) => {
+/** Step 1 → step 2 via the saved-address shortcut. */
+async function completeSetupStep(page: Page): Promise<void> {
+  await page.getByRole("button", { name: /Use a saved address/ }).click();
+  await page.getByRole("button", { name: /Mum/ }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
+  await expect(page.getByRole("heading", { name: /What are you shipping\?/ })).toBeVisible();
+}
+
+test.describe("Seller builder — stepped rework", () => {
+  test("compact intro: one line, no hero, no How-it-works card", async ({ page }) => {
     await openBuilder(page);
 
-    await expect(page.getByRole("heading", { name: "How it works" })).toBeVisible();
-    await expect(page.getByText("Post your link")).toBeVisible();
-
-    // Order on the page: How it works → availability → parcel question →
-    // ship-from. Assert by vertical position rather than DOM heuristics.
-    const yHow = (await page.getByRole("heading", { name: "How it works" }).boundingBox())?.y ?? NaN;
-    const yAvail = (await page.getByText("How many can sell through this link?").boundingBox())?.y ?? NaN;
-    const yParcel = (await page.getByText("Describe the product").boundingBox())?.y ?? NaN;
-    const yShipFrom = (await page.getByText("Where does it ship from?").boundingBox())?.y ?? NaN;
-    expect(yHow).toBeLessThan(yAvail);
-    expect(yAvail).toBeLessThan(yParcel);
-    expect(yParcel).toBeLessThan(yShipFrom);
+    await expect(page.getByText(INTRO)).toBeVisible();
+    await expect(page.getByRole("heading", { name: "How it works" })).toHaveCount(0);
+    // The old hero subtitle is gone too.
+    await expect(page.getByText(/your buyer does the rest/)).toHaveCount(0);
   });
 
-  test("parcel question is the shared one: fields collapsed behind the Guestimator until revealed", async ({ page }) => {
+  test("step 1 is quantity + origin; the parcel question is NOT on it", async ({ page }) => {
     await openBuilder(page);
 
-    // The shared <ParcelQuestion> signature: describe-first, manual reveal.
-    await expect(page.getByText("Describe the product")).toBeVisible();
-    const reveal = page.getByRole("button", { name: "or fill in manually" });
-    await expect(reveal).toBeVisible();
-    await expect(page.getByText("Packaging type")).toHaveCount(0);
-
-    await reveal.click();
-    await expect(page.getByText("Packaging type")).toBeVisible();
-    // The shared component splits weight into pounds + ounces — the old
-    // seller-only card had a single lbs field.
-    await expect(page.getByText("Pounds")).toBeVisible();
-    await expect(page.getByText("Ounces")).toBeVisible();
+    await expect(page.getByText("How many can sell through this link?")).toBeVisible();
+    await expect(page.getByText("Where does it ship from?")).toBeVisible();
+    // Quantity renders above the origin card.
+    const yQty = (await page.getByText("How many can sell through this link?").boundingBox())?.y ?? NaN;
+    const yOrigin = (await page.getByText("Where does it ship from?").boundingBox())?.y ?? NaN;
+    expect(yQty).toBeLessThan(yOrigin);
+    // The item step lives on its own screen.
+    await expect(page.getByText("Describe the product")).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: /What are you shipping\?/ })).toHaveCount(0);
   });
 
-  test("validation reveals the parcel fields and names what's missing", async ({ page }) => {
+  test("step 1 validates the address before advancing", async ({ page }) => {
     await openBuilder(page);
 
-    await page.getByRole("button", { name: /Review your link/ }).click();
+    await page.getByRole("button", { name: "Continue" }).click();
     await expect(page.getByText("Please fix these before continuing:")).toBeVisible();
-    await expect(page.getByRole("listitem").filter({ hasText: /^Length$/ })).toBeVisible();
-    await expect(page.getByRole("listitem").filter({ hasText: /^Weight$/ })).toBeVisible();
-    // showErrors must reveal the collapsed fields it points at (ParcelQuestion contract).
-    await expect(page.getByText("Packaging type")).toBeVisible();
+    await expect(page.getByText("Complete ship-from address")).toBeVisible();
+    await expect(page.getByRole("heading", { name: /What are you shipping\?/ })).toHaveCount(0);
   });
 
-  test("saved-address shortcut lists saved addresses and fills the ship-from form", async ({ page }) => {
+  test("saved-address shortcut fills the ship-from form", async ({ page }) => {
     await openBuilder(page);
 
     const trigger = page.getByRole("button", { name: /Use a saved address/ });
-    await expect(trigger).toBeVisible();
     await expect(trigger).toContainText("(2)");
-
     await trigger.click();
     await page.getByRole("button", { name: /Mum/ }).click();
 
-    // The picker fills the SmartAddressInput with the chosen address: the name
-    // field carries the value, and the address renders as the Verified summary.
     await expect(page.getByLabel(/Your name/)).toHaveValue("Mum");
     await expect(page.getByText(/9 Elm Ave/).first()).toBeVisible();
     await expect(page.getByText("Verified").first()).toBeVisible();
+  });
+
+  test("step 2 is the sender flow's package step, and review carries both steps", async ({ page }) => {
+    await openBuilder(page);
+    await completeSetupStep(page);
+
+    // The shared step's signature: describe-first, manual reveal, lbs+oz.
+    await expect(page.getByText("Describe the product")).toBeVisible();
+    await page.getByRole("button", { name: "or fill in manually" }).click();
+    await expect(page.getByText("Packaging type")).toBeVisible();
+
+    await page.getByPlaceholder("L", { exact: true }).fill("12");
+    await page.getByPlaceholder("W", { exact: true }).fill("9");
+    await page.getByPlaceholder("H", { exact: true }).fill("4");
+    await page.getByPlaceholder("lbs").fill("2");
+    await page.getByLabel(/Item description/).fill("Vintage armchair");
+    await page.getByRole("button", { name: /Review your link/ }).click();
+
+    // Review shows the origin from step 1 and the parcel from step 2.
+    await expect(page.getByRole("heading", { name: /Everything look right\?/ })).toBeVisible();
+    await expect(page.getByText(/9 Elm Ave/)).toBeVisible();
+    await expect(page.getByText(/12″ × 9″ × 4″ · 2 lb/)).toBeVisible();
+    await expect(page.getByText("Vintage armchair")).toBeVisible();
+
+    // Back from step 2 returns to step 1 with state intact.
+    await page.getByRole("button", { name: "Back", exact: true }).click();
+    await expect(page.getByRole("heading", { name: /What are you shipping\?/ })).toBeVisible();
+    await page.getByRole("button", { name: "Back", exact: true }).click();
+    await expect(page.getByText("How many can sell through this link?")).toBeVisible();
+    await expect(page.getByLabel(/Your name/)).toHaveValue("Mum");
   });
 });
