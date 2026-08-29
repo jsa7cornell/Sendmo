@@ -12,6 +12,216 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-28] Seller-link launch proposal — reviewed (approve-with-changes)
+
+**Category:** review
+**Cross-link:** [`proposals/2026-08-28_seller-link-launch_reviewed-2026-08-28_decided-2026-08-29.md`](proposals/2026-08-28_seller-link-launch_reviewed-2026-08-28_decided-2026-08-29.md)
+
+**Browser-verified:** n/a-category: `agent-internal` · n/a-reason: proposal review only — doc edits, no product surface touched.
+
+Fresh-eyes review completed per PROPOSAL-REVIEW-PROTOCOL; verdict **approve-with-changes**, full findings in the proposal's `## Review` section. Nearly all of the proposal's code claims verified exactly, including the PR1 replay chain. Four blockers, all fixable in text: (B1) **the "[2026-08-28] Multi-item seller links" LOG entry below and the proposal record opposite John decisions from the same day** — multi-item 1..99 vs no-quantities one-item-or-unlimited; the author must reconcile the two records and John confirm which stands before implementation; (B2) PR14 is stale — `SENDMO_LIVE_DEFAULT=true` has been set in prod since 2026-07-05 (PRE-LAUNCH T1-1), so the launch step must read current env, not flip from memory; (B3) PR9's `can_print` strips admin print and hides UI without gating `label_url`; (B4) PR1's idempotent return must bind the row to the verified PI before returning `cancel_token`. **Resolved same-day/next-day:** author accepted all four blockers (B1's LOG banner applied below; B2's allowlist sub-item closed with evidence, env read stays open for John), proposed two amendments (B3 gates on the cancel token instead of exempting admin; Pitfall-4 recompute moves to the cron sweep) — both accepted in Round 2. **John approved build 2026-08-29**; proposal renamed `_decided-2026-08-29`. PR14 alone stays gated on John's prod-env read.
+
+---
+
+### [2026-08-28] Multi-item seller links — design; and a replay hole in the shared label-buy path
+
+**Category:** investigation | security
+**Cross-link:** flows artifact (updated 2026-08-28) · **the multi-item half of this entry was itself reversed later the same day — see the banner below and proposal `2026-08-28_seller-link-launch`** · WISHLIST "Seller Link — deferred follow-ups (2026-07-19)"
+
+**Browser-verified:** n/a-category: `investigation` · n/a-reason: design + code reading only. No product surface changed; no commits to `src/` or `supabase/`.
+
+**John chose multi-item (a real quantity per listing) over single-use-only.** Designing the inventory
+claim required attacking the buy sequence, and the attack pass surfaced a defect class that is
+**independent of multi-item and not confined to seller links**. Recording the security finding first
+because it outranks the feature.
+
+---
+
+#### THE REPLAY HOLE — `labels/` has no buy idempotency
+
+Verified directly, four facts:
+
+1. **No UNIQUE constraint or index on `shipments.easypost_shipment_id`** — `grep -rn "easypost_shipment_id" supabase/migrations/*.sql | grep -i "unique\|index"` returns nothing.
+2. **No existing-shipment lookup before the buy.** The only `idempotency_key`s in `labels/index.ts`
+   (`:926`, `:1373`, `:1511`, `:1837`, `:2542`) are **Stripe-side** keys — they make a PI or a refund
+   idempotent, not the label purchase.
+3. **`POST /functions/v1/labels` is anon-callable** (`src/lib/api.ts:917` sends the public anon key) and
+   the caller already holds every body field in their own browser.
+4. **The auto-refund on buy failure is guarded ONLY by `if (verifiedPaymentIntent)`** —
+   `labels/index.ts:1827`. It is **not** scoped to `link_type`, so it fires for flex and full_label too.
+
+Chain: send the same buy body twice. Call 1 buys a real label. Call 2 re-verifies the same payment —
+the flex off-session PI is created with idempotency key `pi_offsess_${easypost_shipment_id}_${pm}`
+(`:926`), so Stripe returns the SAME succeeded PI and `verifiedPaymentIntent` is set again (`:974`).
+The EasyPost buy then fails (that shipment is already purchased) → the `!buyResponse.ok` branch at
+`:1752` → `createRefund` at `:1831`. **The payer is refunded while the label from call 1 stays valid.**
+
+**Not verified, deliberately:** EasyPost's exact response to re-buying a purchased shipment. If it
+errors, the outcome is the refund above; if it returns 200 with the existing label, the outcome is a
+duplicate `shipments` row instead. Both are bad and **both are closed by the same fix** — do not let
+the ambiguity delay the fix.
+
+**Exposure:** seller links are gated off with 0 sales ever, so the seller path is not at risk today.
+**Flex and full_label are live**, and the refund guard was never link-scoped — so the shape reaches
+live money. Treat as the top priority ahead of any seller work.
+
+**Fix (cheap, two halves):** (a) `CREATE UNIQUE INDEX CONCURRENTLY ... ON shipments(easypost_shipment_id) WHERE easypost_shipment_id IS NOT NULL` (pre-flight the dupe count the way migration 015:32 does);
+(b) in `labels/`, right after PI verify, look up an existing shipments row for this
+`easypost_shipment_id` and return 200 with its `public_code`/`label_url`/`cancel_token` — **no claim,
+no buy, no refund.**
+
+**Three siblings on the same shared path, all verified:**
+- **A thrown buy escapes every refund.** `doBuy` (`:1622`) and `buyResponse.json()` (`:1623`) are not
+  in a try/catch; a fetch throw or a non-JSON CDN 502 body escapes to the outer catch (`:2595`), which
+  is a bare 500 with **no refund and no `sendAdminAlert`**. Buyer charged, no label, nobody paged.
+  Fix: wrap both and funnel a throw into the `!ok` branch at `:1752`, which already refunds + alerts.
+- **Post-buy DB persist failure alerts nobody.** `admin_insert_shipment` error at `:2019` logs
+  `label.db_persist_error` and returns — no `sendAdminAlert`, unlike the buy-error path. SendMo has
+  paid EasyPost and the buyer is charged with no `shipments` row to refund against later.
+- **The rate limiter cannot hold on the money path.** `_shared/ratelimit.ts:6-9` says it itself: the
+  bucket is per-isolate. Concurrent requests land in separate empty maps and all pass.
+
+---
+
+#### MULTI-ITEM DESIGN — ⚠️ SUPERSEDED SAME DAY, DO NOT BUILD FROM THIS
+
+> **REVERSED 2026-08-28, later the same session.** After this section was written, John ruled
+> out quantities and inventory counts entirely: **the only two options are "one item" and
+> "unlimited"** — i.e. today's shipped `max_shipments` behaviour, unchanged. The counter, the
+> `link_claims` receipts, the `claim_link_unit` RPC, the pre-charge availability gate and the
+> drift reconciliation described below were **all deleted from the plan** and must not be
+> re-proposed from this entry. Current design of record:
+> [`proposals/2026-08-28_seller-link-launch_reviewed-2026-08-28_decided-2026-08-29.md`](proposals/2026-08-28_seller-link-launch_reviewed-2026-08-28_decided-2026-08-29.md) §1.3 and §2.2.
+>
+> **What survives from this section, unchanged and still true:** the replay-hole security finding
+> above, and the F1 gotcha at the end (the repo deliberately avoids expanding
+> `admin_insert_shipment`'s signature). Read those; treat everything between as a design that was
+> considered and dropped.
+>
+> **The consequence John's reversal creates:** with nothing counting units, an unlimited link has
+> no stopping condition, and **there is no close/deactivate action anywhere** — the only code that
+> retires a link lives in the rotate handler, hard-gated to `link_type='flexible'`
+> (`links/index.ts:99`). An off switch is now load-bearing. See the proposal §2.2 / PR5.
+>
+> Recorded here rather than deleted because the rejected design's rationale — especially *why* a
+> client-side compare-and-set is unsafe on this path — is worth keeping if quantities ever return.
+
+
+**Model.** `max_shipments` becomes a required integer 1..99 for `seller_link`; **NULL-means-unlimited is
+retired** (it fails OPEN — any path yielding NULL disables inventory enforcement entirely). Add
+`sendmo_links.shipments_claimed INTEGER NOT NULL DEFAULT 0` and a `link_claims(link_id, claim_key)`
+receipt table keyed on the EasyPost shipment id.
+
+**The claim must be a SECURITY DEFINER RPC, not PostgREST.** `.update()` sends literal values and
+**structurally cannot express a column-relative increment**, so today's
+`.update({status:'in_use'}).eq('status','active')` (`labels/index.ts:1495-1499`) does not generalize to N.
+A client-side compare-and-set was designed and **rejected under adversarial review**: its baseline
+`resolvedLink` is read at `:456-464`, seconds before the claim at `:1492` — across a Stripe PI retrieve
+(`:698`), an EndShipper create (`:1206`) and a rate lookup — so under real concurrency it refunds
+buyers on links that still have stock. Use one statement:
+`UPDATE ... SET shipments_claimed = shipments_claimed + 1, status = CASE WHEN shipments_claimed + 1 >= max_shipments THEN 'in_use' ELSE status END WHERE id = $1 AND status = 'active' AND shipments_claimed < max_shipments RETURNING ...`
+— re-evaluated against the post-lock row version, so the lost-update case cannot occur. Follow the
+existing `resolve_recovery_lock` precedent (migration 033) and 044's explicit-grant contract.
+
+**Decided:** claim stays where the single-use claim sits (after PI verify + rate gate, before the
+EasyPost buy — ordering verified and it still holds for N); a **counter, not a derived count** (the
+shipments row does not exist yet at decision time, so it cannot gate the decision); **no auto-return of
+a unit on cancel/refund/dispute** (three writers would race the claim; the seller relists — and the
+relist PATCH must ship in the SAME PR as quantity or the first refund strands a unit); a **pre-charge
+advisory gate in `seller-checkout`** (`:151` is status-only and does not even SELECT `max_shipments`,
+so a hot 10-unit listing charges and refunds every arrival); buyers see **`last_one: true`, never a
+count** (an exact count on an anonymous CDN-fronted GET is a sales-velocity oracle); **one `notes`
+describes all N** (the builder's own copy is "Multiple identical items").
+
+**F1 is a hard prerequisite for the per-listing board** (not for the counter, which lives on the link).
+**Gotcha for whoever does F1:** `labels/index.ts:2213-2218` states the repo deliberately avoids
+expanding `admin_insert_shipment`'s signature — "to avoid the brittle RPC-signature pattern that bit the
+2026-05-13 orphan-shipment incident" — and migrations 018/019 are two prior overload-ambiguity fixes on
+that same function. Weigh a follow-up UPDATE repointing `shipments.link_id` against a `p_link_id`
+parameter; note repointing alone orphans the throwaway link, which is the same stray-card pollution the
+fix is meant to remove.
+
+**Cost:** ~8-10 working days across 6 PRs for multi-item, roughly half of which is the money-safety work
+above and is required before ANY seller-link launch. **Zero new UI components; one new form input** (a
+number field inside the existing card at `SellerBuilder.tsx:411-444`).
+
+**Open with John:** whether multi-item blocks go-live or lands right behind it; auto-return on
+cancellation (cheap to design in now, expensive to retrofit); whether buyers see a remaining count; and
+the 99-unit ceiling.
+
+---
+
+### [2026-08-28] "SendMo for Sellers" investigation — the feature is already deployed, gated off
+
+**Category:** investigation
+**Cross-link:** [`proposals/2026-07-17_seller-link-buyer-pays_reviewed-2026-07-17_decided-2026-07-17.md`](proposals/2026-07-17_seller-link-buyer-pays_reviewed-2026-07-17_decided-2026-07-17.md) · WISHLIST "Seller Link — deferred follow-ups (2026-07-19)" · flows artifact published to John 2026-08-28
+
+**Browser-verified:** n/a-category: `investigation` · n/a-reason: no product surface changed — read-only investigation plus one published document. No commits to `src/`, `supabase/`, or any rendered surface.
+
+**John asked to "build SendMo for sellers" and see the flows first. The build is largely done.** The seller-link
+(buyer-pays) flow was merged to `main` in PR #60 and deployed to production, gated behind
+`VITE_ENABLE_SELLER_LINK`, which production resolves to `coming-soon`. Verified against production, not the repo:
+`curl sendmo.co/sell` → 200, and the prod bundle `index-BDICKxR6.js` contains `seller_link`, `Sell & Ship`,
+`SendMo for Sellers`, `Coming soon`, and the BuyerFlow string `Where should this ship`.
+
+**Production has never run a seller sale.** Read-only queries against `fkxykvzsqdjzhurntgah`:
+`sendmo_links WHERE link_type='seller_link'` returns exactly two rows — `SELLE2E01` and `SELLTEST01`, both
+`is_test=true`, `status='active'`, created 2026-07-19 — and
+`count(*) FILTER (WHERE buyer_email IS NOT NULL)` over all 40 shipments returns **0**. So no defect below is a
+live incident, and equally none of the fixes can be verified in production until the flag flips.
+
+**Against John's ten stated requirements: six built-and-gated (seller creates link, shares it, buyer pays, seller
+notified, seller prints, sale email), four partial** — buyer tracking, buyer picks method, public-marketplace price
+check, seller manages pending shipments.
+
+**Two corrections to the project's own notes, both load-bearing:**
+
+- **WISHLIST F1 overstates the seller's blindness.** The note says a seller cannot see their sales because
+  `shipments.link_id` points at a throwaway link. But `labels/index.ts:1968` passes
+  `p_user_id: resolvedLink?.user_id` — the seller — and migration 025:129 stamps that onto the throwaway link, so
+  the Dashboard's existing shipments query (`sendmo_links!inner(user_id)` … `.eq(…, user.id)`,
+  `Dashboard.tsx:221-225`) **does** return every seller sale, each row deep-linking to `/t/<code>` where Print
+  lives. What is actually missing is narrower: no sale-vs-own-shipment marker, no "sold, not yet printed" state,
+  and the per-link child grouping (which genuinely does need F1 fixed). R9's cheap version therefore needs
+  **no migration** — two extra fields on a query that already runs.
+
+- **The `links` PATCH handler has no `link_type` guard, and the comment claiming it does is false.**
+  `supabase/functions/links/index.ts:1041` says "this handler already rejects non-flexible links above"; the
+  `!== "flexible"` guards at `:99` and `:253` belong to the rotate and activate handlers. A seller link reached
+  through the Links-tab Manage button (`LinksTab.tsx:133-135`, no type branch) opens the recipient editor; a
+  prefs-only save **succeeds**, silently rewriting `preferred_speed` / `preferred_carrier` / `max_price_cents` —
+  all three of which bind what future buyers can pick and be charged (`rates/index.ts:473-481`,
+  `seller-checkout/index.ts:265`). An address-bearing save fails closed on the migration-040 CHECK as an
+  unexplained 500. Untracked anywhere before today.
+
+**Confirmed pre-live defects** (none reachable while the flag is off): buyer can print/download the seller's label
+PDF carrying the seller's home address — `tracking/index.ts:694` returns `label_url` outside the role gate; a
+silent `$100` cap stamped on every link even when the seller declined one and `SellerBuilder.tsx:292` promised
+"Buyer picks the carrier & speed" (`links/index.ts:682`,
+`const sPriceCap = typeof price_cap_dollars === "number" ? price_cap_dollars : 100`); the Facebook unfurl tells
+buyers the cost is covered on a buyer-pays link (`ogMeta.ts:52-54`, a knowingly-parked placeholder locked in by
+two passing tests and SPEC.md:726); no rate limiter on `links` GET-by-code (SPEC.md:1261 specifies 30/min/IP,
+never implemented) or on `seller-checkout`, which fires a real EasyPost GET before its permission check; sold-out
+single-use links render as "Hmm, that link didn't work"; seller links badged "Flexible"; and no seller email on
+buyer cancellation or on a dispute.
+
+**Decision recorded — the R8 answer is a precomputed price band, not a live per-viewer quote.** Both the client
+(`BuyerFlow.tsx:119`, street+city+state+zip+phone+email) and the server (`rates/index.ts:283`, carrier-valid
+phone) gate the price behind a full address, so a marketplace stranger cannot check shipping cost. The per-viewer
+ZIP quote scales EasyPost shipment creation with curiosity, and `_shared/ratelimit.ts:6-9` is per-isolate so a
+crowd on one Facebook post bypasses it. Quoting three representative destination ZIPs once at link creation bounds
+upstream cost to links created rather than traffic, and is the only version that can put a price in the unfurl.
+Exact ZIP-only quoting follows post-launch behind a `(link_id, zip3)` cache.
+
+**Open question back to John:** whether "pending shipments" means sold-but-not-yet-printed (a filter over existing
+data) or abandoned checkouts (no row exists until a label is bought — a new table and a new write path).
+
+**Gotcha for the next agent:** the seller-link doc comments in this repo are unusually detailed and several are
+stale — `links/index.ts:1041` above is the sharp example. Verify against code, not comments.
+
+---
+
+
 ### [2026-08-25] PR #93 rebased down to what survived; #89 closed as superseded
 
 **Category:** chore | flow-cleanup
