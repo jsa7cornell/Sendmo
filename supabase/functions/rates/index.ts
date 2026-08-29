@@ -3,6 +3,7 @@ import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { log } from "../_shared/logger.ts";
 import { isUsablePhone } from "../_shared/phone.ts";
 import { checkRateLimit, clientIpKey } from "../_shared/ratelimit.ts";
+import { quoteShipmentRaw } from "../_shared/easypost-quote.ts";
 
 const MARKUP_MULTIPLIER = 1.15;
 const MARKUP_FLAT_CENTS = 100; // $1.00 flat fee on top of the percentage markup
@@ -312,8 +313,6 @@ Deno.serve(async (req: Request) => {
             );
         }
 
-        const authHeader = "Basic " + btoa(apiKey + ":");
-
         // Build address objects — include name/company/phone when provided
         // (required by EasyPost for label purchase on some carriers like USPS)
         const buildAddress = (addr: Record<string, string>) => ({
@@ -334,42 +333,32 @@ Deno.serve(async (req: Request) => {
         console.log(`[Session ${sessionId}] [rates] to:`, JSON.stringify(builtTo));
         console.log(`[Session ${sessionId}] [rates] parcel:`, JSON.stringify(parcel));
 
-        // Create shipment to get rates
+        // Create shipment to get rates — via the ONE shared quote client
+        // (_shared/easypost-quote.ts, PR10): the price band computes against
+        // the exact same call, so the two can't drift. Throw-safe by
+        // construction (safeFetchJson underneath).
+        //
+        // Link binding: stamp reference = link.id so downstream functions can
+        // verify this shipment was minted from the link (seller blocker fix;
+        // extended to destination-deferred flex links in Phase 3, where
+        // labels/ trust-resolves to_address from this shipment). Omitted for
+        // ordinary flex + full-label.
+        const bindingReference = sellerLinkId ?? deferredDestLinkId ?? flexLinkId ?? null;
         const start = Date.now();
-        const shipmentResponse = await fetch(
-            "https://api.easypost.com/v2/shipments",
-            {
-                method: "POST",
-                headers: {
-                    Authorization: authHeader,
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                    shipment: {
-                        // Seller-link binding: stamp reference = link.id so
-                        // Link binding: stamp reference = link.id so downstream
-                        // functions can verify this shipment was minted from the
-                        // link (seller blocker fix; extended to
-                        // destination-deferred flex links in Phase 3, where
-                        // labels/ trust-resolves to_address from this shipment).
-                        // Omitted for ordinary flex + full-label.
-                        ...(sellerLinkId ? { reference: sellerLinkId }
-                            : deferredDestLinkId ? { reference: deferredDestLinkId }
-                            : flexLinkId ? { reference: flexLinkId } : {}),
-                        from_address: builtFrom,
-                        to_address: builtTo,
-                        parcel: {
-                            length: parcel.length,
-                            width: parcel.width,
-                            height: parcel.height,
-                            weight: parcel.weight_oz,
-                        },
-                    },
-                }),
-            }
-        );
-
-        const shipmentData = await shipmentResponse.json();
+        const quoteResult = await quoteShipmentRaw({
+            apiKey,
+            from: builtFrom,
+            to: builtTo,
+            parcel: {
+                length: parcel.length,
+                width: parcel.width,
+                height: parcel.height,
+                weight_oz: parcel.weight_oz,
+            },
+            reference: bindingReference,
+        });
+        const shipmentResponse = { ok: quoteResult.ok, status: quoteResult.status ?? 0 };
+        const shipmentData = quoteResult.data;
         const elapsed = Date.now() - start;
 
         if (!shipmentResponse.ok || shipmentData.error) {

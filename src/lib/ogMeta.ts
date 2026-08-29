@@ -30,6 +30,9 @@ export interface OgLinkPayload {
    * the prepaid fallback.
    */
   status?: string | null;
+  /** Seller-link price band (PR10) — rides the unfurl, where the click decision happens. */
+  est_min_cents?: number | null;
+  est_max_cents?: number | null;
 }
 
 export interface OgStrings {
@@ -91,11 +94,17 @@ export function buildOgStrings(link: OgLinkPayload | null): OgStrings {
       };
     }
     const item = sanitizeItemLabel(link.notes);
+    // The band on the card (PR10): the unfurl is where the click decision
+    // happens, and a precomputed number is the only kind that can ride it.
+    const band =
+      typeof link.est_min_cents === "number" && typeof link.est_max_cents === "number"
+        ? `Shipping typically $${(link.est_min_cents / 100).toFixed(2)}–$${(link.est_max_cents / 100).toFixed(2)}. `
+        : "";
     return {
       // Typographic quotes (review #5): inch-marks are everywhere in listing
       // text (`12" vinyl`), and straight quotes around them break visibly.
       title: item ? `Get “${item}” shipped to you` : SELLER_TITLE,
-      description: SELLER_DESC,
+      description: band + SELLER_DESC,
     };
   }
 

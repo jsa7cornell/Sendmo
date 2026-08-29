@@ -724,8 +724,9 @@ The preview is the first thing a sender sees — before the page, inside someone
 | name, no city | `You're sending a package to {First}` | same |
 | city/state, no name | `You're sending a package to {City}, {ST}` | `The postage is already paid. …` |
 | no data | `You've been sent a prepaid shipping label` | generic fallback |
-| `seller_link`, no notes | `Enter your address to get this shipped` | buyer-pays copy (`SELLER_DESC`) |
-| `seller_link` + notes | `Get "{item}" shipped to you` (notes sanitized: URLs stripped, 60-char cap) | buyer-pays copy |
+| `seller_link`, no notes | `Enter your address to get this shipped` | buyer-pays copy (`SELLER_DESC`), prefixed `Shipping typically $X–$Y.` when the band is computed (PR10) |
+| `seller_link` + notes | `Get "{item}" shipped to you` (notes sanitized: URLs stripped, 60-char cap) | same |
+| `seller_link`, non-active (410 body) | `This item has already sold` | `The seller closed this listing on SendMo.` |
 
 **Invariant — exactly one of each preview tag.** `index.html` ships generic marketing `og:*`/`twitter:*` tags for the root domain, so the middleware **strips them before injecting**: appending alone leaves duplicates and crawlers unfurl the generic SendMo card (the 2026-08-10 bug). [`tests/unit/ogMeta.test.ts`](tests/unit/ogMeta.test.ts) asserts the counts against the real `index.html`, so adding a static tag there without teaching `ogMeta.ts` to strip it turns the suite red.
 

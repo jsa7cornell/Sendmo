@@ -111,6 +111,15 @@ describe("buildOgStrings", () => {
     expect(og.description).toBe(SELLER_DESC);
   });
 
+  it("carries the price band into the seller card (PR10 — the unfurl is where the click decision happens)", () => {
+    const og = buildOgStrings({ ...JOHN, link_type: "seller_link", est_min_cents: 1250, est_max_cents: 2410 });
+    expect(og.description).toContain("Shipping typically $12.50–$24.10.");
+    // No band computed → no band text, never $NaN.
+    const noBand = buildOgStrings({ ...JOHN, link_type: "seller_link", est_min_cents: null, est_max_cents: null });
+    expect(noBand.description).toBe(SELLER_DESC);
+    expect(noBand.description).not.toContain("NaN");
+  });
+
   it("a SOLD seller link unfurls as sold, never as any pays-copy (the 410 body carries status)", () => {
     const og = buildOgStrings({ ...JOHN, link_type: "seller_link", status: "in_use", notes: "Couch" });
     expect(og.title).toBe("This item has already sold");
