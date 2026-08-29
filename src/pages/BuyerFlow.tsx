@@ -308,7 +308,7 @@ function AddressStep({
         <p className="text-sm text-foreground rounded-xl bg-primary/5 border border-primary/20 px-4 py-3">
           Shipping typically costs{" "}
           <span className="font-semibold">
-            ${(linkData.est_min_cents / 100).toFixed(2)}–${(linkData.est_max_cents / 100).toFixed(2)}
+            {formatCents(linkData.est_min_cents)}–{formatCents(linkData.est_max_cents)}
           </span>
           {" "}— enter your address for your exact price.
         </p>

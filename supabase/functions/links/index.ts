@@ -786,7 +786,7 @@ Deno.serve(async (req: Request) => {
                     phone: origin_address.phone,
                     is_verified: origin_address.verified || false,
                 })
-                .select("id")
+                .select("id, street1, city, state, zip")
                 .single();
             if (originErr || !originAddr) {
                 console.error("Origin address insert error:", originErr);
@@ -868,7 +868,11 @@ Deno.serve(async (req: Request) => {
                             street1: originAddr.street1 ?? null,
                         },
                         parcel: { length: dims[0], width: dims[1], height: dims[2], weight_oz: dims[3] },
-                        reference: sellerLink.id,
+                        linkId: sellerLink.id,
+                        // The buyer-visible constraints (review #2): the band
+                        // must be the cheapest option the buyer can PICK.
+                        preferredCarrier: preferred_carrier === "any" ? null : (preferred_carrier || null),
+                        preferredSpeed: speed_preference || null,
                     });
                     if (band) {
                         const { error: bandErr } = await supabase

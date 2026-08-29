@@ -35,6 +35,8 @@ export interface QuoteRate {
     service: string;
     /** EasyPost's base rate, dollars-as-string (their wire shape). */
     rate: string;
+    /** est_delivery_days ?? delivery_days — the band's speed-tier input. */
+    deliveryDays: number | null;
 }
 
 export interface QuoteResult {
@@ -136,6 +138,8 @@ export async function createQuoteShipment(params: {
                 carrier: String(r.carrier ?? ""),
                 service: String(r.service ?? ""),
                 rate: String(r.rate),
+                deliveryDays: typeof r.est_delivery_days === "number" ? r.est_delivery_days
+                    : typeof r.delivery_days === "number" ? r.delivery_days : null,
             }))
         : [];
     return { ok: true, shipmentId: result.data?.id ?? null, rates, error: rates.length === 0 ? "no rates returned" : null };

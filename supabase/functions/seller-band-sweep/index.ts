@@ -44,7 +44,7 @@ Deno.serve(async (req: Request) => {
     const { data: stale, error: staleErr } = await supabase
         .from("sendmo_links")
         .select(`
-            id, short_code, is_test, length_in, width_in, height_in, weight_hint_oz, est_computed_at,
+            id, short_code, is_test, length_in, width_in, height_in, weight_hint_oz, est_computed_at, preferred_carrier, preferred_speed,
             origin_address:addresses!origin_address_id ( street1, city, state, zip )
         `)
         .eq("link_type", "seller_link")
@@ -78,7 +78,9 @@ Deno.serve(async (req: Request) => {
                 height: Number(link.height_in),
                 weight_oz: Number(link.weight_hint_oz),
             },
-            reference: link.id,
+            linkId: link.id,
+            preferredCarrier: (link.preferred_carrier as string | null) ?? null,
+            preferredSpeed: (link.preferred_speed as string | null) ?? null,
         });
         if (!band) {
             failed++;

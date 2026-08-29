@@ -96,6 +96,9 @@ export function buildOgStrings(link: OgLinkPayload | null): OgStrings {
     const item = sanitizeItemLabel(link.notes);
     // The band on the card (PR10): the unfurl is where the click decision
     // happens, and a precomputed number is the only kind that can ride it.
+    // Manual cents formatting on purpose: ogMeta is imported by the Edge
+    // middleware + the legacy serverless copy, and pulling formatCents from
+    // api.ts would drag import.meta.env access into those runtimes.
     const band =
       typeof link.est_min_cents === "number" && typeof link.est_max_cents === "number"
         ? `Shipping typically $${(link.est_min_cents / 100).toFixed(2)}–$${(link.est_max_cents / 100).toFixed(2)}. `

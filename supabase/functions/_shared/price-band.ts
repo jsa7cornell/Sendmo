@@ -14,6 +14,7 @@
 
 import { applyMarkup } from "./pricing.ts";
 import { createQuoteShipment, type QuoteAddress, type QuoteParcel } from "./easypost-quote.ts";
+import { classifySpeed, rateDisplayFilterReason, MAX_DISPLAY_PRICE } from "./rate-filters.ts";
 import type { FetchLike } from "./easypost-rates.ts";
 
 // Near / mid / far zones for a contiguous-US origin. Deliberately EXCLUDES
@@ -41,7 +42,22 @@ export async function computeSellerPriceBand(params: {
     apiKey: string;
     origin: QuoteAddress;
     parcel: QuoteParcel;
-    reference?: string | null;
+    /**
+     * The link's id. Stamped on band quotes as "band:<id>" — NEVER the bare
+     * id: seller-checkout and labels accept any shipment whose reference
+     * equals the link id verbatim, and a band shipment carries a fixed cheap
+     * destination (review #3 — the prefix makes those checks reject it by
+     * construction rather than by shp_-id secrecy).
+     */
+    linkId?: string | null;
+    /**
+     * The link's buyer-visible constraints (review #2): the band is the
+     * cheapest option the buyer can actually PICK, so it runs through the
+     * same display filter as the rate list — denylist, platform ceiling,
+     * carrier, speed.
+     */
+    preferredCarrier?: string | null;
+    preferredSpeed?: string | null;
     fetchImpl?: FetchLike;
 }): Promise<PriceBand | null> {
     const cheapestPerDestination: number[] = [];
@@ -51,18 +67,27 @@ export async function computeSellerPriceBand(params: {
             from: params.origin,
             to: destination,
             parcel: params.parcel,
-            reference: params.reference ?? null,
+            reference: params.linkId ? `band:${params.linkId}` : null,
             fetchImpl: params.fetchImpl,
         });
         if (!quote.ok || quote.rates.length === 0) return null;
-        const cheapest = Math.min(
-            ...quote.rates
-                .map((r) => parseFloat(r.rate))
-                .filter((n) => Number.isFinite(n) && n > 0)
-                .map((dollars) => applyMarkup(dollars)),
-        );
-        if (!Number.isFinite(cheapest)) return null;
-        cheapestPerDestination.push(cheapest);
+        const displayable = quote.rates
+            .map((r) => ({
+                cents: applyMarkup(parseFloat(r.rate)),
+                carrier: r.carrier,
+                service: r.service,
+                speedTier: classifySpeed(r.deliveryDays),
+                rawDollars: parseFloat(r.rate),
+            }))
+            .filter((r) => Number.isFinite(r.rawDollars) && r.rawDollars > 0)
+            .filter((r) =>
+                rateDisplayFilterReason(
+                    { displayPriceDollars: r.cents / 100, carrier: r.carrier, service: r.service, speedTier: r.speedTier },
+                    // Seller links carry no cap (PR4) — the platform ceiling applies.
+                    { effectivePriceCapDollars: MAX_DISPLAY_PRICE, preferredCarrier: params.preferredCarrier, preferredSpeed: params.preferredSpeed },
+                ) === null);
+        if (displayable.length === 0) return null;
+        cheapestPerDestination.push(Math.min(...displayable.map((r) => r.cents)));
     }
     return {
         minCents: Math.min(...cheapestPerDestination),
