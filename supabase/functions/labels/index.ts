@@ -11,6 +11,7 @@ import {
     createRefund,
     createOffSessionShipmentPI,
     cancelPaymentIntent,
+    isPaymentIntentRefunded,
 } from "../_shared/stripe.ts";
 import { checkRateLimit } from "../_shared/ratelimit.ts";
 import { sendAdminAlert } from "../_shared/alert.ts";
@@ -20,7 +21,8 @@ import { assertKeysMatchEnv } from "../_shared/env-guard.ts";
 import { checkLiveChargeAllowed } from "../_shared/allowlist.ts";
 import { resolveGateBasisCents } from "../_shared/pricing.ts";
 import { runInBackground } from "../_shared/background.ts";
-import { lookupRate, rerateAndMatch, rerateRetryCapCents } from "../_shared/easypost-rates.ts";
+import { lookupRate, rerateAndMatch, rerateRetryCapCents, safeFetchJson } from "../_shared/easypost-rates.ts";
+import { decideBuyReplay } from "../_shared/buy-idempotency.ts";
 
 // Pricing markup MUST stay in sync with supabase/functions/rates/index.ts.
 // Server-derives display_price_cents from EasyPost rate for the flex-link
@@ -74,6 +76,11 @@ Deno.serve(async (req: Request) => {
         ?? req.headers.get("x-real-ip")
         ?? "unknown";
 
+    // Hoisted above the try so the outer catch can say whether money moved
+    // (PR1: an unhandled throw after a charge used to be a silent bare 500).
+    let verifiedPaymentIntent: { id: string; amount: number; status: string } | null = null;
+    let reqShipmentId: string | null = null;
+
     try {
         const {
             easypost_shipment_id,
@@ -109,6 +116,7 @@ Deno.serve(async (req: Request) => {
                 { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
             );
         }
+        reqShipmentId = String(easypost_shipment_id);
 
         // Pattern D rate limit (flex sender path only). The full-label path
         // is JWT-authenticated and the comp path requires admin, so neither
@@ -670,7 +678,7 @@ Deno.serve(async (req: Request) => {
         //      saved PM for display_price_cents. Auto-captures synchronously.
         //   3. else (FULL-LABEL) — verify the caller-supplied payment_intent_id
         //      is succeeded and metadata matches easypost_shipment_id.
-        let verifiedPaymentIntent: { id: string; amount: number; status: string } | null = null;
+        // (verifiedPaymentIntent itself is declared above the try — PR1.)
 
         if (!isComp && resolvedLink?.link_type === "seller_link") {
             // ── Seller-link buyer verify path (on-session, mirrors full-label) ──
@@ -724,6 +732,26 @@ Deno.serve(async (req: Request) => {
                         JSON.stringify({ error: "PaymentIntent does not match this seller link" }),
                         { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
                     );
+                }
+                // Refunded-PI guard (PR1): status='succeeded' survives a full
+                // refund, and the auto-refund branches below make a refunded
+                // PI a natural retry input — buying against one is a free label.
+                const sellerPiRefunded = await isPaymentIntentRefunded(pi, isLive);
+                if (sellerPiRefunded === true) {
+                    return new Response(
+                        JSON.stringify({ error: "This payment was refunded after an earlier failed attempt. Please start a new checkout." }),
+                        { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                    );
+                }
+                if (sellerPiRefunded === null) {
+                    log({
+                        event_type: "label.pi_refund_check_skipped",
+                        session_id: sessionId,
+                        severity: "warn",
+                        entity_type: "payment_intent",
+                        entity_id: pi.id,
+                        properties: { flow: "seller_link", reason: "stripe charge read failed" },
+                    });
                 }
                 verifiedPaymentIntent = { id: pi.id, amount: pi.amount, status: pi.status };
             } catch (err) {
@@ -972,6 +1000,34 @@ Deno.serve(async (req: Request) => {
                 });
 
                 if (pi.status === "succeeded") {
+                    // Refunded-PI guard (PR1), flex flavor: a resubmit within
+                    // the Stripe idempotency window gets the SAME PI back —
+                    // possibly one an auto-refund branch already refunded.
+                    // Buying against it would be a free label. Only an old PI
+                    // can be in that state, so the extra Stripe read is
+                    // skipped for freshly-minted ones.
+                    const piAgeSec = pi.created ? (Date.now() / 1000) - pi.created : 0;
+                    if (piAgeSec > 60) {
+                        const flexPiRefunded = await isPaymentIntentRefunded(pi, isLive);
+                        if (flexPiRefunded === true) {
+                            return new Response(
+                                JSON.stringify({
+                                    error: "An earlier attempt for this quote was refunded. Please go back, get a fresh quote, and try again.",
+                                }),
+                                { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                            );
+                        }
+                        if (flexPiRefunded === null) {
+                            log({
+                                event_type: "label.pi_refund_check_skipped",
+                                session_id: sessionId,
+                                severity: "warn",
+                                entity_type: "payment_intent",
+                                entity_id: pi.id,
+                                properties: { flow: "flex", reason: "stripe charge read failed" },
+                            });
+                        }
+                    }
                     verifiedPaymentIntent = {
                         id: pi.id,
                         amount: (pi as { amount_received?: number }).amount_received ?? pi.amount,
@@ -1180,6 +1236,24 @@ Deno.serve(async (req: Request) => {
                         { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
                     );
                 }
+                // Refunded-PI guard (PR1) — see the seller branch's comment.
+                const fullPiRefunded = await isPaymentIntentRefunded(pi, isLive);
+                if (fullPiRefunded === true) {
+                    return new Response(
+                        JSON.stringify({ error: "This payment was refunded after an earlier failed attempt. Please start a new checkout." }),
+                        { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                    );
+                }
+                if (fullPiRefunded === null) {
+                    log({
+                        event_type: "label.pi_refund_check_skipped",
+                        session_id: sessionId,
+                        severity: "warn",
+                        entity_type: "payment_intent",
+                        entity_id: pi.id,
+                        properties: { flow: "full_label", reason: "stripe charge read failed" },
+                    });
+                }
                 verifiedPaymentIntent = { id: pi.id, amount: pi.amount, status: pi.status };
             } catch (err) {
                 const msg = err instanceof Error ? err.message : "PI verification failed";
@@ -1191,19 +1265,316 @@ Deno.serve(async (req: Request) => {
             }
         }
 
+        // ─── Post-charge refund helper (PR1/N6) ─────────────────
+        // Refund the verified PI + page a human, for failure branches that sit
+        // AFTER money moved but BEFORE a label exists. Mirrors the buy-failure
+        // refund path below; never throws; no-ops when there is no PI (comp).
+        const refundVerifiedPiOrAlert = async (opts: {
+            failureReason: string;
+            idemSuffix: string;
+            alertSubject: string;
+            alertIntro: string;
+            extraRows?: Array<{ label: string; value: string }>;
+        }): Promise<{ refundIssued: boolean; refundErrorMsg: string | null }> => {
+            if (!verifiedPaymentIntent) return { refundIssued: false, refundErrorMsg: null };
+            const refundStart = Date.now();
+            try {
+                const refund = await createRefund({
+                    payment_intent_id: verifiedPaymentIntent.id,
+                    reason: "requested_by_customer",
+                    metadata: { easypost_shipment_id, failure_reason: opts.failureReason },
+                    idempotency_key: `refund_${easypost_shipment_id}_${opts.idemSuffix}`,
+                    liveMode: isLive,
+                });
+                log({
+                    event_type: "label.auto_refund_issued",
+                    session_id: sessionId,
+                    severity: "warn",
+                    entity_type: "payment_intent",
+                    entity_id: verifiedPaymentIntent.id,
+                    duration_ms: Date.now() - refundStart,
+                    properties: {
+                        refund_id: refund.id,
+                        amount_cents: refund.amount,
+                        easypost_shipment_id,
+                        reason: opts.failureReason,
+                    },
+                });
+                await sendAdminAlert({
+                    subject: opts.alertSubject,
+                    heading: "Label Buy Aborted — Buyer Auto-Refunded",
+                    intro: opts.alertIntro + " The captured payment was refunded automatically; no action needed unless this repeats.",
+                    rows: [
+                        { label: "PaymentIntent", value: verifiedPaymentIntent.id },
+                        { label: "EasyPost shipment", value: easypost_shipment_id },
+                        { label: "Reason", value: opts.failureReason },
+                        ...(opts.extraRows ?? []),
+                        { label: "Mode", value: isLive ? "LIVE" : "Test" },
+                    ],
+                    source: `labels post-charge failure (${opts.failureReason})`,
+                });
+                return { refundIssued: true, refundErrorMsg: null };
+            } catch (refundErr) {
+                const refundMsg = refundErr instanceof Error ? refundErr.message : String(refundErr);
+                console.error(`[Session ${sessionId}] [labels] POST-CHARGE REFUND FAILED (${opts.failureReason}):`, refundMsg);
+                log({
+                    event_type: "label.auto_refund_failed",
+                    session_id: sessionId,
+                    severity: "error",
+                    entity_type: "payment_intent",
+                    entity_id: verifiedPaymentIntent.id,
+                    duration_ms: Date.now() - refundStart,
+                    properties: {
+                        error_message: refundMsg,
+                        easypost_shipment_id,
+                        reason: opts.failureReason,
+                        requires_manual_intervention: true,
+                    },
+                });
+                await sendAdminAlert({
+                    subject: "Auto-refund FAILED — customer charged, no label",
+                    heading: "Auto-Refund Failed — Manual Refund Required",
+                    intro: opts.alertIntro + " The automatic Stripe refund then ALSO failed. The customer has been charged and has no label. Refund manually in Stripe.",
+                    rows: [
+                        { label: "PaymentIntent", value: verifiedPaymentIntent.id },
+                        { label: "EasyPost shipment", value: easypost_shipment_id },
+                        { label: "Reason", value: opts.failureReason },
+                        { label: "Refund error", value: refundMsg },
+                        ...(opts.extraRows ?? []),
+                        { label: "Mode", value: isLive ? "LIVE" : "Test" },
+                    ],
+                    source: `labels post-charge refund failure (${opts.failureReason})`,
+                });
+                return { refundIssued: false, refundErrorMsg: refundMsg };
+            }
+        };
+
+        // ─── Buy idempotency (PR1 — the replay hole) ────────────
+        // Before any claim or buy: does a shipments row for this
+        // easypost_shipment_id already exist? If it does, this request is a
+        // replay (retry, double-submit, or a deliberate probe). Proceeding
+        // would make EasyPost refuse the re-buy, land in the buy-failure
+        // branch, and REFUND the payer while the original label stays valid
+        // (the 2026-08-28 finding). Decision table + rationale live in
+        // _shared/buy-idempotency.ts. The hot-path cost is one index probe
+        // (migration 045's partial index services this exact predicate); the
+        // full row — including the cancel_token credential — is fetched only
+        // on the rare replay branches.
+        if (!supabase) {
+            // Without DB access the replay check can't run and neither can
+            // persistence — fail closed rather than reopen the hole.
+            return new Response(
+                JSON.stringify({ error: "Server configuration error" }),
+                { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+        // Returns the full replay-shape 200 for an existing row, re-read at
+        // return time. Shared by the pre-buy replay branches and the 23505
+        // duplicate-insert recovery in the persist branch below.
+        const respondWithExistingShipment = async (): Promise<Response | null> => {
+            const { data: rows } = await supabase
+                .from("shipments")
+                .select("id, public_code, cancel_token, label_url, tracking_number, carrier, service, link:sendmo_links(short_code)")
+                .eq("easypost_shipment_id", easypost_shipment_id)
+                .limit(1);
+            const row = rows?.[0];
+            if (!row) return null;
+            const linkJoin = row.link as { short_code?: string | null } | { short_code?: string | null }[] | null;
+            const shortCode = Array.isArray(linkJoin) ? linkJoin[0]?.short_code : linkJoin?.short_code;
+            log({
+                event_type: "label.buy_replayed_idempotent",
+                session_id: sessionId,
+                severity: "info",
+                entity_type: "shipment",
+                entity_id: row.id,
+                properties: { easypost_shipment_id, payment_intent_id: verifiedPaymentIntent?.id ?? null },
+            });
+            return new Response(
+                JSON.stringify({
+                    tracking_number: row.tracking_number,
+                    label_url: row.label_url,
+                    carrier: row.carrier,
+                    service: row.service,
+                    public_code: row.public_code,
+                    short_code: shortCode ?? null,
+                    shipment_id: row.id,
+                    cancel_token: row.cancel_token,
+                    already_purchased: true,
+                }),
+                { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        };
+        {
+            const lookupStart = Date.now();
+            // .limit(1) not .maybeSingle(): pre-045 environments can hold
+            // duplicate rows for one shipment id, and maybeSingle() errors on
+            // them — which would 503 every replay of exactly the ids that
+            // need the idempotent answer most.
+            const { data: existRows, error: existErr } = await supabase
+                .from("shipments")
+                .select("id, stripe_payment_intent_id, payment_method")
+                .eq("easypost_shipment_id", easypost_shipment_id)
+                .limit(1);
+            if (existErr) {
+                // Can't prove idempotency — refuse rather than risk the replay
+                // refund. Post-charge on the paid legs, so a human is paged;
+                // no auto-refund from here (on a true replay the label already
+                // exists and its payment must stay matched to it).
+                log({
+                    event_type: "label.idempotency_lookup_error",
+                    session_id: sessionId,
+                    severity: "error",
+                    entity_type: "label",
+                    entity_id: easypost_shipment_id,
+                    duration_ms: Date.now() - lookupStart,
+                    properties: { error_message: existErr.message, payment_intent_id: verifiedPaymentIntent?.id ?? null },
+                });
+                runInBackground(
+                    sendAdminAlert({
+                        subject: "Label buy refused — idempotency lookup failed",
+                        heading: "Idempotency Lookup Failed",
+                        intro: "The pre-buy shipments lookup errored, so the buy was refused. If a payment was captured and the customer does not retry successfully, they may need a manual refund.",
+                        rows: [
+                            { label: "EasyPost shipment", value: easypost_shipment_id },
+                            { label: "PaymentIntent", value: verifiedPaymentIntent?.id ?? "none (comp)" },
+                            { label: "DB error", value: existErr.message },
+                            { label: "Mode", value: isLive ? "LIVE" : "Test" },
+                        ],
+                        source: "labels buy idempotency (label.idempotency_lookup_error)",
+                    }),
+                    "idempotency_lookup_error_alert",
+                );
+                return new Response(
+                    JSON.stringify({
+                        error: "We hit a temporary problem completing your purchase. Please try again in a moment; if you were charged and don't receive a confirmation email, contact support@sendmo.co.",
+                    }),
+                    { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+            const existing = existRows?.[0] ?? null;
+            const decision = decideBuyReplay({
+                rowExists: !!existing,
+                existingPiId: existing?.stripe_payment_intent_id ?? null,
+                rowIsComp: existing?.payment_method === "comp",
+                verifiedPiId: verifiedPaymentIntent?.id ?? null,
+                isComp,
+            });
+            if ((decision === "return_existing" || decision === "return_existing_repair") && existing) {
+                if (decision === "return_existing_repair" && verifiedPaymentIntent) {
+                    // The original buy's forward-stitch never landed. Repair it
+                    // so cancel/receipt resolution and the next replay bind
+                    // directly. Best-effort — the replay answer works either way.
+                    const { error: repairErr } = await supabase
+                        .from("shipments")
+                        .update({ stripe_payment_intent_id: verifiedPaymentIntent.id })
+                        .eq("id", existing.id)
+                        .is("stripe_payment_intent_id", null);
+                    log({
+                        event_type: "label.replay_stitch_repaired",
+                        session_id: sessionId,
+                        severity: repairErr ? "warn" : "info",
+                        entity_type: "shipment",
+                        entity_id: existing.id,
+                        properties: {
+                            payment_intent_id: verifiedPaymentIntent.id,
+                            repair_error: repairErr?.message ?? null,
+                        },
+                    });
+                }
+                const replayResp = await respondWithExistingShipment();
+                if (replayResp) return replayResp;
+                // Row vanished between the probe and the re-read — fall
+                // through to the normal buy path (EasyPost/the unique index
+                // still backstop it).
+            }
+            if (decision === "refund_mismatch" || decision === "refuse_mismatch") {
+                // The row exists but this request's payment is not its
+                // payment. 409 without the row's fields — cancel_token is a
+                // credential (review B4). refund_mismatch additionally makes
+                // the REQUEST's payer whole: their charge (possibly a fresh
+                // capture — Stripe idempotency keys expire after 24h) bought
+                // nothing. The row's own payment is never touched.
+                log({
+                    event_type: "label.buy_replay_binding_mismatch",
+                    session_id: sessionId,
+                    severity: "error",
+                    entity_type: "label",
+                    entity_id: easypost_shipment_id,
+                    properties: {
+                        existing_pi: existing?.stripe_payment_intent_id ?? null,
+                        request_pi: verifiedPaymentIntent?.id ?? null,
+                        is_comp: isComp,
+                        refunding_request_pi: decision === "refund_mismatch",
+                    },
+                });
+                let refunded = false;
+                if (decision === "refund_mismatch") {
+                    const { refundIssued } = await refundVerifiedPiOrAlert({
+                        failureReason: "buy_replay_mismatch",
+                        idemSuffix: "replay_mismatch",
+                        alertSubject: "Label buy refused — replayed shipment, mismatched payment refunded",
+                        alertIntro: "A buy request arrived for a shipment that already has a shipments row, bound to a different payment. The request's own charge bought nothing and was refunded. Worth a look if it repeats (probe vs. double-checkout).",
+                        extraRows: [{ label: "Existing row PI", value: String(existing?.stripe_payment_intent_id ?? "none") }],
+                    });
+                    refunded = refundIssued;
+                } else {
+                    runInBackground(
+                        sendAdminAlert({
+                            subject: "Label buy refused — replay with no payment to bind",
+                            heading: "Replay With Mismatched Payment",
+                            intro: "A no-payment (comp) buy request arrived for a shipment whose existing row does not match it. Either a probe or a mis-driven admin action — investigate.",
+                            rows: [
+                                { label: "EasyPost shipment", value: easypost_shipment_id },
+                                { label: "Existing row PI", value: String(existing?.stripe_payment_intent_id ?? "none") },
+                                { label: "Mode", value: isLive ? "LIVE" : "Test" },
+                            ],
+                            source: "labels buy idempotency (label.buy_replay_binding_mismatch)",
+                        }),
+                        "replay_mismatch_alert",
+                    );
+                }
+                return new Response(
+                    JSON.stringify({
+                        error: "already_purchased",
+                        code: "SHIPMENT_ALREADY_PURCHASED",
+                        refunded,
+                        message: "This shipment has already been purchased" +
+                            (refunded ? " — your charge for this attempt has been refunded." : ".") +
+                            " If you believe this is an error, contact support@sendmo.co with reference " + easypost_shipment_id,
+                    }),
+                    { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                );
+            }
+        }
+
         const apiKey = Deno.env.get(isLive ? "EASYPOST_API_KEY" : "EASYPOST_TEST_API_KEY");
         if (!apiKey) {
+            // Post-charge on every paid leg (the flex PI above has already
+            // captured; full-label/seller PIs captured before this call) — a
+            // bare 500 here used to strand the buyer's money (N6/WISHLIST).
+            const { refundIssued } = await refundVerifiedPiOrAlert({
+                failureReason: "easypost_key_missing",
+                idemSuffix: "key_missing",
+                alertSubject: "Label buy aborted — EasyPost API key not configured",
+                alertIntro: `The ${isLive ? "live" : "test"} EasyPost API key is missing, so a paid label buy could not proceed.`,
+            });
             return new Response(
-                JSON.stringify({ error: `EasyPost ${isLive ? 'Live' : 'Test'} API key not configured` }),
+                JSON.stringify({
+                    error: `EasyPost ${isLive ? 'Live' : 'Test'} API key not configured`,
+                    refunded: refundIssued,
+                }),
                 { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
             );
         }
 
         const authHeader = "Basic " + btoa(apiKey + ":");
 
-        // Create EndShipper (required for USPS labels)
+        // Create EndShipper (required for USPS labels).
+        // safeFetchJson (PR1): a thrown fetch or a non-JSON body here used to
+        // escape to the outer catch — a bare 500 AFTER the paid legs charged.
+        // Failures now land in the branch below, which refunds.
         const endShipperStart = Date.now();
-        const endShipperResponse = await fetch(
+        const endShipperResult = await safeFetchJson(
             "https://api.easypost.com/v2/end_shippers",
             {
                 method: "POST",
@@ -1226,8 +1597,8 @@ Deno.serve(async (req: Request) => {
                 }),
             }
         );
-
-        const endShipperData = await endShipperResponse.json();
+        const endShipperResponse = { ok: endShipperResult.ok, status: endShipperResult.status };
+        const endShipperData = endShipperResult.data as { id?: string; error?: { message?: string; code?: string } };
         const endShipperElapsed = Date.now() - endShipperStart;
 
         if (!endShipperResponse.ok || endShipperData.error) {
@@ -1249,8 +1620,17 @@ Deno.serve(async (req: Request) => {
                 },
             });
 
+            // Post-charge (N6/WISHLIST): the paid legs have already captured by
+            // here — refund + page instead of stranding the buyer's money.
+            const { refundIssued } = await refundVerifiedPiOrAlert({
+                failureReason: "endshipper_failed",
+                idemSuffix: "endshipper_failed",
+                alertSubject: "Label buy aborted — EndShipper creation failed",
+                alertIntro: "EasyPost refused the EndShipper create, so a paid label buy could not proceed.",
+                extraRows: [{ label: "EndShipper error", value: endShipperData.error?.message ?? "Unknown error" }],
+            });
             return new Response(
-                JSON.stringify({ error: errorMsg }),
+                JSON.stringify({ error: errorMsg, refunded: refundIssued }),
                 { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
             );
         }
@@ -1590,7 +1970,11 @@ Deno.serve(async (req: Request) => {
         // paid, then retry once. If any of that fails we fall through to the
         // existing refund path unchanged.
         const buyStart = Date.now();
-        const doBuy = (rateId: string) => fetch(
+        // safeFetchJson (PR1): a thrown buy — fetch failure or a non-JSON CDN
+        // error page — used to escape to the outer catch as a bare 500 with
+        // the buyer charged, no refund, and nobody paged. It now lands in the
+        // `!buyResponse.ok` branch below, which refunds and alerts.
+        const doBuy = (rateId: string) => safeFetchJson(
             `https://api.easypost.com/v2/shipments/${easypost_shipment_id}/buy`,
             {
                 method: "POST",
@@ -1619,8 +2003,9 @@ Deno.serve(async (req: Request) => {
         let boughtRateId = easypost_rate_id;
         let rerateOutcome: RerateOutcome = "not_attempted";
         let retryFailureDetail: string | null = null;
-        let buyResponse = await doBuy(easypost_rate_id);
-        let buyData = await buyResponse.json();
+        const firstBuy = await doBuy(easypost_rate_id);
+        let buyResponse: { ok: boolean; status: number | null } = firstBuy;
+        let buyData = firstBuy.data;
 
         if (buyResponse.status === 404 || buyData.error?.code === "NOT_FOUND") {
             // Retrying cannot produce two labels: this branch is only reachable
@@ -1710,8 +2095,9 @@ Deno.serve(async (req: Request) => {
                             },
                         });
                     } else {
-                        const retryResp = await doBuy(fresh.id);
-                        const retryData = await retryResp.json();
+                        const retry = await doBuy(fresh.id);
+                        const retryResp = retry;
+                        const retryData = retry.data;
                         if (retryResp.ok && !retryData.error) {
                             rerateOutcome = "recovered";
                             boughtRateId = fresh.id;
@@ -2017,6 +2403,27 @@ Deno.serve(async (req: Request) => {
                         : null
                 });
                 if (error) {
+                    // Duplicate-insert recovery (PR1): with migration 045's
+                    // unique index, a genuinely concurrent double-buy that
+                    // slipped past the pre-buy check (both requests probed
+                    // before either row landed) now fails here with 23505
+                    // instead of minting a second row. The winner's row IS
+                    // this purchase — return it, exactly like the pre-buy
+                    // replay path does.
+                    if (error.code === "23505" && /easypost_shipment_id/.test(error.message ?? "")) {
+                        const dupResp = await respondWithExistingShipment();
+                        if (dupResp) {
+                            log({
+                                event_type: "label.db_persist_duplicate_recovered",
+                                session_id: sessionId,
+                                severity: "warn",
+                                entity_type: "label",
+                                entity_id: easypost_shipment_id,
+                                properties: { payment_intent_id: verifiedPaymentIntent?.id ?? null },
+                            });
+                            return dupResp;
+                        }
+                    }
                     console.error('admin_insert_shipment error:', error);
                     log({
                         event_type: "label.db_persist_error",
@@ -2030,6 +2437,31 @@ Deno.serve(async (req: Request) => {
                             error_details: error.details,
                         }
                     });
+                    // PR1: SendMo has paid EasyPost and the buyer is charged,
+                    // but there is no shipments row to refund/track against —
+                    // this used to log-and-move-on with nobody paged, unlike
+                    // the buy-error path. A human must reconcile it same-day.
+                    // Backgrounded: this branch still falls through to the
+                    // label response, so the alert must not add SMTP latency
+                    // to the buyer's wait.
+                    runInBackground(
+                        sendAdminAlert({
+                            subject: "Shipment persist FAILED after label buy — manual reconciliation required",
+                            heading: "Label Bought, DB Row Missing",
+                            intro: "EasyPost sold the label and (on paid legs) the buyer is charged, but admin_insert_shipment failed — " +
+                                "there is no shipments row, so tracking, cancel/refund, and the dashboard cannot see this shipment. " +
+                                "Insert the row (or refund) manually.",
+                            rows: [
+                                { label: "EasyPost shipment", value: easypost_shipment_id },
+                                { label: "Tracking number", value: String(trackingNumber ?? "unknown") },
+                                { label: "PaymentIntent", value: verifiedPaymentIntent?.id ?? "none (comp)" },
+                                { label: "DB error", value: error.message },
+                                { label: "Mode", value: isLive ? "LIVE" : "Test" },
+                            ],
+                            source: "labels admin_insert_shipment (label.db_persist_error)",
+                        }),
+                        "label_persist_failed_alert",
+                    );
                 } else {
                     // admin_insert_shipment returns TABLE(out_id, out_public_code, out_short_code) — array of rows.
                     // Migration 019 renamed OUT params with out_ prefix to avoid shadowing column names inside the RPC body.
@@ -2040,6 +2472,22 @@ Deno.serve(async (req: Request) => {
                     dbShipmentId = shipmentId ?? null;
                     dbPublicCode = publicCode ?? null;
                     dbShortCode = shortCode ?? null;
+
+                    // Comp marker (PR1): the RPC has no payment_method param,
+                    // so comp rows land at the column's DEFAULT 'card'. The
+                    // buy-idempotency decision uses payment_method='comp' to
+                    // tell a comp row from a paid row whose PI stitch failed —
+                    // stamp it via the item_description follow-up-UPDATE
+                    // pattern (never an RPC-signature change).
+                    if (shipmentId && isComp) {
+                        const { error: pmErr } = await supabase
+                            .from('shipments')
+                            .update({ payment_method: 'comp' })
+                            .eq('id', shipmentId);
+                        if (pmErr) {
+                            console.error('comp payment_method stamp error:', pmErr);
+                        }
+                    }
 
                     // ── Admin notice: every label creation (John's ask) ──────
                     // Operational FYI to SENDMO_ADMIN_EMAIL on EVERY successful
@@ -2594,6 +3042,41 @@ Deno.serve(async (req: Request) => {
         );
     } catch (err) {
         console.error("Label purchase error:", err);
+        // PR1: this used to be a silent bare 500. With the buy segment now
+        // funneling its own throws into the refund path, reaching here means
+        // an unclassified bug. Always leave a queryable trace (Rule 20:
+        // telemetry first); page a human ONLY when money was in flight — the
+        // endpoint is anon-callable, so alerting on every malformed request
+        // would let anyone flood the admin inbox. No auto-refund from here:
+        // this catch cannot prove the buy did NOT succeed, and refunding a
+        // delivered label is its own incident.
+        log({
+            event_type: "label.unhandled_error",
+            session_id: sessionId,
+            severity: "error",
+            entity_type: "label",
+            entity_id: reqShipmentId ?? "unknown",
+            properties: {
+                error_message: err instanceof Error ? err.message : String(err),
+                payment_intent_id: verifiedPaymentIntent?.id ?? null,
+                charged: !!verifiedPaymentIntent,
+            },
+        });
+        if (verifiedPaymentIntent) {
+            await sendAdminAlert({
+                subject: "Labels function crashed AFTER a charge — manual review required",
+                heading: "Unhandled Labels Error (charge in flight)",
+                intro: "The labels function threw outside every handled branch AFTER a payment was verified/captured. " +
+                    "Check whether a label was bought and whether the customer needs a refund — nothing automatic ran.",
+                rows: [
+                    { label: "Error", value: err instanceof Error ? err.message : String(err) },
+                    { label: "EasyPost shipment", value: reqShipmentId ?? "unknown" },
+                    { label: "PaymentIntent", value: verifiedPaymentIntent.id },
+                    { label: "Session", value: sessionId },
+                ],
+                source: "labels outer catch (label.unhandled_error)",
+            });
+        }
         return new Response(
             JSON.stringify({ error: "Internal server error" }),
             { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }

@@ -12,6 +12,25 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-29] PR1 — the label buy is un-replayable; every post-charge failure now refunds or pages
+
+**Category:** fix | security
+**Cross-link:** [`proposals/2026-08-28_seller-link-launch_reviewed-2026-08-28_decided-2026-08-29.md`](proposals/2026-08-28_seller-link-launch_reviewed-2026-08-28_decided-2026-08-29.md) §3 PR1 (+ review B4, N5, N6) · closes the 2026-08-28 replay-hole finding below · WISHLIST "EndShipper / missing-EP-key 500 strands an on-session buyer's money" (fixed here)
+
+**Browser-verified:**
+  spec: tests/e2e/sender-questions.spec.ts ("a replayed buy is refused with the human copy")
+  variants-covered: [flex replay-mismatch 409 copy; unit truth-table covers {full-label, flex, seller, comp} × {first-buy, replay-match, replay-repair, replay-mismatch, no-payment}; comp replay end-to-end in tests/integration/labels-buy-idempotency.test.ts (env-gated)]
+
+**The replay hole is closed at three layers.** (1) Before any claim/buy, `labels/` looks up an existing `shipments` row for the request's `easypost_shipment_id` (one probe against the new partial unique index) and decides via [`_shared/buy-idempotency.ts`](supabase/functions/_shared/buy-idempotency.ts): a payment-matched replay gets the original label back (200 + `already_purchased: true`); a paid row whose PI forward-stitch never landed gets the label back AND the stitch repaired (all three legs verify the PI↔shipment binding first, so the verified PI IS that shipment's payment); a mismatched paid request gets 409 and **its own PI refunded** (it bought nothing — Stripe idempotency keys expire after 24h, so a stale resubmit can carry a fresh capture; the in-session code review caught that refusing without refunding would have KEPT that second charge); a no-payment mismatch fails closed. (2) Migration 045 adds the partial UNIQUE index on `shipments.easypost_shipment_id` — a concurrent double-buy that slips the pre-check now 23505s on insert and is answered with the winner's row, not a 200 full of nulls. (3) A refunded-but-still-`succeeded` PI is rejected at verification (`isPaymentIntentRefunded`, `_shared/stripe.ts`) so the new auto-refund branches can't be replayed into a free label.
+
+**Post-charge failures stop stranding money silently:** EasyPost buy calls route through `safeFetchJson` (`_shared/easypost-rates.ts`) so thrown fetches/non-JSON bodies land in the existing refund+alert branch instead of a bare 500; the EndShipper-failure and missing-EP-key branches refund + page (`refundVerifiedPiOrAlert`); `admin_insert_shipment` failure now pages (backgrounded — that branch still returns the bought label); the outer catch logs `label.unhandled_error` and pages only when a charge was in flight (anon-callable endpoint — alerting on every malformed body would be an inbox-flood vector). Client: `buyLabel`/`buyLabelSeller` surface the 409's `message` (support copy + reference), not the machine token. Comp rows now get `payment_method='comp'` stamped (the RPC leaves the column at DEFAULT 'card'), which is what lets the replay decision tell a comp row from a stitch-failed paid row.
+
+**Deviation from the proposal text, deliberate:** migration 045 uses a plain `CREATE UNIQUE INDEX`, not `CONCURRENTLY` — supabase migrations run in a transaction, where CONCURRENTLY cannot; at 40 rows the lock is sub-millisecond. Q5 is settled by the repo itself: `labels/index.ts` documents EasyPost refuses re-buying a purchased shipment, so the replay outcome was the refund, not a duplicate row.
+
+**Gotcha for the next agent:** the in-session code review (5 finder angles) caught a money **regression** in the first draft of this very fix — `refuse_mismatch` without a refund would have kept a double-charge the OLD code refunded via the EasyPost-rebuy-failure path. Idempotency changes on a money path need the "what did the old failure path do with the money" question asked explicitly.
+
+---
+
 ### [2026-08-28] Seller-link launch proposal — reviewed (approve-with-changes)
 
 **Category:** review
