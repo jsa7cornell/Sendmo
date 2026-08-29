@@ -33,6 +33,11 @@ describe("LinksTab — Close listing", () => {
     expect(screen.queryByRole("link", { name: /Manage/i })).toBeNull();
   });
 
+  it("shows the listing's item text on the seller card (PR12)", () => {
+    renderTab({ link_type: "seller_link", status: "active", notes: "Vintage armchair" });
+    expect(screen.getByText("Vintage armchair")).toBeInTheDocument();
+  });
+
   it("hides it on flex links and non-active seller links", () => {
     renderTab({ link_type: "flexible", status: "active" });
     expect(screen.queryByRole("button", { name: /Close listing/i })).toBeNull();

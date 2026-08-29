@@ -250,7 +250,7 @@ export default function Dashboard() {
       // flexible all represented so the user sees their full inventory.
       const allLinksPromise = supabase
         .from("sendmo_links")
-        .select("id, short_code, link_type, status, created_at, updated_at, recipient_address:addresses!recipient_address_id(name, city, state)")
+        .select("id, short_code, link_type, status, notes, created_at, updated_at, recipient_address:addresses!recipient_address_id(name, city, state)")
         .eq("user_id", user.id)
         .order("updated_at", { ascending: false })
         .limit(50);

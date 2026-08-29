@@ -38,6 +38,8 @@ interface LinkWithShipments {
   short_code: string;
   link_type: string;
   status: string;
+  /** Seller listings: the item text — the card's human name (PR12). */
+  notes?: string | null;
   created_at: string;
   recipient_address: {
     name: string | null;
@@ -153,6 +155,9 @@ export default function LinksTab({ links, loading, onCloseLink }: Props) {
                       {linkTypeLabel(l.link_type)}
                     </Badge>
                   </div>
+                  {l.link_type === "seller_link" && l.notes && (
+                    <p className="text-xs text-foreground truncate">{l.notes}</p>
+                  )}
                   {recipientLine && (
                     <p className="text-xs text-muted-foreground">For {recipientLine}</p>
                   )}
@@ -224,18 +229,13 @@ export default function LinksTab({ links, loading, onCloseLink }: Props) {
               </ul>
             )}
 
-            {/* Overflow link when total > 5. Target page is stubbed for now —
-                routes to ?tab=shipments&link=<short_code> so the Shipments
-                tab can filter when that feature lands. */}
+            {/* Overflow (Q4 decided + PR11 review #4): the old "View all N"
+                link targeted a STUBBED filter, and N derived from the 50-row
+                shipments window — an authoritative-looking wrong number. Say
+                only what we know until the filter exists. */}
             {hasMore && (
-              <div className="px-5 py-2.5 border-t border-border/60 bg-muted/20">
-                <Link
-                  to={`/dashboard?tab=shipments&link=${l.short_code}`}
-                  className="text-xs text-primary hover:underline inline-flex items-center gap-1"
-                >
-                  View all {l.total_shipments} shipments
-                  <ChevronRight className="w-3 h-3" />
-                </Link>
+              <div className="px-5 py-2.5 border-t border-border/60 bg-muted/20 text-xs text-muted-foreground">
+                Showing the {l.shipments.length} most recent shipments on this link.
               </div>
             )}
           </div>
