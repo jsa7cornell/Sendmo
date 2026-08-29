@@ -609,7 +609,11 @@ Deno.serve(async (req: Request) => {
         {
             const sellerSaleBuyerEmail = (shipment as { buyer_email?: string | null }).buyer_email ?? null;
             const sellerOwnerUserId = linkRow?.user_id ?? null;
-            if (sellerSaleBuyerEmail && sellerOwnerUserId) {
+            // No notice when the SELLER cancelled their own sale (review #3):
+            // the copy is written for a surprised recipient, and confirming a
+            // person's own click is noise. Buyer- and admin-initiated cancels
+            // are the surprises this email exists for.
+            if (sellerSaleBuyerEmail && sellerOwnerUserId && actor !== "link_owner") {
                 try {
                     const { data: sellerProfile } = await supabase
                         .from("profiles")
@@ -628,11 +632,25 @@ Deno.serve(async (req: Request) => {
                                 status: "sent",
                                 provider_id: shipment.public_code,
                             });
+                        // 23505 = the migration-035 dedup index fired (already
+                        // sent) — the expected skip. Anything else is a real
+                        // insert failure and must not vanish silently (review #5a).
+                        if (noticeLogErr && (noticeLogErr as { code?: string }).code !== "23505") {
+                            log({
+                                event_type: "cancel.seller_notice_log_error",
+                                session_id: sessionId,
+                                severity: "warn",
+                                source: "cancel-label",
+                                entity_type: "shipment",
+                                entity_id: shipment.id,
+                                properties: { error_message: noticeLogErr.message },
+                            });
+                        }
                         if (!noticeLogErr) {
                             const tpl = sellerSaleCancelledEmail({
                                 publicCode: shipment.public_code,
                                 itemDescription: (shipment as { item_description?: string | null }).item_description ?? null,
-                                cancelledByBuyer: actor === "session_token" || actor === "email_token",
+                                cancelledBy: actor === "admin" ? "admin" : "buyer",
                                 trackingUrl: `https://sendmo.co/t/${shipment.public_code}`,
                             });
                             try {
@@ -647,13 +665,18 @@ Deno.serve(async (req: Request) => {
                                     properties: { public_code: shipment.public_code },
                                 });
                             } catch (noticeErr) {
+                                // DELETE the dedup row on a failed send (review
+                                // #5b): the unique index has no status
+                                // predicate, so a 'failed' row would block the
+                                // retry forever.
                                 const msg = noticeErr instanceof Error ? noticeErr.message : String(noticeErr);
                                 console.error("[cancel-label] seller notice send failed:", msg);
                                 await supabase
                                     .from("notifications_log")
-                                    .update({ status: "failed", error_message: msg })
+                                    .delete()
                                     .eq("shipment_id", shipment.id)
-                                    .eq("event_type", "cancel.seller_notice");
+                                    .eq("event_type", "cancel.seller_notice")
+                                    .is("contact_id", null);
                             }
                         }
                     }

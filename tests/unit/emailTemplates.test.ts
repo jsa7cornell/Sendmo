@@ -408,16 +408,26 @@ describe("email HTML injection guard (PR7 review)", () => {
 import { sellerSaleCancelledEmail as _ssce, refundSubmittedEmail as _rse } from "../../supabase/functions/_shared/email-templates";
 
 describe("seller-sale cancellation emails (PR13)", () => {
-  it("tells the seller not to ship, naming the item (escaped)", () => {
+  it("tells the seller not to ship — HTML escaped, subject PLAIN (entities in a subject render literally)", () => {
     const tpl = _ssce({
-      publicCode: "PC9", itemDescription: `<b>Vintage</b> armchair`,
-      cancelledByBuyer: true, trackingUrl: "https://sendmo.co/t/PC9",
+      publicCode: "PC9", itemDescription: `<b>Vintage</b> & 12" armchair`,
+      cancelledBy: "buyer", trackingUrl: "https://sendmo.co/t/PC9",
     });
-    expect(tpl.subject).toContain("don't ship");
+    expect(tpl.subject).toContain(`<b>Vintage</b> & 12" armchair`);
+    expect(tpl.subject).not.toContain("&amp;");
+    expect(tpl.subject).not.toContain("&quot;");
     expect(tpl.html).toContain("Don't ship this one");
     expect(tpl.html).toContain("The buyer cancelled");
     expect(tpl.html).not.toContain("<b>Vintage</b>");
     expect(tpl.html).toContain("&lt;b&gt;Vintage&lt;/b&gt;");
+  });
+
+  it("admin cancels say so to the seller", () => {
+    const tpl = _ssce({
+      publicCode: "PC9", itemDescription: null,
+      cancelledBy: "admin", trackingUrl: "https://sendmo.co/t/PC9",
+    });
+    expect(tpl.html).toContain("cancelled by our team");
   });
 
   it("the buyer's refund email says 'cancelled by the seller' — never 'you cancelled' or link-user copy", () => {

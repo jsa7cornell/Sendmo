@@ -658,27 +658,30 @@ export function refundSubmittedEmail(params: {
 export function sellerSaleCancelledEmail(params: {
   publicCode: string;
   itemDescription: string | null;
-  /** true → the buyer cancelled; false → seller/admin action (context only). */
-  cancelledByBuyer: boolean;
+  /** Who cancelled — drives the attribution line (review #3). */
+  cancelledBy: "buyer" | "admin";
   trackingUrl: string;
 }): { subject: string; html: string } {
-  const item = params.itemDescription?.trim()
-    ? escapeEmailHtml(params.itemDescription.trim().length > 60
+  // Subject is PLAIN TEXT (review #2): escaping there renders entities
+  // literally in the inbox ("&amp;quot;"). Escape only at the HTML sites.
+  const itemRaw = params.itemDescription?.trim()
+    ? (params.itemDescription.trim().length > 60
         ? `${params.itemDescription.trim().slice(0, 60)}…`
         : params.itemDescription.trim())
     : null;
-  const whoLine = params.cancelledByBuyer
+  const itemHtml = itemRaw ? escapeEmailHtml(itemRaw) : null;
+  const whoLine = params.cancelledBy === "buyer"
     ? "The buyer cancelled this sale and their payment is being refunded."
-    : "This sale was cancelled and the buyer's payment is being refunded.";
+    : "This sale was cancelled by our team and the buyer's payment is being refunded.";
   return {
-    subject: item
-      ? `Sale cancelled — don't ship "${item}"`
+    subject: itemRaw
+      ? `Sale cancelled — don't ship "${itemRaw}"`
       : "A sale on your listing was cancelled — don't ship it",
     html: layout(`
       <h2 style="margin:0 0 8px;font-size:20px;font-weight:600;color:#111827;">Don't ship this one</h2>
       <p style="margin:0 0 16px;font-size:14px;color:${GRAY_600};line-height:1.5;">
         ${whoLine} If you've already printed the label, discard it — it's been voided.
-        ${item ? `<br/>Item: <strong>${item}</strong>` : ""}
+        ${itemHtml ? `<br/>Item: <strong>${itemHtml}</strong>` : ""}
       </p>
       <p style="margin:0 0 16px;font-size:14px;color:${GRAY_600};line-height:1.5;">
         Your listing link isn't changed by this — if the item is still for sale, nothing to do.
