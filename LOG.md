@@ -12,6 +12,19 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-29] PR12 — sales appear under their listing; the dead overflow link goes honest
+
+**Category:** ship
+**Cross-link:** [`proposals/2026-08-28_seller-link-launch_reviewed-2026-08-28_decided-2026-08-29.md`](proposals/2026-08-28_seller-link-launch_reviewed-2026-08-28_decided-2026-08-29.md) §3 PR12 (Q4 decided: hide the stub) · resolves PR11 review #4
+
+**Browser-verified:**
+  spec: tests/unit/LinksTabClose.test.tsx (seller card shows the item text)
+  variants-covered: [seller card with notes; grouping itself lights up via PR11's rebind — verified in the §6 staging run]
+
+With PR11's rebind live, the Dashboard's existing child filter and the LinksTab card become correct with no query change — the permanent "No shipments yet" ends and the orphan buyer-named cards stop. This PR adds the two missing garnishes: `notes` on the allLinks select so the seller card is named by its item, and the "View all N shipments" overflow link — which targeted a STUBBED filter with an N derived from the 50-row window (PR11 review #4: authoritative-looking and wrong) — replaced by an honest "Showing the X most recent shipments on this link."
+
+---
+
 ### [2026-08-29] PR11 — shipments bind to the link that sold them; the throwaway retires
 
 **Category:** fix

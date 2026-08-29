@@ -79,6 +79,8 @@ interface DashboardLinkRow {
   short_code: string;
   link_type: "flexible" | "full_label" | "seller_link";
   status: "active" | "in_use" | "completed" | "used" | string;
+  /** Seller listings: the item text (PR12). */
+  notes: string | null;
   created_at: string;
   updated_at: string;
   recipient_address: {
@@ -250,7 +252,7 @@ export default function Dashboard() {
       // flexible all represented so the user sees their full inventory.
       const allLinksPromise = supabase
         .from("sendmo_links")
-        .select("id, short_code, link_type, status, created_at, updated_at, recipient_address:addresses!recipient_address_id(name, city, state)")
+        .select("id, short_code, link_type, status, notes, created_at, updated_at, recipient_address:addresses!recipient_address_id(name, city, state)")
         .eq("user_id", user.id)
         .order("updated_at", { ascending: false })
         .limit(50);
@@ -455,6 +457,10 @@ export default function Dashboard() {
       short_code: l.short_code,
       link_type: l.link_type,
       status: l.status,
+      // Explicit mapping — notes must be forwarded or the seller card's
+      // item line dies silently (PR12 review #1: the unit test renders
+      // LinksTab directly and can't catch a dropped field here).
+      notes: l.notes ?? null,
       created_at: l.created_at,
       recipient_address: l.recipient_address,
       shipments: children.slice(0, 5).map((s) => ({
