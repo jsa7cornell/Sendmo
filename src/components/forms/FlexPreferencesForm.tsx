@@ -202,17 +202,30 @@ function PriceGridModal({ onClose }: { onClose: () => void }) {
 export interface FlexPreferencesValue {
   speed_preference: SpeedTier;
   preferred_carrier: string;
+  /**
+   * Required even under hideCap (seller links never read or send it) — the
+   * flex consumers all do, and a shared-shape optional here would ripple
+   * through them for no gain. SellerBuilder's constraint keeps the default
+   * 100 as inert state.
+   */
   price_cap: number;
 }
 
 interface Props {
   value: FlexPreferencesValue;
   onChange: (v: FlexPreferencesValue) => void;
+  /**
+   * Seller links (PR4, decided: "no price cap"): on a buyer-pays link a cap
+   * protects nobody — the buyer spends their own money on options they pick —
+   * so the seller builder hides the cap and keeps carrier + speed. Flex links
+   * (recipient-pays) keep the cap: there it bounds someone ELSE's spend.
+   */
+  hideCap?: boolean;
 }
 
-export default function FlexPreferencesForm({ value, onChange }: Props) {
+export default function FlexPreferencesForm({ value, onChange, hideCap = false }: Props) {
   const [showOptional, setShowOptional] = useState(
-    value.preferred_carrier !== "any" || value.price_cap !== 100,
+    value.preferred_carrier !== "any" || (!hideCap && value.price_cap !== 100),
   );
   const [showPriceGrid, setShowPriceGrid] = useState(false);
 
@@ -307,7 +320,8 @@ export default function FlexPreferencesForm({ value, onChange }: Props) {
                   </p>
                 </div>
 
-                {/* Max shipping cost */}
+                {/* Max shipping cost — hidden on seller links (buyer-pays) */}
+                {!hideCap && (
                 <div>
                   <label className="text-sm font-medium text-foreground mb-2 block">Maximum shipping cost</label>
                   <div className="grid grid-cols-2 gap-2">
@@ -335,6 +349,7 @@ export default function FlexPreferencesForm({ value, onChange }: Props) {
                     Your sender won't see options above this price
                   </p>
                 </div>
+                )}
               </div>
             </motion.div>
           )}

@@ -12,6 +12,25 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-29] PR4 — no price cap on seller links, and honest "no options" copy for buyers
+
+**Category:** fix | ship
+**Cross-link:** [`proposals/2026-08-28_seller-link-launch_reviewed-2026-08-28_decided-2026-08-29.md`](proposals/2026-08-28_seller-link-launch_reviewed-2026-08-28_decided-2026-08-29.md) §3 PR4 (Q3 decided: remove the control, not just the default)
+
+**Browser-verified:**
+  spec: tests/e2e/buyer-flow.spec.ts ("empty rates blame the seller's filter or the carriers")
+  variants-covered: [seller_link buyer flow, empty-rates state; builder cap-control removal covered by tsc + the hideCap default leaving flex callers untouched]
+
+Every seller link was being stamped with a silent `$100` cap — including links whose builder promised "Buyer picks the carrier & speed". The seller create now writes `max_price_cents: NULL`, the cap control is gone from the seller builder (`FlexPreferencesForm` gains `hideCap`; flex links keep the cap — there it bounds someone ELSE's spend), and the platform-wide $200 ceiling stays as the runaway guard.
+
+**The gotcha that mattered: `x > null` coerces null to 0 in JS/TS**, so every pre-existing `amountCents > link.max_price_cents` comparison would have 403'd EVERY capless buy — seller-checkout and both labels cap-check sites now use an explicit `?? PLATFORM_MAX` effective cap. Anyone adding a nullable-cap consumer: never compare against `max_price_cents` raw.
+
+BuyerFlow's empty-rates copy stops blaming only the address — and (review catch) only mentions "the seller's shipping preferences" when the seller actually set one; an unconstrained link blames carrier coverage / the supported price range instead. First mocked e2e spec for the buyer surface (`tests/e2e/buyer-flow.spec.ts`, both copy variants) — later PRs extend it.
+
+**The review caught the launch-stopper:** `max_price_cents` has been `NOT NULL` since migration 001, so writing NULL without **migration 047** (DROP NOT NULL + `sendmo_links_cap_by_type_check` restricting NULL to seller_link + backfilling the two test fixtures + column COMMENT) would have 23502'd every seller create. The cap comparison now lives in one place — `effectiveLinkCapCents` in `_shared/pricing.ts` (used by seller-checkout + both labels sites, regression-tested in `pricing.test.ts`) — and the stale "cap composition" pricing test that asserted the retired seller invariant is replaced.
+
+---
+
 ### [2026-08-29] PR3 — the Marketplace card tells the truth; a sold link stops looking broken
 
 **Category:** fix | ship

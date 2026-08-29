@@ -45,3 +45,18 @@ export const MARKUP_FLAT_CENTS = 100;
 export function applyMarkup(rateDollars: number): number {
     return Math.round(rateDollars * 100 * MARKUP_MULTIPLIER) + MARKUP_FLAT_CENTS;
 }
+
+// Platform-wide display-price ceiling in cents — the runaway guard that
+// stands in when a link carries no cap of its own. Mirrors rates/'s
+// MAX_DISPLAY_PRICE ($200); keep the two in sync.
+export const PLATFORM_MAX_PRICE_CENTS = 200_00;
+
+/**
+ * The cap a link's charge must respect. Seller links carry max_price_cents
+ * NULL (PR4, decided: buyer-pays, no cap) — the platform ceiling applies.
+ * NEVER compare against max_price_cents raw: `x > null` coerces null to 0
+ * and 403s every capless buy (the PR4 review's gotcha).
+ */
+export function effectiveLinkCapCents(maxPriceCents: number | null | undefined): number {
+    return typeof maxPriceCents === "number" ? maxPriceCents : PLATFORM_MAX_PRICE_CENTS;
+}

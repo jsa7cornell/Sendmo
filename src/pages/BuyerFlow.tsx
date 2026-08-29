@@ -380,7 +380,14 @@ function RatesStep({
           <Package className="w-8 h-8 text-muted-foreground mx-auto mb-3" />
           <h2 className="text-lg font-bold text-foreground mb-2">No options for this address</h2>
           <p className="text-sm text-muted-foreground mb-3">
-            We couldn't find a shipping option to that address. Double-check it and try again.
+            {/* Not only an address problem (PR4): the seller's carrier/speed
+                filter or the platform's $200 price ceiling can remove every
+                option — "double-check your address" alone misdirects a buyer
+                whose address is fine. The seller-preferences clause only
+                renders when the seller actually set one (review #4). */}
+            {linkData.preferred_carrier || linkData.preferred_speed
+              ? "The seller's shipping preferences didn't leave an option for this address. Double-check the address; if it's right, ask the seller to loosen their shipping settings."
+              : "No carrier could quote this shipment to that address within our supported price range. Double-check the address; if it's right, this destination may be out of reach for this package."}
           </p>
           <Button variant="outline" onClick={onBack} className="rounded-xl mt-2">
             <ArrowLeft className="w-4 h-4 mr-1" /> Edit address

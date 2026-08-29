@@ -17,7 +17,8 @@ import type { AddressInput, SpeedTier } from "@/lib/types";
 interface ShareValueSummary {
   speed_preference: SpeedTier;
   preferred_carrier: string;
-  price_cap: number;
+  /** Absent on seller links (PR4 — buyer-pays, no cap). */
+  price_cap?: number;
   address?: AddressInput;
 }
 
@@ -132,7 +133,7 @@ ${shortLink}`;
               <div>
                 <span className="capitalize">{value.speed_preference}</span>
                 {carrierLabel && <> · {carrierLabel}</>}
-                <> · ${value.price_cap} cap</>
+                {typeof value.price_cap === "number" && <> · ${value.price_cap} cap</>}
               </div>
             </div>
           </div>
