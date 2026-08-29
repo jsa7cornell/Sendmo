@@ -49,6 +49,17 @@ export default async function middleware(request: Request): Promise<Response | u
   const SUPABASE_URL = process.env["VITE_SUPABASE_URL"] ?? "";
   const SUPABASE_ANON_KEY = process.env["VITE_SUPABASE_ANON_KEY"] ?? "";
 
+  // The real viewer's IP, forwarded to the links function so its per-IP rate
+  // limit (PR2) buckets per viewer instead of pooling every sendmo.co page
+  // view into a handful of Vercel egress IPs (which would self-rate-limit
+  // our own unfurls). x-forwarded-for's FIRST hop is fine here: Vercel sets
+  // it on the inbound edge request, and this is a bucketing hint for a
+  // speed-bump limiter, not an auth signal.
+  const viewerIp =
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
+    request.headers.get("x-real-ip") ??
+    "";
+
   // Fetch link personalisation data (best-effort)
   let link: OgLinkPayload | null = null;
   if (SUPABASE_URL && SUPABASE_ANON_KEY) {
@@ -57,6 +68,7 @@ export default async function middleware(request: Request): Promise<Response | u
         `${SUPABASE_URL}/functions/v1/links?code=${encodeURIComponent(shortCode)}`,
         {
           headers: {
+            ...(viewerIp ? { "x-sendmo-client-ip": viewerIp } : {}),
             apikey: SUPABASE_ANON_KEY,
             Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
           },

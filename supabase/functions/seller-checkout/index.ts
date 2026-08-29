@@ -5,6 +5,21 @@ import { assertKeysMatchEnv } from "../_shared/env-guard.ts";
 import { checkLiveChargeAllowed } from "../_shared/allowlist.ts";
 import { applyMarkup } from "../_shared/pricing.ts";
 import { createPaymentIntent, type ShippingDetails } from "../_shared/stripe.ts";
+import { checkRateLimit, clientIpKey } from "../_shared/ratelimit.ts";
+import { checkDbRateLimit, shouldAlertFailedOpen } from "../_shared/dbratelimit.ts";
+import { sendAdminAlert } from "../_shared/alert.ts";
+import { runInBackground } from "../_shared/background.ts";
+
+// Anonymous, anon-callable, and every request costs a Stripe PI create plus a
+// real EasyPost GET — so it gets both limiter layers (PR2, seller-link launch
+// proposal): the free per-isolate speed bump, then the shared DB window.
+// 10/min per (IP, short_code): a legitimate buyer needs a handful of attempts
+// at most (card retries), while a crowd on one link from one IP is the
+// card-testing shape §2.6 worries about.
+const CHECKOUT_RATE_LIMIT = { max: 10, windowMs: 60_000 };
+// Code-independent per-IP ceiling (review PR2-#5): card testing is PI-create
+// volume from ONE actor, so N scraped codes must not mean N× the budget.
+const IP_WIDE_RATE_LIMIT = { max: 30, windowMs: 60_000 };
 
 // POST /seller-checkout
 //
@@ -136,6 +151,61 @@ Deno.serve(async (req: Request) => {
             : null;
         if (!sbAdmin) {
             return jsonResponse({ error: "Server configuration error" }, 500);
+        }
+
+        // ─── Rate limits (PR2) — before any EasyPost or Stripe spend ─────────
+        // Two keys (review PR2-#5): per-(IP, code) for the ordinary buyer
+        // retry budget, plus a code-INDEPENDENT per-IP ceiling — card testing
+        // is PI-create volume from one actor, and without the wide key an
+        // attacker holding N scraped codes gets N× the budget from one IP.
+        const callerIp = clientIpKey(req);
+        const limitKey = `seller-checkout:${callerIp}:${link_short_code}`;
+        const ipWideKey = `seller-checkout:ip:${callerIp}`;
+        if (checkRateLimit(limitKey, CHECKOUT_RATE_LIMIT) ||
+            checkRateLimit(ipWideKey, IP_WIDE_RATE_LIMIT)) {
+            return jsonResponse({ error: "Too many attempts. Please wait a moment and try again." }, 429);
+        }
+        const [dbLimit, dbIpLimit] = await Promise.all([
+            checkDbRateLimit(sbAdmin, limitKey, {
+                max: CHECKOUT_RATE_LIMIT.max,
+                windowSeconds: CHECKOUT_RATE_LIMIT.windowMs / 1000,
+            }),
+            checkDbRateLimit(sbAdmin, ipWideKey, {
+                max: IP_WIDE_RATE_LIMIT.max,
+                windowSeconds: IP_WIDE_RATE_LIMIT.windowMs / 1000,
+            }),
+        ]);
+        const failedOpen = dbLimit.failedOpen ? dbLimit : dbIpLimit.failedOpen ? dbIpLimit : null;
+        if (failedOpen) {
+            log({
+                event_type: "ratelimit.db_check_failed_open",
+                session_id: sessionId,
+                severity: "warn",
+                entity_type: "payment_intent",
+                properties: { error_message: failedOpen.error, key_scope: "seller_checkout" },
+            });
+            if (shouldAlertFailedOpen()) {
+                runInBackground(
+                    sendAdminAlert({
+                        subject: "Money-path rate limiter is failing open (seller-checkout)",
+                        heading: "DB Rate Limiter Failing Open",
+                        intro: "checkDbRateLimit errored, so seller-checkout is running on the per-isolate speed bump only. Most common cause: migration 046 not applied. One alert per isolate; see ratelimit.db_check_failed_open in event_logs for volume.",
+                        rows: [{ label: "Error", value: failedOpen.error ?? "unknown" }],
+                        source: "seller-checkout rate limit (ratelimit.db_check_failed_open)",
+                    }),
+                    "ratelimit_failed_open_alert",
+                );
+            }
+        }
+        if (dbLimit.rejected || dbIpLimit.rejected) {
+            log({
+                event_type: "seller_checkout.rate_limited",
+                session_id: sessionId,
+                severity: "warn",
+                entity_type: "payment_intent",
+                properties: { link_short_code, layer: "db", key: dbIpLimit.rejected ? "ip_wide" : "per_link" },
+            });
+            return jsonResponse({ error: "Too many attempts. Please wait a moment and try again." }, 429);
         }
 
         // ─── Resolve the SELLER link (service role — bypasses RLS) ────────────

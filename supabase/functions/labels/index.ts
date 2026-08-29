@@ -13,7 +13,8 @@ import {
     cancelPaymentIntent,
     isPaymentIntentRefunded,
 } from "../_shared/stripe.ts";
-import { checkRateLimit } from "../_shared/ratelimit.ts";
+import { checkRateLimit, clientIpKey } from "../_shared/ratelimit.ts";
+import { checkDbRateLimit, shouldAlertFailedOpen } from "../_shared/dbratelimit.ts";
 import { sendAdminAlert } from "../_shared/alert.ts";
 import { buildLabelCreatedNoticeRows } from "../_shared/label-notice.ts";
 import { resolveLiveMode } from "../_shared/mode.ts";
@@ -118,27 +119,18 @@ Deno.serve(async (req: Request) => {
         }
         reqShipmentId = String(easypost_shipment_id);
 
-        // Pattern D rate limit (flex sender path only). The full-label path
-        // is JWT-authenticated and the comp path requires admin, so neither
-        // needs anonymous-URL rate limiting. Only the flex sender-confirm
-        // path (link_short_code present, no JWT, no comp) is hit here.
-        if (link_short_code && !comp) {
-            const rateKey = `${senderIp}:${link_short_code}`;
-            if (checkRateLimit(rateKey, FLEX_RATE_LIMIT)) {
-                log({
-                    event_type: "label.flex_rate_limited",
-                    session_id: sessionId,
-                    severity: "warn",
-                    entity_type: "label",
-                    entity_id: easypost_shipment_id,
-                    properties: { ip: senderIp, link_short_code },
-                });
-                return new Response(
-                    JSON.stringify({ error: "Too many attempts. Please wait a moment and try again." }),
-                    { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-                );
-            }
+        // Format-guard link_short_code BEFORE it feeds any limiter key or
+        // query (review PR2-#1): an unbounded attacker-supplied string would
+        // otherwise mint a fresh multi-KB rate-limit key per request.
+        if (link_short_code !== undefined && link_short_code !== null &&
+            (typeof link_short_code !== "string" || !/^[a-zA-Z0-9]{1,20}$/.test(link_short_code))) {
+            return new Response(
+                JSON.stringify({ error: "Invalid link_short_code" }),
+                { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
         }
+        // (The flex rate limit now lives below, after the Supabase client
+        // exists — it needs the DB layer and the replay exemption.)
 
         // isLive starts from the client hint but is RE-DERIVED server-side
         // before any money or EasyPost-key decision (T1-1):
@@ -159,6 +151,88 @@ Deno.serve(async (req: Request) => {
         const supabase = (sbUrl && sbKey)
             ? createClient(sbUrl, sbKey, { auth: { autoRefreshToken: false, persistSession: false } })
             : null;
+
+        // ─── Flex/seller confirm rate limit (PR2) ────────────────
+        // Two layers on one key: the free per-isolate speed bump, then the
+        // shared DB window (migration 046 — the per-isolate bucket cannot
+        // hold where each request moves money). Keyed on clientIpKey (LAST
+        // x-forwarded-for hop — the first hop is client-prependable, review
+        // M2/PR2-#1), never the Radar-metadata senderIp. Fail-open with a
+        // once-per-isolate admin alert (a warn per request reads as noise
+        // when the real story is "the limiter is off" — PR2-#6).
+        //
+        // Replay exemption (PR2-#3): a rejected request whose shipment
+        // ALREADY has a shipments row is exactly the retry the PR1
+        // buy-idempotency layer exists to serve — it spends no money
+        // (idempotent return) and 429ing it strands a charged buyer. One
+        // indexed probe, only on the about-to-reject path.
+        if (link_short_code && !comp && supabase) {
+            const limiterIp = clientIpKey(req);
+            const limitKey = `labels:${limiterIp}:${link_short_code}`;
+            let rejectedLayer: "memory" | "db" | null = null;
+            if (checkRateLimit(limitKey, FLEX_RATE_LIMIT)) {
+                rejectedLayer = "memory";
+            } else {
+                const dbLimit = await checkDbRateLimit(supabase, limitKey, {
+                    max: FLEX_RATE_LIMIT.max,
+                    windowSeconds: FLEX_RATE_LIMIT.windowMs / 1000,
+                });
+                if (dbLimit.failedOpen) {
+                    log({
+                        event_type: "ratelimit.db_check_failed_open",
+                        session_id: sessionId,
+                        severity: "warn",
+                        entity_type: "label",
+                        entity_id: easypost_shipment_id,
+                        properties: { error_message: dbLimit.error, key_scope: "labels_flex" },
+                    });
+                    if (shouldAlertFailedOpen()) {
+                        runInBackground(
+                            sendAdminAlert({
+                                subject: "Money-path rate limiter is failing open (labels)",
+                                heading: "DB Rate Limiter Failing Open",
+                                intro: "checkDbRateLimit errored, so the labels flex confirm is running on the per-isolate speed bump only. Most common cause: migration 046 not applied. One alert per isolate; see ratelimit.db_check_failed_open in event_logs for volume.",
+                                rows: [{ label: "Error", value: dbLimit.error ?? "unknown" }],
+                                source: "labels flex rate limit (ratelimit.db_check_failed_open)",
+                            }),
+                            "ratelimit_failed_open_alert",
+                        );
+                    }
+                } else if (dbLimit.rejected) {
+                    rejectedLayer = "db";
+                }
+            }
+            if (rejectedLayer) {
+                const { data: replayRows } = await supabase
+                    .from("shipments")
+                    .select("id")
+                    .eq("easypost_shipment_id", easypost_shipment_id)
+                    .limit(1);
+                if (replayRows?.[0]) {
+                    log({
+                        event_type: "label.flex_rate_limit_bypassed_replay",
+                        session_id: sessionId,
+                        severity: "info",
+                        entity_type: "label",
+                        entity_id: easypost_shipment_id,
+                        properties: { link_short_code, layer: rejectedLayer },
+                    });
+                } else {
+                    log({
+                        event_type: "label.flex_rate_limited",
+                        session_id: sessionId,
+                        severity: "warn",
+                        entity_type: "label",
+                        entity_id: easypost_shipment_id,
+                        properties: { ip: limiterIp, link_short_code, layer: rejectedLayer },
+                    });
+                    return new Response(
+                        JSON.stringify({ error: "Too many attempts. Please wait a moment and try again." }),
+                        { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+                    );
+                }
+            }
+        }
 
         // ─── Flex-link resolution (proposal §3.5 + §3.6 + B3/B5) ─
         // When link_short_code is present, the server:

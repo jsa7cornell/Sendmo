@@ -566,6 +566,8 @@ Use **Supabase SQL Editor** (service role) to query this table for debugging.
 | `label.db_persist_duplicate_recovered` | labels fn | Insert hit the unique `easypost_shipment_id` index — returned the winner's row |
 | `label.pi_refund_check_skipped` | labels fn | Stripe charge read failed — refunded-PI guard skipped (fail-open, warn) |
 | `label.unhandled_error` | labels fn | Outer-catch 500; `charged` property says whether a PI was in flight |
+| `ratelimit.db_check_failed_open` | labels / seller-checkout | The DB-backed money-path limiter (migration 046) errored and the request was allowed through |
+| `seller_checkout.rate_limited` | seller-checkout fn | Buyer checkout rejected by the shared DB window (10/min per IP+code) |
 | `refund.admin_initiated` | refunds fn | Admin issued a Stripe refund via `/refunds` (H3 — info severity) |
 | `refund.admin_initiated_failed` | refunds fn | Admin refund Stripe call failed (H3 — error severity) |
 | `refund.failed` | stripe-webhook | Stripe `charge.refund.updated` with `status='failed'` — card couldn't accept refund (H3 D1 — error severity) |
