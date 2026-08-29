@@ -713,7 +713,12 @@ Deno.serve(async (req: Request) => {
                 );
             }
 
-            const sPriceCap = typeof price_cap_dollars === "number" ? price_cap_dollars : 100;
+            // No price cap on seller links (PR4, decided): the buyer pays
+            // their own shipping on options they pick, so a cap protects
+            // nobody — and the old silent $100 default bound links whose
+            // builder promised "Buyer picks the carrier & speed". NULL falls
+            // back to the platform-wide MAX_DISPLAY_PRICE guard in rates/.
+            // (price_cap_dollars stays honored on the flex branches below.)
             const { data: sellerLink, error: sellerLinkErr } = await supabase
                 .from("sendmo_links")
                 .insert({
@@ -730,7 +735,7 @@ Deno.serve(async (req: Request) => {
                     height_in: dims[2],
                     weight_hint_oz: dims[3],      // weight reuses weight_hint_oz (migration 040)
                     max_shipments: Number(max_shipments) === 1 ? 1 : null,  // 1 = single-use, null = reusable
-                    max_price_cents: Math.round(sPriceCap * 100),
+                    max_price_cents: null,
                     preferred_speed: speed_preference || null,
                     preferred_carrier: preferred_carrier === "any" ? null : (preferred_carrier || null),
                     notes: notes || null,

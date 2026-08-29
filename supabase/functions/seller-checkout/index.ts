@@ -3,7 +3,7 @@ import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { log } from "../_shared/logger.ts";
 import { assertKeysMatchEnv } from "../_shared/env-guard.ts";
 import { checkLiveChargeAllowed } from "../_shared/allowlist.ts";
-import { applyMarkup } from "../_shared/pricing.ts";
+import { applyMarkup, effectiveLinkCapCents } from "../_shared/pricing.ts";
 import { createPaymentIntent, type ShippingDetails } from "../_shared/stripe.ts";
 import { checkRateLimit, clientIpKey } from "../_shared/ratelimit.ts";
 import { checkDbRateLimit, shouldAlertFailedOpen } from "../_shared/dbratelimit.ts";
@@ -20,6 +20,8 @@ const CHECKOUT_RATE_LIMIT = { max: 10, windowMs: 60_000 };
 // Code-independent per-IP ceiling (review PR2-#5): card testing is PI-create
 // volume from ONE actor, so N scraped codes must not mean N× the budget.
 const IP_WIDE_RATE_LIMIT = { max: 30, windowMs: 60_000 };
+
+
 
 // POST /seller-checkout
 //
@@ -340,7 +342,13 @@ Deno.serve(async (req: Request) => {
             }
             amountCents = applyMarkup(parseFloat(matched.rate));
         }
-        if (amountCents > link.max_price_cents) {
+        // PR4: seller links carry NO cap (max_price_cents NULL — the buyer
+        // spends their own money on options they pick). The platform-wide
+        // ceiling stands in as the runaway guard, mirroring rates/'s
+        // MAX_DISPLAY_PRICE. NOTE `amountCents > null` coerces null to 0 and
+        // would have 403'd EVERY capless checkout — hence the explicit guard.
+        const effectiveCapCents = effectiveLinkCapCents(link.max_price_cents);
+        if (amountCents > effectiveCapCents) {
             log({
                 event_type: "seller_checkout.cap_exceeded",
                 session_id: sessionId,
@@ -351,9 +359,10 @@ Deno.serve(async (req: Request) => {
                     link_short_code: link.short_code,
                     server_derived_cents: amountCents,
                     max_price_cents: link.max_price_cents,
+                    effective_cap_cents: effectiveCapCents,
                 },
             });
-            return jsonResponse({ error: "Rate exceeds the seller's price cap" }, 403);
+            return jsonResponse({ error: "Rate exceeds the maximum shipping price" }, 403);
         }
         if (amountCents < 50) {
             return jsonResponse({ error: "Amount below Stripe minimum" }, 400);

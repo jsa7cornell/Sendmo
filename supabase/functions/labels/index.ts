@@ -20,7 +20,7 @@ import { buildLabelCreatedNoticeRows } from "../_shared/label-notice.ts";
 import { resolveLiveMode } from "../_shared/mode.ts";
 import { assertKeysMatchEnv } from "../_shared/env-guard.ts";
 import { checkLiveChargeAllowed } from "../_shared/allowlist.ts";
-import { resolveGateBasisCents } from "../_shared/pricing.ts";
+import { resolveGateBasisCents, effectiveLinkCapCents as sharedEffectiveLinkCapCents } from "../_shared/pricing.ts";
 import { runInBackground } from "../_shared/background.ts";
 import { lookupRate, rerateAndMatch, rerateRetryCapCents, safeFetchJson } from "../_shared/easypost-rates.ts";
 import { decideBuyReplay } from "../_shared/buy-idempotency.ts";
@@ -556,6 +556,15 @@ Deno.serve(async (req: Request) => {
             // Server-derive display_price_cents from EasyPost rate (B5).
             // Client-supplied value is used only for audit logging; the gate
             // decision is on the server-derived number.
+            //
+            // PR4: seller links carry NO cap (max_price_cents NULL) — the
+            // platform ceiling stands in ($200, mirroring rates/'s
+            // MAX_DISPLAY_PRICE). NOTE `x > null` coerces null to 0 and would
+            // have 403'd every capless buy.
+            const effectiveLinkCapCents = sharedEffectiveLinkCapCents(link.max_price_cents);
+            const capExceededMsg = link.link_type === "seller_link"
+                ? "Rate exceeds the maximum shipping price"
+                : "Rate exceeds the recipient's price cap";
             const rateLookupKey = Deno.env.get(isLive ? "EASYPOST_API_KEY" : "EASYPOST_TEST_API_KEY");
             if (!rateLookupKey) {
                 return new Response(
@@ -589,7 +598,7 @@ Deno.serve(async (req: Request) => {
                     );
                 }
                 const serverCents = applyMarkup(parseFloat(matched.rate));
-                if (serverCents > link.max_price_cents) {
+                if (serverCents > effectiveLinkCapCents) {
                     log({
                         event_type: "label.cap_exceeded",
                         session_id: sessionId,
@@ -601,10 +610,11 @@ Deno.serve(async (req: Request) => {
                             server_derived_cents: serverCents,
                             client_supplied_cents: bodyDisplayPriceCents ?? null,
                             max_price_cents: link.max_price_cents,
+                            effective_cap_cents: effectiveLinkCapCents,
                         },
                     });
                     return new Response(
-                        JSON.stringify({ error: "Rate exceeds the recipient's price cap" }),
+                        JSON.stringify({ error: capExceededMsg }),
                         { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
                     );
                 }
@@ -612,7 +622,7 @@ Deno.serve(async (req: Request) => {
             } else {
                 const rateData = await rateLookupResp.json();
                 const serverCents = applyMarkup(parseFloat(rateData.rate));
-                if (serverCents > link.max_price_cents) {
+                if (serverCents > effectiveLinkCapCents) {
                     log({
                         event_type: "label.cap_exceeded",
                         session_id: sessionId,
@@ -624,10 +634,11 @@ Deno.serve(async (req: Request) => {
                             server_derived_cents: serverCents,
                             client_supplied_cents: bodyDisplayPriceCents ?? null,
                             max_price_cents: link.max_price_cents,
+                            effective_cap_cents: effectiveLinkCapCents,
                         },
                     });
                     return new Response(
-                        JSON.stringify({ error: "Rate exceeds the recipient's price cap" }),
+                        JSON.stringify({ error: capExceededMsg }),
                         { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
                     );
                 }

@@ -157,7 +157,10 @@ export default function SellerBuilder() {
     };
     if (constraintOn) {
       params.speed_preference = constraint.speed_preference;
-      params.price_cap_dollars = constraint.price_cap;
+      // No price cap on seller links (PR4, decided): the buyer pays their own
+      // shipping on options they pick, so a cap protects nobody. The server
+      // writes max_price_cents NULL; rates/ falls back to the platform-wide
+      // MAX_DISPLAY_PRICE ($200) runaway guard.
       // "any" carrier = no carrier constraint — omit it.
       if (constraint.preferred_carrier !== "any") {
         params.preferred_carrier = constraint.preferred_carrier;
@@ -239,7 +242,7 @@ export default function SellerBuilder() {
           value={{
             speed_preference: constraint.speed_preference,
             preferred_carrier: constraintOn ? constraint.preferred_carrier : "any",
-            price_cap: constraint.price_cap,
+            // price_cap omitted — seller links carry no cap (PR4).
             // Only surface the ship-from + constraint summary when the seller
             // actually set a constraint (LinkShareCard couples them in one line).
             address: constraintOn ? origin : undefined,
@@ -283,9 +286,8 @@ export default function SellerBuilder() {
                 <div className="text-foreground font-medium capitalize">{constraint.speed_preference}</div>
                 <div>
                   {constraint.preferred_carrier !== "any"
-                    ? `${constraint.preferred_carrier.toUpperCase()} · `
-                    : "Any carrier · "}
-                  up to ${constraint.price_cap}
+                    ? constraint.preferred_carrier.toUpperCase()
+                    : "Any carrier"}
                 </div>
               </>
             ) : (
@@ -453,7 +455,7 @@ export default function SellerBuilder() {
             <div>
               <p className="text-sm font-semibold text-foreground">Set a shipping limit</p>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Optional — cap the carrier, speed &amp; price the buyer can pick. Off means the buyer chooses freely.
+                Optional — limit the carrier &amp; speed the buyer can pick. Off means the buyer chooses freely. The buyer always sees the price before paying.
               </p>
             </div>
           </div>
@@ -461,7 +463,7 @@ export default function SellerBuilder() {
         </div>
         {constraintOn && (
           <div className="mt-5">
-            <FlexPreferencesForm value={constraint} onChange={setConstraint} />
+            <FlexPreferencesForm value={constraint} onChange={setConstraint} hideCap />
           </div>
         )}
       </div>
