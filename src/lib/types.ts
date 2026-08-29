@@ -36,7 +36,7 @@ export interface Address {
 // ─── SendMo Links ────────────────────────────────────────────
 export type LinkType = "full_label" | "flexible" | "seller_link";
 // NOTE: 'in_use'/'completed' per migration 020 (renamed 'used' → 'in_use', added 'completed').
-export type LinkStatus = "draft" | "active" | "in_use" | "completed" | "expired" | "cancelled";
+export type LinkStatus = "draft" | "active" | "in_use" | "completed" | "expired" | "cancelled" | "closed";
 export type LinkFunder = "buyer" | "seller";
 
 export interface SendmoLink {

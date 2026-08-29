@@ -13,10 +13,14 @@
 // The link-row data + the user's full shipment list are fetched in Dashboard
 // itself and passed in; this component is pure rendering. Keeps the fetch
 // shape consistent with the existing Shipments tab.
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { Link2, ChevronRight, Package, Truck, CheckCircle2, AlertCircle, Clock } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 
 interface ChildShipment {
@@ -46,6 +50,11 @@ interface LinkWithShipments {
 interface Props {
   links: LinkWithShipments[];
   loading: boolean;
+  /**
+   * Close a seller listing (PR5). Resolves on success; the parent refetches.
+   * Absent → no Close control renders (e.g. a future read-only embedding).
+   */
+  onCloseLink?: (linkId: string) => Promise<void>;
 }
 
 const LINK_STATUS: Record<string, { label: string; tone: string }> = {
@@ -53,6 +62,7 @@ const LINK_STATUS: Record<string, { label: string; tone: string }> = {
   in_use:    { label: "In use",    tone: "bg-amber-50 text-amber-800 border-amber-200" },
   completed: { label: "Used up",   tone: "bg-muted text-muted-foreground border-border" },
   used:      { label: "Used up",   tone: "bg-muted text-muted-foreground border-border" },
+  closed:    { label: "Closed",    tone: "bg-muted text-muted-foreground border-border" },
 };
 
 const SHIPMENT_ICON: Record<string, { Icon: typeof Package; color: string }> = {
@@ -80,7 +90,26 @@ function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-export default function LinksTab({ links, loading }: Props) {
+export default function LinksTab({ links, loading, onCloseLink }: Props) {
+  // The listing being confirmed for close, and the in-flight/error state.
+  const [closing, setClosing] = useState<{ id: string; short_code: string } | null>(null);
+  const [closeBusy, setCloseBusy] = useState(false);
+  const [closeError, setCloseError] = useState<string | null>(null);
+
+  async function confirmClose() {
+    if (!closing || !onCloseLink) return;
+    setCloseBusy(true);
+    setCloseError(null);
+    try {
+      await onCloseLink(closing.id);
+      setClosing(null);
+    } catch (err) {
+      setCloseError(err instanceof Error ? err.message : "Couldn't close the listing");
+    } finally {
+      setCloseBusy(false);
+    }
+  }
+
   if (loading) {
     return (
       <div className="bg-card rounded-2xl border border-border shadow-sm p-12 text-center">
@@ -131,9 +160,26 @@ export default function LinksTab({ links, loading }: Props) {
                   </p>
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
-                  <Button asChild variant="outline" size="sm" className="rounded-lg text-xs">
-                    <Link to={`/links/${l.id}/edit`}>Manage</Link>
-                  </Button>
+                  {/* The seller's off switch (PR5): with nothing counting
+                      inventory, closing the listing is how "sold out" happens. */}
+                  {l.link_type === "seller_link" && l.status === "active" && onCloseLink && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="rounded-lg text-xs"
+                      onClick={() => { setCloseError(null); setClosing({ id: l.id, short_code: l.short_code }); }}
+                    >
+                      Close listing
+                    </Button>
+                  )}
+                  {/* No Manage on seller links: listings are immutable by
+                      decision (N7 — close-and-recreate is the recourse), and
+                      the flex editor it routes to has nothing for them. */}
+                  {l.link_type !== "seller_link" && (
+                    <Button asChild variant="outline" size="sm" className="rounded-lg text-xs">
+                      <Link to={`/links/${l.id}/edit`}>Manage</Link>
+                    </Button>
+                  )}
                 </div>
               </div>
             </div>
@@ -194,6 +240,29 @@ export default function LinksTab({ links, loading }: Props) {
           </div>
         );
       })}
+
+      <Dialog open={closing !== null} onOpenChange={(open) => { if (!open && !closeBusy) setClosing(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Close this listing?</DialogTitle>
+            <DialogDescription>
+              Buyers who open sendmo.co/s/{closing?.short_code} will see "This item has
+              already sold". This can't be undone — to sell again, create a new link.
+            </DialogDescription>
+          </DialogHeader>
+          {closeError && (
+            <p className="text-sm text-destructive">{closeError}</p>
+          )}
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setClosing(null)} disabled={closeBusy}>
+              Keep it open
+            </Button>
+            <Button onClick={confirmClose} disabled={closeBusy}>
+              {closeBusy ? "Closing…" : "Close listing"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
