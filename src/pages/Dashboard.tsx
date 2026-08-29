@@ -442,6 +442,12 @@ export default function Dashboard() {
     setDashRefresh((n) => n + 1);
   }
 
+  // PR8: the sold-awaiting-print queue. Derived from the same 50-row
+  // shipments window as the table below — on a very busy account an older
+  // unprinted sale can age out of the window (Q4, deferred); the header
+  // discloses it when the window is full.
+  const soldQueue = soldAwaitingPrint(shipments);
+
   const linksWithChildren = allLinks.map((l) => {
     const children = shipments.filter((s) => s.link_id === l.id);
     return {
@@ -849,7 +855,7 @@ export default function Dashboard() {
         )}
 
         {/* Shipments Table — gated by tab state */}
-        {tab === "shipments" && soldAwaitingPrint(shipments).length > 0 && (
+        {tab === "shipments" && soldQueue.length > 0 && (
           /* "Sold — needs label printed" (PR8): the seller's action queue.
              Same single-surface model as the table below — the row links to
              /t/<code>, where Print lives. No new component, no new query:
@@ -862,13 +868,19 @@ export default function Dashboard() {
               </h2>
               <p className="text-xs text-muted-foreground mt-0.5">
                 A buyer paid for shipping. Open the label and print it, then hand the package to the carrier.
+                {shipments.length >= 50 && " Showing sales from your 50 most recent shipments."}
               </p>
             </div>
             <ul className="divide-y divide-border/40">
-              {soldAwaitingPrint(shipments).map((s) => (
+              {soldQueue.map((s) => (
                 <li key={s.id}>
+                  {/* No public_code should be impossible (the RPC always mints
+                      one) — render an inert row rather than a scroll-to-top
+                      "#" link if it ever happens. */}
                   <Link
-                    to={s.public_code ? `/t/${s.public_code}` : "#"}
+                    to={s.public_code ? `/t/${s.public_code}` : "."}
+                    aria-disabled={!s.public_code}
+                    onClick={(e) => { if (!s.public_code) e.preventDefault(); }}
                     className="flex items-center justify-between gap-3 px-5 py-3 hover:bg-muted/30 transition-colors"
                   >
                     <div className="min-w-0">
