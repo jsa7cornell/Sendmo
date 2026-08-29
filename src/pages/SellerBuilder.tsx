@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  Tag, ArrowLeft, ArrowRight, Package, Mail, ScrollText, MapPin,
+  Tag, ArrowLeft, ArrowRight, Package, MapPin,
   Loader2, AlertCircle, SlidersHorizontal, PackageCheck, Repeat, LogIn,
 } from "lucide-react";
 import AppHeader from "@/components/AppHeader";
@@ -9,14 +9,16 @@ import SiteFooter from "@/components/SiteFooter";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import SmartAddressInput from "@/components/ui/SmartAddressInput";
-import MagicGuestimator from "@/components/recipient/MagicGuestimator";
+import ParcelQuestion from "@/components/shipment/ParcelQuestion";
+import { type ParcelDraft, EMPTY_PARCEL_DRAFT } from "@/components/shipment/parcelDraft";
+import SavedAddressPicker from "@/components/recipient/SavedAddressPicker";
 import FlexPreferencesForm, { type FlexPreferencesValue } from "@/components/forms/FlexPreferencesForm";
 import LinkShareCard from "@/components/links/LinkShareCard";
 import { useAuth } from "@/contexts/AuthContext";
 import { SELLER_LINK_LIVE } from "@/lib/featureFlags";
 import { createSellerLink } from "@/lib/api";
 import type { CreateSellerLinkParams, CreateLinkResult } from "@/lib/api";
-import type { AddressInput, GuestimatorResult, PackagingType } from "@/lib/types";
+import type { AddressInput, PackagingType } from "@/lib/types";
 import { isUsablePhone } from "@/lib/phone";
 import { emptyAddress } from "@/lib/utils";
 
@@ -26,24 +28,36 @@ import { emptyAddress } from "@/lib/utils";
  * Decided proposal: proposals/2026-07-17_seller-link-buyer-pays_reviewed-2026-07-17_decided-2026-07-17.md
  *
  * A SELLER specs their ship-FROM origin + package (dims/weight) + an optional
- * carrier/speed/price constraint + single-use vs reusable, then creates a
- * shareable link. The BUYER later opens it, adds their destination, and pays.
+ * carrier/speed constraint + single-use vs reusable, then creates a shareable
+ * link. The BUYER later opens it, adds their destination, and pays.
  *
  * Deliberately its OWN page with local step state — NOT the recipient
  * RecipientFlowContext state machine (review N5). Mirrors the lightweight
  * local-`useState` step pattern in components/links/LinksEditor.tsx.
+ *
+ * The parcel question (Guestimator + fields) and the saved-address shortcut
+ * are the shared components both other flows use — <ParcelQuestion> and
+ * <SavedAddressPicker> — not seller-specific copies (2026-08-29 UI rework).
  */
 
 type Step = "details" | "review" | "ready";
 
-const PACKAGING_OPTIONS: { value: PackagingType; label: string; Icon: typeof Package }[] = [
-  { value: "box", label: "Box / Rigid", Icon: Package },
-  { value: "envelope", label: "Envelope / Soft", Icon: Mail },
-  { value: "tube", label: "Tube / Irregular", Icon: ScrollText },
-];
+const PACKAGING_LABELS: Record<PackagingType, string> = {
+  box: "Box / Rigid",
+  envelope: "Envelope / Soft Pack",
+  tube: "Tube / Irregular",
+};
 
 function defaultConstraint(): FlexPreferencesValue {
   return { speed_preference: "standard", preferred_carrier: "any", price_cap: 100 };
+}
+
+function formatWeight(weightOz: number): string {
+  const lbs = Math.floor(weightOz / 16);
+  const oz = Math.round(weightOz % 16);
+  if (lbs && oz) return `${lbs} lb ${oz} oz`;
+  if (lbs) return `${lbs} lb`;
+  return `${oz} oz`;
 }
 
 // ── Layout shell: emerald "Sell & Ship" branding + AppHeader ──
@@ -72,6 +86,34 @@ function SellHeader({ subtitle }: { subtitle: string }) {
   );
 }
 
+// ── "How it works" — the pitch, compressed to one card (2026-08-29) ──
+const HOW_IT_WORKS: { title: string; desc: string }[] = [
+  { title: "Describe your item", desc: "Package size, weight, and where it ships from." },
+  { title: "Post your link", desc: "Marketplace, eBay, a DM — anywhere your buyer is." },
+  { title: "Buyer pays, you ship", desc: "They cover shipping at checkout. You print the label and send it." },
+];
+
+function HowItWorks() {
+  return (
+    <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
+      <h2 className="text-sm font-semibold text-foreground mb-4">How it works</h2>
+      <ol className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        {HOW_IT_WORKS.map((s, i) => (
+          <li key={s.title} className="flex sm:flex-col items-start gap-3 sm:gap-2">
+            <span className="w-7 h-7 rounded-full bg-emerald-500/15 text-emerald-700 text-sm font-bold flex items-center justify-center shrink-0">
+              {i + 1}
+            </span>
+            <div>
+              <p className="text-sm font-semibold text-foreground">{s.title}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">{s.desc}</p>
+            </div>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
 export default function SellerBuilder() {
   const navigate = useNavigate();
   const { session, loading, isAdmin } = useAuth();
@@ -80,12 +122,9 @@ export default function SellerBuilder() {
   const [step, setStep] = useState<Step>("details");
   const [origin, setOrigin] = useState<AddressInput>(emptyAddress());
 
-  const [packaging, setPackaging] = useState<PackagingType>("box");
-  const [length, setLength] = useState("");
-  const [width, setWidth] = useState("");
-  const [height, setHeight] = useState("");
-  const [weightLbs, setWeightLbs] = useState("");
-  const [description, setDescription] = useState("");
+  // One draft for the whole parcel question — the shared <ParcelQuestion>
+  // shape, adapted to numbers only at submit (same boundary as SenderStepPackage).
+  const [draft, setDraft] = useState<ParcelDraft>(EMPTY_PARCEL_DRAFT);
 
   const [singleUse, setSingleUse] = useState(true);
   const [constraintOn, setConstraintOn] = useState(false);
@@ -96,32 +135,25 @@ export default function SellerBuilder() {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<CreateLinkResult | null>(null);
 
-  function handleGuestimate(r: GuestimatorResult) {
-    setPackaging(r.packaging);
-    setLength(String(r.length));
-    setWidth(String(r.width));
-    if (r.packaging !== "envelope") setHeight(String(r.height));
-    setWeightLbs(String(r.weightLbs));
-    setDescription(r.itemName);
-  }
-
   // Parsed parcel, or null if any dim is missing/zero. Envelope height → 1in.
   function computeParcel(): { length: number; width: number; height: number; weightOz: number } | null {
-    const l = parseFloat(length);
-    const w = parseFloat(width);
-    const h = packaging === "envelope" ? 1 : parseFloat(height);
-    const wt = parseFloat(weightLbs);
+    const l = parseFloat(draft.length);
+    const w = parseFloat(draft.width);
+    const h = draft.packaging === "envelope" ? 1 : parseFloat(draft.height);
+    const wt = (parseFloat(draft.weightLbs) || 0) * 16 + (parseFloat(draft.weightOz) || 0);
     if (!l || !w || !h || !wt) return null;
-    return { length: l, width: w, height: h, weightOz: wt * 16 };
+    return { length: l, width: w, height: h, weightOz: wt };
   }
 
   const addrComplete = !!origin.street && !!origin.city && !!origin.state && !!origin.zip;
   const phoneOk = isUsablePhone(origin.phone);
   const parcel = computeParcel();
 
+  const weightMissing = !((parseFloat(draft.weightLbs) || 0) * 16 + (parseFloat(draft.weightOz) || 0));
   const addrIncomplete = tried && !addrComplete;
   const phoneIncomplete = tried && !phoneOk;
-  const dimsIncomplete = tried && (!length || !width || (packaging !== "envelope" && !height) || !weightLbs);
+  const dimsIncomplete = tried &&
+    (!draft.length || !draft.width || (draft.packaging !== "envelope" && !draft.height) || weightMissing);
 
   function handleReview() {
     setTried(true);
@@ -153,7 +185,7 @@ export default function SellerBuilder() {
       weight_oz: p.weightOz,
       // single-use → closes after the first sale; reusable → omit (stays open).
       max_shipments: singleUse ? 1 : undefined,
-      notes: description.trim() || undefined,
+      notes: draft.description.trim() || undefined,
     };
     if (constraintOn) {
       params.speed_preference = constraint.speed_preference;
@@ -220,6 +252,7 @@ export default function SellerBuilder() {
     return (
       <Shell>
         <SellHeader subtitle="Create a link, post it, and the buyer pays for shipping — you just print the label." />
+        <HowItWorks />
         <div className="bg-card rounded-2xl border border-border shadow-sm p-6 text-center space-y-4">
           <p className="text-sm text-muted-foreground">
             Sign in to create your Sell &amp; Ship link — we attach it to your account so you can manage it and print labels.
@@ -256,7 +289,6 @@ export default function SellerBuilder() {
 
   // ── Step 2: review ─────────────────────────────────────────
   if (step === "review" && parcel) {
-    const packagingLabel = PACKAGING_OPTIONS.find((o) => o.value === packaging)?.label ?? packaging;
     return (
       <Shell>
         <SellHeader subtitle="Double-check the details — the buyer will ship to their own address from here." />
@@ -270,9 +302,9 @@ export default function SellerBuilder() {
           </ReviewRow>
 
           <ReviewRow icon={Package} label="Package">
-            <div className="text-foreground font-medium">{packagingLabel}</div>
-            <div>{parcel.length}″ × {parcel.width}″ × {parcel.height}″ · {weightLbs} lb</div>
-            {description.trim() && <div className="text-muted-foreground">{description.trim()}</div>}
+            <div className="text-foreground font-medium">{PACKAGING_LABELS[draft.packaging]}</div>
+            <div>{parcel.length}″ × {parcel.width}″ × {parcel.height}″ · {formatWeight(parcel.weightOz)}</div>
+            {draft.description.trim() && <div className="text-muted-foreground">{draft.description.trim()}</div>}
           </ReviewRow>
 
           <ReviewRow icon={singleUse ? PackageCheck : Repeat} label="Availability">
@@ -326,91 +358,12 @@ export default function SellerBuilder() {
         <ArrowLeft className="w-4 h-4" /> Back to shipping options
       </button>
 
-      <SellHeader subtitle="Tell us where it ships from and the box size & weight — the Guesstimator can fill this in." />
+      <SellHeader subtitle="Describe what you're selling and where it ships from — your buyer does the rest." />
 
-      {/* Origin (ship-from) address */}
-      <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
-        <h3 className="text-sm font-semibold text-foreground mb-3">Where does it ship from?</h3>
-        <SmartAddressInput
-          label="Origin"
-          nameLabel="Your name"
-          nameHint="your name"
-          addressLabel="Ship-from address"
-          value={origin}
-          onChange={setOrigin}
-          error={addrIncomplete ? "Please enter a complete address" : undefined}
-        />
-      </div>
+      <HowItWorks />
 
-      {/* Magic Guestimator */}
-      <MagicGuestimator onResult={handleGuestimate} />
-
-      {/* Package details */}
-      <div className="bg-card rounded-2xl border border-border shadow-sm p-5 space-y-4">
-        <div>
-          <label className="text-sm font-medium text-foreground mb-2 block">Packaging type</label>
-          <div className="grid grid-cols-3 gap-2">
-            {PACKAGING_OPTIONS.map(({ value, label, Icon }) => {
-              const selected = packaging === value;
-              return (
-                <button
-                  key={value}
-                  type="button"
-                  onClick={() => setPackaging(value)}
-                  className={
-                    "flex flex-col items-center gap-1.5 rounded-xl border-2 p-3 transition " +
-                    (selected
-                      ? "border-emerald-500 bg-emerald-500/5 text-foreground"
-                      : "border-border bg-background hover:border-muted-foreground/30 text-muted-foreground")
-                  }
-                >
-                  <Icon className={"w-5 h-5 " + (selected ? "text-emerald-600" : "")} />
-                  <span className="text-xs font-medium">{label}</span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        <div>
-          <label className="text-sm font-medium text-foreground mb-1.5 block">
-            Item description <span className="font-normal text-muted-foreground">(optional)</span>
-          </label>
-          <input
-            type="text"
-            placeholder="e.g. ceramic mug"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            className="w-full rounded-xl border border-border bg-background px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500"
-          />
-        </div>
-
-        <div>
-          <label className="text-sm font-medium text-foreground mb-1.5 block">
-            Dimensions <span className="font-normal text-muted-foreground">(inches)</span>
-          </label>
-          <div className={packaging === "envelope" ? "grid grid-cols-2 gap-3" : "grid grid-cols-3 gap-3"}>
-            <input type="number" inputMode="numeric" placeholder="Length" value={length} onChange={(e) => setLength(e.target.value)}
-              className={`rounded-xl border ${tried && !length ? "border-destructive" : "border-border"} bg-background px-3 py-2.5 text-sm text-center focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500`} />
-            <input type="number" inputMode="numeric" placeholder="Width" value={width} onChange={(e) => setWidth(e.target.value)}
-              className={`rounded-xl border ${tried && !width ? "border-destructive" : "border-border"} bg-background px-3 py-2.5 text-sm text-center focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500`} />
-            {packaging !== "envelope" && (
-              <input type="number" inputMode="numeric" placeholder="Height" value={height} onChange={(e) => setHeight(e.target.value)}
-                className={`rounded-xl border ${tried && !height ? "border-destructive" : "border-border"} bg-background px-3 py-2.5 text-sm text-center focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500`} />
-            )}
-          </div>
-        </div>
-
-        <div>
-          <label className="text-sm font-medium text-foreground mb-1.5 block">
-            Weight <span className="font-normal text-muted-foreground">(lbs)</span>
-          </label>
-          <input type="number" inputMode="numeric" placeholder="e.g. 5" value={weightLbs} onChange={(e) => setWeightLbs(e.target.value)}
-            className={`w-full rounded-xl border ${tried && !weightLbs ? "border-destructive" : "border-border"} bg-background px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500`} />
-        </div>
-      </div>
-
-      {/* Single-use vs reusable */}
+      {/* Single-use vs reusable — the first decision, because it frames the
+          rest: is this ONE listing or a stack of identical ones? (2026-08-29) */}
       <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
         <label className="text-sm font-semibold text-foreground mb-3 block">How many can sell through this link?</label>
         <div className="grid grid-cols-2 gap-2">
@@ -445,7 +398,40 @@ export default function SellerBuilder() {
         </div>
       </div>
 
-      {/* Optional carrier/speed/price constraint */}
+      {/* The parcel question — Guestimator + fields as ONE step, the same
+          shared <ParcelQuestion> the sender and creator flows use, replacing
+          the page's separate Guestimator card + hand-rolled fields (2026-08-29). */}
+      <ParcelQuestion
+        value={draft}
+        onChange={(patch) => setDraft((d) => ({ ...d, ...patch }))}
+        showErrors={dimsIncomplete}
+        invalid={{
+          length: tried && !parseFloat(draft.length),
+          width: tried && !parseFloat(draft.width),
+          height: tried && draft.packaging !== "envelope" && !parseFloat(draft.height),
+          weight: tried && weightMissing,
+        }}
+      />
+
+      {/* Origin (ship-from) address */}
+      <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
+        <h3 className="text-sm font-semibold text-foreground mb-3">Where does it ship from?</h3>
+        <SmartAddressInput
+          label="Origin"
+          nameLabel="Your name"
+          nameHint="your name"
+          addressLabel="Ship-from address"
+          value={origin}
+          onChange={setOrigin}
+          error={addrIncomplete ? "Please enter a complete address" : undefined}
+        />
+        {/* Same prefill shortcut as the other flows' address steps. */}
+        <div className="mt-4">
+          <SavedAddressPicker onSelect={(addr) => setOrigin(addr)} />
+        </div>
+      </div>
+
+      {/* Optional carrier/speed constraint */}
       <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
         <div className="flex items-start justify-between gap-4">
           <div className="flex items-start gap-3">
@@ -478,10 +464,10 @@ export default function SellerBuilder() {
           <ul className="list-disc list-inside text-xs ml-1">
             {addrIncomplete && <li>Complete ship-from address</li>}
             {phoneIncomplete && <li>Phone number — the shipping carriers require it</li>}
-            {tried && !length && <li>Length</li>}
-            {tried && !width && <li>Width</li>}
-            {tried && packaging !== "envelope" && !height && <li>Height</li>}
-            {tried && !weightLbs && <li>Weight</li>}
+            {tried && !draft.length && <li>Length</li>}
+            {tried && !draft.width && <li>Width</li>}
+            {tried && draft.packaging !== "envelope" && !draft.height && <li>Height</li>}
+            {tried && weightMissing && <li>Weight</li>}
           </ul>
         </div>
       )}
