@@ -12,6 +12,23 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-29] PR10 — a price before the wall: the seller-link band
+
+**Category:** ship
+**Cross-link:** [`proposals/2026-08-28_seller-link-launch_reviewed-2026-08-28_decided-2026-08-29.md`](proposals/2026-08-28_seller-link-launch_reviewed-2026-08-28_decided-2026-08-29.md) §2.3 (Option A decided; N1 cost-premise correction; Round-2 recompute amendment)
+
+**Browser-verified:**
+  spec: tests/e2e/buyer-flow.spec.ts ("the price band shows BEFORE any address is typed" + the no-band/no-NaN negative)
+  variants-covered: [band present on address step; band absent → no line; unfurl band + no-band + sold variants in tests/unit/ogMeta.test.ts; band math + any-destination-failure + never-throws in tests/unit/priceBand.test.ts]
+
+A Marketplace stranger can now see a shipping price before surrendering address/phone/email. **Migration 049** adds `est_min_cents`/`est_max_cents`/`est_computed_at` and registers `seller-band-sweep-daily` (05:30 UTC, migration-036 idiom). The band is the cheapest displayed option per three representative contiguous-US destinations (AK/HI deliberately excluded — "typically" copy, the exact price still gates the purchase), computed once at link creation (best-effort — creation never fails on an EasyPost hiccup; the sweep backfills) and refreshed by the sweep when older than 14 days — **on cron, never on the anonymous GET** (Round-2: the OG middleware calls that GET on every page view). Served in GET-by-code, on the BuyerFlow address step, and in the unfurl.
+
+**One quote client now exists**: rates/'s inline EasyPost shipment-create moved to `_shared/easypost-quote.ts` (`quoteShipmentRaw` — addresses stay caller-built so behavior is byte-compatible; the call gains safeFetchJson throw-safety) and the band computes through the same call, so the two can't drift. **And one display filter**: the review caught that the first draft's band used the cheapest RAW quote — a carrier-constrained link would promise a price its buyer could never pick — so the denylist/ceiling/carrier/speed predicate moved to `_shared/rate-filters.ts` and BOTH the rate list and the band run it.
+
+**Three more review catches worth knowing about:** the creation-time band could never compute (the origin insert selected `{id}` only — undefined city/state/zip fed EasyPost; every create burned 3 quote calls and the band waited a day for the sweep, i.e. through a post's whole first-day traffic window); band quotes are stamped `reference: "band:<id>"` — NEVER the bare link id, which is the exact token the checkout binding checks trust; and `config.toml` pins `[functions.seller-band-sweep] verify_jwt = false` (the 2026-05-10/11 missing-toml-section 401 class — a silently dead cron is the failure shape).
+
+---
+
 ### [2026-08-29] PR9 — the buyer stops being shown the seller's label
 
 **Category:** fix | security

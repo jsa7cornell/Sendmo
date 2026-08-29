@@ -5,6 +5,7 @@ import { resolveLiveMode } from "../_shared/mode.ts";
 import { checkLiveChargeAllowed } from "../_shared/allowlist.ts";
 import { log } from "../_shared/logger.ts";
 import { checkRateLimit, clientIpKey } from "../_shared/ratelimit.ts";
+import { computeSellerPriceBand } from "../_shared/price-band.ts";
 
 // ─── Short code generator ───────────────────────────────────
 const SAFE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
@@ -455,6 +456,7 @@ Deno.serve(async (req: Request) => {
                 max_price_cents, preferred_speed, preferred_carrier,
                 size_hint, weight_hint_oz, notes, expires_at,
                 length_in, width_in, height_in,
+                est_min_cents, est_max_cents,
                 created_at,
                 recipient_address:addresses!recipient_address_id (
                     name, street1, city, state, zip
@@ -589,6 +591,11 @@ Deno.serve(async (req: Request) => {
                 preferred_carrier: link.preferred_carrier,
                 size_hint: link.size_hint,
                 notes: link.notes,
+                // Price band (PR10) — precomputed "typically" numbers so the
+                // anonymous address step and the unfurl can show a price with
+                // zero per-viewer upstream cost. NULL = not computed.
+                est_min_cents: (link as { est_min_cents?: number | null }).est_min_cents ?? null,
+                est_max_cents: (link as { est_max_cents?: number | null }).est_max_cents ?? null,
                 recipient_city: link.recipient_address?.city ?? null,
                 recipient_state: link.recipient_address?.state ?? null,
                 recipient_zip: link.recipient_address?.zip ?? null,
@@ -779,7 +786,7 @@ Deno.serve(async (req: Request) => {
                     phone: origin_address.phone,
                     is_verified: origin_address.verified || false,
                 })
-                .select("id")
+                .select("id, street1, city, state, zip")
                 .single();
             if (originErr || !originAddr) {
                 console.error("Origin address insert error:", originErr);
@@ -841,6 +848,53 @@ Deno.serve(async (req: Request) => {
                     JSON.stringify({ error: "Failed to create seller link" }),
                     { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
                 );
+            }
+
+            // ── Price band (PR10) — best-effort, never fails creation ──
+            // Three representative-destination quotes, computed once here so
+            // the anonymous GET and the OG unfurl serve a number without any
+            // per-viewer upstream cost. On failure the band stays NULL (the
+            // UI simply doesn't show one) and the daily seller-band-sweep
+            // fills it in.
+            {
+                const bandKey = Deno.env.get(linkIsTest ? "EASYPOST_TEST_API_KEY" : "EASYPOST_API_KEY");
+                if (bandKey) {
+                    const band = await computeSellerPriceBand({
+                        apiKey: bandKey,
+                        origin: {
+                            city: originAddr.city,
+                            state: originAddr.state,
+                            zip: originAddr.zip,
+                            street1: originAddr.street1 ?? null,
+                        },
+                        parcel: { length: dims[0], width: dims[1], height: dims[2], weight_oz: dims[3] },
+                        linkId: sellerLink.id,
+                        // The buyer-visible constraints (review #2): the band
+                        // must be the cheapest option the buyer can PICK.
+                        preferredCarrier: preferred_carrier === "any" ? null : (preferred_carrier || null),
+                        preferredSpeed: speed_preference || null,
+                    });
+                    if (band) {
+                        const { error: bandErr } = await supabase
+                            .from("sendmo_links")
+                            .update({
+                                est_min_cents: band.minCents,
+                                est_max_cents: band.maxCents,
+                                est_computed_at: new Date().toISOString(),
+                            })
+                            .eq("id", sellerLink.id);
+                        if (bandErr) console.error("price band write error:", bandErr);
+                    } else {
+                        log({
+                            event_type: "link.band_compute_failed",
+                            session_id: req.headers.get("x-session-id") || "unknown",
+                            severity: "warn",
+                            entity_type: "sendmo_link",
+                            entity_id: sellerLink.id,
+                            properties: { short_code: sellerLink.short_code, at: "create" },
+                        });
+                    }
+                }
             }
 
             return new Response(

@@ -578,6 +578,12 @@ export async function createSellerLink(
 }
 
 export interface LinkData {
+  /**
+   * Seller-link price band (PR10): "typically" numbers precomputed at link
+   * creation (+ daily sweep). NULL/absent = not computed — show nothing.
+   */
+  est_min_cents?: number | null;
+  est_max_cents?: number | null;
   id: string;
   short_code: string;
   link_type: string;

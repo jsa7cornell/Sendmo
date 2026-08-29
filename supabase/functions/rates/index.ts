@@ -3,10 +3,11 @@ import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { log } from "../_shared/logger.ts";
 import { isUsablePhone } from "../_shared/phone.ts";
 import { checkRateLimit, clientIpKey } from "../_shared/ratelimit.ts";
+import { quoteShipmentRaw } from "../_shared/easypost-quote.ts";
+import { MAX_DISPLAY_PRICE, classifySpeed, rateDisplayFilterReason } from "../_shared/rate-filters.ts";
 
 const MARKUP_MULTIPLIER = 1.15;
 const MARKUP_FLAT_CENTS = 100; // $1.00 flat fee on top of the percentage markup
-const MAX_DISPLAY_PRICE = 200;
 
 // Service denylist — carrier+service pairs whose buy-time rate is not
 // guaranteed to equal the rate-shop quote. We do not surface these to
@@ -42,10 +43,10 @@ const MAX_DISPLAY_PRICE = 200;
 //     intercepts any live Smart Post buy where the delta exceeds 5%. If
 //     30 consecutive live Smart Post shipments pass the gate, consider the
 //     denylist permanently retired for this service.
-const SERVICE_DENYLIST: Array<{ carrier: string; service: string }> = [
-    { carrier: "fedexdefault", service: "SMART_POST" },
-    { carrier: "fedex", service: "SMART_POST" },          // defensive — covers either FedEx EP carrier-account label
-];
+// SERVICE_DENYLIST moved to _shared/rate-filters.ts (PR10) — the price band
+// must hide the same services the buyer list hides, or the band promises a
+// price the buyer can't pick. The forensics + re-enable path above still
+// govern it.
 
 // PRE-LAUNCH T2-3: public endpoint, burns EasyPost rate-shop quota (and can
 // be pointed at the LIVE key via live_mode). 10 req/min/IP per SPEC §14.
@@ -312,8 +313,6 @@ Deno.serve(async (req: Request) => {
             );
         }
 
-        const authHeader = "Basic " + btoa(apiKey + ":");
-
         // Build address objects — include name/company/phone when provided
         // (required by EasyPost for label purchase on some carriers like USPS)
         const buildAddress = (addr: Record<string, string>) => ({
@@ -334,42 +333,32 @@ Deno.serve(async (req: Request) => {
         console.log(`[Session ${sessionId}] [rates] to:`, JSON.stringify(builtTo));
         console.log(`[Session ${sessionId}] [rates] parcel:`, JSON.stringify(parcel));
 
-        // Create shipment to get rates
+        // Create shipment to get rates — via the ONE shared quote client
+        // (_shared/easypost-quote.ts, PR10): the price band computes against
+        // the exact same call, so the two can't drift. Throw-safe by
+        // construction (safeFetchJson underneath).
+        //
+        // Link binding: stamp reference = link.id so downstream functions can
+        // verify this shipment was minted from the link (seller blocker fix;
+        // extended to destination-deferred flex links in Phase 3, where
+        // labels/ trust-resolves to_address from this shipment). Omitted for
+        // ordinary flex + full-label.
+        const bindingReference = sellerLinkId ?? deferredDestLinkId ?? flexLinkId ?? null;
         const start = Date.now();
-        const shipmentResponse = await fetch(
-            "https://api.easypost.com/v2/shipments",
-            {
-                method: "POST",
-                headers: {
-                    Authorization: authHeader,
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                    shipment: {
-                        // Seller-link binding: stamp reference = link.id so
-                        // Link binding: stamp reference = link.id so downstream
-                        // functions can verify this shipment was minted from the
-                        // link (seller blocker fix; extended to
-                        // destination-deferred flex links in Phase 3, where
-                        // labels/ trust-resolves to_address from this shipment).
-                        // Omitted for ordinary flex + full-label.
-                        ...(sellerLinkId ? { reference: sellerLinkId }
-                            : deferredDestLinkId ? { reference: deferredDestLinkId }
-                            : flexLinkId ? { reference: flexLinkId } : {}),
-                        from_address: builtFrom,
-                        to_address: builtTo,
-                        parcel: {
-                            length: parcel.length,
-                            width: parcel.width,
-                            height: parcel.height,
-                            weight: parcel.weight_oz,
-                        },
-                    },
-                }),
-            }
-        );
-
-        const shipmentData = await shipmentResponse.json();
+        const quoteResult = await quoteShipmentRaw({
+            apiKey,
+            from: builtFrom,
+            to: builtTo,
+            parcel: {
+                length: parcel.length,
+                width: parcel.width,
+                height: parcel.height,
+                weight_oz: parcel.weight_oz,
+            },
+            reference: bindingReference,
+        });
+        const shipmentResponse = { ok: quoteResult.ok, status: quoteResult.status ?? 0 };
+        const shipmentData = quoteResult.data;
         const elapsed = Date.now() - start;
 
         if (!shipmentResponse.ok || shipmentData.error) {
@@ -410,13 +399,6 @@ Deno.serve(async (req: Request) => {
         }
 
         // ── Speed tier classification ──
-        function classifySpeed(days: number | null): string {
-            if (days === null) return "standard";
-            if (days <= 3) return "express";
-            if (days <= 5) return "standard";
-            return "economy";
-        }
-
         // ── Recipient preference price cap (converts cents → dollars) ──
         const effectivePriceCap = typeof max_price_cents === "number"
             ? max_price_cents / 100
@@ -439,15 +421,16 @@ Deno.serve(async (req: Request) => {
                 };
             })
             .filter((r: { display_price: number; carrier: string; service: string; speed_tier: string }) => {
-                // Service denylist (top of file) — exclude services with
-                // known systematic buy-time rate drift. Telemetry: emit a
-                // rate.service_denylisted event for each filtered rate so we
-                // can count how many quotes the denylist suppressed (and at
-                // what would-have-been price) — this is the data the
-                // denylist re-enable path is keyed on.
-                const carrierLower = r.carrier.toLowerCase();
-                const serviceUpper = r.service.toUpperCase();
-                if (SERVICE_DENYLIST.some(d => d.carrier === carrierLower && d.service === serviceUpper)) {
+                // Shared predicate (_shared/rate-filters.ts, PR10) — the
+                // price band applies the SAME one, so the band can't promise
+                // a price this list would hide. Telemetry preserved: the
+                // denylist reason still emits rate.service_denylisted (the
+                // data the re-enable path is keyed on).
+                const reason = rateDisplayFilterReason(
+                    { displayPriceDollars: r.display_price, carrier: r.carrier, service: r.service, speedTier: r.speed_tier },
+                    { effectivePriceCapDollars: effectivePriceCap, preferredCarrier: preferred_carrier, preferredSpeed: preferred_speed },
+                );
+                if (reason === "denylisted") {
                     log({
                         event_type: "rate.service_denylisted",
                         session_id: sessionId,
@@ -462,28 +445,7 @@ Deno.serve(async (req: Request) => {
                     });
                     return false;
                 }
-
-                // Hard cap — never show rates above the absolute max
-                if (r.display_price > MAX_DISPLAY_PRICE) return false;
-
-                // Recipient preference: price cap
-                if (r.display_price > effectivePriceCap) return false;
-
-                // Recipient preference: carrier filter
-                if (preferred_carrier && preferred_carrier !== "any") {
-                    if (r.carrier.toLowerCase() !== preferred_carrier.toLowerCase()) return false;
-                }
-
-                // Recipient preference: speed tier filter
-                if (preferred_speed) {
-                    const speedRank: Record<string, number> = { economy: 0, standard: 1, express: 2 };
-                    const rateRank = speedRank[r.speed_tier] ?? 1;
-                    const prefRank = speedRank[preferred_speed] ?? 1;
-                    // Show rates at the preferred speed or faster
-                    if (rateRank < prefRank) return false;
-                }
-
-                return true;
+                return reason === null;
             })
             .sort((a: { display_price: number }, b: { display_price: number }) => a.display_price - b.display_price);
 

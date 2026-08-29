@@ -83,6 +83,23 @@ test.describe("buyer flow — no shipping options", () => {
     await expect(page.getByText(/Double-check it and try again\./)).toHaveCount(0);
   });
 
+  test("the price band shows BEFORE any address is typed (PR10)", async ({ page }) => {
+    await mockBuyerFlow(page, { rates: [] }, { est_min_cents: 1250, est_max_cents: 2410 });
+    await page.goto("/s/SELLE2E9");
+    await expect(page.getByRole("heading", { name: /Where should this ship\?/i })).toBeVisible({ timeout: 10000 });
+    // The whole point: a price with zero typing.
+    await expect(page.getByText(/Shipping typically costs/i)).toBeVisible();
+    await expect(page.getByText(/\$12\.50–\$24\.10/)).toBeVisible();
+  });
+
+  test("no band computed → no band line (and never NaN)", async ({ page }) => {
+    await mockBuyerFlow(page, { rates: [] });
+    await page.goto("/s/SELLE2E9");
+    await expect(page.getByRole("heading", { name: /Where should this ship\?/i })).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText(/Shipping typically/i)).toHaveCount(0);
+    await expect(page.getByText(/NaN/)).toHaveCount(0);
+  });
+
   test("constrained link: the seller-preferences copy", async ({ page }) => {
     await mockBuyerFlow(page, { rates: [] }, { preferred_carrier: "USPS", preferred_speed: "standard" });
     await page.goto("/s/SELLE2E9");

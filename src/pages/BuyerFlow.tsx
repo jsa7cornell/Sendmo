@@ -300,6 +300,20 @@ function AddressStep({
         </p>
       )}
 
+      {/* Price band (PR10): a price BEFORE the wall — the whole reason a
+          Marketplace stranger can decide whether to type their address at
+          all. "Typically": three representative contiguous-US destinations,
+          not a quote; the exact price gates the purchase. */}
+      {typeof linkData.est_min_cents === "number" && typeof linkData.est_max_cents === "number" && (
+        <p className="text-sm text-foreground rounded-xl bg-primary/5 border border-primary/20 px-4 py-3">
+          Shipping typically costs{" "}
+          <span className="font-semibold">
+            {formatCents(linkData.est_min_cents)}–{formatCents(linkData.est_max_cents)}
+          </span>
+          {" "}— enter your address for your exact price.
+        </p>
+      )}
+
       <AddressForm value={address} tried={tried} onChange={onAddressChange} />
 
       <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
