@@ -7,6 +7,20 @@ const BRAND_BLUE = "#2563EB";
 const GRAY_600 = "#4B5563";
 const GRAY_400 = "#9CA3AF";
 
+
+// Escape user-authored text before it enters an email body. PR7 made
+// itemDescription cross-party (the SELLER writes listing notes, the BUYER
+// receives them in a SendMo-branded email), which turns raw interpolation
+// into an HTML-injection vector (review finding, 2026-08-29). Applies to
+// sender-typed parcel descriptions too — same class, older provenance.
+function escapeEmailHtml(str: string): string {
+    return str
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+}
+
 function layout(content: string): string {
   return `<!DOCTYPE html>
 <html lang="en">
@@ -112,8 +126,8 @@ export function labelConfirmationEmail(params: {
 
   const trimmedSender = senderName?.trim();
   const trimmedItem = itemDescription?.trim();
-  const itemDisplay = trimmedItem && trimmedItem.length > 40
-    ? `${trimmedItem.slice(0, 40)}…`
+  const itemDisplay = trimmedItem
+    ? escapeEmailHtml(trimmedItem.length > 40 ? `${trimmedItem.slice(0, 40)}…` : trimmedItem)
     : trimmedItem;
   const priceDisplay = typeof displayPriceCents === "number" && displayPriceCents > 0
     ? `$${(displayPriceCents / 100).toFixed(2)}`
@@ -127,7 +141,7 @@ export function labelConfirmationEmail(params: {
       </td>
     </tr>`;
 
-  const fromRow = trimmedSender ? summaryRow("From", trimmedSender) : "";
+  const fromRow = trimmedSender ? summaryRow("From", escapeEmailHtml(trimmedSender)) : "";
   const itemRow = itemDisplay ? summaryRow("Item", itemDisplay) : "";
   // On a seller_link the SELLER reads this email and did NOT pay — relabel so
   // "Amount" isn't misread as a charge to them; it's the shipping the buyer paid.
@@ -220,8 +234,8 @@ export function senderLabelReadyEmail(params: {
   const manageUrl = `${trackingUrl}?cancel=${cancelToken}`;
 
   const trimmedItem = itemDescription?.trim();
-  const itemDisplay = trimmedItem && trimmedItem.length > 40
-    ? `${trimmedItem.slice(0, 40)}…`
+  const itemDisplay = trimmedItem
+    ? escapeEmailHtml(trimmedItem.length > 40 ? `${trimmedItem.slice(0, 40)}…` : trimmedItem)
     : trimmedItem;
   const itemRow = itemDisplay ? `
     <tr>
