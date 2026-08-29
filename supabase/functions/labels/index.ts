@@ -1954,8 +1954,9 @@ Deno.serve(async (req: Request) => {
         // back. If a concurrent buyer already claimed it (no row returned),
         // refund THIS buyer's captured PI and return a "just sold" 409
         // without buying a label. Uses the REAL seller link id
-        // (resolvedLink.id), never shipments.link_id — the RPC mints a
-        // throwaway full_label link there (F1/B3). Reusable links
+        // (resolvedLink.id), never shipments.link_id — at claim time the row
+        // doesn't exist yet, and even post-insert the RPC binds it to a
+        // throwaway until the PR11 rebind lands later in this request. Reusable links
         // (max_shipments=null) skip this entirely.
         if (resolvedLink?.link_type === "seller_link" && resolvedLink.max_shipments === 1) {
             const { data: claimed, error: claimErr } = await supabase
@@ -2561,6 +2562,8 @@ Deno.serve(async (req: Request) => {
                     dbPublicCode = publicCode ?? null;
                     dbShortCode = shortCode ?? null;
 
+// (link rebind moved below the buyer_email write — PR11 review #2)
+
                     // Comp marker (PR1): the RPC has no payment_method param,
                     // so comp rows land at the column's DEFAULT 'card'. The
                     // buy-idempotency decision uses payment_method='comp' to
@@ -2832,6 +2835,84 @@ Deno.serve(async (req: Request) => {
                                     ],
                                     source: "labels seller-link buyer_email persist",
                                 });
+                            }
+                        }
+
+                        // ── Bind the shipment to the link that sold it (PR11/F1) ──
+                        // admin_insert_shipment mints a throwaway full_label
+                        // link per shipment and points shipments.link_id at it
+                        // — so per-link grouping matched nothing and tracking
+                        // resolved the wrong link. Q2 decided the follow-up-
+                        // UPDATE route (a defaulted p_link_id param mints a NEW
+                        // OVERLOAD — the 018/019 ambiguity class), then DELETE
+                        // the throwaway. Placed AFTER the cancel-token and
+                        // buyer_email writes (review #2): those are
+                        // load-bearing; this is grouping.
+                        //
+                        // Delete safety (review #1): shipments.link_id was ON
+                        // DELETE CASCADE since 001 — deleting a still-
+                        // referenced link would have deleted the PAID SHIPMENT.
+                        // Three layers now: the repoint is verified by
+                        // .select() (PostgREST returns no error for a zero-row
+                        // UPDATE); a probe confirms nothing references the
+                        // throwaway; and migration 050 flips the FK to
+                        // RESTRICT so even a bug here fails loudly, not
+                        // destructively. Best-effort: any failure leaves the
+                        // pre-PR11 throwaway-bound state consumers handle.
+                        if (shipmentId && resolvedLink) {
+                            try {
+                                const { data: mintedRow } = await supabase
+                                    .from("shipments")
+                                    .select("link_id")
+                                    .eq("id", shipmentId)
+                                    .single();
+                                const throwawayId = mintedRow?.link_id ?? null;
+                                if (throwawayId && throwawayId !== resolvedLink.id) {
+                                    const { data: repointed, error: repointErr } = await supabase
+                                        .from("shipments")
+                                        .update({ link_id: resolvedLink.id })
+                                        .eq("id", shipmentId)
+                                        .select("id");
+                                    if (repointErr || !repointed || repointed.length !== 1) {
+                                        console.error("link_id repoint did not land:", repointErr?.message ?? "zero rows");
+                                    } else {
+                                        dbShortCode = resolvedLink.short_code;
+                                        const { data: stillRef } = await supabase
+                                            .from("shipments")
+                                            .select("id")
+                                            .eq("link_id", throwawayId)
+                                            .limit(1);
+                                        let throwawayDeleted = false;
+                                        if (!stillRef || stillRef.length === 0) {
+                                            const { error: delErr } = await supabase
+                                                .from("sendmo_links")
+                                                .delete()
+                                                .eq("id", throwawayId)
+                                                .eq("link_type", "full_label")
+                                                .eq("user_id", resolvedLink.user_id);
+                                            if (delErr) {
+                                                // Orphan card persists — visible, non-fatal.
+                                                console.error("throwaway link delete error:", delErr);
+                                            } else {
+                                                throwawayDeleted = true;
+                                            }
+                                        }
+                                        log({
+                                            event_type: "label.link_rebound",
+                                            session_id: sessionId,
+                                            severity: "info",
+                                            entity_type: "shipment",
+                                            entity_id: shipmentId,
+                                            properties: {
+                                                link_id: resolvedLink.id,
+                                                link_type: resolvedLink.link_type,
+                                                throwaway_deleted: throwawayDeleted,
+                                            },
+                                        });
+                                    }
+                                }
+                            } catch (rebindErr) {
+                                console.error("link rebind unexpected throw:", rebindErr);
                             }
                         }
 

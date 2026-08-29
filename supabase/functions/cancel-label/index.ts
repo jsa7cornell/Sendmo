@@ -577,14 +577,18 @@ Deno.serve(async (req: Request) => {
                 // (link_id points at the throwaway) but MUST land before PR11
                 // repoints it; enforced by
                 // tests/unit/sellerLinkLifecycleGuards.test.ts.
-                const { error: linkErr } = await supabase
+                // .eq full_label (PR11 review #6) — see webhooks' twin flip.
+                // .select makes linkRevived truthful: PostgREST returns no
+                // error for a zero-row UPDATE.
+                const { data: revivedRows, error: linkErr } = await supabase
                     .from("sendmo_links")
                     .update({ status: "active" })
                     .eq("id", linkRow.id)
                     .eq("status", "in_use")
-                    .neq("link_type", "seller_link");
-                if (!linkErr) linkRevived = true;
-                else console.error("Link revival error:", linkErr);
+                    .eq("link_type", "full_label")
+                    .select("id");
+                if (linkErr) console.error("Link revival error:", linkErr);
+                else linkRevived = (revivedRows?.length ?? 0) === 1;
             }
         }
 

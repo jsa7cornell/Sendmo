@@ -51,6 +51,8 @@ interface TrackingData {
    * payloads → treat as printable.
    */
   can_print?: boolean;
+  /** PR11: true on seller sales — gates flex-flavored link CTAs. */
+  is_seller_sale?: boolean;
   link_short_code: string | null;
   // Parent link status — added 2026-05-13 evening alongside dashboard tabs.
   // Surfaced on F3 cancelled so users know whether the link is still reusable.
@@ -735,8 +737,12 @@ export default function TrackingPage() {
                   {/* F3 — parent link reference + forward CTA so the user
                       isn't stuck on a dead-end AND knows whether the link is
                       still reusable. */}
+                  {/* Seller sales pass a null code (review #3): the component's
+                      own fallback renders "Start a new shipment" instead of
+                      offering "print another label" into a seller listing —
+                      unmounting it entirely left the buyer with no CTA. */}
                   <PrintAnotherLabelCTA
-                    linkShortCode={data.link_short_code}
+                    linkShortCode={data.is_seller_sale === true ? null : data.link_short_code}
                     linkStatus={data.link_status ?? null}
                     status={data.status}
                   />
