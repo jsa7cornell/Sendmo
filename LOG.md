@@ -12,6 +12,19 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-29] PR8 — the seller's board: "Sold — needs label printed"
+
+**Category:** ship
+**Cross-link:** [`proposals/2026-08-28_seller-link-launch_reviewed-2026-08-28_decided-2026-08-29.md`](proposals/2026-08-28_seller-link-launch_reviewed-2026-08-28_decided-2026-08-29.md) §2.4/§3 PR8 (Q4: 50-row cap deferred)
+
+**Browser-verified:**
+  spec: tests/unit/sellerBoard.test.ts (the grouping predicate) — rendering reuses the existing shipments-tab row idiom
+  variants-covered: [sale awaiting print (in group); scanned sale, delivered sale, seller's own shipment (all excluded)]
+
+All three of the seller's states already existed in the data — this is selection, not new state. The Dashboard shipments select gains `buyer_email` + `item_description` (two fields on a query that already runs — no migration, no new component), and a **"Sold — needs label printed"** card renders above the shipments table for rows where `buyer_email` is set and status is `label_created`: item name (PR7's snapshot), buyer, date, deep link to `/t/<code>` where Print lives. Rows leave the group at the first carrier scan. Known deferred (Q4): the select's 50-row window bounds the group on a very busy account.
+
+---
+
 ### [2026-08-29] PR7 — the sale carries the item's name
 
 **Category:** fix

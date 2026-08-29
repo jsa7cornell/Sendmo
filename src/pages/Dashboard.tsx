@@ -14,6 +14,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { SELLER_LINK_VISIBLE, SELLER_LINK_LIVE } from "@/lib/featureFlags";
 import { supabase } from "@/lib/supabase";
 import LinksTab from "@/components/dashboard/LinksTab";
+import { soldAwaitingPrint } from "@/lib/sellerBoard";
 import AddCardModal from "@/components/dashboard/AddCardModal";
 import AppHeader from "@/components/AppHeader";
 import SiteFooter from "@/components/SiteFooter";
@@ -33,6 +34,10 @@ interface DashboardShipment {
   rate_cents: number;
   is_test: boolean;
   easypost_shipment_id: string | null;
+  // Seller-sale marker (F1) + the item text snapshotted at buy time (PR7).
+  // Together they drive the "Sold — needs label printed" group (PR8).
+  buyer_email: string | null;
+  item_description: string | null;
   created_at: string;
   updated_at: string;
   // link_id used to group shipments by parent link in the Links tab (decided
@@ -222,7 +227,7 @@ export default function Dashboard() {
 
       const shipmentsPromise = supabase
         .from("shipments")
-        .select("id, link_id, tracking_number, public_code, carrier, service, status, refund_status, display_price_cents, rate_cents, is_test, easypost_shipment_id, created_at, updated_at, sendmo_links!inner(user_id, sender_name), sender_address:addresses!sender_address_id(name, city, state), recipient_address:addresses!recipient_address_id(name, city, state)")
+        .select("id, link_id, tracking_number, public_code, carrier, service, status, refund_status, display_price_cents, rate_cents, is_test, easypost_shipment_id, buyer_email, item_description, created_at, updated_at, sendmo_links!inner(user_id, sender_name), sender_address:addresses!sender_address_id(name, city, state), recipient_address:addresses!recipient_address_id(name, city, state)")
         .eq("sendmo_links.user_id", user.id)
         .order("created_at", { ascending: false })
         .limit(50);
@@ -844,6 +849,50 @@ export default function Dashboard() {
         )}
 
         {/* Shipments Table — gated by tab state */}
+        {tab === "shipments" && soldAwaitingPrint(shipments).length > 0 && (
+          /* "Sold — needs label printed" (PR8): the seller's action queue.
+             Same single-surface model as the table below — the row links to
+             /t/<code>, where Print lives. No new component, no new query:
+             two extra fields on the select that already runs. */
+          <div className="bg-card rounded-2xl border border-emerald-200 shadow-sm mb-6">
+            <div className="p-5 border-b border-border">
+              <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
+                <Package className="w-4 h-4 text-emerald-600" />
+                Sold — needs label printed
+              </h2>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                A buyer paid for shipping. Open the label and print it, then hand the package to the carrier.
+              </p>
+            </div>
+            <ul className="divide-y divide-border/40">
+              {soldAwaitingPrint(shipments).map((s) => (
+                <li key={s.id}>
+                  <Link
+                    to={s.public_code ? `/t/${s.public_code}` : "#"}
+                    className="flex items-center justify-between gap-3 px-5 py-3 hover:bg-muted/30 transition-colors"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-sm text-foreground truncate">
+                        {s.item_description || "Item"}
+                        {s.is_test && (
+                          <span className="ml-2 inline-flex items-center rounded-full border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[9px] font-semibold text-amber-700 uppercase tracking-wide">Test</span>
+                        )}
+                      </p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        Sold {new Date(s.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })} · buyer {s.buyer_email}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      {s.public_code && <span className="font-mono text-xs text-primary">{s.public_code}</span>}
+                      <ChevronRight className="w-3 h-3 text-muted-foreground" />
+                    </div>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         {tab === "shipments" && (
         <div className="bg-card rounded-2xl border border-border shadow-sm">
           <div className="p-5 border-b border-border">
