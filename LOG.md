@@ -12,7 +12,21 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
-### [2026-08-29] Seller link LAUNCHED — stack #114–#127 merged, flag flipped, live-verified
+### [2026-08-29] /sell builder rework — how-it-works up top, shared ParcelQuestion + SavedAddressPicker
+
+**Category:** fix | ship
+**Cross-link:** launch-day feedback from John (post-§6 first look)
+
+**Browser-verified:** spec: `tests/e2e/seller-builder.spec.ts` · variants-covered: page order (how-it-works → availability → parcel → ship-from), collapsed-then-revealed parcel fields, validation reveal, saved-address list + fill.
+
+Four changes to `src/pages/SellerBuilder.tsx`, all reuse over invention (Rule 6):
+
+- **"How it works" strip** — a compact 3-step card (describe → post → buyer pays) directly under the header, on both the signed-out wall and the builder.
+- **Single vs multiple moved up top** — it frames the rest of the form, so it is now the first card.
+- **Guestimator + package fields → the shared `<ParcelQuestion>`** (2026-08-24 component both other flows use), replacing the page's separate Guestimator card and hand-rolled fields. The seller now gets the describe-first collapsed layout and lbs+oz weight for free; local state collapsed to one `ParcelDraft`.
+- **Saved addresses on the ship-from card** — the shared `<SavedAddressPicker>` under `SmartAddressInput`, same placement as the recipient flow's origin step.
+
+Gotcha for future e2e in this file: dev runs with the seller flag off, and the coming-soon gate admits only admins — `mock-admin-auth.ts` is the harness that gets a spec into the builder.
 
 **Category:** ship
 **Cross-link:** [`proposals/2026-08-29_seller-launch-runbook_PR14.md`](proposals/2026-08-29_seller-launch-runbook_PR14.md) · [`proposals/2026-08-28_seller-link-launch_reviewed-2026-08-28_decided-2026-08-29.md`](proposals/2026-08-28_seller-link-launch_reviewed-2026-08-28_decided-2026-08-29.md)
