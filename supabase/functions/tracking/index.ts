@@ -692,6 +692,22 @@ Deno.serve(async (req: Request) => {
       promised_delivery_date: shipment.promised_delivery_date,
       delivered_at: shipment.delivered_at,
       label_url: shipment.label_url ?? null,
+      // can_print (PR9, seller-link launch — author-amended B3, Round-2
+      // accepted): on a seller sale the label PDF carries the SELLER's full
+      // home address/name/phone, and the buyer has no business printing it.
+      // Gate on the CREDENTIAL, not the role: the cancel token is what
+      // identifies the buyer — the seller never holds it in either of their
+      // states (signed-in → sender_flex; from their email, no session →
+      // anonymous), and admins keep print with no special case (an admin
+      // presenting the buyer's token is the one shape that hides it — noted
+      // and accepted in Round 2; they print from their admin session). Honest
+      // scope: this is a curtain, not a lock — label_url still ships in the
+      // payload (gating it server-side would break the seller's no-session
+      // print path), and a buyer arriving WITHOUT their token resolves
+      // anonymous and sees print. The durable fix (a print token in the
+      // seller's email, mirroring the buyer's cancel token) is the named
+      // follow-up in the proposal's §5.
+      can_print: !(isSellerSale && viewerHoldsValidCancelToken),
       link_short_code: linkJoin?.short_code ?? null,
       // Parent link status — surfaced on F3 cancelled so the user knows whether
       // the link is reusable (active), tied up in another label (in_use), or

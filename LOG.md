@@ -12,6 +12,21 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-29] PR9 — the buyer stops being shown the seller's label
+
+**Category:** fix | security
+**Cross-link:** [`proposals/2026-08-28_seller-link-launch_reviewed-2026-08-28_decided-2026-08-29.md`](proposals/2026-08-28_seller-link-launch_reviewed-2026-08-28_decided-2026-08-29.md) §3 PR9 (author-amended B3, Round-2 accepted)
+
+**Browser-verified:**
+  spec: tests/e2e/tracking-lifecycle-states.spec.ts ("F1 with can_print:false")
+  variants-covered: [can_print:false → no Print/Download, no HowToShipStrip, buyer-flavored hero, help intact; can_print absent (F1 baseline) → unchanged print surface]
+
+The tracking payload gains a server-derived `can_print: !(isSellerSale && viewerHoldsValidCancelToken)` — gate on the CREDENTIAL, not the role (the Round-2 amendment): the cancel token is what identifies the buyer, the seller never holds it in either of their states, and admins keep print with no special case. The client hides Print/Download, the drop-off strip, and swaps the pre-dropoff hero to buyer copy ("The seller is preparing your package") — "ready to print" was an instruction to the wrong party.
+
+**Honest scope, stated in the code:** this is a curtain, not a lock. `label_url` still ships in the payload (server-gating it would break the seller's no-session print path), and a buyer arriving WITHOUT their token resolves anonymous and sees print. The durable fix — a print token in the seller's email, mirroring the buyer's cancel token — is the named follow-up in the proposal's §5.
+
+---
+
 ### [2026-08-29] PR8 — the seller's board: "Sold — needs label printed"
 
 **Category:** ship

@@ -3,6 +3,8 @@
 import { cn } from "@/lib/utils";
 
 interface StateHeroProps {
+  /** PR9: seller-sale buyer — the pre-dropoff headline addresses them, not the printer. */
+  buyerView?: boolean;
   lifecycleState: "pre-dropoff" | "post-dropoff" | "post-delivery";
   headline?: string;
   subtitle?: string;
@@ -88,8 +90,18 @@ function PostDeliverySvg() {
   );
 }
 
-function DefaultHeadline({ lifecycleState }: { lifecycleState: StateHeroProps["lifecycleState"] }) {
+function DefaultHeadline({ lifecycleState, buyerView }: { lifecycleState: StateHeroProps["lifecycleState"]; buyerView?: boolean }) {
   if (lifecycleState === "pre-dropoff") {
+    // Buyer view (PR9): the token-holding buyer on a seller sale can't print
+    // — the seller does. "Ready to print" would be an instruction to the
+    // wrong party.
+    if (buyerView) {
+      return (
+        <h1 className="text-[14px] font-bold tracking-tight mx-2 leading-tight">
+          The seller is <span className="text-primary">preparing your package</span> — tracking starts at the first carrier scan!
+        </h1>
+      );
+    }
     return (
       <h1 className="text-[14px] font-bold tracking-tight mx-2 leading-tight">
         Your label is <span className="text-primary">ready to print</span> — waiting for drop-off!
@@ -110,7 +122,7 @@ function DefaultHeadline({ lifecycleState }: { lifecycleState: StateHeroProps["l
   );
 }
 
-export default function StateHero({ lifecycleState, headline, subtitle }: StateHeroProps) {
+export default function StateHero({ lifecycleState, headline, subtitle, buyerView }: StateHeroProps) {
   return (
     <div className={cn("text-center pb-1 mb-3")}>
       <div className="h-16 flex justify-center items-end mb-1">
@@ -124,7 +136,7 @@ export default function StateHero({ lifecycleState, headline, subtitle }: StateH
           {headline}
         </h1>
       ) : (
-        <DefaultHeadline lifecycleState={lifecycleState} />
+        <DefaultHeadline lifecycleState={lifecycleState} buyerView={buyerView} />
       )}
 
       {subtitle && (

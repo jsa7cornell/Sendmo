@@ -43,6 +43,14 @@ interface TrackingData {
   delivered_at: string | null;
   // Round 2 additions (proposal §11):
   label_url: string | null;
+  /**
+   * PR9 (seller-link launch): false when the viewer is the token-holding
+   * BUYER on a seller sale — the label PDF carries the seller's home
+   * address, and the buyer isn't the one shipping. Presentation gate only
+   * (a curtain, not a lock — see tracking/index.ts); absent on older
+   * payloads → treat as printable.
+   */
+  can_print?: boolean;
   link_short_code: string | null;
   // Parent link status — added 2026-05-13 evening alongside dashboard tabs.
   // Surfaced on F3 cancelled so users know whether the link is still reusable.
@@ -447,6 +455,10 @@ export default function TrackingPage() {
   // Count surfaces as a small line BELOW the row.
   function ActionButtonsRow() {
     if (!data || !data.label_url) return null;
+    // PR9: the token-holding buyer on a seller sale gets no Print/Download —
+    // the PDF carries the seller's home address and the buyer isn't the one
+    // shipping. Server-derived; absent (older payloads) means printable.
+    if (data.can_print === false) return null;
     const printCount = data.print_count ?? 0;
     const printed = printCount > 0;
     return (
@@ -747,8 +759,8 @@ export default function TrackingPage() {
               {/* ── PRE-DROP-OFF (F1): status = label_created ───────────── */}
               {lifecycleState === "pre-dropoff" && (
                 <>
-                  {/* State hero */}
-                  <StateHero lifecycleState="pre-dropoff" />
+                  {/* State hero — buyer flavor when the viewer can't print (PR9) */}
+                  <StateHero lifecycleState="pre-dropoff" buyerView={data.can_print === false} />
 
                   {/* ETA banner — hides itself when promised_delivery_date is null */}
                   <EtaBanner
@@ -760,11 +772,15 @@ export default function TrackingPage() {
                   {/* Action buttons row (Print + Download) + print-count line */}
                   <ActionButtonsRow />
 
-                  {/* How to ship strip */}
-                  <HowToShipStrip
-                    carrier={data.carrier}
-                    printDone={(data.print_count ?? 0) > 0}
-                  />
+                  {/* How to ship strip — hidden from the seller-sale buyer
+                      (PR9): these are the SELLER's drop-off instructions for
+                      a package the buyer isn't shipping. */}
+                  {data.can_print !== false && (
+                    <HowToShipStrip
+                      carrier={data.carrier}
+                      printDone={(data.print_count ?? 0) > 0}
+                    />
+                  )}
 
                   {/* DetailsCard (family=1) + footer: Cancel (when eligible) + Help */}
                   <DetailsCardWithFooter family={1} showCancel={canCancel} />
