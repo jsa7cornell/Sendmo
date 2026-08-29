@@ -402,3 +402,31 @@ describe("email HTML injection guard (PR7 review)", () => {
     expect(tpl.html).toContain("&lt;a href=");
   });
 });
+
+// PR13: the seller notice on a cancelled sale, and the seller-aware
+// canceller line for the buyer's refund email.
+import { sellerSaleCancelledEmail as _ssce, refundSubmittedEmail as _rse } from "../../supabase/functions/_shared/email-templates";
+
+describe("seller-sale cancellation emails (PR13)", () => {
+  it("tells the seller not to ship, naming the item (escaped)", () => {
+    const tpl = _ssce({
+      publicCode: "PC9", itemDescription: `<b>Vintage</b> armchair`,
+      cancelledByBuyer: true, trackingUrl: "https://sendmo.co/t/PC9",
+    });
+    expect(tpl.subject).toContain("don't ship");
+    expect(tpl.html).toContain("Don't ship this one");
+    expect(tpl.html).toContain("The buyer cancelled");
+    expect(tpl.html).not.toContain("<b>Vintage</b>");
+    expect(tpl.html).toContain("&lt;b&gt;Vintage&lt;/b&gt;");
+  });
+
+  it("the buyer's refund email says 'cancelled by the seller' — never 'you cancelled' or link-user copy", () => {
+    const tpl = _rse({
+      amount_cents: 1840, carrier: "UPS", public_code: "PC9",
+      tracking_url: "https://sendmo.co/t/PC9",
+      canceller_is_payer: false, canceller_type: "seller",
+    });
+    expect(tpl.html).toContain("cancelled by the seller");
+    expect(tpl.html).not.toContain("person using your shared link");
+  });
+});

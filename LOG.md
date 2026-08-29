@@ -12,6 +12,19 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-29] PR13 — the seller hears about a reversed sale; the buyer stops being told they cancelled
+
+**Category:** fix | ship
+**Cross-link:** [`proposals/2026-08-28_seller-link-launch_reviewed-2026-08-28_decided-2026-08-29.md`](proposals/2026-08-28_seller-link-launch_reviewed-2026-08-28_decided-2026-08-29.md) §3 PR13 · WISHLIST 2026-07-19 "cancel-label refund-email copy says 'you cancelled' when the SELLER cancels" (fixed)
+
+**Browser-verified:** n/a-category: `pure-logic` · n/a-reason: email dispatch + template copy; both templates and the canceller-line matrix are unit-tested (tests/unit/emailTemplates.test.ts); no DOM surface changes.
+
+A buyer cancellation was silent to the seller — who then ships an item that was never really paid for. Now every successful cancel of a seller sale emails the seller (`sellerSaleCancelledEmail`: "Don't ship this one", item named + escaped, voided-label warning), hooked to the CANCEL itself, not the refund outcome, deduped via notifications_log (`cancel.seller_notice`), never blocking the cancel response.
+
+And the inverted copy is fixed at both ends: `cancellerIsPayer` now keys on `buyer_email` (on a seller sale the payer acts via the cancel token; the link owner is the SELLER), and the buyer's refund email gains a `"seller"` canceller line — "Your purchase was cancelled by the seller", not "you cancelled" and not "the person using your shared link".
+
+---
+
 ### [2026-08-29] PR12 — sales appear under their listing; the dead overflow link goes honest
 
 **Category:** ship
