@@ -14,76 +14,65 @@ export default function Index() {
 
       {/* Hero */}
       <section className="container max-w-5xl mx-auto px-4 pt-16 pb-20 text-center">
-        <div className="inline-flex items-center gap-2 rounded-full bg-primary/10 text-primary px-4 py-1.5 text-sm font-medium mb-6">
-          <Zap className="w-3.5 h-3.5" />
-          Prepaid shipping made easy
-        </div>
-
-        <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold text-foreground leading-tight max-w-3xl mx-auto">
-          Create a shipping label.{" "}
-          <span className="text-primary">Share it with anyone.</span>
+        {/* The two product nouns take their path color (blue = you pay,
+            green = buyer pays) and each card below repeats its color as a
+            top rule — the title's color coding IS the wayfinding, so the
+            spans and the rules must stay in sync. */}
+        <h1 className="text-3xl sm:text-4xl lg:text-5xl font-bold text-foreground leading-tight max-w-3xl mx-auto text-balance">
+          Shareable <span className="text-primary">shipping labels</span> and{" "}
+          <span className="text-emerald-600">shipping links</span>{" "}
+          <span className="text-muted-foreground font-semibold">
+            for buying, selling, and just generally getting stuff
+          </span>{" "}
+          where it needs to go.
         </h1>
 
-        <p className="text-lg text-muted-foreground mt-6 max-w-2xl mx-auto leading-relaxed">
-          Set up a link once. Share it with anyone who needs to send you something —
-          they click, enter package details, and print a label. Or mail something out
-          yourself in the same few steps.
-        </p>
-
-        {/* Two doors, split on who pays. The seller door is the buyer-pays
-            product's front entrance; before this it had none of its own.
-            Launch-gated — with the flag off this renders as the single
-            you-pay CTA it has always been. */}
-        <div className="flex flex-col sm:flex-row items-start justify-center gap-4 mt-10">
-          <div className="flex flex-col items-center gap-2 w-full sm:w-auto sm:max-w-xs">
+        {/* Two doors, split on who pays. Launch-gated — with the seller flag
+            off this renders as the single you-pay card it has always been. */}
+        <div
+          className={`grid gap-4 mx-auto mt-12 text-left ${
+            SELLER_LINK_VISIBLE ? "sm:grid-cols-2 max-w-3xl" : "max-w-md"
+          }`}
+        >
+          <div className="relative overflow-hidden bg-card rounded-2xl border border-border shadow-sm p-6 flex flex-col gap-3">
+            <span aria-hidden className="absolute inset-x-0 top-0 h-1 bg-primary" />
+            <h2 className="text-xl font-bold text-foreground">Buy a Shipping Label</h2>
+            <p className="text-sm text-muted-foreground leading-relaxed flex-1">
+              Buy a shipping label that you or someone else can fill out.
+            </p>
             <Button
-              className="rounded-xl text-lg py-6 px-8 shadow-md gap-2 w-full"
+              className="rounded-xl gap-2 self-start"
               onClick={() => window.location.href = "/onboarding"}
             >
-              Send or receive a package
-              <ArrowRight className="w-5 h-5" />
+              Buy a shipping label
+              <ArrowRight className="w-4 h-4" />
             </Button>
-            <span className="text-xs text-muted-foreground">You pay for shipping</span>
           </div>
 
           {SELLER_LINK_VISIBLE && (
-            <div className="flex flex-col items-center gap-2 w-full sm:w-auto sm:max-w-xs">
+            <div className="relative overflow-hidden bg-card rounded-2xl border border-border shadow-sm p-6 flex flex-col gap-3">
+              <span aria-hidden className="absolute inset-x-0 top-0 h-1 bg-emerald-600" />
+              <h2 className="text-xl font-bold text-foreground">Create a Shipping Checkout Link</h2>
+              <p className="text-sm text-muted-foreground leading-relaxed flex-1">
+                Allow your buyers to pay for shipping — useful on Facebook Marketplace.
+              </p>
               <Button
-                variant="outline"
                 disabled={!SELLER_LINK_LIVE}
-                className="rounded-xl text-lg py-6 px-8 gap-2 w-full"
+                className="rounded-xl gap-2 self-start bg-emerald-600 hover:bg-emerald-700 text-white"
                 onClick={SELLER_LINK_LIVE ? () => { window.location.href = "/sell"; } : undefined}
               >
-                SendMo for Sellers
+                Create a checkout link
                 {SELLER_LINK_LIVE ? (
-                  <ArrowRight className="w-5 h-5" />
+                  <ArrowRight className="w-4 h-4" />
                 ) : (
-                  <span className="text-[10px] font-bold uppercase tracking-wide bg-muted border border-border rounded-full px-2 py-0.5">
+                  <span className="text-[10px] font-bold uppercase tracking-wide bg-white/20 rounded-full px-2 py-0.5">
                     Soon
                   </span>
                 )}
               </Button>
-              <span className="text-xs text-muted-foreground text-center text-balance">
-                Create a buyer shipping experience for Marketplaces, eBay, and more
-              </span>
-              {/* Who-pays stays its own line and stays parallel with the door
-                  beside it. The decided seller-link proposal (OQ1) required the
-                  payer flip to be unmistakable on this surface, and "buyer
-                  shipping experience" hints at it without stating it. */}
-              <span className="text-xs font-medium text-muted-foreground">
-                The buyer pays for shipping
-              </span>
             </div>
           )}
         </div>
-
-        <button
-          type="button"
-          onClick={() => window.location.href = "/faq"}
-          className="mt-8 text-sm text-muted-foreground rounded-xl px-3 py-2 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-        >
-          Learn more
-        </button>
       </section>
 
       {/* How it works */}

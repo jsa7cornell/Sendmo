@@ -20,7 +20,7 @@ describe("App Routing", () => {
     it("renders the home page on /", () => {
         window.history.pushState({}, "Test page", "/");
         render(<App />);
-        expect(screen.getByText("Prepaid shipping made easy")).toBeInTheDocument();
+        expect(screen.getByText("for buying, selling, and just generally getting stuff")).toBeInTheDocument();
     });
 
     it("renders the FAQ page on /faq", () => {
