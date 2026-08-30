@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  Tag, ArrowLeft, ArrowRight, Package, MapPin,
+  Tag, ArrowLeft, ArrowRight, Package, MapPin, Truck,
   Loader2, AlertCircle, SlidersHorizontal, PackageCheck, Repeat, LogIn,
 } from "lucide-react";
 import AppHeader from "@/components/AppHeader";
@@ -15,7 +15,8 @@ import type { SenderParcel } from "@/components/sender/senderState";
 import LinkShareCard from "@/components/links/LinkShareCard";
 import { useAuth } from "@/contexts/AuthContext";
 import { SELLER_LINK_LIVE } from "@/lib/featureFlags";
-import { createSellerLink } from "@/lib/api";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { createSellerLink, closeSellerLink, fetchSellerBandQuote, formatCents } from "@/lib/api";
 import type { CreateSellerLinkParams, CreateLinkResult } from "@/lib/api";
 import type { AddressInput, PackagingType } from "@/lib/types";
 import { isUsablePhone } from "@/lib/phone";
@@ -101,6 +102,71 @@ export default function SellerBuilder() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<CreateLinkResult | null>(null);
+
+  // ── Review-step shipping estimate (John, 2026-08-30) ──
+  // The pre-create price band: origin + this item's dims/weight quoted
+  // against the same three representative destinations buyers see
+  // ("typically $X–$Y"). The in-flight promise is keyed by inputs in a ref
+  // so StrictMode's double effect and bouncing between steps share ONE
+  // quote (3 EasyPost calls) instead of re-spending it. A failed quote
+  // resolves null — the row hides rather than showing a made-up number.
+  const bandFetchRef = useRef<{ key: string; promise: Promise<{ min_cents: number; max_cents: number } | null> } | null>(null);
+  const [band, setBand] = useState<{ min_cents: number; max_cents: number } | null>(null);
+  const [bandLoading, setBandLoading] = useState(false);
+
+  // ── "Make a change" from the ready screen (John, 2026-08-30) ──
+  // The link already exists there and seller links are immutable (PR6), so
+  // Back = confirm → close (invalidate) the created link → re-enter review
+  // with the form intact; Create then mints a fresh link + new URL.
+  const [editConfirmOpen, setEditConfirmOpen] = useState(false);
+  const [reopening, setReopening] = useState(false);
+  const [reopenError, setReopenError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (step !== "review" || !parcel || !session?.access_token) return;
+    const key = JSON.stringify([
+      origin.city, origin.state, origin.zip,
+      parcel.length, parcel.width, parcel.height, parcel.weightOz,
+    ]);
+    if (bandFetchRef.current?.key !== key) {
+      bandFetchRef.current = {
+        key,
+        promise: fetchSellerBandQuote(
+          { city: origin.city, state: origin.state, zip: origin.zip, street1: origin.street },
+          { length: parcel.length, width: parcel.width, height: parcel.height, weight_oz: parcel.weightOz },
+          session.access_token,
+        )
+          .then((res) => res.band)
+          // Estimate is a nicety — a failed quote settles null and hides.
+          .catch(() => null),
+      };
+    }
+    let cancelled = false;
+    setBand(null);
+    setBandLoading(true);
+    bandFetchRef.current.promise.then((b) => {
+      if (cancelled) return;
+      setBand(b);
+      setBandLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [step, parcel, origin, session?.access_token]);
+
+  async function handleEditConfirm() {
+    if (!result || !session?.access_token) return;
+    setReopening(true);
+    setReopenError(null);
+    try {
+      await closeSellerLink(result.id, session.access_token);
+      setResult(null);
+      setEditConfirmOpen(false);
+      setStep("review");
+    } catch (e) {
+      setReopenError(e instanceof Error ? e.message : "Couldn't turn off the old link");
+    } finally {
+      setReopening(false);
+    }
+  }
 
   const addrComplete = !!origin.street && !!origin.city && !!origin.state && !!origin.zip;
   const phoneOk = isUsablePhone(origin.phone);
@@ -231,7 +297,43 @@ export default function SellerBuilder() {
           }}
           onDone={() => navigate("/dashboard")}
           doneLabel="Go to dashboard"
+          onBack={() => { setReopenError(null); setEditConfirmOpen(true); }}
+          backLabel="Make a change"
         />
+
+        <Dialog open={editConfirmOpen} onOpenChange={(open) => { if (!reopening) setEditConfirmOpen(open); }}>
+          <DialogContent className="max-w-sm rounded-2xl">
+            <DialogHeader>
+              <DialogTitle>Edit this listing?</DialogTitle>
+            </DialogHeader>
+            <p className="text-sm text-muted-foreground">
+              Your current link will stop working right away. When you finish editing,
+              you'll get a <span className="font-medium text-foreground">new link</span> to
+              share instead — anyone who has the old one will see it's no longer active.
+            </p>
+            {reopenError && (
+              <p className="text-sm text-destructive">{reopenError}</p>
+            )}
+            <div className="flex gap-3 pt-1">
+              <Button
+                variant="outline"
+                onClick={() => setEditConfirmOpen(false)}
+                disabled={reopening}
+                className="flex-1 rounded-xl"
+              >
+                Keep this link
+              </Button>
+              <Button
+                onClick={handleEditConfirm}
+                disabled={reopening}
+                className="flex-1 rounded-xl gap-1.5"
+              >
+                {reopening && <Loader2 className="w-4 h-4 animate-spin" />}
+                {reopening ? "Turning off…" : "Yes, edit it"}
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
       </Shell>
     );
   }
@@ -264,6 +366,27 @@ export default function SellerBuilder() {
           <ReviewRow icon={SlidersHorizontal} label="Shipping options">
             <div>Buyer picks the carrier &amp; speed</div>
           </ReviewRow>
+
+          {/* Pre-create estimate: this item's dims/weight from this origin,
+              quoted to near/mid/far destinations. Hidden when the quote
+              fails — a wrong number is worse than none. */}
+          {(bandLoading || band) && (
+            <ReviewRow icon={Truck} label="What buyers will pay">
+              {bandLoading ? (
+                <div className="flex items-center gap-2">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>Checking typical shipping prices…</span>
+                </div>
+              ) : band && (
+                <>
+                  <div className="text-foreground font-medium">
+                    Typically {formatCents(band.min_cents)}–{formatCents(band.max_cents)}
+                  </div>
+                  <div>Depends on where your buyer is — they see the exact price before paying</div>
+                </>
+              )}
+            </ReviewRow>
+          )}
         </div>
 
         {error && (

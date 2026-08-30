@@ -38,6 +38,109 @@ Deno.serve(async (req: Request) => {
         ? pathSegments[linksIdx + 2]
         : null;
 
+    // ── POST /links/band-quote — Authenticated: pre-create price band ──
+    // The seller-builder review step shows "buyers typically pay $X–$Y"
+    // BEFORE the link exists (John, 2026-08-30), so the seller can bail on
+    // an item that costs more to ship than it's worth. Same three
+    // representative destinations + display filter as the stored band
+    // (price-band.ts); no linkId yet, so band quotes carry no reference.
+    // Cost note: this is per-review-view (3 EasyPost quote calls), not
+    // per-link like the stored band — acceptable because it's behind auth
+    // and rate-limited per user; the PR10 "bounded by links created" rule
+    // targeted the anonymous, crawler-amplified GET.
+    if (req.method === "POST" && pathLinkId === "band-quote" && !pathAction) {
+        const authHeader = req.headers.get("Authorization") || "";
+        const token = authHeader.replace("Bearer ", "");
+        const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+        if (authError || !user) {
+            return new Response(
+                JSON.stringify({ error: "Unauthorized" }),
+                { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+        if (
+            checkRateLimit(`band-quote:${user.id}`, { max: 10, windowMs: 60_000 }) ||
+            checkRateLimit(`band-quote-transport:${clientIpKey(req)}`, { max: 60, windowMs: 60_000 })
+        ) {
+            return new Response(
+                JSON.stringify({ error: "Too many estimate requests — try again in a minute" }),
+                { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+
+        let body: {
+            origin?: { city?: string; state?: string; zip?: string; street1?: string };
+            parcel?: { length?: number; width?: number; height?: number; weight_oz?: number };
+        };
+        try {
+            body = await req.json();
+        } catch {
+            return new Response(
+                JSON.stringify({ error: "Invalid JSON body" }),
+                { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+        const origin = body.origin;
+        if (!origin?.city || !origin?.state || !origin?.zip) {
+            return new Response(
+                JSON.stringify({ error: "Missing origin city/state/zip" }),
+                { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+        const quoteDims = [body.parcel?.length, body.parcel?.width, body.parcel?.height, body.parcel?.weight_oz]
+            .map((v) => Number(v));
+        if (quoteDims.some((v) => !Number.isFinite(v) || v <= 0)) {
+            return new Response(
+                JSON.stringify({ error: "Package length, width, height, and weight are all required" }),
+                { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+
+        // Same test/live derivation as creation (T1-1 gate D), so the
+        // estimate is quoted with the same EasyPost key the created link's
+        // band will use. Allowlist downgrade skipped: it only changes which
+        // key a LIVE-mode non-allowlisted customer quotes with, and nothing
+        // is charged here.
+        const { data: quoterProfile } = await supabase
+            .from("profiles")
+            .select("role, admin_active_mode")
+            .eq("id", user.id)
+            .maybeSingle();
+        const quoterMode = resolveLiveMode({
+            callerRole: (quoterProfile?.role as string) ?? null,
+            callerAdminMode: (quoterProfile?.admin_active_mode as string) ?? null,
+            isAuthenticated: true,
+        });
+        const quoteKey = Deno.env.get(quoterMode.isLive ? "EASYPOST_API_KEY" : "EASYPOST_TEST_API_KEY");
+        if (!quoteKey) {
+            return new Response(
+                JSON.stringify({ band: null }),
+                { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+
+        const band = await computeSellerPriceBand({
+            apiKey: quoteKey,
+            origin: {
+                city: origin.city,
+                state: origin.state,
+                zip: origin.zip,
+                street1: origin.street1 ?? null,
+            },
+            parcel: { length: quoteDims[0], width: quoteDims[1], height: quoteDims[2], weight_oz: quoteDims[3] },
+            linkId: null,
+            preferredCarrier: null,
+            preferredSpeed: null,
+        });
+        // band === null = quote failed upstream; the client just hides the row.
+        return new Response(
+            JSON.stringify({
+                band: band ? { min_cents: band.minCents, max_cents: band.maxCents } : null,
+            }),
+            { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+    }
+
     // ── GET /links/:id — Authenticated: single link status (Pattern D polling) ──
     if (req.method === "GET" && pathLinkId && !pathAction) {
         const authHeader = req.headers.get("Authorization") || "";

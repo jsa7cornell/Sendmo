@@ -854,6 +854,7 @@ Decided 2026-07-17 (proposal `2026-07-17_label-print-page`), deployed 2026-07-18
 |--------|------|-------------|------|
 | POST | `/api/addresses/verify` | Verify address | No |
 | POST | `/api/links` | Create new SendMo link | Yes |
+| POST | `/api/links/band-quote` | Pre-create seller price band ("typically $X–$Y" on the builder's review step; same 3 representative destinations as PR10) | Yes |
 | GET | `/api/links/:shortCode` | Get link details (sender view) | No |
 | PATCH | `/api/links/:id` | Update link preferences | Yes |
 | POST | `/api/rates` | Get shipping rates for package | No |
@@ -1250,6 +1251,7 @@ Reference: [proposals/2026-05-23_buy-time-rate-gate.md](proposals/2026-05-23_buy
 | `POST /api/place-details` | 20 req | 1 min | IP |
 | `POST /api/labels` | 5 req | 1 min | IP + link_id |
 | `POST /api/links` | 3 req | 1 hour | user_id |
+| `POST /api/links/band-quote` | 10 req (user) + 60 req (IP) | 1 min | user_id + IP |
 | `GET /api/links/:shortCode` | 30 req | 1 min | IP |
 
 > Implemented 2026-07-04 (PRE-LAUNCH T2-3) via the shared sliding-window limiter
