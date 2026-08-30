@@ -35,7 +35,7 @@ describe("Index landing (no auth redirect)", () => {
   it("signed-out visitor sees the marketing homepage (no redirect)", () => {
     mockAuth = { user: null, loading: false };
     renderAt();
-    expect(screen.getAllByText(/Prepaid shipping made easy/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/where it needs to go/i).length).toBeGreaterThan(0);
     expect(screen.queryByText("DASHBOARD PAGE")).not.toBeInTheDocument();
   });
 
@@ -43,14 +43,14 @@ describe("Index landing (no auth redirect)", () => {
     mockAuth = { user: null, loading: true };
     renderAt();
     // loading=true → render marketing even though user is null-so-far.
-    expect(screen.getAllByText(/Prepaid shipping made easy/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/where it needs to go/i).length).toBeGreaterThan(0);
     expect(screen.queryByText("DASHBOARD PAGE")).not.toBeInTheDocument();
   });
 
   it("signed-in visitor also sees the marketing homepage (no bounce)", () => {
     mockAuth = { user: { id: "u1" }, loading: false };
     renderAt();
-    expect(screen.getAllByText(/Prepaid shipping made easy/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/where it needs to go/i).length).toBeGreaterThan(0);
     expect(screen.queryByText("DASHBOARD PAGE")).not.toBeInTheDocument();
   });
 });

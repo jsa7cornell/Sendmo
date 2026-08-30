@@ -10,12 +10,12 @@ test.describe("Home page", () => {
     ).toBeVisible();
 
     // Tagline pill (appears in hero pill and footer — use first)
-    await expect(page.getByText("Prepaid shipping made easy").first()).toBeVisible();
+    await expect(page.getByText("where it needs to go").first()).toBeVisible();
 
     // Primary door. Named for the job, not the artifact — and it no longer
     // excludes the plain "I'm mailing something out" case.
     await expect(
-      page.getByRole("button", { name: /Send or receive a package/i })
+      page.getByRole("button", { name: /Buy a shipping label/i })
     ).toBeVisible();
     await expect(page.getByText("You pay for shipping")).toBeVisible();
 
@@ -27,7 +27,7 @@ test.describe("Home page", () => {
 
   test("the you-pay door navigates to onboarding", async ({ page }) => {
     await page.goto("/");
-    await page.getByRole("button", { name: /Send or receive a package/i }).click();
+    await page.getByRole("button", { name: /Buy a shipping label/i }).click();
     await expect(page).toHaveURL(/\/onboarding/);
   });
 });

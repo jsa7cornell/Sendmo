@@ -12,6 +12,17 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-30] Homepage hero rebuilt — two-door cards, John's copy, color-coded title
+
+**Category:** ship
+**Cross-link:** Direction A design/copy review (artifact `claude.ai/code/artifact/4e4f5285-ab45-484f-bb7b-ae4b5756eb38`, rev 5 flat variant approved by John)
+
+**Browser-verified:** mcp-session: Claude Browser pane, vite dev on worktree with `VITE_ENABLE_SELLER_LINK=true` + dummy Supabase env (hero is static; app boots logged-out) · variants-covered: desktop 1280 light, mobile 375 stacked; both cards render, green CTA live, single-card fallback is a className branch on the same flag.
+
+Hero on `Index.tsx` replaced wholesale with John's approved copy: H1 "Shareable shipping labels and shipping links for buying, selling, and just generally getting stuff where it needs to go." — "shipping labels" in `text-primary` (blue), "shipping links" in emerald, connective words dimmed to `text-muted-foreground`; the two cards repeat their color as a top rule, so the title's color coding is the wayfinding (comment in the JSX says so). Cards: "Buy a Shipping Label" (blue, /onboarding) and "Create a Shipping Checkout Link" (green, /sell). Removed: "Prepaid shipping made easy" badge, old H1/sub, who-pays helper lines, "Learn more" button. Seller launch gate untouched — `SELLER_LINK_VISIBLE/LIVE` wrap the green card exactly as before; flag off = single centered blue card. Tests updated to the new strings: `App.test.tsx` (exact-match moved to the muted span — the H1 is now split across spans, so exact-matching the full sentence fails), `IndexLanding.test.tsx`, `e2e/home.spec.ts`. Follow-ups deliberately NOT here: `index.html` meta title still says "Prepaid Shipping Made Easy"; lower homepage sections (How it works / Why SendMo) still describe the old link-first mental model; /sell header still says "Sell & Ship" vs. the card's "Create a Shipping Checkout Link". Prod needs `VITE_ENABLE_SELLER_LINK=true` in Vercel for the green card to render.
+
+---
+
 ### [2026-08-29] Buyer review follow-up — Ships-from section (seller name + city/state), email off the page
 
 **Category:** fix | ship
