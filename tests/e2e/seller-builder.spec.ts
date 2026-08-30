@@ -15,7 +15,7 @@ import { SUPABASE_URL } from "./supabase-env";
 // VITE_ENABLE_SELLER_LINK flag is off, and admins are the one audience the
 // coming-soon gate lets through (SellerBuilder.tsx gate comment).
 
-const INTRO = /A SendMo shipping link allows your buyers to pay for shipping/;
+const INTRO = /Your buyer picks the shipping speed and pays for it/;
 
 async function openBuilder(page: Page): Promise<void> {
   await mockAdminAuth(page);
@@ -45,7 +45,7 @@ async function openBuilder(page: Page): Promise<void> {
   );
   await page.goto("/sell");
   // First-paint-under-load convention (onboarding.spec.ts): 15s.
-  await expect(page.getByRole("heading", { name: "Sell & Ship" })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole("heading", { name: "Shipping Link" })).toBeVisible({ timeout: 15_000 });
 }
 
 /** Step 1 → step 2 via the saved-address shortcut. */

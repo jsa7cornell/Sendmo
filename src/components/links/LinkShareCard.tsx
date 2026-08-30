@@ -7,7 +7,6 @@ import {
   ArrowLeft,
   QrCode,
   MapPin,
-  Facebook,
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { Button } from "@/components/ui/button";
@@ -29,6 +28,18 @@ interface Props {
   doneLabel?: string;
   onBack?: () => void;
   backLabel?: string;
+  /**
+   * Which flow created the link. The share snippet describes what the OPENER
+   * of the link will do, and that differs by flow: a prepay link's opener
+   * prints the already-paid label; a shipping link's opener (the buyer) pays
+   * for shipping and never sees a label. Defaults to prepay so existing
+   * callers keep today's copy.
+   */
+  variant?: "prepay" | "seller";
+  /** Seller links: the item text, echoed so the link is identifiable later. */
+  itemLabel?: string;
+  /** Seller links: single-use vs reusable, echoed beside the item. */
+  singleUse?: boolean;
 }
 
 export default function LinkShareCard({
@@ -38,7 +49,11 @@ export default function LinkShareCard({
   doneLabel,
   onBack,
   backLabel,
+  variant = "prepay",
+  itemLabel,
+  singleUse,
 }: Props) {
+  const seller = variant === "seller";
   const [copied, setCopied] = useState(false);
   const [snippetCopied, setSnippetCopied] = useState(false);
   const [qrOpen, setQrOpen] = useState(false);
@@ -51,7 +66,11 @@ export default function LinkShareCard({
     setTimeout(() => setCopied(false), 2000);
   }
 
-  const marketplaceSnippet = `📦 I ship with SendMo — open my link, enter your address, and print the prepaid label.
+  const marketplaceSnippet = seller
+    ? `📦 Shipping is easy — open my SendMo link, enter your address, pick your speed, and pay for shipping. I'll get it in the mail.
+
+${shortLink}`
+    : `📦 I ship with SendMo — open my link, enter your address, and print the prepaid label.
 
 ${shortLink}`;
 
@@ -97,30 +116,43 @@ ${shortLink}`;
             <CheckCircle2 className="w-6 h-6 text-success" />
           </motion.div>
           <h2 className="text-base sm:text-lg font-bold text-foreground">
-            Your link is ready
+            {seller ? "Your shipping link is ready — send it to your buyer" : "Your link is ready"}
           </h2>
         </div>
 
+        {seller && (
+          <p className="text-xs text-muted-foreground mb-2">
+            {itemLabel ? (
+              <>
+                Shipping for <span className="font-medium text-foreground">{itemLabel}</span>
+              </>
+            ) : (
+              "Your shipping link"
+            )}
+            {" · "}
+            {singleUse ? "single use" : "reusable"} · active until you turn it off
+          </p>
+        )}
+
         <div className="flex items-center gap-2 bg-muted/50 rounded-xl px-3 py-2.5 mb-2">
           <span className="text-sm text-foreground font-mono flex-1 truncate">{shortLink}</span>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleCopyLink}
-            className="rounded-lg gap-1.5 shrink-0"
-          >
-            <Copy className="w-3.5 h-3.5" />
-            {copied ? "Copied!" : "Copy"}
-          </Button>
         </div>
 
         <Button
+          onClick={handleCopyLink}
+          className={`w-full rounded-xl gap-2 ${seller ? "bg-emerald-600 hover:bg-emerald-700 text-white" : ""}`}
+        >
+          <Copy className="w-4 h-4" />
+          {copied ? "Copied!" : "Copy link"}
+        </Button>
+
+        <Button
           variant="outline"
-          className="w-full rounded-xl gap-2"
+          className="w-full rounded-xl gap-2 mt-2"
           onClick={() => setQrOpen(true)}
         >
           <QrCode className="w-4 h-4" />
-          Show QR code
+          {seller ? "Show QR code — in-person sales or a printed listing" : "Show QR code"}
         </Button>
 
         {(addressLine || carrierLabel) && (
@@ -140,26 +172,24 @@ ${shortLink}`;
         )}
       </motion.div>
 
-      {/* Marketplace snippet card */}
-      <div className="bg-primary/5 rounded-2xl border border-primary/20 p-4 sm:p-5">
-        <div className="flex items-center gap-2.5 mb-3">
-          <div className="w-8 h-8 rounded-lg bg-[#1877F2] text-white flex items-center justify-center shrink-0">
-            <Facebook className="w-4 h-4 fill-white" />
+      {/* Listing snippet card */}
+      <div className="bg-muted/40 rounded-2xl border border-border p-4 sm:p-5">
+        <div className="mb-3 min-w-0">
+          <div className="text-sm font-semibold text-foreground">
+            Paste this into your listing
           </div>
-          <div className="min-w-0">
-            <div className="text-sm font-semibold text-foreground">
-              Selling on Facebook Marketplace?
-            </div>
-            <div className="text-xs text-muted-foreground">
-              Paste this into your listing description.
-            </div>
+          <div className="text-xs text-muted-foreground">
+            Works on Marketplace, Craigslist, OfferUp — or just text it.
           </div>
         </div>
-        <div className="bg-card rounded-xl border border-primary/20 px-3 py-2.5 mb-2 text-sm text-foreground whitespace-pre-wrap leading-relaxed">
-          {`📦 I ship with SendMo — open my link, enter your address, and print the prepaid label.\n\n`}
+        <div className="bg-card rounded-xl border border-border px-3 py-2.5 mb-2 text-sm text-foreground whitespace-pre-wrap leading-relaxed">
+          {seller
+            ? `📦 Shipping is easy — open my SendMo link, enter your address, pick your speed, and pay for shipping. I'll get it in the mail.\n\n`
+            : `📦 I ship with SendMo — open my link, enter your address, and print the prepaid label.\n\n`}
           <span className="font-mono text-primary text-xs break-all">{shortLink}</span>
         </div>
         <Button
+          variant="outline"
           onClick={handleCopySnippet}
           className="w-full rounded-xl gap-2"
         >
@@ -168,20 +198,21 @@ ${shortLink}`;
         </Button>
       </div>
 
-      {/* CTAs */}
+      {/* Quiet exits — the primary action on this screen is copying the link */}
       <div className="flex flex-col-reverse sm:flex-row gap-2 sm:gap-3">
         {onBack && (
           <Button
-            variant="outline"
+            variant="ghost"
             onClick={onBack}
-            className="sm:flex-1 rounded-xl gap-2"
+            className="sm:flex-1 rounded-xl gap-2 text-muted-foreground"
           >
             <ArrowLeft className="w-4 h-4" />
             {backLabel ?? "Go back"}
           </Button>
         )}
         <Button
-          className="sm:flex-1 rounded-xl shadow-sm gap-2"
+          variant="ghost"
+          className="sm:flex-1 rounded-xl gap-2 text-muted-foreground"
           onClick={onDone}
         >
           {doneLabel ?? "Go to your account page"}
