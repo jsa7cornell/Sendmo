@@ -15,7 +15,7 @@ import { SUPABASE_URL } from "./supabase-env";
 // VITE_ENABLE_SELLER_LINK flag is off, and admins are the one audience the
 // coming-soon gate lets through (SellerBuilder.tsx gate comment).
 
-const INTRO = /A SendMo shipping link allows your buyers to pay for shipping/;
+const INTRO = /Your buyer picks the shipping speed and pays for it/;
 
 async function openBuilder(page: Page): Promise<void> {
   await mockAdminAuth(page);
