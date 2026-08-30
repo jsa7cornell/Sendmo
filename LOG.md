@@ -12,6 +12,19 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-30] Shipping Link ready screen — snippet correctness fix, variant-aware share card, naming
+
+**Category:** ship
+**Cross-link:** Direction A review artifact `claude.ai/code/artifact/4e4f5285-ab45-484f-bb7b-ae4b5756eb38` · John's decisions: links don't expire ("active until you turn it off"); the artifact's name is "Shipping Link"
+
+**Browser-verified:** mcp-session: Claude Browser pane on worktree vite (`/link-share-preview` extended to render both variants side by side) · variants-covered: prepay (unchanged snippet, new button hierarchy) and seller (new snippet, identity line, validity, QR qualifier, emerald primary); DOM-verified via get_page_text — pane screenshots were serving stale frames.
+
+**The bug:** `LinkShareCard` is SHARED by four callers, and its share snippet ("open my link… print the prepaid label") describes the PREPAY flow. On a seller link the buyer pays and the seller prints — the snippet was wrong instructions under the seller's name. **The handoff's claim that `ogMeta.ts` had the same bug was wrong** — ogMeta already branches (SELLER_TITLE/SELLER_DESC, seller-link PR3); its "print the prepaid label" lines are the prepay unfurl, which is correct. Fix: a `variant?: "prepay" | "seller"` prop (default prepay — the other three callers are untouched); seller gets "📦 Shipping is easy — open my SendMo link, enter your address, pick your speed, and pay for shipping. I'll get it in the mail."
+
+Also in this change, both variants: button hierarchy reworked — "Copy link" is now the one full-width primary (emerald on seller), "Copy snippet" demoted to outline, Done/Back demoted to ghost text (two equal solid slabs meant no answer); Facebook logo block replaced with neutral "Paste this into your listing / Works on Marketplace, Craigslist, OfferUp — or just text it." Seller variant only: heading "Your shipping link is ready — send it to your buyer"; identity line "Shipping for <item> · single use|reusable · active until you turn it off" (John: no expiry exists); QR button gains "— in-person sales or a printed listing". Naming: SellHeader h1 "Sell & Ship" → "Shipping Link", subhead rewritten actor-first, sign-in copy follows; e2e heading assertion updated. NOTE the residual naming fork: homepage card (John's verbatim copy) says "Create a Shipping Checkout Link", app now says "Shipping Link" — flagged to John, one-word homepage tweak if he wants them identical.
+
+---
+
 ### [2026-08-30] Homepage hero rebuilt — two-door cards, John's copy, color-coded title
 
 **Category:** ship
