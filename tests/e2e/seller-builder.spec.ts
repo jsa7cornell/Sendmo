@@ -139,4 +139,115 @@ test.describe("Seller builder — stepped rework", () => {
     await expect(page.getByText(INTRO)).toBeVisible();
     await expect(page.getByLabel(/Your name/)).toHaveValue("Mum");
   });
+
+  // ─── 2026-08-30: review-step estimate + ready-screen "Make a change" ───────
+
+  /** Step 2 → review via manual parcel entry. */
+  async function completePackageStep(page: Page): Promise<void> {
+    await page.getByRole("button", { name: "or fill in manually" }).click();
+    await page.getByPlaceholder("L", { exact: true }).fill("12");
+    await page.getByPlaceholder("W", { exact: true }).fill("9");
+    await page.getByPlaceholder("H", { exact: true }).fill("4");
+    await page.getByPlaceholder("lbs").fill("2");
+    await page.getByLabel(/Item description/).fill("Vintage armchair");
+    await page.getByRole("button", { name: /Review your link/ }).click();
+    await expect(page.getByRole("heading", { name: /Everything look right\?/ })).toBeVisible();
+  }
+
+  test("review shows the typical-shipping band from the pre-create quote", async ({ page }) => {
+    await openBuilder(page);
+    const quoteBodies: unknown[] = [];
+    await page.route(`${SUPABASE_URL}/functions/v1/links/band-quote`, async (route) => {
+      quoteBodies.push(route.request().postDataJSON());
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ band: { min_cents: 812, max_cents: 1440 } }),
+      });
+    });
+    await completeSetupStep(page);
+    await completePackageStep(page);
+
+    await expect(page.getByText("What buyers will pay")).toBeVisible();
+    await expect(page.getByText("Typically $8.12–$14.40")).toBeVisible();
+    // The quote carries THIS item's origin + dims/weight.
+    expect(quoteBodies).toHaveLength(1);
+    expect(quoteBodies[0]).toMatchObject({
+      origin: { city: "Ithaca", state: "NY", zip: "14850" },
+      parcel: { length: 12, width: 9, height: 4, weight_oz: 32 },
+    });
+
+    // Bouncing back to the item step and returning doesn't re-quote.
+    await page.getByRole("button", { name: "Back", exact: true }).click();
+    await page.getByRole("button", { name: /Review your link/ }).click();
+    await expect(page.getByRole("heading", { name: /Everything look right\?/ })).toBeVisible();
+    await expect(page.getByText("Typically $8.12–$14.40")).toBeVisible();
+    expect(quoteBodies).toHaveLength(1);
+  });
+
+  test("quote failure hides the estimate row instead of blocking review", async ({ page }) => {
+    await openBuilder(page);
+    await page.route(`${SUPABASE_URL}/functions/v1/links/band-quote`, (route) =>
+      route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "boom" }) }),
+    );
+    await completeSetupStep(page);
+    await completePackageStep(page);
+
+    await expect(page.getByText("What buyers will pay")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /Create link/ })).toBeEnabled();
+  });
+
+  test("ready screen: Make a change confirms, invalidates the link, and re-creating mints a new one", async ({ page }) => {
+    await openBuilder(page);
+    await page.route(`${SUPABASE_URL}/functions/v1/links/band-quote`, (route) =>
+      route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ band: null }) }),
+    );
+    const created: string[] = [];
+    const closed: string[] = [];
+    await page.route(`${SUPABASE_URL}/functions/v1/links`, async (route) => {
+      const code = created.length === 0 ? "OLDcode1234" : "NEWcode5678";
+      created.push(code);
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ id: `link-${created.length}`, short_code: code, url: `https://sendmo.co/s/${code}` }),
+      });
+    });
+    await page.route(`${SUPABASE_URL}/functions/v1/links/*/close`, async (route) => {
+      closed.push(new URL(route.request().url()).pathname.split("/").at(-2)!);
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ id: "link-1", short_code: "OLDcode1234", status: "closed" }),
+      });
+    });
+
+    await completeSetupStep(page);
+    await completePackageStep(page);
+    await page.getByRole("button", { name: /Create link/ }).click();
+    await expect(page.getByText("sendmo.co/s/OLDcode1234").first()).toBeVisible();
+
+    // Back = confirm first (John: "are you sure?" before commencing).
+    await page.getByRole("button", { name: /Make a change/ }).click();
+    await expect(page.getByText("Edit this listing?")).toBeVisible();
+    await expect(page.getByText(/Your current link will stop working/)).toBeVisible();
+
+    // Declining keeps the link and stays on the ready screen.
+    await page.getByRole("button", { name: "Keep this link" }).click();
+    await expect(page.getByText("sendmo.co/s/OLDcode1234").first()).toBeVisible();
+    expect(closed).toHaveLength(0);
+
+    // Confirming closes (invalidates) the old link and returns to review intact.
+    await page.getByRole("button", { name: /Make a change/ }).click();
+    await page.getByRole("button", { name: "Yes, edit it" }).click();
+    await expect(page.getByRole("heading", { name: /Everything look right\?/ })).toBeVisible();
+    expect(closed).toEqual(["link-1"]);
+    await expect(page.getByText(/9 Elm Ave/)).toBeVisible();
+    await expect(page.getByText("Vintage armchair")).toBeVisible();
+
+    // Create again → a NEW link, not the old code.
+    await page.getByRole("button", { name: /Create link/ }).click();
+    await expect(page.getByText("sendmo.co/s/NEWcode5678").first()).toBeVisible();
+    await expect(page.getByText("OLDcode1234")).toHaveCount(0);
+  });
 });

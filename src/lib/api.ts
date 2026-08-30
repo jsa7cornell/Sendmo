@@ -577,6 +577,36 @@ export async function createSellerLink(
   return data as CreateLinkResult;
 }
 
+// ─── Seller band quote (pre-create estimate) ───────────────
+// The review step's "buyers typically pay $X–$Y" — same three
+// representative destinations as the stored price band (PR10), quoted
+// BEFORE the link exists so the seller can bail on an expensive-to-ship
+// item. `band: null` = quote failed upstream; callers hide the row.
+
+export interface SellerBandQuote {
+  band: { min_cents: number; max_cents: number } | null;
+}
+
+export async function fetchSellerBandQuote(
+  origin: { city: string; state: string; zip: string; street1?: string },
+  parcel: { length: number; width: number; height: number; weight_oz: number },
+  accessToken: string,
+): Promise<SellerBandQuote> {
+  const res = await fetch(`${BASE_URL}/functions/v1/links/band-quote`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({ origin, parcel }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || `Failed to fetch shipping estimate (${res.status})`);
+  }
+  return data as SellerBandQuote;
+}
+
 export interface LinkData {
   /**
    * Seller-link price band (PR10): "typically" numbers precomputed at link
