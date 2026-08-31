@@ -110,7 +110,7 @@ export default function MagicGuestimator({
           className="rounded-xl gap-1.5"
         >
           {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-          {loading ? "Thinking…" : "I'm Feeling Lucky"}
+          {loading ? "Thinking…" : "Estimate size & weight"}
         </Button>
         {/* No default caption (John, 2026-08-19: "no green, just keep it
             normal. limit the text to only what is needed"). It restated the

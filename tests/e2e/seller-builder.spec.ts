@@ -81,7 +81,7 @@ test.describe("Seller builder — stepped rework", () => {
     const yOrigin = (await page.getByText("Where does it ship from?").boundingBox())?.y ?? NaN;
     expect(yQty).toBeLessThan(yOrigin);
     // The item step lives on its own screen.
-    await expect(page.getByText("Describe the product")).toHaveCount(0);
+    await expect(page.getByText("Describe it in plain words")).toHaveCount(0);
     await expect(page.getByRole("heading", { name: /What are you shipping\?/ })).toHaveCount(0);
   });
 
@@ -112,7 +112,7 @@ test.describe("Seller builder — stepped rework", () => {
     await completeSetupStep(page);
 
     // The shared step's signature: describe-first, manual reveal, lbs+oz.
-    await expect(page.getByText("Describe the product")).toBeVisible();
+    await expect(page.getByText("Describe it in plain words")).toBeVisible();
     await page.getByRole("button", { name: "or fill in manually" }).click();
     await expect(page.getByText("Packaging type")).toBeVisible();
 

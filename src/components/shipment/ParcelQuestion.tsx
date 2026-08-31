@@ -45,15 +45,33 @@ interface Props {
   invalid?: { length?: boolean; width?: boolean; height?: boolean; weight?: boolean };
 }
 
+const PACKAGING_SHORT: Record<PackagingType, string> = {
+  box: "box",
+  envelope: "envelope",
+  tube: "tube",
+};
+
 export default function ParcelQuestion({
   value, onChange, onGuestimated, showErrors = false, invalid = {},
 }: Props) {
   const [manualOpen, setManualOpen] = useState(false);
+  // Whether the current values came from the Guestimator (vs a prefill or a
+  // returning visit) — only changes the summary card's first line.
+  const [estimated, setEstimated] = useState(false);
   const hasParcelValues = !!(
     value.length || value.width || value.height ||
     value.weightLbs || value.weightOz || value.description
   );
-  const showParcelFields = manualOpen || hasParcelValues || showErrors;
+  // Filled values render as a one-line summary card with "Adjust" (2026-08-30,
+  // Direction A review — John approved the mock). This supersedes the
+  // 2026-08-24 "reveal the fields, the reveal is the confirmation" behavior:
+  // the values stay visible and correctable — the summary shows them and
+  // Adjust opens the same fields — they just stop being five inputs as the
+  // first thing on the screen. showErrors still forces the real fields open:
+  // a validation summary naming Length must never point at a field the user
+  // cannot see.
+  const showParcelFields = manualOpen || showErrors;
+  const showSummary = hasParcelValues && !showParcelFields;
 
   function handleGuestimation(result: GuestimatorResult) {
     onChange({
@@ -65,19 +83,38 @@ export default function ParcelQuestion({
       weightOz: String(Math.round((result.weightLbs % 1) * 16)),
       description: result.itemName,
     });
+    setEstimated(true);
     onGuestimated?.(result);
   }
+
+  const dimsLabel =
+    value.packaging === "envelope"
+      ? [value.length, value.width].filter(Boolean).join(" × ")
+      : [value.length, value.width, value.height].filter(Boolean).join(" × ");
+  const weightLabel = [
+    value.weightLbs && `${value.weightLbs} lb`,
+    value.weightOz && `${value.weightOz} oz`,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const summaryLine = [
+    dimsLabel && `${dimsLabel} in`,
+    weightLabel,
+    PACKAGING_SHORT[value.packaging],
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
     <div className="space-y-5">
       {/* Describe it and we size it — the intended path. */}
       <MagicGuestimator
         onResult={handleGuestimation}
-        title="Describe the product"
-        subtitle={null}
+        title="Describe it in plain words"
+        subtitle="This also prints on the shipping label."
         placeholder="e.g., a hardcover cookbook"
         icon={false}
-        action={showParcelFields ? undefined : (
+        action={showParcelFields || showSummary ? undefined : (
           <button
             type="button"
             onClick={() => setManualOpen(true)}
@@ -87,6 +124,26 @@ export default function ParcelQuestion({
           </button>
         )}
       />
+
+      {showSummary && (
+        <div className="rounded-2xl border border-primary/25 bg-primary/5 p-4">
+          <p className="text-sm font-medium text-foreground">
+            {estimated && value.description ? (
+              <>Our estimate for <span className="font-semibold">{value.description}</span></>
+            ) : (
+              "Your package"
+            )}
+          </p>
+          <p className="mt-1 font-mono text-sm text-foreground tabular-nums">{summaryLine}</p>
+          <button
+            type="button"
+            onClick={() => setManualOpen(true)}
+            className="mt-2 text-sm font-medium text-primary underline underline-offset-4 rounded px-0.5 transition-colors hover:text-primary/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+          >
+            Adjust size, weight or packaging
+          </button>
+        </div>
+      )}
 
       {showParcelFields && (
         // ONE card, not four (2026-08-23). Description, packaging, dimensions
