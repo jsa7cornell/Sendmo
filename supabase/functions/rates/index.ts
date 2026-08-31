@@ -290,7 +290,7 @@ Deno.serve(async (req: Request) => {
             // entry — telling them to contact the creator about it is backwards.
             const linkCase = linkType === "flexible" && !deferredDestLinkId;
             const msg = linkCase
-                ? "This shipping link's delivery address doesn't have a phone number, which the carriers require. The person who created this link needs to add one (from their SendMo dashboard) before you can ship."
+                ? "This link's delivery address doesn't have a phone number, which the carriers require. The person who created this link needs to add one (from their SendMo dashboard) before you can ship."
                 : "The delivery address is missing a phone number — shipping carriers require one to generate a label.";
             logRateError("to_address_missing_phone", "warn", {
                 from_zip: from_address?.zip ?? null,

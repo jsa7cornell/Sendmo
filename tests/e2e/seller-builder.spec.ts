@@ -45,7 +45,7 @@ async function openBuilder(page: Page): Promise<void> {
   );
   await page.goto("/sell");
   // First-paint-under-load convention (onboarding.spec.ts): 15s.
-  await expect(page.getByRole("heading", { name: "Shipping Link" })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole("heading", { name: "Checkout Link" })).toBeVisible({ timeout: 15_000 });
 }
 
 /** Step 1 → step 2 via the saved-address shortcut. */

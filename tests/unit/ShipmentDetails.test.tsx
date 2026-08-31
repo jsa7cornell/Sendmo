@@ -60,7 +60,7 @@ describe("ShipmentDetails", () => {
     expect(screen.getByText("Shipment Details")).toBeInTheDocument();
 
     rerender(<ShipmentDetails state={makeState({ path: "flexible" })} onEdit={() => {}} />);
-    expect(screen.getByText("Shipping Link Details")).toBeInTheDocument();
+    expect(screen.getByText("Label Link Details")).toBeInTheDocument();
   });
 
   it("says who fills in each question the creator handed over", () => {

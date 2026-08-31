@@ -116,7 +116,7 @@ ${shortLink}`;
             <CheckCircle2 className="w-6 h-6 text-success" />
           </motion.div>
           <h2 className="text-base sm:text-lg font-bold text-foreground">
-            {seller ? "Your shipping link is ready — send it to your buyer" : "Your link is ready"}
+            {seller ? "Your checkout link is ready — send it to your buyer" : "Your link is ready"}
           </h2>
         </div>
 
@@ -127,7 +127,7 @@ ${shortLink}`;
                 Shipping for <span className="font-medium text-foreground">{itemLabel}</span>
               </>
             ) : (
-              "Your shipping link"
+              "Your checkout link"
             )}
             {" · "}
             {singleUse ? "single use" : "reusable"} · active until you turn it off

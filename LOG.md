@@ -21,6 +21,15 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 The dashboard spoke five dialects for two products; this lands the decided lane. `LinksTab` rows are now titled by what the link is FOR (item text on checkout links, "For <name> · <city, state>" on label links) with the slug demoted to the meta line; the schema-taxonomy badge (Seller/Full label/Flexible) is replaced by the who-pays chip — new shared `WhoPaysChip.tsx` (green "Buyer pays" / blue "You pay") — plus `userLinkTypeLabel()` in linkTypeLabel.ts ("Checkout link"/"Label link"; the PR6 one-map principle holds, admin keeps the precise taxonomy). Wrong-audience bug fixed: a checkout link's empty state said "Share … with a sender" — the opener is a BUYER; now "No sales yet. Paste … into your listing." Header buttons align with the homepage doors: "Sell an item"→"Create a checkout link" (emerald), "Create a new shipment"→"Buy a shipping label". "Close listing"→"Close link" (dialog body kept — the "already sold" explanation stays). "Rotate URL"→"Get a new URL". Empty tab copy names both products. NOTE: SellerBuilder's inline Buyer-pays chip was already gone (John's 2026-08-29 "no badge" pass) — WhoPaysChip serves the dashboard now; use it for any future chip surface instead of re-inlining.
 
+### [2026-08-31] Lane-naming sweep — "Checkout Link" (buyer pays) / "Label link" (you pay)
+
+**Category:** ship
+**Cross-link:** dashboard scrub entry above (lane decided there); Direction A review artifact §Dashboard scrub
+
+**Browser-verified:** spec: seller-builder + phone-gate + onboarding + skip-to-sender + sender-questions e2e green locally (44 passed) with assertions updated to the new names · variants-covered: /sell header + sign-in gate, checkout-link ready heading, label-link editor create/edit headings, Label Link Details card, phone-gate server message.
+
+Applies the decided lane to every in-between surface: /sell h1 "Shipping Link"→"Checkout Link" (+ sign-in copy); LinkShareCard seller heading "Your checkout link is ready — send it to your buyer"; LinksEditor "Create/Edit your label link"; ShipmentDetails card "Label Link Details"; SenderFlow loading line goes name-free ("Loading your link…" — senders don't need product taxonomy). The `rates` edge function's phone-gate message drops the product name too ("This link's delivery address…") — note this PR touches supabase/functions/**, so the Deploy Edge Functions workflow runs on merge. Homepage hero untouched — John's verbatim copy ("shipping links" in the title reads generically and "Create a Shipping Checkout Link" contains the lane name). Remaining "shipping link" hits in src/ are code comments only.
+
 ---
 
 ### [2026-08-30] Old-tagline sweep — "Prepaid shipping made easy" retired everywhere

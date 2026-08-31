@@ -77,7 +77,7 @@ function SellHeader() {
     <div className="space-y-1.5">
       <div className="flex items-center gap-2.5">
         <Tag className="w-5 h-5 text-emerald-600" />
-        <h1 className="text-xl font-bold text-foreground">Shipping Link</h1>
+        <h1 className="text-xl font-bold text-foreground">Checkout Link</h1>
       </div>
       <p className="text-sm text-muted-foreground">
         Your buyer picks the shipping speed and pays for it. You print the label and hand it over.
@@ -203,7 +203,7 @@ export default function SellerBuilder() {
         <SellHeader />
         <div className="bg-card rounded-2xl border border-border shadow-sm p-6 text-center space-y-4">
           <p className="text-sm text-muted-foreground">
-            Sign in to create your shipping link — we attach it to your account so you can manage it and print labels.
+            Sign in to create your checkout link — we attach it to your account so you can manage it and print labels.
           </p>
           <Button onClick={() => navigate("/login")} className="rounded-xl gap-2">
             <LogIn className="w-4 h-4" /> Sign in to continue
