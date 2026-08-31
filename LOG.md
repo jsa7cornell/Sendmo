@@ -12,6 +12,17 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-31] Homepage rev 6 — CSS shipping label in the hero, vertical rhythm halved
+
+**Category:** ship
+**Cross-link:** Direction A review artifact §Homepage rev 6 (mock approved by John; his corrections: printer IS needed — no capability claims on the label; must be mobile-friendly and SEO-clean)
+
+**Browser-verified:** mcp-session: worktree vite, Browser pane fronted (screenshots real, not stale) · variants-covered: desktop 1280 (3-col hero: two cards + tilted label, How-it-works visible in first viewport), mobile 375 (label hidden, clean two-card stack, no horizontal scroll).
+
+New `HeroLabel.tsx`: a stylized USPS 4×6 drawn entirely in CSS — service banner, from/to, tracking barcode + mono number. No image asset, no CLS (fixed proportions), always white like a real label in both themes, `aria-hidden` (decorative; no text for crawlers to misread), hidden below lg. Deliberately carries NO capability copy — the earlier handoff's "scan at counter / no printer needed" claim was cut on John's correction (a printer is required; swept src/ and found no such claim shipped anywhere else). Spacing: sections `py-20`→`py-10`, header margins `mb-12`→`mb-6`, hero `pt-16 pb-20`→`pt-12 pb-10`, CTA card `p-10 sm:p-16`→`p-8 sm:p-10`; the fold now shows hero + the start of How-it-works. SEO unchanged-good: h1/h2 hierarchy intact, metas from #138, label invisible to assistive tech and crawlers.
+
+---
+
 ### [2026-08-31] Dashboard copy scrub — rows titled by purpose, who-pays chips, lane names
 
 **Category:** ship

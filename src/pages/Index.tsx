@@ -1,6 +1,7 @@
 import { Link2, Shield, Zap, ArrowRight, CheckCircle2, Users, CreditCard, Package } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import AppHeader from "@/components/AppHeader";
+import HeroLabel from "@/components/HeroLabel";
 import SiteFooter from "@/components/SiteFooter";
 import { SELLER_LINK_VISIBLE, SELLER_LINK_LIVE } from "@/lib/featureFlags";
 
@@ -13,7 +14,7 @@ export default function Index() {
       <AppHeader />
 
       {/* Hero */}
-      <section className="container max-w-5xl mx-auto px-4 pt-16 pb-20 text-center">
+      <section className="container max-w-5xl mx-auto px-4 pt-12 pb-10 text-center">
         {/* The two product nouns take their path color (blue = you pay,
             green = buyer pays) and each card below repeats its color as a
             top rule — the title's color coding IS the wayfinding, so the
@@ -27,11 +28,15 @@ export default function Index() {
           where it needs to go.
         </h1>
 
-        {/* Two doors, split on who pays. Launch-gated — with the seller flag
-            off this renders as the single you-pay card it has always been. */}
+        {/* Two doors, split on who pays, plus the label they both produce
+            (lg-and-up only — the mobile hero stays the clean card stack).
+            Launch-gated — with the seller flag off this renders as the single
+            you-pay card it has always been. */}
         <div
-          className={`grid gap-4 mx-auto mt-12 text-left ${
-            SELLER_LINK_VISIBLE ? "sm:grid-cols-2 max-w-3xl" : "max-w-md"
+          className={`grid gap-4 mx-auto mt-8 text-left ${
+            SELLER_LINK_VISIBLE
+              ? "sm:grid-cols-2 lg:grid-cols-[1fr_1fr_0.85fr] max-w-4xl"
+              : "lg:grid-cols-[1fr_0.85fr] max-w-md lg:max-w-2xl"
           }`}
         >
           <div className="relative overflow-hidden bg-card rounded-2xl border border-border shadow-sm p-6 flex flex-col gap-3">
@@ -72,15 +77,17 @@ export default function Index() {
               </Button>
             </div>
           )}
+
+          <HeroLabel />
         </div>
       </section>
 
       {/* How it works */}
-      <section className="container max-w-5xl mx-auto px-4 py-20">
+      <section className="container max-w-5xl mx-auto px-4 py-10">
         <h2 className="text-2xl sm:text-3xl font-bold text-foreground text-center mb-4">
           How SendMo works
         </h2>
-        <p className="text-muted-foreground text-center mb-12 max-w-lg mx-auto">
+        <p className="text-muted-foreground text-center mb-6 max-w-lg mx-auto">
           From "can you ship this to me?" to a label in their hands — in minutes.
         </p>
 
@@ -120,8 +127,8 @@ export default function Index() {
       </section>
 
       {/* Value props */}
-      <section className="container max-w-5xl mx-auto px-4 py-20">
-        <h2 className="text-2xl sm:text-3xl font-bold text-foreground text-center mb-12">
+      <section className="container max-w-5xl mx-auto px-4 py-10">
+        <h2 className="text-2xl sm:text-3xl font-bold text-foreground text-center mb-6">
           Why SendMo?
         </h2>
 
@@ -162,11 +169,11 @@ export default function Index() {
       </section>
 
       {/* Use cases */}
-      <section className="container max-w-5xl mx-auto px-4 py-20">
+      <section className="container max-w-5xl mx-auto px-4 py-10">
         <h2 className="text-2xl sm:text-3xl font-bold text-foreground text-center mb-4">
           Perfect for
         </h2>
-        <p className="text-muted-foreground text-center mb-12">
+        <p className="text-muted-foreground text-center mb-6">
           Buying, selling, or just getting stuff where it needs to go
         </p>
 
@@ -187,8 +194,8 @@ export default function Index() {
       </section>
 
       {/* CTA */}
-      <section className="container max-w-5xl mx-auto px-4 py-20 text-center">
-        <div className="bg-primary/5 border border-primary/20 rounded-2xl p-10 sm:p-16">
+      <section className="container max-w-5xl mx-auto px-4 py-10 text-center">
+        <div className="bg-primary/5 border border-primary/20 rounded-2xl p-8 sm:p-10">
           <h2 className="text-2xl sm:text-3xl font-bold text-foreground mb-4">
             Ready to simplify shipping?
           </h2>
