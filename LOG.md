@@ -16,6 +16,7 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 **Category:** fix
 **Cross-link:** live repro: shipment D7HTQJP (2026-08-31 seller-link sale whose "[SendMo] New label (live)" admin notice said "flexible link")
+**Deploy:** [#142](https://github.com/jsa7cornell/Sendmo/pull/142) squash-merged (`8c8679f`) 2026-08-31; `npx supabase functions deploy labels` ✓ (project fkxykvzsqdjzhurntgah). Live.
 
 **Browser-verified:** n/a-category: pure-logic · n/a-reason: change is a server-side string discriminator feeding the admin email + event-log properties — no rendered surface; contract verified by unit tests on the extracted pure helper (tests/unit/label-notice.test.ts, 15 passing).
 
