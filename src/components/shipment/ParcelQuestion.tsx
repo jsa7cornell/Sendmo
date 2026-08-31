@@ -18,12 +18,12 @@ export type { ParcelDraft };
 // is the intended path, and four cards of dimensions in front of someone who
 // was going to type "a hardcover cookbook" is the wrong first impression.
 //
-// They are NOT collapsible once there is something to see. Any parcel value
-// present (the guestimator just filled them, or the user is returning to a
-// filled step) reveals them, so an auto-filled estimate is always visible and
-// correctable rather than hidden behind a link. `showErrors` reveals them too:
-// a validation summary naming Length and Width must never point at fields the
-// user cannot see.
+// Filled values render as a one-line summary card with "Adjust" opening the
+// fields (2026-08-30, Direction A review — supersedes the 2026-08-24
+// always-expanded rule). The old invariant survives in two ways: every value
+// is visible on the summary, and `showErrors` always forces the real fields
+// open — a validation summary naming Length and Width must never point at
+// fields the user cannot see.
 
 const PACKAGING_OPTIONS: { id: PackagingType; label: string; desc: string }[] = [
   { id: "box", label: "Box / Rigid", desc: "Standard cardboard box" },
