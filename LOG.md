@@ -12,6 +12,17 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-31] Label flow discriminator fixed to three-way — seller sales no longer report as "flexible link"
+
+**Category:** fix
+**Cross-link:** live repro: shipment D7HTQJP (2026-08-31 seller-link sale whose "[SendMo] New label (live)" admin notice said "flexible link")
+
+**Browser-verified:** n/a-category: pure-logic · n/a-reason: change is a server-side string discriminator feeding the admin email + event-log properties — no rendered surface; contract verified by unit tests on the extracted pure helper (tests/unit/label-notice.test.ts, 15 passing).
+
+`labels/index.ts` classified every flow as `resolvedLink ? flex : full_label` — a binary that predates seller links, so every seller-link sale was mislabeled "flexible link" in the admin label notice and `flex` in the event-log `flow:` telemetry (four sites: buy_time_rate_unresolvable / _exceeded / _drift, rerate_impossible). Fix: new pure `resolveLabelFlow(linkType)` + `LABEL_FLOW_NOTICE_NAMES` in `_shared/label-notice.ts` — three-way `full_label / flex / seller_link` keyed on `resolvedLink.link_type` ("flex" kept over "flexible" for telemetry continuity with the flow-specific log sites that already emit it). All five sites now derive from one `labelFlow` const; the buyer-email `variant:` site (~line 3082), which already computed the same three-way inline, was consolidated onto it. Notice email now says "seller link". Unit tests added for the helper + a seller-link Mode-row case.
+
+---
+
 ### [2026-08-31] Homepage rev 6 — CSS shipping label in the hero, vertical rhythm halved
 
 **Category:** ship
