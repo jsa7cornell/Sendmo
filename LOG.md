@@ -12,6 +12,23 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-30] Estimator screen — result card, benefit naming, truthful re-weigh footer
+
+**Category:** ship
+**Cross-link:** Direction A review artifact `claude.ai/code/artifact/4e4f5285-ab45-484f-bb7b-ae4b5756eb38` (mock approved by John) · supersedes the 2026-08-24 "reveal-the-fields is the confirmation" behavior in ParcelQuestion
+
+**Browser-verified:** spec: tests/e2e/onboarding.spec.ts Step-14 Guestimator tests + rate-refetch.spec.ts + seller-builder.spec.ts + sender-questions/phone-gate/url-step-routing (47 e2e green locally under full mocks) · variants-covered: estimate path (summary card renders, Adjust opens fields carrying values), manual path (fields open, no summary), returning to a filled step (summary, Adjust to edit), validation (showErrors still forces real fields open — a summary can't be pointed at by "Length is required").
+
+Three changes to the shared parcel question (`ParcelQuestion.tsx` — recipient, sender, and seller flows all render it):
+
+1. **"I'm Feeling Lucky" → "Estimate size & weight"** (`MagicGuestimator.tsx` default — all four surfaces). Borrowed-joke naming made the differentiator read as a gimmick.
+2. **Filled values render as a one-line summary card** ("Our estimate for <item>" / "Your package" · `L × W × H in · lb oz · packaging`) with "Adjust size, weight or packaging" opening the unchanged fields. This REVERSES the 2026-08-24 "NOT collapsible once there is something to see" rule, with John's approval via the Direction A mock; the old invariant survives as: every value is visible on the summary, and showErrors still forces the fields open. Guestimator card title → "Describe it in plain words / This also prints on the shipping label." — resolving the duplicate-ask complaint (post-estimate, the Item description input now lives behind Adjust).
+3. **The legal footer's fear sentence replaced with the true policy** in RecipientStepPackage/Origin/Shipping: "If the carrier re-weighs your package, we cover small differences — larger ones are charged to your card and confirmed by email." Fact-checked against `_shared/adjustments.ts` + PAYMENTS.md §11: ≤$1 absorbed, $1.01–$10 auto-recharged (+$1 handling) with `carrierAdjustmentEmail` fired AFTER the recharge succeeds, >$10 flagged for manual review. NOTE both handoff proposals were wrong on the facts — "$3 covered" (it's $1) and "email you BEFORE charging" (the email is after) — do not resurrect either wording.
+
+**Deliberately not done:** the handoff's segmented control for "Sender will fill this in" — that escape was already reworked into `SkipToSenderLink` + `DimmedWhenDeferred` in John's 2026-08-2x passes with dedicated spec coverage (skip-to-sender.spec, onboarding "named, visible choice" tests); layering the older suggestion over it would regress a newer decision. Step pips ("STEP n OF N") also deferred — that's a flow-container change across three flows, its own PR if John still wants it.
+
+---
+
 ### [2026-08-30] Shipping Link ready screen — snippet correctness fix, variant-aware share card, naming
 
 **Category:** ship

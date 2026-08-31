@@ -262,8 +262,8 @@ export default function RecipientStepShipping({
         <a href="/terms" target="_blank" rel="noopener noreferrer" className="underline hover:text-foreground">Terms</a>
         {" "}and{" "}
         <a href="/privacy" target="_blank" rel="noopener noreferrer" className="underline hover:text-foreground">Privacy Policy</a>.
-        Shipping rates include carrier price plus SendMo's service fee. Final cost may be adjusted by the carrier
-        if package dimensions or weight differ from what was declared.
+        Shipping rates include carrier price plus SendMo's service fee. If the carrier re-weighs
+        your package, we cover small differences — larger ones are charged to your card and confirmed by email.
       </p>
     </div>
   );
