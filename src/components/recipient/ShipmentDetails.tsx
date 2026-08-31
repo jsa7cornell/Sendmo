@@ -126,7 +126,7 @@ export default function ShipmentDetails({
 
   return (
     <ShipmentDetailsCard
-      title={isLink ? "Shipping Link Details" : "Shipment Details"}
+      title={isLink ? "Label Link Details" : "Shipment Details"}
       cells={cells}
       total={totalCents !== null ? { label: totalLabel, text: formatCents(totalCents) } : null}
     />

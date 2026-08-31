@@ -12,6 +12,17 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-31] Lane-naming sweep — "Checkout Link" (buyer pays) / "Label link" (you pay)
+
+**Category:** ship
+**Cross-link:** dashboard scrub entry above (lane decided there); Direction A review artifact §Dashboard scrub
+
+**Browser-verified:** spec: seller-builder + phone-gate + onboarding + skip-to-sender + sender-questions e2e green locally (44 passed) with assertions updated to the new names · variants-covered: /sell header + sign-in gate, checkout-link ready heading, label-link editor create/edit headings, Label Link Details card, phone-gate server message.
+
+Applies the decided lane to every in-between surface: /sell h1 "Shipping Link"→"Checkout Link" (+ sign-in copy); LinkShareCard seller heading "Your checkout link is ready — send it to your buyer"; LinksEditor "Create/Edit your label link"; ShipmentDetails card "Label Link Details"; SenderFlow loading line goes name-free ("Loading your link…" — senders don't need product taxonomy). The `rates` edge function's phone-gate message drops the product name too ("This link's delivery address…") — note this PR touches supabase/functions/**, so the Deploy Edge Functions workflow runs on merge. Homepage hero untouched — John's verbatim copy ("shipping links" in the title reads generically and "Create a Shipping Checkout Link" contains the lane name). Remaining "shipping link" hits in src/ are code comments only.
+
+---
+
 ### [2026-08-30] Old-tagline sweep — "Prepaid shipping made easy" retired everywhere
 
 **Category:** ship
