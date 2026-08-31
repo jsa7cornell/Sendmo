@@ -16,7 +16,7 @@ import {
 import { checkRateLimit, clientIpKey } from "../_shared/ratelimit.ts";
 import { checkDbRateLimit, shouldAlertFailedOpen } from "../_shared/dbratelimit.ts";
 import { sendAdminAlert } from "../_shared/alert.ts";
-import { buildLabelCreatedNoticeRows } from "../_shared/label-notice.ts";
+import { buildLabelCreatedNoticeRows, resolveLabelFlow, LABEL_FLOW_NOTICE_NAMES } from "../_shared/label-notice.ts";
 import { resolveLiveMode } from "../_shared/mode.ts";
 import { assertKeysMatchEnv } from "../_shared/env-guard.ts";
 import { checkLiveChargeAllowed } from "../_shared/allowlist.ts";
@@ -648,6 +648,11 @@ Deno.serve(async (req: Request) => {
                 display_price_cents = serverCents;
             }
         }
+
+        // Flow discriminator for telemetry + the admin notice. Three-way
+        // (full_label / flex / seller_link) — the old `resolvedLink ?` binary
+        // predates seller links and mislabeled seller sales as flex.
+        const labelFlow = resolveLabelFlow(resolvedLink?.link_type ?? null);
 
         // ─── Caller identity (proposal 2026-05-11_account-creation-timing) ─
         // Resolve auth.uid() from the Authorization header when present.
@@ -1789,7 +1794,7 @@ Deno.serve(async (req: Request) => {
                     properties: {
                         easypost_rate_id,
                         quoted_display_price_cents: gateDisplayCents,
-                        flow: resolvedLink ? "flex" : "full_label",
+                        flow: labelFlow,
                         note: "rate absent from shipment — price cap not evaluated; buy will attempt rerate",
                     },
                 });
@@ -1817,7 +1822,7 @@ Deno.serve(async (req: Request) => {
                             stripe_fee_pct: STRIPE_FEE_PCT,
                             stripe_fee_flat_cents: STRIPE_FEE_FLAT_CENTS,
                             min_net_margin_pct: MIN_NET_MARGIN_PCT,
-                            flow: resolvedLink ? "flex" : "full_label",
+                            flow: labelFlow,
                             easypost_rate_id,
                         },
                     });
@@ -1939,7 +1944,7 @@ Deno.serve(async (req: Request) => {
                             buy_time_rate_cents: buyTimeRateCents,
                             drift_pct: Math.round(((buyTimeRateCents - quotedRateCentsApprox) / quotedRateCentsApprox) * 100),
                             margin_remaining_cents: gateDisplayCents - buyTimeRateCents,
-                            flow: resolvedLink ? "flex" : "full_label",
+                            flow: labelFlow,
                             easypost_rate_id,
                         },
                     });
@@ -2126,7 +2131,7 @@ Deno.serve(async (req: Request) => {
                         stale_rate_id: easypost_rate_id,
                         reason: "rate object absent before buy — no carrier+service to re-match",
                         quoted_display_price_cents: gateDisplayCents,
-                        flow: resolvedLink ? "flex" : "full_label",
+                        flow: labelFlow,
                     },
                 });
             } else {
@@ -2618,7 +2623,7 @@ Deno.serve(async (req: Request) => {
                         const noticePayerEmail = callerEmail ?? (resolvedLink ? recipient_email : null);
                         const noticeRows = buildLabelCreatedNoticeRows({
                             mode: noticeMode,
-                            flow: resolvedLink ? "flexible link" : "full prepaid",
+                            flow: LABEL_FLOW_NOTICE_NAMES[labelFlow],
                             carrier,
                             service,
                             eta: noticeEta,
@@ -3074,7 +3079,7 @@ Deno.serve(async (req: Request) => {
                                             // Seller sale → the payer contact is the SELLER; give
                                             // them the "you made a sale" copy on this degraded path
                                             // too (not flex "label created with your prepaid link").
-                                            variant: isSellerLink ? "seller_link" : resolvedLink ? "flex" : "full_label",
+                                            variant: labelFlow,
                                         });
                                         // runInBackground (fix 2026-07-06): keep the send alive
                                         // past the handler return via EdgeRuntime.waitUntil.
