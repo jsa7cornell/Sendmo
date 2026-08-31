@@ -89,20 +89,20 @@ export default function Index() {
             {
               step: "1",
               icon: Link2,
-              title: "Create a label link",
-              desc: "Enter your address, set your shipping preferences, and get a shareable link. Your address stays private.",
+              title: "Buy a label or create a link",
+              desc: "Buy the shipping label yourself, or set up a link someone else fills out. Your address stays private.",
             },
             {
               step: "2",
               icon: Package,
-              title: "Sender enters details",
-              desc: "The sender clicks your link, enters the package dimensions and weight, and picks a shipping speed.",
+              title: "Share it",
+              desc: "Text or email the link — or paste it straight into your Marketplace listing. They enter the package details.",
             },
             {
               step: "3",
               icon: CheckCircle2,
               title: "Print & ship",
-              desc: "A prepaid label is generated instantly. The sender prints it, attaches it, and drops off the package.",
+              desc: "The label is generated instantly. Whoever has the box prints it, attaches it, and drops it off.",
             },
           ].map((item) => (
             <div key={item.step} className="bg-card rounded-2xl border border-border shadow-sm p-6 text-center">
@@ -134,8 +134,8 @@ export default function Index() {
             },
             {
               icon: CreditCard,
-              title: "Recipient pays, sender ships",
-              desc: "No more Venmo-ing shipping costs back and forth. One clean transaction.",
+              title: "Either side can pay",
+              desc: "Cover the shipping yourself, or let your buyer pay at checkout. No more Venmo-ing shipping costs back and forth.",
             },
             {
               icon: Users,
@@ -167,12 +167,13 @@ export default function Index() {
           Perfect for
         </h2>
         <p className="text-muted-foreground text-center mb-12">
-          Anyone who receives packages from multiple senders
+          Buying, selling, or just getting stuff where it needs to go
         </p>
 
-        <div className="grid gap-4 sm:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2">
           {[
             { emoji: "🛒", title: "Marketplace buyers", desc: "Facebook Marketplace, Craigslist, OfferUp — get sellers to ship to you easily" },
+            { emoji: "🏷️", title: "Marketplace sellers", desc: "Post a checkout link in your listing — your buyer pays for shipping, you just print the label" },
             { emoji: "🏢", title: "Office managers", desc: "One link for all vendors and employees to ship items to the office" },
             { emoji: "🎁", title: "Gift recipients", desc: "Share with friends and family so they can send gifts without asking for your address" },
           ].map((item) => (
@@ -192,7 +193,7 @@ export default function Index() {
             Ready to simplify shipping?
           </h2>
           <p className="text-muted-foreground mb-8 max-w-md mx-auto">
-            Your first link takes about 60 seconds to set up. No account required.
+            Your first label or link takes about 60 seconds. No account required.
           </p>
           <Button
             className="rounded-xl text-lg py-6 px-10 shadow-md gap-2"

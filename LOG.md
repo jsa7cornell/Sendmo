@@ -12,6 +12,17 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-30] Old-tagline sweep — "Prepaid shipping made easy" retired everywhere
+
+**Category:** ship
+**Cross-link:** follows the Direction A homepage rebuild (#134); Direction A review artifact `claude.ai/code/artifact/4e4f5285-ab45-484f-bb7b-ae4b5756eb38`
+
+**Browser-verified:** mcp-session: Claude Browser pane, worktree vite with dummy Supabase env; full-page DOM read of `/` (title, hero, all four lower sections, footer) · variants-covered: logged-out desktop; plus home.spec + site-chrome.spec e2e green locally (13/13).
+
+"Prepaid shipping made easy" is at zero occurrences in src/, index.html, and public/. New copy, all drawn from John's approved hero voice: browser/OG/Twitter title "SendMo — Shareable Shipping Labels & Links"; meta/OG/Twitter description stitched verbatim from the two hero cards; footer + /login tagline "Getting stuff where it needs to go"; manifest description "Shareable shipping labels and shipping links."; ogMeta og:image:alt follows. Lower homepage sections rewritten off the link-first mental model: How-it-works steps are now "Buy a label or create a link / Share it / Print & ship"; "Recipient pays, sender ships" → "Either side can pay"; "Perfect for" gains a Marketplace sellers cell (grid 3→2×2) and its subhead reuses the hero's closing phrase; CTA line covers both artifacts ("Your first label or link…" — "No account required" kept, verified: /onboarding has no ProtectedRoute). Untouched on purpose: ogMeta link-unfurl copy ("You've been sent a prepaid shipping label" etc.) — that describes a PREPAID LINK, not the brand, and ogMeta.test pins it.
+
+---
+
 ### [2026-08-30] Estimator screen — result card, benefit naming, truthful re-weigh footer
 
 **Category:** ship

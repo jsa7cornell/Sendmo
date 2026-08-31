@@ -16,7 +16,7 @@ export default function SiteFooter() {
       <div className="container max-w-5xl mx-auto px-4 py-8 flex flex-col sm:flex-row items-center justify-between gap-4">
         <Link to="/" className="flex items-center gap-2 hover:opacity-80 transition-opacity">
           <SendMoLogo className="w-5 h-5" />
-          <span className="text-sm text-muted-foreground">SendMo — Prepaid shipping made easy</span>
+          <span className="text-sm text-muted-foreground">SendMo — Getting stuff where it needs to go</span>
         </Link>
         <div className="flex items-center gap-4 text-sm text-muted-foreground">
           <Link to="/faq" className="hover:text-foreground transition-colors">FAQ</Link>
