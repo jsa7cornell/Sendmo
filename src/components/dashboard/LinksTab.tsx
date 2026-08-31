@@ -22,7 +22,8 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
-import { linkTypeLabel } from "@/lib/linkTypeLabel";
+import { userLinkTypeLabel } from "@/lib/linkTypeLabel";
+import WhoPaysChip from "@/components/WhoPaysChip";
 
 interface ChildShipment {
   id: string;
@@ -127,7 +128,7 @@ export default function LinksTab({ links, loading, onCloseLink }: Props) {
       <div className="bg-card rounded-2xl border border-border shadow-sm p-12 text-center">
         <Link2 className="w-10 h-10 text-muted-foreground/40 mx-auto mb-3" />
         <p className="text-sm text-muted-foreground">No links yet</p>
-        <p className="text-xs text-muted-foreground mt-1">Create a SendMo link from the onboarding flow to share with senders.</p>
+        <p className="text-xs text-muted-foreground mt-1">Buy a shipping label or create a checkout link — both give you a link to share.</p>
       </div>
     );
   }
@@ -141,6 +142,14 @@ export default function LinksTab({ links, loading, onCloseLink }: Props) {
           ? [recipient.name, [recipient.city, recipient.state].filter(Boolean).join(", ")].filter(Boolean).join(" · ")
           : null;
         const hasMore = l.total_shipments > l.shipments.length;
+        const isSeller = l.link_type === "seller_link";
+        // Rows are titled by what the link is FOR (Direction A dashboard
+        // scrub): the item on checkout links, the recipient on label links.
+        // The slug stays findable on the meta line — fifty links deep, a bare
+        // slug is unidentifiable.
+        const title = isSeller
+          ? (l.notes || l.short_code)
+          : (recipientLine ? `For ${recipientLine}` : l.short_code);
         return (
           <div key={l.id} className="bg-card rounded-2xl border border-border shadow-sm overflow-hidden">
             {/* Link header */}
@@ -148,21 +157,13 @@ export default function LinksTab({ links, loading, onCloseLink }: Props) {
               <div className="flex items-start justify-between gap-3 flex-wrap">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-                    <Link2 className="w-4 h-4 text-primary flex-shrink-0" />
-                    <span className="font-mono text-base font-semibold text-foreground">{l.short_code}</span>
+                    <Link2 className={cn("w-4 h-4 flex-shrink-0", isSeller ? "text-emerald-600" : "text-primary")} />
+                    <span className="text-base font-semibold text-foreground truncate">{title}</span>
+                    <WhoPaysChip variant={isSeller ? "buyer" : "you"} className="text-[10px] px-2 py-0.5" />
                     <Badge variant="outline" className={cn("text-[10px]", statusCfg.tone)}>{statusCfg.label}</Badge>
-                    <Badge variant="outline" className="text-[10px] text-muted-foreground">
-                      {linkTypeLabel(l.link_type)}
-                    </Badge>
                   </div>
-                  {l.link_type === "seller_link" && l.notes && (
-                    <p className="text-xs text-foreground truncate">{l.notes}</p>
-                  )}
-                  {recipientLine && (
-                    <p className="text-xs text-muted-foreground">For {recipientLine}</p>
-                  )}
                   <p className="text-[11px] text-muted-foreground mt-0.5">
-                    Created {formatDate(l.created_at)} · sendmo.co/s/{l.short_code}
+                    {userLinkTypeLabel(l.link_type)} · Created {formatDate(l.created_at)} · sendmo.co/s/{l.short_code}
                   </p>
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
@@ -175,7 +176,7 @@ export default function LinksTab({ links, loading, onCloseLink }: Props) {
                       className="rounded-lg text-xs"
                       onClick={() => { setCloseError(null); setClosing({ id: l.id, short_code: l.short_code }); }}
                     >
-                      Close listing
+                      Close link
                     </Button>
                   )}
                   {/* No Manage on seller links: listings are immutable by
@@ -192,8 +193,15 @@ export default function LinksTab({ links, loading, onCloseLink }: Props) {
 
             {/* Child shipments — up to 5 */}
             {l.shipments.length === 0 ? (
+              // The opener of a checkout link is a BUYER; "share it with a
+              // sender" is the prepay story. Same wrong-audience species as
+              // the Marketplace snippet fix (#135).
               <div className="px-5 py-4 text-xs text-muted-foreground italic">
-                No shipments yet. Share <span className="font-mono">sendmo.co/s/{l.short_code}</span> with a sender.
+                {isSeller ? (
+                  <>No sales yet. Paste <span className="font-mono">sendmo.co/s/{l.short_code}</span> into your listing.</>
+                ) : (
+                  <>No shipments yet. Share <span className="font-mono">sendmo.co/s/{l.short_code}</span> with a sender.</>
+                )}
               </div>
             ) : (
               <ul className="divide-y divide-border/40">
@@ -245,7 +253,7 @@ export default function LinksTab({ links, loading, onCloseLink }: Props) {
       <Dialog open={closing !== null} onOpenChange={(open) => { if (!open && !closeBusy) setClosing(null); }}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Close this listing?</DialogTitle>
+            <DialogTitle>Close this link?</DialogTitle>
             <DialogDescription>
               Buyers who open sendmo.co/s/{closing?.short_code} will see "This item has
               already sold". This can't be undone — to sell again, create a new link.
@@ -259,7 +267,7 @@ export default function LinksTab({ links, loading, onCloseLink }: Props) {
               Keep it open
             </Button>
             <Button onClick={confirmClose} disabled={closeBusy}>
-              {closeBusy ? "Closing…" : "Close listing"}
+              {closeBusy ? "Closing…" : "Close link"}
             </Button>
           </DialogFooter>
         </DialogContent>
