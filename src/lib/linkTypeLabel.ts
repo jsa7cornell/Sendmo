@@ -12,3 +12,17 @@ export const LINK_TYPE_LABELS: Record<string, string> = {
 export function linkTypeLabel(linkType: string): string {
   return LINK_TYPE_LABELS[linkType] ?? linkType;
 }
+
+// User-facing lane names (Direction A dashboard scrub, 2026-08-31): users see
+// the two product names — "Label link" (you pay) and "Checkout link" (buyer
+// pays) — while the schema taxonomy above (full_label/flexible) stays on
+// admin surfaces, where the distinction matters operationally.
+export const USER_LINK_TYPE_LABELS: Record<string, string> = {
+  full_label: "Label link",
+  flexible: "Label link",
+  seller_link: "Checkout link",
+};
+
+export function userLinkTypeLabel(linkType: string): string {
+  return USER_LINK_TYPE_LABELS[linkType] ?? linkTypeLabel(linkType);
+}

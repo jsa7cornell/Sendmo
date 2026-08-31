@@ -505,12 +505,12 @@ export default function Dashboard() {
               <Button
                 variant="outline"
                 disabled={!SELLER_LINK_LIVE}
-                className="rounded-xl gap-2 text-sm"
+                className="rounded-xl gap-2 text-sm border-emerald-200 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800"
                 onClick={SELLER_LINK_LIVE ? () => navigate("/sell") : undefined}
                 title={SELLER_LINK_LIVE ? undefined : "Coming soon"}
               >
                 <Tag className="w-4 h-4" />
-                Sell an item
+                Create a checkout link
                 {!SELLER_LINK_LIVE && (
                   <span className="text-[10px] font-bold uppercase tracking-wide bg-muted border border-border rounded-full px-1.5 py-0.5">
                     Soon
@@ -520,7 +520,7 @@ export default function Dashboard() {
             )}
             <Button className="rounded-xl gap-2 text-sm" onClick={() => navigate("/onboarding")}>
               <SendMoLogo className="w-4 h-4" />
-              Create a new shipment
+              Buy a shipping label
             </Button>
           </div>
         </div>
@@ -704,7 +704,7 @@ export default function Dashboard() {
                     disabled={rotating}
                     className="text-[11px] text-muted-foreground hover:text-foreground underline disabled:opacity-50"
                   >
-                    {rotating ? "Rotating…" : "Rotate URL"}
+                    {rotating ? "Getting a new URL…" : "Get a new URL"}
                   </button>
                 </div>
               </>

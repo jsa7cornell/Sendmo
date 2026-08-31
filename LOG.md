@@ -12,6 +12,15 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-08-31] Dashboard copy scrub — rows titled by purpose, who-pays chips, lane names
+
+**Category:** ship
+**Cross-link:** Direction A review artifact `claude.ai/code/artifact/4e4f5285-ab45-484f-bb7b-ae4b5756eb38` §Dashboard scrub (proposal approved by John 2026-08-31) · NAMING LANE DECIDED: "Label link" (you pay) / "Checkout link" (buyer pays)
+
+**Browser-verified:** spec: tests/unit/LinksTabClose.test.tsx (rewritten to the new copy) + site-chrome/auth e2e green locally (15/15) · variants-covered: active checkout link (Close control, Buyer-pays chip, item-text title), flexible link (no Close, Manage), closed link, empty-shipments per type.
+
+The dashboard spoke five dialects for two products; this lands the decided lane. `LinksTab` rows are now titled by what the link is FOR (item text on checkout links, "For <name> · <city, state>" on label links) with the slug demoted to the meta line; the schema-taxonomy badge (Seller/Full label/Flexible) is replaced by the who-pays chip — new shared `WhoPaysChip.tsx` (green "Buyer pays" / blue "You pay") — plus `userLinkTypeLabel()` in linkTypeLabel.ts ("Checkout link"/"Label link"; the PR6 one-map principle holds, admin keeps the precise taxonomy). Wrong-audience bug fixed: a checkout link's empty state said "Share … with a sender" — the opener is a BUYER; now "No sales yet. Paste … into your listing." Header buttons align with the homepage doors: "Sell an item"→"Create a checkout link" (emerald), "Create a new shipment"→"Buy a shipping label". "Close listing"→"Close link" (dialog body kept — the "already sold" explanation stays). "Rotate URL"→"Get a new URL". Empty tab copy names both products. NOTE: SellerBuilder's inline Buyer-pays chip was already gone (John's 2026-08-29 "no badge" pass) — WhoPaysChip serves the dashboard now; use it for any future chip surface instead of re-inlining.
+
 ### [2026-08-31] Lane-naming sweep — "Checkout Link" (buyer pays) / "Label link" (you pay)
 
 **Category:** ship
