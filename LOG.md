@@ -12,6 +12,25 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-09-14] Jones's seller feedback triaged — three of four asks already shipped; two live bugs found underneath
+
+**Category:** docs
+**Cross-link:** proposal [2026-09-14_jones-seller-feedback.md](proposals/2026-09-14_jones-seller-feedback.md) (in review). Prod ground truth: shipment `K1ZQ9FR`. Corrects a false dimensional claim in decided [2026-07-17_label-print-page.md](proposals/2026-07-17_label-print-page.md) §36.
+
+Jones Anderson made SendMo's first real marketplace sale (live, 2026-09-10, UPSDAP Ground Saver, Checkout Link, parcel 12x13x1in "DEFCON badge") and sent four requests. Triaged against prod + a worktree at origin/main.
+
+**Three of the four already exist; the seller lane never offered them.** The label size picker is live and unflagged but sits behind a button labelled only `Print` — prod has **4 `label.printed` events ever, none his**, so he never reached it (he almost certainly hit Download, whose `fetch()` fails on the no-CORS S3 URL and falls back to `window.open`, dumping a raw 800x1400 PNG in a tab). The seller-pays lane (`/onboarding`) is live and unflagged but its only exit from `/sell` is a back-arrow reading "Back to shipping options" (`SellerBuilder.tsx:310`). The carrier constraint is enforced server-side (`rates/index.ts:245`) but `SellerBuilder.tsx:229` hardcodes `"any"` since PR #131 (`735f070`) removed the control on 2026-08-29 — **12 days before he shipped**. Prod: 0/7 seller links carry a carrier vs 2/27 flexible.
+
+**Bug 1 — every UPS label prints 14.3% vertically squashed.** Measured, not inferred: Jones's label PNG decodes to 800x1400 @200dpi = 4.00 x 7.00in, ink ending at exactly row 1199 (6.00in) with exactly 200 blank rows. `LabelPrintPage.tsx:167` sets `width:4in; height:6in` with **no `object-fit` anywhere in `src/`**, so CSS default `fill` compresses non-uniformly. UPS carries a MaxiCode, a fixed-geometry 2D symbol with no distortion tolerance. ~Half of live labels are UPS (4 of 7). The decided 2026-07-17 proposal asserted "1200x1800 = exactly 4x6 ... holds across carriers (USPS GroundAdvantage and UPSDAP Ground samples)" — false when written; the UPSDAP sample it cites is 800x1400. Same false claim copied into the code comment at `LabelPrintPage.tsx:17-19`. **Not print-and-scan tested — no scan failure has been reported.**
+
+**Bug 2 — picking UPS or FedEx as a carrier constraint filters out every rate.** `_shared/rate-filters.ts:58` compares EasyPost's raw carrier string to the lowercase chip id. EasyPost returns `UPSDAP`/`FedExDefault`; chips are `ups`/`fedex`. Only `usps` matches, by coincidence. **Latent** — the one `ups` link in prod is `draft`, and `rates/index.ts:150,206` gate on `status === "active"`. CI is green because **zero test files import `rate-filters`**. Fix is to mirror `normalizeCarrier` (`src/components/sender/senderState.ts:124-131`), which already handles both via `.includes()`.
+
+**Two framings the adversarial passes killed** (recorded so they are not re-derived): his package was a 12x13 flat, so "label too big for the package" is false for this shipment; and trimming the UPS blank tail does **not** make the printed label smaller — the page already prints 4x6, so the fix makes it undistorted, not shorter.
+
+No code changed this session. Five workstreams proposed; W5 reverses a deliberate call and needs John's sign-off.
+
+---
+
 ### [2026-08-31] Label flow discriminator fixed to three-way — seller sales no longer report as "flexible link"
 
 **Category:** fix
