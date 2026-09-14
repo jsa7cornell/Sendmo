@@ -10,9 +10,25 @@ import { carrierDisplayName } from "@/lib/utils";
 // anchor); carrier "Tracking #" is demoted and only appears in F2 where
 // the carrier has actually scanned it. F3 hides the carrier number entirely
 // — it's a dead identifier post-void.
+//
+// 2026-09-14 — narrow carve-out to that F2 rule, decided by John. A seller on
+// a marketplace has to paste the CARRIER number into eBay to mark the order
+// shipped and release payout, and no marketplace accepts the SendMo code. The
+// F2 gate meant the number was invisible on exactly the screen a seller lands
+// on right after buying (F1, pre-dropoff). The white-label reasoning behind
+// the original decision protects what a BUYER sees, so the carve-out is scoped
+// to the seller's own view (`showCarrierTracking`) and F2 is unchanged for
+// everyone else. Labelled "not scanned yet" so nobody clicks through to a
+// carrier page that would 404 — the original rationale, preserved.
 
 interface Props {
   family: 1 | 2 | 3;
+  /**
+   * Show the carrier tracking number before the first scan. True only for the
+   * seller's own view of their own shipment. Buyers and anonymous viewers keep
+   * the 2026-05-13 behaviour.
+   */
+  showCarrierTracking?: boolean;
   data: {
     public_code: string;
     tracking_number: string | null;
@@ -50,7 +66,7 @@ function Row({ label, value, mono }: { label: string; value: React.ReactNode; mo
   );
 }
 
-export default function DetailsCard({ family, data }: Props) {
+export default function DetailsCard({ family, data, showCarrierTracking }: Props) {
   const fromLoc = formatLocation(data.from_city, data.from_state);
   const toLoc = formatLocation(data.to_city, data.to_state);
 
@@ -74,6 +90,15 @@ export default function DetailsCard({ family, data }: Props) {
             F1 hides it (not scanned yet — would 404). F3 hides it (dead number). */}
         {family === 2 && data.tracking_number && !data.is_test && (
           <Row label="Tracking #" value={<span className="break-all">{data.tracking_number}</span>} mono />
+        )}
+
+        {/* Pre-dropoff, seller's own view only — see the carve-out note above. */}
+        {family === 1 && showCarrierTracking && data.tracking_number && !data.is_test && (
+          <Row
+            label="Tracking # (not scanned yet)"
+            value={<span className="break-all select-all">{data.tracking_number}</span>}
+            mono
+          />
         )}
 
         {/* Timestamps differ per family. F1 says "Created"; F2 says "Shipped";

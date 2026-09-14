@@ -397,6 +397,13 @@ export default function TrackingPage() {
       <div>
         <DetailsCard
           family={family}
+          /* Pre-dropoff carrier tracking number, seller's own view only
+             (decided 2026-09-14). `is_seller_sale` scopes this to the
+             marketplace lane, and `can_print !== false` is the server-derived
+             seller/buyer discriminator already used for the label action —
+             false means the token-holding BUYER, who must not get it. Buyers
+             and anonymous viewers keep the 2026-05-13 F2-only behaviour. */
+          showCarrierTracking={data.is_seller_sale === true && data.can_print !== false}
           data={{
             public_code: data.public_code,
             tracking_number: data.tracking_number,

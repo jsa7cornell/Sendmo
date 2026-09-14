@@ -172,3 +172,42 @@ export function buildLabelCreatedNoticeRows(f: LabelNoticeFacts): AdminAlertRow[
 
     return rows;
 }
+
+/**
+ * "Austin, TX" — city/state only, the grade tracking/ emits to every viewer
+ * role (index.ts:782-785). Street addresses are never denormalized out of the
+ * label; email is a weaker channel than an authenticated page, so it gets the
+ * same grade rather than a looser one. Returns null when either half is
+ * missing, so callers can omit the row instead of printing a half-place.
+ */
+export function placeLabel(
+    city: string | null | undefined,
+    state: string | null | undefined,
+): string | null {
+    const c = (city ?? "").trim();
+    const st = (state ?? "").trim();
+    if (!c || !st) return null;
+    return `${c}, ${st}`;
+}
+
+/** "14 oz · 10×8×4 in" — the declared parcel, as the customer entered it. */
+export function parcelSummary(
+    lengthIn: number,
+    widthIn: number,
+    heightIn: number,
+    weightOz: number,
+): string | null {
+    const parts: string[] = [];
+    if (Number.isFinite(weightOz) && weightOz > 0) {
+        const lbs = Math.floor(weightOz / 16);
+        const oz = Math.round(weightOz % 16);
+        if (lbs && oz) parts.push(`${lbs} lb ${oz} oz`);
+        else if (lbs) parts.push(`${lbs} lb`);
+        else parts.push(`${oz} oz`);
+    }
+    const dims = [lengthIn, widthIn, heightIn];
+    if (dims.every((d) => Number.isFinite(d) && d > 0)) {
+        parts.push(`${dims.map((d) => Math.round(d * 100) / 100).join("\u00d7")} in`);
+    }
+    return parts.length ? parts.join(" \u00b7 ") : null;
+}

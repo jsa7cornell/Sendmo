@@ -127,3 +127,60 @@ describe("dispatchNotifications — failed-send audit trail (the .catch regressi
         );
     });
 });
+
+// ─── Emailed label attachment (2026-09-14, W3) ──────────────────────────
+//
+// The label file rides the creation email so a seller has a copy they can file
+// or print later. Two contracts worth pinning, because both run on the
+// label-purchase path: the fetch only happens for label_created (a tracking
+// update has no label), and a label that will not fetch must send a normal
+// email rather than costing the seller one.
+describe("dispatchNotifications — emailed label attachment", () => {
+    // is_flex:true so the payer role is `recipient`, matching the mock
+    // contact — the dispatcher filters label_created to the payer role, so a
+    // mismatched role means no email at all and the test asserts nothing.
+    const LABEL_CTX = { ...CTX, label_url: "https://labels.test/x.png", is_flex: true };
+
+    it("attaches the label on label_created", async () => {
+        vi.stubGlobal("fetch", vi.fn(async () => new Response(
+            new Uint8Array([137, 80, 78, 71]),
+            { status: 200, headers: { "content-type": "image/png" } },
+        )));
+        vi.mocked(sendEmail).mockResolvedValue({ id: "email-provider-id" });
+
+        await dispatchNotifications(makeMockSupabase([]), "ship-1", "label_created", LABEL_CTX);
+
+        const call = vi.mocked(sendEmail).mock.calls.at(-1)?.[0] as { attachments?: unknown[] };
+        expect(call.attachments).toHaveLength(1);
+        expect((call.attachments![0] as { filename: string }).filename)
+            .toBe("sendmo-label-ABC123.png");
+        vi.unstubAllGlobals();
+    });
+
+    it("does not fetch a label for a tracking update", async () => {
+        const fetchSpy = vi.fn();
+        vi.stubGlobal("fetch", fetchSpy);
+        vi.mocked(sendEmail).mockResolvedValue({ id: "email-provider-id" });
+
+        await dispatchNotifications(makeMockSupabase([]), "ship-1", "in_transit", LABEL_CTX);
+
+        expect(fetchSpy).not.toHaveBeenCalled();
+        const call = vi.mocked(sendEmail).mock.calls.at(-1)?.[0] as { attachments?: unknown[] };
+        expect(call.attachments).toBeUndefined();
+        vi.unstubAllGlobals();
+    });
+
+    it("still sends the email when the label cannot be fetched", async () => {
+        vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("label host down"); }));
+        vi.mocked(sendEmail).mockResolvedValue({ id: "email-provider-id" });
+        const inserts: InsertedRow[] = [];
+
+        await dispatchNotifications(makeMockSupabase(inserts), "ship-1", "label_created", LABEL_CTX);
+
+        expect(sendEmail).toHaveBeenCalled();
+        const call = vi.mocked(sendEmail).mock.calls.at(-1)?.[0] as { attachments?: unknown[] };
+        expect(call.attachments).toBeUndefined();
+        expect(inserts.some((r) => r.status === "sent")).toBe(true);
+        vi.unstubAllGlobals();
+    });
+});
