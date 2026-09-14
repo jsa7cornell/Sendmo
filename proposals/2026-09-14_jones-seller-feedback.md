@@ -5,7 +5,7 @@ project: sendmo
 status: in-review
 blocked_on: null
 created: 2026-09-14
-last_updated: 2026-09-14  # drafted from Jones's 2026-09-11 feedback
+last_updated: 2026-09-14  # drafted, then revised same day after John confirmed Jones printed from Download with no thermal printer — W4 split into W4a/W4b, Q2 and Q5 resolved
 reviewed: null
 decided: null
 pr: null
@@ -22,7 +22,7 @@ outcome: null
 
 Two findings here are independent of everything else in this proposal and stand on their own merits:
 
-1. **Every UPS label prints distorted.** The print page forces a 4×7 UPS label into a 4in × 6in box with no `object-fit`, so CSS default `fill` compresses it 14.3% vertically. UPS labels carry a MaxiCode — a fixed-geometry 2D symbol with no tolerance for non-uniform distortion. Roughly half of all live SendMo labels are UPS (4 of 7). **Nobody has reported a scan failure, and I have not print-and-scan tested it** — but the geometry is measured, not inferred.
+1. **Every UPS label printed *from the print page* comes out distorted.** It forces a 4×7 UPS label into a 4in × 6in box with no `object-fit`, so CSS default `fill` compresses it 14.3% vertically. UPS labels carry a MaxiCode — a fixed-geometry 2D symbol with no tolerance for non-uniform distortion. Roughly half of all live SendMo labels are UPS (4 of 7). **Nobody has reported a scan failure, I have not print-and-scan tested it, and — confirmed 2026-09-14 — Jones did not hit it** (he printed from Download, which bypasses that CSS entirely). The geometry is measured, not inferred; the user impact is currently theoretical. Fix it on its own merits, not as a response to this feedback.
 
 2. **Picking "UPS" or "FedEx" as a carrier constraint filters out every rate.** `_shared/rate-filters.ts:58` compares EasyPost's raw carrier string to the lowercase UI chip id. EasyPost returns `UPSDAP` and `FedExDefault`; the chips are `ups` and `fedex`. Only `usps` matches, by coincidence. This is **latent** — prod has exactly two carrier-constrained links, one `usps`/active (works) and one `ups`/draft (never resolved, because `rates/` only reads active links). Cheap insurance, not an emergency.
 
@@ -66,13 +66,19 @@ Both were framings I had already written down, and both were wrong. Recording th
 
 **Correction 2 — trimming the UPS label does not make the printed label smaller.** The print page already forces every label into a 4in × 6in box. Fixing the distortion makes the same 4×6 footprint *undistorted*. The delta in physical size is exactly zero. Any copy that tells a seller "we made your label smaller" would be false.
 
-### The finding that actually explains #2
+### The finding that actually explains #2 — confirmed by John, 2026-09-14
 
-**Jones never opened the print page.** Production has exactly **4** `label.printed` events, ever; the most recent is 2026-07-18, well before his 2026-09-10 sale. So he never saw the three-preset size picker.
+**Jones never opened the print page, and he printed from Download on a plain home printer.**
 
-What he almost certainly used is **Download**, right next to Print on the tracking page. `handleDownloadClick` (`src/pages/TrackingPage.tsx:310-327`) calls `fetch(labelUrl)` against a no-CORS S3 URL. That throws. The `catch` falls through to `window.open(labelUrl)` — which dumps a raw 800×1400 PNG into a browser tab. From there the only sizing control is the browser's print dialog.
+The code evidence: production has exactly **4** `label.printed` events, ever; the most recent is 2026-07-18, well before his 2026-09-10 sale. So he never saw the three-preset size picker.
 
-*"It made lable easy to re size"* is a plain description of that experience.
+**John confirmed the rest directly: Jones does not own a thermal printer, and was printing from the downloaded file.** That closes the one gap the code could not close — the absence of a print event proves he did not use the print page, not what he did instead.
+
+So his actual path was **Download**, the button sitting right next to Print. `handleDownloadClick` (`src/pages/TrackingPage.tsx:310-327`) calls `fetch(labelUrl)` against a no-CORS S3 URL. That throws. The `catch` falls through to `window.open(labelUrl)` — which dumps a raw 800×1400 PNG into a browser tab. From there his only sizing control was the browser's print dialog, which by default scales a lone image to fit the sheet. An 800×1400 image fitted to Letter portrait prints at roughly **6.3 × 11in** — not 4×6, and far *larger* than the package needs.
+
+*"It made lable easy to re size"* is a plain description of that experience, and John's clarification — *"so it fits on smal/medium/large sized packages"* — is what you ask for after a label prints the size of the page.
+
+> **The implication that re-scopes W4: Jones never experienced the distortion bug.** The 14.3% squash lives in the print page's CSS. He never loaded that page, so the PNG he printed was geometrically correct — just enormous. The distortion is still real and still worth fixing (§0.1), but it is **not** the cause of his complaint, and fixing it would not have changed his day. W4 is therefore split: the thing that fixes Jones is the Download path, and the distortion fix rides along as an independent bug.
 
 ### The through-line
 
@@ -116,6 +122,7 @@ SELLER JOURNEY (Checkout Link — the lane Jones used)
         │
         └── [Download] ──► fetch() fails (no CORS) ──► window.open
                           ──► raw 800×1400 PNG in a tab   ← GAP B
+                          ──► browser scales it to fill Letter  (CONFIRMED path)
 ```
 
 ---
@@ -129,7 +136,8 @@ Five workstreams. Each is independently shippable; none blocks another. They are
 | **W1** | Carrier matcher fix | Bug | XS | No |
 | **W2** | Seller-pays signpost on `/sell` | Copy + routing | XS→S | Yes, for the full version |
 | **W3** | Label email becomes a real shipment record | Feature | S | No |
-| **W4** | UPS label distortion fix | Bug | S | No |
+| **W4a** | Download lands on the print page + signpost | Bug + copy | S | Pick an option (§7 Q2) |
+| **W4b** | UPS label distortion fix | Bug | S | No |
 | **W5** | Carrier constraint control on `/sell` | Feature | M | **Yes — reverses a 2026-08-29 call** |
 
 The unifying idea: **stop hiding capabilities the seller already paid for.** Four of the five are about exposure and correctness, not new capability. Only W5 adds a control, and even that restores one that existed until three weeks ago.
@@ -141,7 +149,7 @@ Every workstream here extends something that already exists:
 - W1 mirrors `normalizeCarrier` (`src/components/sender/senderState.ts:124-131`), which already handles `UPSDAP` and `FedExDefault` correctly via `.includes()`.
 - W2 changes one string and one route.
 - W3 extends `summaryRow` (`email-templates.ts:136`) and `labelCreatedCtx` — the context object already built at the call site.
-- W4 extends the existing `Preset` / `PRESETS` / `sheet-${preset}` scheme (`LabelPrintPage.tsx:21-28`, `:166-203`).
+- W4a re-points an existing button at an existing page. W4b extends the existing `Preset` / `PRESETS` / `sheet-${preset}` scheme (`LabelPrintPage.tsx:21-28`, `:166-203`).
 - W5 extends the existing `preferred_carrier` column and the one shared rate predicate.
 
 No new table, no new edge function, no new dependency, no new abstraction.
@@ -235,7 +243,39 @@ The `family === 2` gate is defensible on its own terms — the comment says F1 h
 
 **Also not proposed: a post-purchase "we emailed you" line on the tracking page.** It does not reach the seller. On a seller link the **buyer** is the one redirected to `?fresh=1`, and the celebration flag is only read inside the payer branch. Setting the seller's expectation means the email subject doing the work, not a page he never visits.
 
-### W4 — UPS label distortion fix (S, bug)
+### W4 — The printing path (S) — split into W4a and W4b
+
+John's 2026-09-14 confirmation (Jones printed from Download, no thermal printer) splits this cleanly. **W4a is what fixes Jones. W4b is an independent bug he never hit.** They touch different files and should be separate PRs.
+
+#### W4a — Make Download land somewhere printable (S) — *this is the one that answers Jones*
+
+**The failure.** `src/pages/TrackingPage.tsx:310-327`:
+
+```ts
+const res = await fetch(labelUrl);        // no-CORS S3 URL → throws
+...
+} catch {
+  window.open(labelUrl, "_blank", ...);   // raw 800×1400 PNG in a tab
+}
+```
+
+The `fetch` **always** throws for these labels. Verified 2026-09-14 against Jones's live label URL: a request carrying `Origin: https://sendmo.co` returns `200 OK` with **no** `Access-Control-Allow-Origin` header at all, so the browser blocks the read. This is the same fact the decided 2026-07-17 proposal established at `:37` as the reason the print page uses an `<img>` rather than `fetch`. So the `catch` is not an edge case; **it is the only path Download ever takes.** The `a.download` branch above it is dead code for every real label.
+
+The seller then prints a bare image from the browser, which scales it to fit the sheet. That is the whole of Jones's complaint.
+
+**Fix — pick one (see §7 Q2, now reframed).** My recommendation is (a):
+
+- **(a) Point Download at the print page.** Replace the Download button's handler with navigation to `/t/<code>/print`, or relabel the pair so one button reads something like "Print or save label" and both land on the print page. The print page already solves sizing with three presets and already logs `label.printed`. This is a handful of lines and it puts every seller on the surface that was built for this.
+- **(b) Keep a true download but make it work.** Proxy the label through an edge function so `fetch` succeeds and `a.download` fires, giving a real saved file. More code, a new endpoint, and it still hands the seller a bare PNG to print badly.
+- **(c) Do both** — (a) for the button, (b) later if sellers ask for an actual file.
+
+**Files:** `src/pages/TrackingPage.tsx` (the button pair at `:454-497` and `handleDownloadClick` at `:310-327`). Possibly `src/components/tracking/HowToShipStrip.tsx` for a line of guidance.
+
+**Also in W4a — the signpost.** The route to the size picker is a button reading only `Print` (`TrackingPage.tsx:483`). The words "size", "resize", "layout" and "paper" appear nowhere on the tracking page. And the print page's own tips card says *"Paper size **Letter**, portrait. Any printer works — no label printer needed"* — fine for Jones, who has no thermal printer, but it reads as "there is nothing to choose here." Lead the preset names with the physical outcome instead of the format name. Zero print-behavior change, no printer required to verify.
+
+#### W4b — UPS label distortion fix (S, independent bug)
+
+**Not the cause of Jones's complaint** — he never loaded this page. Fix it because it is wrong, not because he asked.
 
 **Measured, not inferred.** I pulled Jones's actual label from `shipments.label_url` and decoded the pixels:
 
@@ -292,7 +332,8 @@ Production confirms the consequence: **0 of 7 seller links carry a carrier const
 | W1 | **New** `tests/unit/rateFilters.test.ts`: assert `UPSDAP` matches `ups`, `FedExDefault` matches `fedex`, `USPS` matches `usps`, and a genuine mismatch still returns `carrier_filtered`. Use the **real** EasyPost strings, not synthetic ones — that substitution is why this bug shipped. |
 | W2 | Unit: the who-pays choice routes to `/onboarding` (not a deep URL). Manual: signed-out path still hits the sign-in wall correctly. |
 | W3 | Extend `tests/unit/emailTemplates.test.ts`: seller variant never renders the seller's own name in a From-like row; city/state only, no street; tracking number present and prominent. Extend the notifications test for the **degraded direct-send path** (`labels/index.ts:3069-3106`) — that is the trap. |
-| W4 | Geometry unit tests need `naturalWidth`/`naturalHeight` stubbed — jsdom never loads images, so `onLoad` never fires. There is no precedent in the repo for this, so budget for it: `Object.defineProperty` on the img plus a manual `load` dispatch. **Playwright is the better layer here** — see §6. |
+| W4a | Playwright: from a pre-dropoff tracking page, the Download/print affordance lands on `/t/<code>/print` (not a raw S3 tab) and a `label.printed` event is logged. Unit: the dead `a.download` branch is gone or genuinely reachable. |
+| W4b | Geometry unit tests need `naturalWidth`/`naturalHeight` stubbed — jsdom never loads images, so `onLoad` never fires. There is no precedent in the repo for this, so budget for it: `Object.defineProperty` on the img plus a manual `load` dispatch. **Playwright is the better layer here** — see §6. |
 | W5 | Unit: comma-separated `preferred_carrier` filters to the union. Integration: a two-carrier link returns rates from both. |
 
 **The honest gap:** no unit test can prove a barcode scans. W4's real verification is physical (§6).
@@ -305,6 +346,7 @@ Production confirms the consequence: **0 of 7 seller links carry a carrier const
 - Buy-time carrier re-check in `labels/` (`WISHLIST.md:187`, seller-link F5). Cross-linked, not fixed.
 - Attaching the label PDF to the email — decision first (§7 Q3).
 - Fixing the Full-page preset's over-scale — flagged (§7 Q4), not fixed.
+- A 4×6 thermal-roll preset (`@page { size: 4in 6in }`). Dropped 2026-09-14: Jones has no thermal printer, so it helps nobody we know of yet. Revisit when a seller with one asks.
 - Any repeat-sale / duplicate-link flow. Real gap (origin starts empty, single-use closes the link, no duplicate action exists) but it is its own proposal.
 - Requesting a different `label_size` from EasyPost at buy time. `label_size` is a **shipment-create** option, not a buy parameter, so it would have to be chosen before the buyer has paid. Post-purchase conversion via `GET /shipments/:id/label` exists and our labels are all PNG (the only convertible format), but neither is needed once W4 lands.
 
@@ -316,8 +358,9 @@ Per PLAYBOOK Rule 19, browser-verify before the LOG entry.
 
 1. **W1** — create a flexible link constrained to `ups`, activate it, open it as a buyer. Rates appear. Repeat for `fedex`. Before the fix both return zero options.
 2. **W3** — buy a test-mode seller-link label. Confirm the seller's email names the **buyer** and destination city/state, shows service level and parcel, and carries the tracking number prominently. Force the contacts-insert failure path and confirm the degraded email is also correct.
-3. **W4 — the one that needs a physical printer.** Print a real UPS label and a real USPS label at each of the three presets. Measure the printed label with a ruler: the UPS label must measure 4.00 × 6.00in with no vertical compression. **Then scan every barcode with a phone scanner app**, including the MaxiCode. This is the only proof that matters and it cannot be automated. Blocks the W4 LOG entry.
-4. **W5** — create a seller link restricted to USPS + UPS, open as a buyer, confirm both carriers appear and FedEx does not.
+3. **W4a — reproduce Jones's exact path first.** On a real pre-dropoff tracking page, click Download as it exists today and confirm it opens a raw PNG in a tab (this is the bug). Then print that tab to Letter and measure what comes out — that is the artifact Jones was holding. After the fix, the same click lands on `/t/<code>/print` with the presets visible. No special printer needed.
+4. **W4b — the one that needs a physical printer.** Print a real UPS label and a real USPS label at each of the three presets. Measure the printed label with a ruler: the UPS label must measure 4.00 × 6.00in with no vertical compression. **Then scan every barcode with a phone scanner app**, including the MaxiCode. This is the only proof that matters and it cannot be automated. Blocks the W4 LOG entry.
+5. **W5** — create a seller link restricted to USPS + UPS, open as a buyer, confirm both carriers appear and FedEx does not.
 
 ---
 
@@ -326,8 +369,7 @@ Per PLAYBOOK Rule 19, browser-verify before the LOG entry.
 **Q1 — Does the carrier control come back to `/sell`? (John's call, not the reviewer's.)**
 Restoring it reverses PR #131, a deliberate simplification made 2026-08-29. My recommendation is **yes, restore it**, for three reasons: the drop-off burden is the seller's alone; prod shows 0/7 seller links carry a constraint because nobody *can*; and the first real seller asked for it within 12 days. The counter-argument is real — you removed it to keep `/sell` short, and three checkboxes is a step backward on that axis. Middle option: put it behind the same collapsed "Show optional settings" disclosure the flex form already uses, so the default path stays short.
 
-**Q2 — Ask Jones two questions before building W4?**
-"Did you print from the tracking page or from a downloaded file?" and "do you own a thermal label printer?" His answers fork W4 cleanly: if he used Download, the fix is the download path and a signpost, not presets. One message, and it de-risks the most expensive workstream. **Recommend asking before W4 starts.** W1/W2/W3 do not depend on the answer.
+**Q2 — RESOLVED 2026-09-14, and it changed the plan.** John confirmed: Jones has no thermal printer and printed from the downloaded file. That kills the 4×6-roll preset idea outright, demotes the distortion fix from "the answer" to "an unrelated bug", and promotes the Download path to the thing that actually fixes him. What remains is a smaller choice — which of W4a's three options (a/b/c) to take. **Recommend (a)**: point Download at the print page. It is the fewest lines, it reuses a page built for exactly this, and it starts logging `label.printed` so we stop being blind to how sellers print.
 
 **Q3 — Should the label PDF be attached to the email?**
 `WISHLIST.md:77` promised it and it was never built. Resend supports attachments; `sendEmail` does not. It would make the email a genuinely self-contained record and would matter most for a seller on a phone who wants to print later on a computer. Costs: email size, deliverability, and a new code path on the money flow. My recommendation is **not in this batch** — ship W3's enrichment first and see whether Jones still wants the file.
@@ -335,7 +377,7 @@ Restoring it reverses PR #131, a deliberate simplification made 2026-08-29. My r
 **Q4 — What do we do about the Full-page preset over-scaling barcodes?**
 It is pre-existing and not introduced by anything here, but W4 touches the same code and it would be dishonest to ship a fix that blesses it. Options: (a) leave it and say nothing, (b) cap the enlargement at a compliant scale, (c) remove the preset. My recommendation is **(b)** — keep the option for legibility, cap it where DMM 204's 0.021in ceiling puts it.
 
-**Q5 — For the reviewer specifically.** The three-way split in W4 (fix distortion / signpost the print page / fix the Download path) is where I am least confident. I have argued Jones hit the Download path, on the evidence that no print event exists for his shipment. That is strong but circumstantial — the event only fires from the SendMo print page, so its absence proves he did not use that page, not what he did instead. If you read the evidence differently, say so; it changes which of the three we build first.
+**Q5 — For the reviewer specifically.** My original open question here was whether Jones hit the Download path; John has since confirmed he did, so that is settled. What I now most want challenged is the **W4a option choice**. Option (a) removes a "Download" affordance some sellers may genuinely want (a saved file to print later, or from another device) and replaces it with navigation. If you think losing a real download is worse than the bad print it currently produces, argue for (c). I have since verified the `fetch`-always-throws claim myself, so it is no longer open: `curl -I` against Jones's live label URL, **with an `Origin: https://sendmo.co` header**, returns `HTTP/1.1 200` and **zero** `Access-Control-Allow-Origin` headers. A browser `fetch` from our origin is therefore blocked every time, the `catch` always fires, and `a.download` is dead code for every real label. Challenge it if you read that differently.
 
 ---
 
