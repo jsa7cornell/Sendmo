@@ -2,6 +2,7 @@ import { createClient } from "jsr:@supabase/supabase-js@2.97.0";
 import { corsHeaders, handleCors } from "../_shared/cors.ts";
 import { log } from "../_shared/logger.ts";
 import { sendEmail } from "../_shared/resend.ts";
+import { buildLabelAttachment } from "../_shared/label-attachment.ts";
 import { budgetReachedEmail, labelConfirmationEmail } from "../_shared/email-templates.ts";
 import { dispatchNotifications, LABEL_CREATED_EVENT } from "../_shared/notifications.ts";
 import { checkAccountBudget } from "../_shared/budget.ts";
@@ -16,7 +17,7 @@ import {
 import { checkRateLimit, clientIpKey } from "../_shared/ratelimit.ts";
 import { checkDbRateLimit, shouldAlertFailedOpen } from "../_shared/dbratelimit.ts";
 import { sendAdminAlert } from "../_shared/alert.ts";
-import { buildLabelCreatedNoticeRows, resolveLabelFlow, LABEL_FLOW_NOTICE_NAMES } from "../_shared/label-notice.ts";
+import { buildLabelCreatedNoticeRows, resolveLabelFlow, LABEL_FLOW_NOTICE_NAMES, placeLabel, parcelSummary } from "../_shared/label-notice.ts";
 import { resolveLiveMode } from "../_shared/mode.ts";
 import { assertKeysMatchEnv } from "../_shared/env-guard.ts";
 import { checkLiveChargeAllowed } from "../_shared/allowlist.ts";
@@ -3031,6 +3032,35 @@ Deno.serve(async (req: Request) => {
                                 // stays true so routing is unchanged; this only picks the copy.
                                 is_seller_link: isSellerLink,
                                 sender_name: from_address?.name ?? null,
+                                // The route, so the email reads as a record of a
+                                // shipment rather than a tracking notice. On a seller
+                                // link `from_address` is the SELLER's own ship-from, so
+                                // the old lone "From: <name>" row told the seller their
+                                // own name and never named the buyer or where the item
+                                // was going — an eBay seller with concurrent sales could
+                                // not file it against an order.
+                                //
+                                // City/state only, never street. tracking/index.ts:782-785
+                                // emits exactly this grade to every viewer role including
+                                // the payer; email is a weaker, forwardable channel than
+                                // an authenticated page, so it gets the same grade, not a
+                                // looser one. The street address stays on the label.
+                                from_place: placeLabel(from_address?.city, from_address?.state),
+                                to_place: placeLabel(to_address?.city, to_address?.state),
+                                to_name: to_address?.name ?? null,
+                                service: service || null,
+                                // Declared parcel — the seller's baseline evidence if a
+                                // carrier reweigh surprise-charges them later (see
+                                // carrierAdjustmentEmail).
+                                parcel_summary: parcelSummary(
+                                    Number(buyData.parcel?.length ?? parcel?.length_in ?? 0),
+                                    Number(buyData.parcel?.width ?? parcel?.width_in ?? 0),
+                                    Number(buyData.parcel?.height ?? parcel?.height_in ?? 0),
+                                    Number(buyData.parcel?.weight ?? parcel?.weight_oz ?? 0),
+                                ),
+                                // Drives the emailed label attachment. Fetched server-side
+                                // in the dispatcher, where there is no CORS to block it.
+                                label_url: (buyData.postage_label?.label_url || buyData.label_url) ?? null,
                                 item_description: itemDescriptionSource,
                                 // For a seller sale the "You paid" (buyer) / "Shipping paid by
                                 // buyer" (seller) amount must be what the buyer ACTUALLY paid —
@@ -3076,6 +3106,18 @@ Deno.serve(async (req: Request) => {
                                             senderName: labelCreatedCtx.sender_name,
                                             itemDescription: labelCreatedCtx.item_description,
                                             displayPriceCents: labelCreatedCtx.display_price_cents,
+                                            // Same shipment rows as the dispatched copy. Without
+                                            // this the degraded path silently keeps sending the
+                                            // old thin email — it bypasses dispatchNotifications
+                                            // entirely, so enriching the dispatcher alone would
+                                            // not reach it.
+                                            facts: {
+                                                fromPlace: labelCreatedCtx.from_place,
+                                                toPlace: labelCreatedCtx.to_place,
+                                                toName: labelCreatedCtx.to_name,
+                                                service: labelCreatedCtx.service,
+                                                parcelSummary: labelCreatedCtx.parcel_summary,
+                                            },
                                             // Seller sale → the payer contact is the SELLER; give
                                             // them the "you made a sale" copy on this degraded path
                                             // too (not flex "label created with your prepaid link").
@@ -3084,7 +3126,13 @@ Deno.serve(async (req: Request) => {
                                         // runInBackground (fix 2026-07-06): keep the send alive
                                         // past the handler return via EdgeRuntime.waitUntil.
                                         runInBackground(
-                                            sendEmail({ to: payerAddr, subject: tpl.subject, html: tpl.html })
+                                            buildLabelAttachment(labelCreatedCtx.label_url, publicCode)
+                                                .then((att) => sendEmail({
+                                                    to: payerAddr,
+                                                    subject: tpl.subject,
+                                                    html: tpl.html,
+                                                    ...(att ? { attachments: [att] } : {}),
+                                                }))
                                                 .then(({ id }) => log({
                                                     event_type: "email.label_confirmation_fallback_sent",
                                                     session_id: sessionId,

@@ -103,12 +103,10 @@ test.describe("TrackingPage — lifecycle state rendering", () => {
         .first()
     ).toBeVisible();
 
-    // Download button
-    await expect(
-      page.getByRole("button", { name: /download/i })
-        .or(page.getByRole("link", { name: /download/i }))
-        .first()
-    ).toBeVisible();
+    // The size signpost under the button (W4a) — the words "size"/"paper"
+    // appeared nowhere on this page before, which is why the first real
+    // seller never found the print page's presets.
+    await expect(page.getByText(/choose a size/i)).toBeVisible();
 
     // HowToShipStrip heading
     await expect(page.getByText(/how to ship/i)).toBeVisible();
@@ -135,8 +133,8 @@ test.describe("TrackingPage — lifecycle state rendering", () => {
 
     await expect(page.getByText(/preparing your package/i)).toBeVisible({ timeout: 10000 });
     await expect(page.getByText(/ready to print/i)).toHaveCount(0);
-    await expect(page.getByRole("link", { name: /^print$/i })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: /download/i })).toHaveCount(0);
+    await expect(page.getByRole("link", { name: /^print or save label$/i })).toHaveCount(0);
+    await expect(page.getByText(/choose a size/i)).toHaveCount(0);
     await expect(page.getByText(/how to ship/i)).toHaveCount(0);
     // The rest of the page stays: details card + help remain visible.
     await expect(page.getByRole("link", { name: /need help/i })).toBeVisible();
@@ -244,10 +242,13 @@ test.describe("TrackingPage — lifecycle state rendering", () => {
     // the blocking finding #1 fall-through: cancelled must NOT map to label_created.
     await expect(page.getByText(/ready to print/i)).not.toBeVisible();
 
-    // Must NOT show Print or Download action buttons (F3 has no label actions)
+    // Must NOT show the label action button (F3 has no label actions).
+    // Anchored on the full label: a bare /^print$/i would match nothing after
+    // the W4a relabel and pass vacuously, silently retiring the PR9 guard that
+    // proves a buyer never sees the seller's home-address label.
     await expect(
-      page.getByRole("button", { name: /^print$/i })
-        .or(page.getByRole("link", { name: /^print$/i }))
+      page.getByRole("button", { name: /^print or save label$/i })
+        .or(page.getByRole("link", { name: /^print or save label$/i }))
     ).not.toBeVisible();
 
     // "Need help" link in DetailsCard(family=3) footer

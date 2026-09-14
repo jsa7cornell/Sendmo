@@ -9,7 +9,9 @@
  */
 
 import { sendEmail } from "./resend.ts";
+import { buildLabelAttachment } from "./label-attachment.ts";
 import { trackingUpdateEmail, labelConfirmationEmail, senderLabelReadyEmail } from "./email-templates.ts";
+import type { ShipmentFacts } from "./email-templates.ts";
 import { log } from "./logger.ts";
 // Type-only: erased by Vitest's TS transform so unit tests never resolve the
 // URL import (same load-bearing pattern as ledger.ts/budget.ts — keep `type`).
@@ -47,6 +49,33 @@ export interface NotificationContext {
   // copy — the owner cancels via their JWT and must not get a live cancel
   // credential in their inbox. Restores 2026-05-12 label-cancel-and-change §3.2.
   cancel_token?: string | null;
+  // ── Shipment record fields (2026-09-14) ──────────────────────────────
+  // These turn the creation email from a tracking notice into a record the
+  // recipient can file. All optional: a caller that omits them produces
+  // exactly the previous email, which is what tracking/ and webhooks/ (status
+  // updates) do — they carry no label or parcel.
+  /** "Austin, TX" — city/state only, never street. */
+  from_place?: string | null;
+  to_place?: string | null;
+  /** Who the package is going to; on a seller sale, the buyer. */
+  to_name?: string | null;
+  /** EasyPost service id, e.g. "GroundAdvantage". */
+  service?: string | null;
+  /** "14 oz · 10×8×4 in" */
+  parcel_summary?: string | null;
+  /** Carrier label URL — fetched server-side and attached to label_created. */
+  label_url?: string | null;
+}
+
+/** Map the dispatch context onto the shared email fact rows. */
+function shipmentFactsFrom(ctx: NotificationContext): ShipmentFacts {
+  return {
+    fromPlace: ctx.from_place ?? null,
+    toPlace: ctx.to_place ?? null,
+    toName: ctx.to_name ?? null,
+    service: ctx.service ?? null,
+    parcelSummary: ctx.parcel_summary ?? null,
+  };
 }
 
 interface Contact {
@@ -85,6 +114,7 @@ const channelHandlers: Record<string, ChannelHandler> = {
           // paid, instead of the flex "no charge to you" copy.
           sellerLink: ctx.is_seller_link === true,
           amountCents: ctx.display_price_cents ?? null,
+          facts: shipmentFactsFrom(ctx),
         })
       : eventType === LABEL_CREATED_EVENT
       ? labelConfirmationEmail({
@@ -98,6 +128,7 @@ const channelHandlers: Record<string, ChannelHandler> = {
           displayPriceCents: ctx.display_price_cents ?? null,
           // Seller-link SELLER render: "you made a sale — print your label".
           variant: ctx.is_seller_link ? "seller_link" : ctx.is_flex ? "flex" : "full_label",
+          facts: shipmentFactsFrom(ctx),
         })
       : trackingUpdateEmail(
           eventType,
@@ -109,10 +140,30 @@ const channelHandlers: Record<string, ChannelHandler> = {
           contact.role,
           ctx.is_seller_link === true,
         );
+    // Attach the label itself on the creation email. WISHLIST.md:77 promised
+    // this at the seller-link build ("label PDF delivered to seller") and it
+    // never shipped; SendMo's first real seller then asked for "a copy of my
+    // shipment to my email". Only on label_created — tracking updates carry no
+    // label. Best-effort: buildLabelAttachment never throws and returns null on
+    // any failure, so a label that will not fetch sends a normal email rather
+    // than losing one. The email always links to the label too.
+    //
+    // NEVER to the seller-link BUYER. On a seller sale the `sender` contact is
+    // the buyer (see the role note at the top of this file), and they do get a
+    // label_created email — the tokenized cancel copy. The label carries the
+    // SELLER's home ship-from address, which is the whole reason PR9 gates it
+    // out of the buyer's UI (tracking/ computes can_print=false for them and
+    // TrackingPage hides the label action). Attaching it here would hand them
+    // by email exactly what that guard withholds on screen.
+    const isSellerLinkBuyer = ctx.is_seller_link === true && contact.role === "sender";
+    const attachment = eventType === LABEL_CREATED_EVENT && !isSellerLinkBuyer
+      ? await buildLabelAttachment(ctx.label_url, ctx.public_code)
+      : null;
     const { id } = await sendEmail({
       to: contact.address,
       subject: template.subject,
       html: template.html,
+      ...(attachment ? { attachments: [attachment] } : {}),
     });
     return { provider_id: id };
   },
