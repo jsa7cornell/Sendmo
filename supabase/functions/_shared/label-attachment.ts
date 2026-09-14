@@ -69,7 +69,7 @@ export async function buildLabelAttachment(
     return {
       filename: `sendmo-label-${publicCode}.${extensionFor(contentType)}`,
       content: toBase64(buf),
-      contentType: contentType ?? "image/png",
+      content_type: contentType ?? "image/png",
     };
   } catch {
     // Network error, timeout, or an expired object — send the email without it.

@@ -12,7 +12,8 @@ const RESEND_API_URL = "https://api.resend.com/emails";
 export interface EmailAttachment {
   filename: string;
   content: string;
-  contentType?: string;
+  /** Resend documents this as snake_case; a camelCase key is silently ignored. */
+  content_type?: string;
 }
 
 interface SendEmailParams {

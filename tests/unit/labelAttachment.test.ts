@@ -32,7 +32,7 @@ describe("buildLabelAttachment", () => {
     const att = await buildLabelAttachment(URL_OK, "K1ZQ9FR");
     expect(att).not.toBeNull();
     expect(att!.filename).toBe("sendmo-label-K1ZQ9FR.png");
-    expect(att!.contentType).toBe("image/png");
+    expect(att!.content_type).toBe("image/png");
     // round-trips back to the original bytes
     expect([...atob(att!.content)].map((c) => c.charCodeAt(0))).toEqual([...bytes]);
   });

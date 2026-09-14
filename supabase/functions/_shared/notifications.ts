@@ -147,7 +147,16 @@ const channelHandlers: Record<string, ChannelHandler> = {
     // label. Best-effort: buildLabelAttachment never throws and returns null on
     // any failure, so a label that will not fetch sends a normal email rather
     // than losing one. The email always links to the label too.
-    const attachment = eventType === LABEL_CREATED_EVENT
+    //
+    // NEVER to the seller-link BUYER. On a seller sale the `sender` contact is
+    // the buyer (see the role note at the top of this file), and they do get a
+    // label_created email — the tokenized cancel copy. The label carries the
+    // SELLER's home ship-from address, which is the whole reason PR9 gates it
+    // out of the buyer's UI (tracking/ computes can_print=false for them and
+    // TrackingPage hides the label action). Attaching it here would hand them
+    // by email exactly what that guard withholds on screen.
+    const isSellerLinkBuyer = ctx.is_seller_link === true && contact.role === "sender";
+    const attachment = eventType === LABEL_CREATED_EVENT && !isSellerLinkBuyer
       ? await buildLabelAttachment(ctx.label_url, ctx.public_code)
       : null;
     const { id } = await sendEmail({
