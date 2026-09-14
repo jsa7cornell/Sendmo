@@ -12,6 +12,29 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-09-14] Jones's feedback built — W1/W2/W3/W4a/W4b/W5; two live bugs fixed, one privacy regression caught in self-review
+
+**Category:** ship
+**Cross-link:** decided proposal [2026-09-14_jones-seller-feedback_reviewed-2026-09-14_decided-2026-09-14.md](proposals/2026-09-14_jones-seller-feedback_reviewed-2026-09-14_decided-2026-09-14.md). Branch `claude/jones-feedback` — **pushed, no PR yet. Not merged, not deployed.**
+
+**Browser-verified:** mcp-session: measured the shipped `<style>` block from `LabelPrintPage.tsx` against four real prod label PNGs in a live browser · variants-covered: UPS 4×6, USPS 4×6, UPS half-sheet, UPS full-page. Old CSS measures **0.8571** vertical distortion on UPS; new measures **1.0000** on every preset. USPS still renders exactly 4.000×6.000in (no regression); the rotated half-sheet window reads 6.000×4.000in and crops exactly 1.00in off the tail, not the side. `/sell` and `/t/<code>` could NOT be browser-verified — this worktree has no `.env.local`, so the app does not boot, and both surfaces sit behind auth; covered by unit tests instead (see gaps below).
+
+**W1 — carrier constraint filtered out every UPS and FedEx rate.** `_shared/rate-filters.ts` compared EasyPost's carrier-ACCOUNT id (`UPSDAP`, `FedExDefault`) to the UI's plain name (`ups`, `fedex`). Only `usps` matched, by coincidence. Latent — the one ups-constrained link in prod is a draft and `rates/index.ts:150,206` only resolve active links. CI was green because **zero test files imported the module**. Added `normalizeCarrier` + `parseCarriers` + `carrierMatchesPreference`; `price-band.ts` and `seller-band-sweep` fixed transitively. New test file verified red-then-green.
+
+**W4b — every UPS label printed 14.3% vertically squashed.** The CSS pinned both axes at 4in×6in with no `object-fit`, so `fill` compressed anything not 4:6. Root cause was a false premise copied from decided proposal [2026-07-17_label-print-page.md](proposals/2026-07-17_label-print-page.md):36 — "1200×1800 = exactly 4×6, holds across carriers". Measured: USPS 1200×1800 @300dpi, UPSDAP 800×1400 @200dpi, FedEx SMART_POST 800×1200. The UPSDAP sample that proposal cited was *already* 800×1400 twelve days before it was written. **The real invariant is that every label is 4.00in WIDE**; height and DPI vary. Fix is geometry-only — width set, height auto, cropped by an `overflow:hidden` window. A content-derived trim is impossible in-browser: the label host sends no CORS headers so the canvas is tainted, and `crossOrigin="anonymous"` would fail the load outright into the error branch. Full-page preset also capped 1.667×→1.33× (it exceeded DMM 204's 0.021in **maximum**, a two-sided bound).
+
+**W4a — Download never downloaded.** `fetch()` against the no-CORS S3 URL always threw, so the catch fell through to `window.open` and dumped a raw 800×1400 PNG in a tab, which the browser scaled to fill the sheet. That is the "make lable easy to re size" complaint; the `a.download` branch was dead code for every real label. Now one button to the print page. Verified 2026-09-14: `curl -I` with `Origin: https://sendmo.co` returns 200 with **zero** `Access-Control-Allow-Origin`.
+
+**W3 — the label email became a shipment record and now carries the label.** The seller's "From" row showed him **his own name** (`labelCreatedCtx.sender_name` ← the seller's own ship-from), and the email never named the buyer or destination. Added route/buyer/service/parcel rows (city/state only, matching `tracking/index.ts:782-785`), promoted the carrier tracking number out of 11px grey into its own monospace row — it is the only place a seller can select that number before the first scan, and pasting it into eBay releases their payout — normalised `UPSDAP`→`UPS`, and attached the label file (`WISHLIST.md:77`, promised at the seller-link build, never shipped).
+
+**Self-review caught a privacy regression the attachment introduced.** On a seller sale the `sender` contact is the **buyer**, and they do get a `label_created` email. The attachment was gated only on event type, so it emailed them a label carrying the **seller's home address** — precisely what PR9 withholds via `can_print=false`. Gated and pinned by a regression test (verified red without the guard). Also renamed the Resend attachment MIME field to `content_type`; the camelCase key was silently ignored.
+
+**W5/W2 — carrier control restored to `/sell`.** Decided [2026-08-28](proposals/2026-08-28_seller-link-launch_reviewed-2026-08-28_decided-2026-08-29.md):245 said "the cap control leaves the seller builder entirely (**carrier and speed stay**)"; PR #131 (`735f070`) removed all three "for now" — drift on two axes, not one. Carrier restored as a **multi-select** (a single value can say USPS *or* UPS, never both); speed deliberately left out per John. The first plan pointed at `SellerBuilder.tsx:229`, a **display prop on the ready screen** — `handleCreate` never sent the field at all, so a picker wired there would have written nothing. Prod confirmed: all 7 seller links are NULL, not `"any"`. Re-estimated M→S (client-only).
+
+**Known gaps — not done.** e2e was **not run**: `tests/e2e/global-setup.ts:38` requires `VITE_SUPABASE_URL`/`ANON_KEY` from `.env.local`, which this worktree lacks and Rule 1 forbids reading from the main checkout. Selectors were re-anchored and verified statically against the rendered strings; CI's required e2e check is the real gate. Edge functions are **not typechecked** — Deno is not installed locally and CI has no `deno check` step. The physical print-and-scan acceptance (§6.4 of the proposal, plus the 2026-07-17 half-sheet debt at `LOG.md`) is still outstanding and needs a real printer.
+
+---
+
 ### [2026-09-14] Jones's seller feedback triaged — three of four asks already shipped; two live bugs found underneath
 
 **Category:** docs
