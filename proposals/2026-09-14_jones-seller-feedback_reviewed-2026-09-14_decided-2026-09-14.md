@@ -2,12 +2,12 @@
 title: Jones's seller feedback — four asks, three already built, two live bugs
 slug: jones-seller-feedback
 project: sendmo
-status: reviewed
+status: decided
 blocked_on: null
 created: 2026-09-14
-last_updated: 2026-09-14  # fresh-eyes review posted (five lenses, each cross-checked, consolidated into one Review section per protocol); awaiting author response
+last_updated: 2026-09-14  # author response + John's decisions recorded; implementation begins
 reviewed: 2026-09-14
-decided: null
+decided: 2026-09-14
 pr: null
 author: Claude Opus 5 — drafted from John's request to act on Jones Anderson's post-sale feedback (received 2026-09-11 over WhatsApp). Grounded against production (read-only queries against fkxykvzsqdjzhurntgah, plus a pixel decode of Jones's actual label PNG) and a worktree at origin/main (HEAD df30c08, 0 behind). Two multi-agent passes — a four-item investigation with per-item adversarial verification, and a focused label-sizing pass with three adversarial lenses (compliance, code, product). The adversarial passes killed two of the author's own framings; both corrections are recorded in §1.
 reviewer: Fresh Claude (Opus 5) session — loaded cold, five parallel lenses (factual verification, prior art, product/market, implementation risk, inference chain). Each lens's findings were then independently cross-checked by a sixth pass before inclusion; findings that failed cross-check were dropped. Reviewers re-decoded all seven live label PNGs, re-curled the S3 CORS headers, re-ran every prod query read-only, and read the decided 2026-07-17 and 2026-08-28 proposals in full.
@@ -487,3 +487,79 @@ The reversal: `proposals/2026-05-13_tracking-page-ia-polish…:117` decided that
 - **W3's Defect 2 surface-by-surface table** is the sharpest thing in the document, and every row checks out.
 - **The `funder='seller'` restraint** — naming the migration 040 seam, showing the two hardcodes, and deferring it to its own proposal instead of folding it in.
 - **The prod numbers.** Seller links 7 with 0 constrained, flexible 27 with 2 constrained (one of which is a draft that `rates/index.ts:150` never resolves — "latent" is exactly the right word), 4 of 7 live labels UPS, `label.printed` count 4. All reproduce.
+
+---
+
+## Author response
+
+Every blocking finding is accepted. Five of the six are the same class of error on my part: I treated decided history as unexplored ground, so I asked John to re-decide things he had already decided and framed restoration work as reversal. The code findings held up; the paper trail did not. Marking each: ✅ accept · ❌ reject with reasoning · ❓ needs John.
+
+### Blocking
+
+**B1 — W4a re-proposes a decided bug. ✅ accept.**
+`proposals/2026-07-17_label-print-page.md:42` states the Download/CORS failure verbatim, and `:18` records OQ5 (proxy deferred to fast-follow) and OQ6 (Bug A folded into #54). I gave W4b the "drift, not a new finding" framing and failed to give W4a the same. Rewriting W4a's opening as *"OQ5's fast-follow is now due, and the print page — which did not exist when OQ5 was written — makes a third option available."* OQ5/OQ6/Bug A added to Reconciliation. §7 Q2 and Q5 collapse into one.
+**John decided (2026-09-14): option (a)** — point Download at the print page. The proxy stays deferred exactly where OQ5 left it. Recording the two standing reasons to revisit it (`WISHLIST.md:23` signed/expiring URL; the ~6-month S3 expiry measured on Jones's label) so the next session does not rediscover them.
+
+**B2 — W5 is drift-restoration, not a reversal. ✅ accept, and the drift is wider than the review says.**
+Decided `2026-08-28_seller-link-launch…:245` reads *"the cap control leaves the seller builder entirely (carrier and speed stay)."* I verified what PR #131 (`735f070`) actually removed: the whole `FlexPreferencesForm` import and `defaultConstraint()` — **carrier, speed AND cap**. Only the cap removal was authorized. So this is drift on two axes, not one. Reframing W5 as restoring `:245`, and correcting §2, the W5 body and §7 Q1 to drop "reverses a deliberate call."
+**John decided (2026-09-14): carrier comes back, speed does not.** Rationale recorded: carrier is a hard constraint (the seller drives to one drop-off), speed is a preference the buyer pays for. That is a deliberate partial restoration of `:245`, not a full one — noted here so a future session does not "finish" it by adding speed back.
+
+**B3 — W5's file plan points at a display prop. ✅ accept. This one would have wasted a build.**
+`SellerBuilder.tsx:229` sits inside the `<LinkShareCard value={{…}}>` literal at `:225-232`, on the step-4 ready screen, after the link exists. The create path is `handleCreate` at `:122`, whose `CreateSellerLinkParams` literal has no `preferred_carrier` at all. Prod confirms the consequence: all 7 seller links are `preferred_carrier` NULL, not `"any"`. W5 now names both sites — `handleCreate` for the write, `:225-232` for the display. And the reviewer's upside holds: `src/lib/api.ts:554` and `links/index.ts:852` already accept and store the field, so W5 is client-only. **Re-estimating W5 from M to S.**
+
+**B4 — "independently shippable" is wrong three ways. ✅ accept all three.**
+(a) W1 gates W5 — `_shared/price-band.ts:84-88` runs the same broken predicate, so a UPS-constrained link shipped before W1 returns zero rates and a null band. (b) `.github/workflows/deploy-edge-functions.yml:74-77` redeploys all 28 functions on any `_shared` change, and both W1 and W3 edit `_shared`. (c) I verified the PR collision myself: **#136** (CONFLICTING, idle since 2026-08-30, forked 7 commits back) touches `SellerBuilder.tsx` + `api.ts` + `links/index.ts` — W2/W5's whole file set; **#112** (CONFLICTING, idle since 2026-08-27, forked **30** commits back) touches `TrackingPage.tsx` — W4a's file.
+§2's sentence is replaced with a sequencing paragraph: **W1 → W5**, batch the two `_shared` edits into one deploy, and treat #136 as a rebase-or-land decision before W2/W5.
+
+**B5 — W4b's mechanism cannot meet its own requirement. ✅ accept. This is the best catch in the review.**
+I specified a content-derived trim and separately established that S3 sends no CORS headers, without noticing those two facts contradict. `naturalWidth`/`naturalHeight` give aspect ratio only; finding where the ink ends needs `getImageData`, which throws on a tainted canvas — and `crossOrigin="anonymous"` would make the image fail to load outright, hitting `onError` at `LabelPrintPage.tsx:302,305` and showing every user the "couldn't render a preview" state.
+Taking the reviewer's geometry-only fix: a 4in × 6in `overflow:hidden` wrapper with `img { width: 4in; height: auto; }`. No JS, no pixel read, no CORS exposure. Stating the cost honestly in W4b: it clips at exactly 6.00in, which on UPS **Ground** trims ~0.010in off a cosmetic border rule. Not a scan risk. W4b will say why `crossOrigin` is not an option.
+
+**B6 — Reconciliation is missing four decided proposals, and W3 reverses one. ✅ accept the gap; the reversal is now a recorded decision, not an oversight.**
+`2026-05-13_tracking-page-ia-polish…:117` decided the carrier tracking number appears only in Family 2, tied to the white-label `public_code` strategy — and I engaged only with the 404 rationale in the code comment, not the branding one. Adding all four (`2026-05-13_tracking-page-ia-polish…`, `2026-06-27_label-confirmation-email-by-role…`, `2026-07-06_flex-sender-visibility`, `2026-05-12_label-cancel-and-change §3.2`) plus migration `042`'s named decision-B to Reconciliation.
+**John decided (2026-09-14): carve out the tracking number for the seller's own view only.** The white-label logic protects what a *buyer* sees; the seller is the customer and already sees the carrier elsewhere. Scoped to the seller's view, so the `:117` decision stands for buyers.
+
+### Non-blocking — accepted
+
+- **NB1 ✅** — the print-event evidence proves less than §1 claimed. Adopting the stronger, user-independent version: the print page merged at 06:29:43Z on 2026-07-18, **49 minutes after** the last of the four `label.printed` events, and the two older rows carry `actor: admin` (John). **The deployed print page has logged zero prints, ever.** Dropping the Jones-specific inference; his path is established by John's direct confirmation instead.
+- **NB3 ✅** — `tests/e2e/tracking-lifecycle-states.spec.ts:138` and `:248-250` use anchored `/^print$/i`, so any relabel makes them pass vacuously, including a PR9 guard proving a buyer never sees the seller's home-address label. Both specs named in the test plan.
+- **NB4 ✅** — my "one place interprets the value" claim was false. `LinkShareCard.tsx:96-99` bare-`toUpperCase()`s it, so a comma value renders `· USPS,UPS` on the seller's own ready screen. Adding a shared `parseCarriers` helper and naming the display site. Also taking the cross-link: `WISHLIST.md:187` (F5) prescribes the same raw-string compare W1 fixes, so W1 exports the normalizer and F5 is updated to use it.
+- **NB5 ✅** — `senderLabelReadyEmail` routes to the `sender` contact, which on a seller link **is the buyer**. W3 will say so explicitly, and note that the function keys on a `sellerLink` boolean rather than `labelConfirmationEmail`'s `variant` enum, so an implementer does not hunt for a seller variant that is not there.
+- **NB6 ✅** — `SPEC.md:806` carries both false claims ("saves the label file", "4x6 portrait @300dpi"). `SPEC.md` added to the W4a and W4b file lists.
+- **NB8 ✅** — three geometry corrections taken: the UPS **Ground** border is three rows (1199–1201), not two; Jones's own Groundsaver label ends cleanly at 1199; and FedEx SMART_POST is a third geometry at 800×1200. W4b will generalize as *"every label is 4in wide, DPI varies, only UPS carries a blank tail."*
+- **NB9 ✅** — trap #3 was wrong. `LabelPrintPage.tsx:203` already has `.sheet-full .item-desc { display: none; }`. Removing it so nobody hunts a bug that does not exist.
+- **NB13 ✅** — Jones has two seller links, both still `active` with `max_shipments` NULL: `AmLCs8yLeU` (15:58:36, no sale — the abandoned duplicate) and `2CDhMhga6f` (15:59:31, carries K1ZQ9FR). Verified read-only. Also correcting §5: neither is single-use, so my parenthetical about single-use closing the link does not apply to his case. And `K1ZQ9FR` is still `label_created` with no carrier scan four days on. **John asked for text to send Jones covering both**; sent 2026-09-14. Closing the spare link waits on Jones's answer.
+- **NB14 ✅** — adding the `can_print` gate to the print page while W4b is in the file. `LabelPrintPage.tsx:114` already fetches the endpoint that computes it; `PrintData` just does not declare it.
+- **NB15 ✅** — §6 will collect the two standing debts at the physical-print step: the 2026-07-17 half-sheet print-and-scan acceptance (`LOG.md:2575`, never discharged) and whether EasyPost `reference` prints on the label (`WISHLIST.md:200`).
+- **All nits ✅** — including the citation corrections (`email-templates.ts:163`→`:164`, `tracking/index.ts:782-789`→`:782-785`), the "5 rows"→6 diagram fix, the `LOG.md:2555`→`2574` re-anchor, and the frontmatter HEAD update.
+
+### Non-blocking — partially rejected
+
+- **NB2 ❌ in part.** Checking Resend for delivery/open state on the two `provider_id`s is a good idea and I will do it. But it cannot settle W3's premise. Even a confirmed open does not tell us whether the email was *useful* — my claim is that its content is thin and its From row wrong for sellers, and both are true regardless of whether he opened it. Resend tells us about deliverability, not fitness. W3 proceeds either way.
+- **NB7 ❌ deferred, not rejected on merit.** The two extra reasons for the proxy are real and I have recorded them under B1. But John chose option (a), so the proxy stays where OQ5 put it. Reopening it here would be exactly the "asking John to re-decide" error B1 flags.
+- **NB11 ✅ accepted, but moot for now.** The `/onboarding` route does land on the buyer's-address question, which a seller writing a listing does not have. That only bites W2's *full* who-pays version, which John has not commissioned. Recording it so the full version does not get built on a broken route. **W2 ships the cheap half only** — the `SellerBuilder.tsx:310` relabel.
+- **NB12 ❓ needs John, deferred.** Whether `/sell` step 1 can carry more controls is a real question now that W5 adds carrier checkboxes and #136 adds a review-step estimate. Not gating: W5 is one control, and the decided `2026-07-17_seller-link-buyer-pays…:195` already specified `FlexPreferencesForm` as the "optional advanced" home for it. Building W5 behind the same collapsed disclosure the flex form uses, which is the conservative choice under either answer.
+
+### Non-blocking — accepted with a scope note
+
+- **NB10 ✅, partly in scope.** Sellers really do see raw EasyPost strings: `_shared/email-templates.ts:164` interpolates `${carrier}` unnormalized, which is why Jones's email said `UPSDAP`. `carrierDisplayName` exists only in `src/`. W3 already edits that exact line, so the email half ships with W3 (W1's normalizer moves to `_shared/` and both use it). The `HowToShipStrip` half is a different file and a different surface — filing it, not folding it in.
+
+---
+
+## Decision
+
+**Decided 2026-09-14 by John. Outcome: approve-with-changes — proceed.**
+
+| # | Question | Decision |
+|---|---|---|
+| Q1 | W5 — was "for now" permanent? Does speed return? | **Restore carrier. Leave speed out.** |
+| Q2/Q5 | W4a — which download fix? | **Option (a)** — point Download at the print page. Proxy stays deferred per OQ5. |
+| Q3 | W3 — reverse the tracking-number IA decision? | **Carve out for the seller's own view only.** Buyers unchanged. |
+| Q4 | W4b — the over-scaling Full-page preset? | **Cap it** at a compliant scale. |
+| Q6 | Attach the label file to the email? | **Ship it** with W3. |
+| — | Jones follow-ups | Text drafted and sent 2026-09-14. Closing the spare link waits on his reply. |
+| — | PRs #136 / #112 | Investigated at John's request: **dormant, not superseded** — both carry real unlanded work. #136 rebase-or-land before W2/W5; #112 split (the `Back to SendMo` removal can land alone; the sender-intro rework needs its own rebase). |
+
+**Build order, from B4:** W1 → W5. W1 and W3 batch into one edge-function deploy. W2 ships the relabel only. W4a and W4b are independent of the rest.
+
+**Scope changes from review:** W5 M→S (client-only). W2 reduced to the cheap half. W4b's trim mechanism replaced with the geometry-only version. The 4×6 thermal preset stays out (dropped 2026-09-14 — Jones has no thermal printer).
