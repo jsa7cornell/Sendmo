@@ -411,7 +411,7 @@ describe("seller-sale cancellation emails (PR13)", () => {
   it("tells the seller not to ship — HTML escaped, subject PLAIN (entities in a subject render literally)", () => {
     const tpl = _ssce({
       publicCode: "PC9", itemDescription: `<b>Vintage</b> & 12" armchair`,
-      cancelledBy: "buyer", trackingUrl: "https://sendmo.co/t/PC9",
+      cancelledBy: "buyer", listingStillOpen: true, trackingUrl: "https://sendmo.co/t/PC9",
     });
     expect(tpl.subject).toContain(`<b>Vintage</b> & 12" armchair`);
     expect(tpl.subject).not.toContain("&amp;");
@@ -425,9 +425,39 @@ describe("seller-sale cancellation emails (PR13)", () => {
   it("admin cancels say so to the seller", () => {
     const tpl = _ssce({
       publicCode: "PC9", itemDescription: null,
-      cancelledBy: "admin", trackingUrl: "https://sendmo.co/t/PC9",
+      cancelledBy: "admin", listingStillOpen: true, trackingUrl: "https://sendmo.co/t/PC9",
     });
     expect(tpl.html).toContain("cancelled by our team");
+  });
+
+  // A cancel never reopens a sold single-use listing (PR6), so the email must
+  // not tell that seller "nothing to do" — they have to relist by hand.
+  it("a sold single-use listing: says it stays sold and points at /sell", () => {
+    const tpl = _ssce({
+      publicCode: "PC9", itemDescription: null,
+      cancelledBy: "buyer", listingStillOpen: false, trackingUrl: "https://sendmo.co/t/PC9",
+    });
+    expect(tpl.html).toContain("still shows this item as sold");
+    expect(tpl.html).toContain('href="https://sendmo.co/sell"');
+    expect(tpl.html).not.toContain("nothing else to do");
+  });
+
+  it("a listing still taking orders: nothing else to do", () => {
+    const tpl = _ssce({
+      publicCode: "PC9", itemDescription: null,
+      cancelledBy: "buyer", listingStillOpen: true, trackingUrl: "https://sendmo.co/t/PC9",
+    });
+    expect(tpl.html).toContain("still open, so nothing else to do");
+    expect(tpl.html).not.toContain("sendmo.co/sell");
+  });
+
+  it("the shared footer carries the current tagline, not the retired one", () => {
+    const tpl = _ssce({
+      publicCode: "PC9", itemDescription: null,
+      cancelledBy: "buyer", listingStillOpen: true, trackingUrl: "https://sendmo.co/t/PC9",
+    });
+    expect(tpl.html).toContain("Getting stuff where it needs to go");
+    expect(tpl.html).not.toContain("Prepaid shipping made easy");
   });
 
   it("the buyer's refund email says 'cancelled by the seller' — never 'you cancelled' or link-user copy", () => {
