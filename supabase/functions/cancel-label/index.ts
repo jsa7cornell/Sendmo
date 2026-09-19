@@ -651,6 +651,7 @@ Deno.serve(async (req: Request) => {
                                 publicCode: shipment.public_code,
                                 itemDescription: (shipment as { item_description?: string | null }).item_description ?? null,
                                 cancelledBy: actor === "admin" ? "admin" : "buyer",
+                                listingStillOpen: linkRow?.status === "active",
                                 trackingUrl: `https://sendmo.co/t/${shipment.public_code}`,
                             });
                             try {

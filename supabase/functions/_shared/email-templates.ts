@@ -42,7 +42,7 @@ function layout(content: string): string {
         </td></tr>
         <!-- Footer -->
         <tr><td style="padding:20px 32px;border-top:1px solid #e5e7eb;text-align:center;">
-          <p style="margin:0;font-size:12px;color:${GRAY_400};">SendMo — Prepaid shipping made easy</p>
+          <p style="margin:0;font-size:12px;color:${GRAY_400};">SendMo — Getting stuff where it needs to go</p>
           <p style="margin:4px 0 0;font-size:12px;color:${GRAY_400};">You received this email because it was requested at sendmo.co</p>
         </td></tr>
       </table>
@@ -112,13 +112,18 @@ export interface ShipmentFacts {
  * sale, showed the SELLER their own name and never said who bought the item or
  * where it was going.
  */
-function shipmentFactRows(facts: ShipmentFacts, opts: { sellerSale: boolean }): string {
+function shipmentFactRows(
+  facts: ShipmentFacts,
+  opts: { sellerSale: boolean; readerIsRecipient?: boolean },
+): string {
   const rows: string[] = [];
   const route = facts.fromPlace && facts.toPlace
     ? `${escapeEmailHtml(facts.fromPlace)} \u2192 ${escapeEmailHtml(facts.toPlace)}`
     : null;
   if (route) rows.push(summaryRow(opts.sellerSale ? "Shipping to" : "Route", route));
-  if (facts.toName?.trim()) {
+  // Skip the name when the reader IS the recipient (the buyer's own email on a
+  // seller sale) — otherwise it tells them their own name.
+  if (facts.toName?.trim() && !opts.readerIsRecipient) {
     rows.push(summaryRow(opts.sellerSale ? "Buyer" : "Recipient", escapeEmailHtml(facts.toName.trim())));
   }
   if (facts.service?.trim()) rows.push(summaryRow("Service", escapeEmailHtml(serviceLabel(facts.service.trim()))));
@@ -388,7 +393,7 @@ export function senderLabelReadyEmail(params: {
             <span style="font-size:16px;font-weight:600;color:#111827;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:0.3px;word-break:break-all;">${carrierTracking}</span>
           </td>
         </tr>
-        ${shipmentFactRows(facts ?? {}, { sellerSale: sellerLink === true })}
+        ${shipmentFactRows(facts ?? {}, { sellerSale: sellerLink === true, readerIsRecipient: sellerLink === true })}
         ${itemRow}
         ${paidRow}
         <tr>
@@ -760,6 +765,10 @@ export function sellerSaleCancelledEmail(params: {
   itemDescription: string | null;
   /** Who cancelled — drives the attribution line (review #3). */
   cancelledBy: "buyer" | "admin";
+  /** True when the listing is still taking orders (a reusable link stays
+   *  'active'). A sold single-use link stays sold after a cancel — no
+   *  auto-reopen (PR6) — so the seller has to relist by hand. */
+  listingStillOpen: boolean;
   trackingUrl: string;
 }): { subject: string; html: string } {
   // Subject is PLAIN TEXT (review #2): escaping there renders entities
@@ -773,6 +782,9 @@ export function sellerSaleCancelledEmail(params: {
   const whoLine = params.cancelledBy === "buyer"
     ? "The buyer cancelled this sale and their payment is being refunded."
     : "This sale was cancelled by our team and the buyer's payment is being refunded.";
+  const listingLine = params.listingStillOpen
+    ? "Your listing is still open, so nothing else to do."
+    : `Your listing link still shows this item as sold. To sell it again, create a new listing at <a href="https://sendmo.co/sell" style="color:${BRAND_BLUE};">sendmo.co/sell</a>.`;
   return {
     subject: itemRaw
       ? `Sale cancelled — don't ship "${itemRaw}"`
@@ -784,7 +796,7 @@ export function sellerSaleCancelledEmail(params: {
         ${itemHtml ? `<br/>Item: <strong>${itemHtml}</strong>` : ""}
       </p>
       <p style="margin:0 0 16px;font-size:14px;color:${GRAY_600};line-height:1.5;">
-        Your listing link isn't changed by this — if the item is still for sale, nothing to do.
+        ${listingLine}
       </p>
       <div style="text-align:center;margin:24px 0;">
         <a href="${params.trackingUrl}" style="display:inline-block;background-color:${BRAND_BLUE};color:#ffffff;font-size:14px;font-weight:600;text-decoration:none;padding:12px 32px;border-radius:8px;">View the cancelled sale</a>

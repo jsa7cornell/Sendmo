@@ -10,6 +10,7 @@ import {
     buildLabelCreatedNoticeRows,
     resolveLabelFlow,
     LABEL_FLOW_NOTICE_NAMES,
+    parcelSummary,
     type LabelNoticeFacts,
 } from "../../supabase/functions/_shared/label-notice.ts";
 
@@ -208,5 +209,18 @@ describe("resolveLabelFlow", () => {
         expect(LABEL_FLOW_NOTICE_NAMES.full_label).toBe("full prepaid");
         expect(LABEL_FLOW_NOTICE_NAMES.flex).toBe("flexible link");
         expect(LABEL_FLOW_NOTICE_NAMES.seller_link).toBe("seller link");
+    });
+});
+
+describe("parcelSummary", () => {
+    it("rounds to whole ounces before splitting into pounds — never '1 lb 16 oz'", () => {
+        expect(parcelSummary(10, 8, 4, 31.7)).toBe("2 lb · 10×8×4 in");
+        expect(parcelSummary(10, 8, 4, 15.6)).toBe("1 lb · 10×8×4 in");
+        expect(parcelSummary(10, 8, 4, 17)).toBe("1 lb 1 oz · 10×8×4 in");
+        expect(parcelSummary(10, 8, 4, 7)).toBe("7 oz · 10×8×4 in");
+    });
+
+    it("never prints '0 oz' for a sub-half-ounce parcel", () => {
+        expect(parcelSummary(0, 0, 0, 0.3)).toBe("1 oz");
     });
 });

@@ -199,11 +199,14 @@ export function parcelSummary(
 ): string | null {
     const parts: string[] = [];
     if (Number.isFinite(weightOz) && weightOz > 0) {
-        const lbs = Math.floor(weightOz / 16);
-        const oz = Math.round(weightOz % 16);
+        // Round to whole ounces FIRST, then split — flooring pounds before
+        // rounding the remainder printed 31.7oz as "1 lb 16 oz".
+        const totalOz = Math.round(weightOz);
+        const lbs = Math.floor(totalOz / 16);
+        const oz = totalOz % 16;
         if (lbs && oz) parts.push(`${lbs} lb ${oz} oz`);
         else if (lbs) parts.push(`${lbs} lb`);
-        else parts.push(`${oz} oz`);
+        else parts.push(`${Math.max(oz, 1)} oz`);
     }
     const dims = [lengthIn, widthIn, heightIn];
     if (dims.every((d) => Number.isFinite(d) && d > 0)) {
