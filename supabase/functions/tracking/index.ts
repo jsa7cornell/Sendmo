@@ -587,15 +587,19 @@ Deno.serve(async (req: Request) => {
     shipmentCancelToken != null &&
     timingSafeEqual(cancelTokenFromRequest, shipmentCancelToken);
 
-  // Seller-link sales invert the payer mapping. A seller sale is identified by
-  // shipments.buyer_email being set (F1: the buy RPC mints a throwaway
-  // full_label link per shipment, so link_type is NEVER seller_link downstream —
-  // buyer_email presence is the only reliable discriminator). In that case the
-  // anonymous BUYER holds the cancel_token and is the paying party (sees the
-  // receipt), while the SELLER (link owner) is demoted to a non-receipt role.
-  // Admin still sees the receipt. Non-seller shipments (buyer_email null) keep
-  // the original mapping byte-for-byte.
-  const isSellerSale = ((shipment as { buyer_email?: string | null }).buyer_email ?? null) != null;
+  // Seller-link sales invert the payer mapping. TWO discriminators (PR11):
+  // buyer_email (the F1 marker) OR the joined link's link_type — post-PR11
+  // shipments.link_id points at the REAL selling link, so link_type IS
+  // reliable, and it catches the alerted-on window where the buyer_email
+  // follow-up write failed (previously the seller was shown the buyer's
+  // receipt until a human backfilled it). In that case the anonymous BUYER
+  // holds the cancel_token and is the paying party (sees the receipt), while
+  // the SELLER (link owner) is demoted to a non-receipt role. Admin still
+  // sees the receipt. Non-seller shipments keep the original mapping
+  // byte-for-byte.
+  const isSellerSale =
+    ((shipment as { buyer_email?: string | null }).buyer_email ?? null) != null ||
+    linkJoin?.link_type === "seller_link";
 
   const viewerRole: "payer" | "sender_flex" | "anonymous" =
     isSellerSale
@@ -692,12 +696,33 @@ Deno.serve(async (req: Request) => {
       promised_delivery_date: shipment.promised_delivery_date,
       delivered_at: shipment.delivered_at,
       label_url: shipment.label_url ?? null,
+      // can_print (PR9, seller-link launch — author-amended B3, Round-2
+      // accepted): on a seller sale the label PDF carries the SELLER's full
+      // home address/name/phone, and the buyer has no business printing it.
+      // Gate on the CREDENTIAL, not the role: the cancel token is what
+      // identifies the buyer — the seller never holds it in either of their
+      // states (signed-in → sender_flex; from their email, no session →
+      // anonymous), and admins keep print with no special case (an admin
+      // presenting the buyer's token is the one shape that hides it — noted
+      // and accepted in Round 2; they print from their admin session). Honest
+      // scope: this is a curtain, not a lock — label_url still ships in the
+      // payload (gating it server-side would break the seller's no-session
+      // print path), and a buyer arriving WITHOUT their token resolves
+      // anonymous and sees print. The durable fix (a print token in the
+      // seller's email, mirroring the buyer's cancel token) is the named
+      // follow-up in the proposal's §5.
+      can_print: !(isSellerSale && viewerHoldsValidCancelToken),
       link_short_code: linkJoin?.short_code ?? null,
       // Parent link status — surfaced on F3 cancelled so the user knows whether
       // the link is reusable (active), tied up in another label (in_use), or
       // fully consumed (completed). Decided 2026-05-13 alongside dashboard
       // links-tab work.
       link_status: linkJoin?.status ?? null,
+      // PR11: after link rebinding, link_short_code is the REAL selling
+      // link's code — surfaces that key off it (e.g. PrintAnotherLabelCTA)
+      // gate on this so a buyer isn't offered "print another label" into a
+      // seller listing.
+      is_seller_sale: isSellerSale,
       link_type: linkJoin?.link_type ?? null,
       viewer_is_recipient: viewerIsRecipient,
       // viewerRole: "payer" | "sender_flex" | "anonymous" — server-derived.

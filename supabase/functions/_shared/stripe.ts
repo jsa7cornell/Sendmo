@@ -133,6 +133,9 @@ export interface PaymentIntent {
     metadata?: Record<string, string>;
     latest_charge?: string;
     capture_method: "automatic" | "manual";
+    // Unix epoch seconds. Used to tell a freshly-minted PI from one Stripe
+    // replayed off an idempotency key (labels PR1 refunded-PI guard).
+    created?: number;
 }
 
 // Stripe `shipping` block — fed to PaymentIntents as a fraud signal for
@@ -228,6 +231,10 @@ export interface Charge {
     outcome?: ChargeOutcome | null;
     payment_intent?: string | null;
     metadata?: Record<string, string>;
+    // Refund state — a PI stays status='succeeded' after a full refund, so
+    // "succeeded" alone must never authorize a label buy (labels PR1).
+    refunded?: boolean;
+    amount_refunded?: number;
     // When ?expand[]=balance_transaction is requested, this becomes the full
     // BT object (id + fee + fee_details). Otherwise it's the BT id string.
     balance_transaction?: string | BalanceTransaction | null;
@@ -265,6 +272,31 @@ export function retrieveCharge(
         method: "GET",
         liveMode,
     });
+}
+
+/**
+ * Whether a succeeded PI's money has (partly or fully) gone back to the
+ * cardholder. A PI stays status='succeeded' after a refund, so every label
+ * buy must check this before treating the PI as payment (labels PR1: the
+ * auto-refund branches make a refunded-but-succeeded PI a natural retry
+ * input, and buying against one is a free label).
+ *
+ * Fail-open on Stripe read errors — the caller has already verified the PI
+ * itself; blocking every buy on a second read's transient failure is worse
+ * than the rare refunded-replay slipping through, and the buy-idempotency
+ * layer still bounds that case. Callers should log when they skip the check.
+ */
+export async function isPaymentIntentRefunded(
+    pi: PaymentIntent,
+    liveMode: boolean,
+): Promise<boolean | null> {
+    if (!pi.latest_charge) return false;
+    try {
+        const ch = await retrieveCharge(pi.latest_charge, liveMode);
+        return ch.refunded === true || (ch.amount_refunded ?? 0) > 0;
+    } catch {
+        return null; // unknown — caller decides (and logs)
+    }
 }
 
 export function capturePaymentIntent(

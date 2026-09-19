@@ -14,10 +14,11 @@ import { useAuth } from "@/contexts/AuthContext";
 import { SELLER_LINK_VISIBLE, SELLER_LINK_LIVE } from "@/lib/featureFlags";
 import { supabase } from "@/lib/supabase";
 import LinksTab from "@/components/dashboard/LinksTab";
+import { soldAwaitingPrint } from "@/lib/sellerBoard";
 import AddCardModal from "@/components/dashboard/AddCardModal";
 import AppHeader from "@/components/AppHeader";
 import SiteFooter from "@/components/SiteFooter";
-import { removePaymentMethod, rotateLinkUrl } from "@/lib/api";
+import { removePaymentMethod, rotateLinkUrl, closeSellerLink } from "@/lib/api";
 
 // ─── Types ──────────────────────────────────────────────────
 
@@ -33,6 +34,10 @@ interface DashboardShipment {
   rate_cents: number;
   is_test: boolean;
   easypost_shipment_id: string | null;
+  // Seller-sale marker (F1) + the item text snapshotted at buy time (PR7).
+  // Together they drive the "Sold — needs label printed" group (PR8).
+  buyer_email: string | null;
+  item_description: string | null;
   created_at: string;
   updated_at: string;
   // link_id used to group shipments by parent link in the Links tab (decided
@@ -72,8 +77,10 @@ interface PaymentMethodRow {
 interface DashboardLinkRow {
   id: string;
   short_code: string;
-  link_type: "flexible" | "full_label";
+  link_type: "flexible" | "full_label" | "seller_link";
   status: "active" | "in_use" | "completed" | "used" | string;
+  /** Seller listings: the item text (PR12). */
+  notes: string | null;
   created_at: string;
   updated_at: string;
   recipient_address: {
@@ -213,13 +220,16 @@ export default function Dashboard() {
   // longer authenticates any direct API calls beyond the existing supabase
   // client (which is already JWT-aware via AuthContext).
 
+  // Bumped after a mutation (e.g. closing a listing) to refetch the lists.
+  const [dashRefresh, setDashRefresh] = useState(0);
+
   useEffect(() => {
     async function fetchData() {
       if (!user) return;
 
       const shipmentsPromise = supabase
         .from("shipments")
-        .select("id, link_id, tracking_number, public_code, carrier, service, status, refund_status, display_price_cents, rate_cents, is_test, easypost_shipment_id, created_at, updated_at, sendmo_links!inner(user_id, sender_name), sender_address:addresses!sender_address_id(name, city, state), recipient_address:addresses!recipient_address_id(name, city, state)")
+        .select("id, link_id, tracking_number, public_code, carrier, service, status, refund_status, display_price_cents, rate_cents, is_test, easypost_shipment_id, buyer_email, item_description, created_at, updated_at, sendmo_links!inner(user_id, sender_name), sender_address:addresses!sender_address_id(name, city, state), recipient_address:addresses!recipient_address_id(name, city, state)")
         .eq("sendmo_links.user_id", user.id)
         .order("created_at", { ascending: false })
         .limit(50);
@@ -242,7 +252,7 @@ export default function Dashboard() {
       // flexible all represented so the user sees their full inventory.
       const allLinksPromise = supabase
         .from("sendmo_links")
-        .select("id, short_code, link_type, status, created_at, updated_at, recipient_address:addresses!recipient_address_id(name, city, state)")
+        .select("id, short_code, link_type, status, notes, created_at, updated_at, recipient_address:addresses!recipient_address_id(name, city, state)")
         .eq("user_id", user.id)
         .order("updated_at", { ascending: false })
         .limit(50);
@@ -266,7 +276,7 @@ export default function Dashboard() {
     }
 
     fetchData();
-  }, [user]);
+  }, [user, dashRefresh]);
 
   // Phase B saved cards — read from Stripe directly via /payment-methods GET
   // (source of truth). The local payment_methods table can silently drift if
@@ -426,6 +436,20 @@ export default function Dashboard() {
   // already ordered by created_at DESC, so the slice keeps the most recent.
   // Total counts use the full grouped count so the "View all N" overflow
   // affordance shows the true number.
+  // PR5: the seller's off switch. LinksTab owns the confirm dialog; this
+  // owns the call + refetch. Throws surface in the dialog's error line.
+  async function handleCloseLink(linkId: string) {
+    if (!session?.access_token) throw new Error("Your session expired — sign in again to close this listing.");
+    await closeSellerLink(linkId, session.access_token);
+    setDashRefresh((n) => n + 1);
+  }
+
+  // PR8: the sold-awaiting-print queue. Derived from the same 50-row
+  // shipments window as the table below — on a very busy account an older
+  // unprinted sale can age out of the window (Q4, deferred); the header
+  // discloses it when the window is full.
+  const soldQueue = soldAwaitingPrint(shipments);
+
   const linksWithChildren = allLinks.map((l) => {
     const children = shipments.filter((s) => s.link_id === l.id);
     return {
@@ -433,6 +457,10 @@ export default function Dashboard() {
       short_code: l.short_code,
       link_type: l.link_type,
       status: l.status,
+      // Explicit mapping — notes must be forwarded or the seller card's
+      // item line dies silently (PR12 review #1: the unit test renders
+      // LinksTab directly and can't catch a dropped field here).
+      notes: l.notes ?? null,
       created_at: l.created_at,
       recipient_address: l.recipient_address,
       shipments: children.slice(0, 5).map((s) => ({
@@ -477,12 +505,12 @@ export default function Dashboard() {
               <Button
                 variant="outline"
                 disabled={!SELLER_LINK_LIVE}
-                className="rounded-xl gap-2 text-sm"
+                className="rounded-xl gap-2 text-sm border-emerald-200 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800"
                 onClick={SELLER_LINK_LIVE ? () => navigate("/sell") : undefined}
                 title={SELLER_LINK_LIVE ? undefined : "Coming soon"}
               >
                 <Tag className="w-4 h-4" />
-                Sell an item
+                Create a checkout link
                 {!SELLER_LINK_LIVE && (
                   <span className="text-[10px] font-bold uppercase tracking-wide bg-muted border border-border rounded-full px-1.5 py-0.5">
                     Soon
@@ -492,7 +520,7 @@ export default function Dashboard() {
             )}
             <Button className="rounded-xl gap-2 text-sm" onClick={() => navigate("/onboarding")}>
               <SendMoLogo className="w-4 h-4" />
-              Create a new shipment
+              Buy a shipping label
             </Button>
           </div>
         </div>
@@ -676,7 +704,7 @@ export default function Dashboard() {
                     disabled={rotating}
                     className="text-[11px] text-muted-foreground hover:text-foreground underline disabled:opacity-50"
                   >
-                    {rotating ? "Rotating…" : "Rotate URL"}
+                    {rotating ? "Getting a new URL…" : "Get a new URL"}
                   </button>
                 </div>
               </>
@@ -829,10 +857,60 @@ export default function Dashboard() {
 
         {/* Links tab content — gated by tab state */}
         {tab === "links" && (
-          <LinksTab links={linksWithChildren} loading={loadingAllLinks} />
+          <LinksTab links={linksWithChildren} loading={loadingAllLinks} onCloseLink={handleCloseLink} />
         )}
 
         {/* Shipments Table — gated by tab state */}
+        {tab === "shipments" && soldQueue.length > 0 && (
+          /* "Sold — needs label printed" (PR8): the seller's action queue.
+             Same single-surface model as the table below — the row links to
+             /t/<code>, where Print lives. No new component, no new query:
+             two extra fields on the select that already runs. */
+          <div className="bg-card rounded-2xl border border-emerald-200 shadow-sm mb-6">
+            <div className="p-5 border-b border-border">
+              <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
+                <Package className="w-4 h-4 text-emerald-600" />
+                Sold — needs label printed
+              </h2>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                A buyer paid for shipping. Open the label and print it, then hand the package to the carrier.
+                {shipments.length >= 50 && " Showing sales from your 50 most recent shipments."}
+              </p>
+            </div>
+            <ul className="divide-y divide-border/40">
+              {soldQueue.map((s) => (
+                <li key={s.id}>
+                  {/* No public_code should be impossible (the RPC always mints
+                      one) — render an inert row rather than a scroll-to-top
+                      "#" link if it ever happens. */}
+                  <Link
+                    to={s.public_code ? `/t/${s.public_code}` : "."}
+                    aria-disabled={!s.public_code}
+                    onClick={(e) => { if (!s.public_code) e.preventDefault(); }}
+                    className="flex items-center justify-between gap-3 px-5 py-3 hover:bg-muted/30 transition-colors"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-sm text-foreground truncate">
+                        {s.item_description || "Item"}
+                        {s.is_test && (
+                          <span className="ml-2 inline-flex items-center rounded-full border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[9px] font-semibold text-amber-700 uppercase tracking-wide">Test</span>
+                        )}
+                      </p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        Sold {new Date(s.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })} · buyer {s.buyer_email}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      {s.public_code && <span className="font-mono text-xs text-primary">{s.public_code}</span>}
+                      <ChevronRight className="w-3 h-3 text-muted-foreground" />
+                    </div>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         {tab === "shipments" && (
         <div className="bg-card rounded-2xl border border-border shadow-sm">
           <div className="p-5 border-b border-border">

@@ -723,13 +723,16 @@ The preview is the first thing a sender sees — before the page, inside someone
 | name + city/state | `You're sending a package to {First} — {City}, {ST}` | `{Full Name} already paid the postage. Tap to tell us about your package and print the prepaid label — it costs you nothing.` |
 | name, no city | `You're sending a package to {First}` | same |
 | city/state, no name | `You're sending a package to {City}, {ST}` | `The postage is already paid. …` |
-| no data, or `seller_link` | `You've been sent a prepaid shipping label` | generic fallback |
+| no data | `You've been sent a prepaid shipping label` | generic fallback |
+| `seller_link`, no notes | `Enter your address to get this shipped` | buyer-pays copy (`SELLER_DESC`), prefixed `Shipping typically $X–$Y.` when the band is computed (PR10) |
+| `seller_link` + notes | `Get "{item}" shipped to you` (notes sanitized: URLs stripped, 60-char cap) | same |
+| `seller_link`, non-active (410 body) | `This item has already sold` | `The seller closed this listing on SendMo.` |
 
 **Invariant — exactly one of each preview tag.** `index.html` ships generic marketing `og:*`/`twitter:*` tags for the root domain, so the middleware **strips them before injecting**: appending alone leaves duplicates and crawlers unfurl the generic SendMo card (the 2026-08-10 bug). [`tests/unit/ogMeta.test.ts`](tests/unit/ogMeta.test.ts) asserts the counts against the real `index.html`, so adding a static tag there without teaching `ogMeta.ts` to strip it turns the suite red.
 
 Card stays `summary_large_image` on the shared brand image (`/og-image.png`) — the personalisation is in the text.
 
-`seller_link` keeps the neutral copy on purpose: the **buyer** pays there, so "already covered" would be false. Revisit when that flow launches.
+`seller_link` copy revised 2026-08-29 (PR3): the buyer-pays card above, naming the item when `notes` is set — the neutral-fallback placeholder is retired.
 
 ### Which questions get asked — `planSenderSteps`
 
@@ -1266,6 +1269,23 @@ Reference: [proposals/2026-05-23_buy-time-rate-gate.md](proposals/2026-05-23_buy
 > cancel-label / labels-flex / refunds / label-print. Buckets are per-isolate
 > (speed bump, not a hard guarantee). Email OTP limits are handled by Supabase
 > Auth since the 2026-05-11/15 migration to `signInWithOtp`.
+>
+> Amended 2026-08-29 (PR2, seller-link launch): the MONEY paths — labels flex
+> confirm and seller-checkout — additionally run a shared DB-backed
+> fixed-window counter (`rate_limit_hit` RPC, migration 046, via
+> `_shared/dbratelimit.ts`; fail-open, logged as
+> `ratelimit.db_check_failed_open`), because the per-isolate bucket cannot
+> hold where each request spends money or EasyPost quota. seller-checkout:
+> 10/min per (IP, short_code) **plus a code-independent 30/min per IP**
+> (card testing is PI-create volume from one actor, so N scraped codes must
+> not mean N× budget). The labels flex limiter exempts requests whose
+> shipment already has a row — those resolve idempotently (PR1) and spend
+> nothing. The `GET /links?code=` 30/min/IP limit above is now actually
+> implemented (in-memory), dual-keyed: 30/min on `x-sendmo-client-ip` (an
+> unauthenticated per-viewer hint forwarded by the Vercel OG middleware —
+> without it every page view pools into a few egress IPs) AND 600/min on
+> the spoof-resistant transport IP, so header-randomizing enumeration still
+> hits a ceiling.
 
 ---
 

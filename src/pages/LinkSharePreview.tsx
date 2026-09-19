@@ -27,6 +27,31 @@ export default function LinkSharePreview() {
           doneLabel="Go to dashboard"
           onBack={() => alert("Go back")}
         />
+
+        <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest my-4 text-center">
+          Seller variant
+        </p>
+        <LinkShareCard
+          shortCode="fqaYPCvYWS"
+          variant="seller"
+          itemLabel="a pair of running shoes"
+          singleUse
+          value={{
+            speed_preference: "standard",
+            preferred_carrier: "any",
+            address: {
+              name: "John Anderson",
+              street: "123 Main St",
+              city: "Brooklyn",
+              state: "NY",
+              zip: "11201",
+              phone: "7185550100",
+              verified: true,
+            },
+          }}
+          onDone={() => alert("Go to dashboard")}
+          doneLabel="Go to dashboard"
+        />
       </div>
     </main>
   );

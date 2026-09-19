@@ -601,7 +601,7 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
     await gotoPackageStep(page);
 
     await expect(
-      page.getByRole("heading", { name: "Describe the product" }),
+      page.getByRole("heading", { name: "Describe it in plain words" }),
     ).toBeVisible();
 
     // The parcel fields start collapsed — describing the item is the intended
@@ -610,17 +610,23 @@ test.describe("Onboarding — Full Prepaid Label flow", () => {
 
     // The Guestimator's textarea is the only multiline input on the step.
     await page.locator("textarea").fill("a laptop");
-    await page.getByRole("button", { name: /I'm Feeling Lucky/i }).click();
+    await page.getByRole("button", { name: /Estimate size & weight/i }).click();
 
-    // The estimate REVEALS the fields it filled — an auto-filled guess the
-    // user cannot see is a guess they cannot correct. That reveal IS the
-    // confirmation now: the "Auto-filled packaging, dimensions & weight"
-    // banner went on 2026-08-25 (John: "no green, just keep it normal"), since
-    // it announced values that are on screen, filled in, one line below it.
+    // The estimate renders as a one-line summary card (2026-08-30, Direction A
+    // review) — the values are visible and "Adjust" opens the same fields.
+    // This supersedes the 2026-08-24 reveal-the-fields confirmation; the old
+    // invariant survives as "the guess the user cannot see doesn't exist":
+    // the summary shows every value the estimate set.
+    await expect(page.getByText(/Our estimate for/)).toBeVisible({ timeout: 8000 });
+    await expect(page.getByText(/15 × /)).toBeVisible();
+    await expect(page.getByRole("textbox", { name: "L", exact: true })).toHaveCount(0);
+    await expect(page.getByText(/Auto-filled packaging/i)).toHaveCount(0);
+
+    // "Adjust" opens the real fields, carrying the estimate's values.
+    await page.getByRole("button", { name: /Adjust size, weight or packaging/i }).click();
     await expect(
       page.getByRole("textbox", { name: "L", exact: true }),
-    ).toHaveValue("15", { timeout: 8000 });
-    await expect(page.getByText(/Auto-filled packaging/i)).toHaveCount(0);
+    ).toHaveValue("15");
   });
 
   test("Step 14: 'or fill in manually' opens the parcel fields without the Guestimator", async ({

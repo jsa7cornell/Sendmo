@@ -381,3 +381,62 @@ describe("seller-link email copy variants", () => {
     expect(r.html).not.toContain("item you bought");
   });
 });
+
+// PR7 review (2026-08-29, HIGH): itemDescription became cross-party — the
+// SELLER writes listing notes, the BUYER receives them in a SendMo-branded
+// email — so user text must never enter the HTML raw.
+import { labelConfirmationEmail as _lce } from "../../supabase/functions/_shared/email-templates";
+
+describe("email HTML injection guard (PR7 review)", () => {
+  it("escapes markup in itemDescription and senderName", () => {
+    const tpl = _lce({
+      publicCode: "PC1", carrierTracking: "1Z", carrier: "UPS", eta: "2 days",
+      trackingUrl: "https://sendmo.co/t/PC1",
+      senderName: `<img src=x onerror=1>`,
+      itemDescription: `<a href="//evil.co">Track here`,
+      displayPriceCents: 1500,
+      variant: "seller_link",
+    });
+    expect(tpl.html).not.toContain(`<a href="//evil.co"`);
+    expect(tpl.html).not.toContain("<img src=x");
+    expect(tpl.html).toContain("&lt;a href=");
+  });
+});
+
+// PR13: the seller notice on a cancelled sale, and the seller-aware
+// canceller line for the buyer's refund email.
+import { sellerSaleCancelledEmail as _ssce, refundSubmittedEmail as _rse } from "../../supabase/functions/_shared/email-templates";
+
+describe("seller-sale cancellation emails (PR13)", () => {
+  it("tells the seller not to ship — HTML escaped, subject PLAIN (entities in a subject render literally)", () => {
+    const tpl = _ssce({
+      publicCode: "PC9", itemDescription: `<b>Vintage</b> & 12" armchair`,
+      cancelledBy: "buyer", trackingUrl: "https://sendmo.co/t/PC9",
+    });
+    expect(tpl.subject).toContain(`<b>Vintage</b> & 12" armchair`);
+    expect(tpl.subject).not.toContain("&amp;");
+    expect(tpl.subject).not.toContain("&quot;");
+    expect(tpl.html).toContain("Don't ship this one");
+    expect(tpl.html).toContain("The buyer cancelled");
+    expect(tpl.html).not.toContain("<b>Vintage</b>");
+    expect(tpl.html).toContain("&lt;b&gt;Vintage&lt;/b&gt;");
+  });
+
+  it("admin cancels say so to the seller", () => {
+    const tpl = _ssce({
+      publicCode: "PC9", itemDescription: null,
+      cancelledBy: "admin", trackingUrl: "https://sendmo.co/t/PC9",
+    });
+    expect(tpl.html).toContain("cancelled by our team");
+  });
+
+  it("the buyer's refund email says 'cancelled by the seller' — never 'you cancelled' or link-user copy", () => {
+    const tpl = _rse({
+      amount_cents: 1840, carrier: "UPS", public_code: "PC9",
+      tracking_url: "https://sendmo.co/t/PC9",
+      canceller_is_payer: false, canceller_type: "seller",
+    });
+    expect(tpl.html).toContain("cancelled by the seller");
+    expect(tpl.html).not.toContain("person using your shared link");
+  });
+});

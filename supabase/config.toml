@@ -210,3 +210,13 @@ verify_jwt = false
 [functions.auth-email-hook]
 enabled = true
 verify_jwt = false
+
+# seller-band-sweep — the seller-link price-band refresher (PR10, migration
+# 049 registers the pg_cron job). Called only by cron via net.http_post with
+# the vault-held service_role key; the function enforces bearer === service
+# key itself. verify_jwt pinned false per the 2026-05-10/11 incident class
+# (a missing toml section defaults verify_jwt=true and 401s the caller —
+# fatal here if the vault key is a non-JWT sb_secret_* key).
+[functions.seller-band-sweep]
+enabled = true
+verify_jwt = false

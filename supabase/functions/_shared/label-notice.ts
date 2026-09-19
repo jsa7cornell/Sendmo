@@ -15,6 +15,26 @@
 // deps and is trivially unit-testable under vitest.
 import type { AdminAlertRow } from "./alert.ts";
 
+// Flow discriminator (2026-08-31). The old `resolvedLink ? flex : full_label`
+// binary predates seller links, so every seller-link sale was reported as a
+// flexible-link one — in this admin notice AND labels/'s event-log `flow:`
+// telemetry (verified live on shipment D7HTQJP). One derivation, keyed on the
+// link's link_type, feeds both. Keys match the values the event log already
+// uses at the flow-specific sites ("flex", not "flexible", for continuity).
+export type LabelFlow = "full_label" | "flex" | "seller_link";
+
+export function resolveLabelFlow(linkType: string | null): LabelFlow {
+    if (linkType === null) return "full_label";
+    return linkType === "seller_link" ? "seller_link" : "flex";
+}
+
+// Human names for the admin-notice "Mode" row.
+export const LABEL_FLOW_NOTICE_NAMES: Record<LabelFlow, string> = {
+    full_label: "full prepaid",
+    flex: "flexible link",
+    seller_link: "seller link",
+};
+
 export interface LabelNoticeAddress {
     name?: string | null;
     street1?: string | null;
@@ -29,7 +49,7 @@ export interface LabelNoticeAddress {
 export interface LabelNoticeFacts {
     // ── shipment ──────────────────────────────────────────────────────────
     mode: string;                       // "test" | "live" | "comp"
-    flow: string;                       // "full prepaid" | "flexible link"
+    flow: string;                       // LABEL_FLOW_NOTICE_NAMES value: "full prepaid" | "flexible link" | "seller link"
     carrier: string;
     service: string;
     eta?: string | null;                // promised delivery date or "N business days"

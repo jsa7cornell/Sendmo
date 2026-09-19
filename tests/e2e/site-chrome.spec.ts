@@ -27,7 +27,7 @@ test("the brand mark goes home from an interior page", async ({ page }) => {
   await page.goto("/terms");
   await page.getByRole("link", { name: /SendMo/i }).first().click();
   await expect(page).toHaveURL(/\/$/);
-  await expect(page.getByRole("heading", { name: /Create a shipping label/i })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /where it needs to go/i })).toBeVisible();
 });
 
 test("the footer logo goes home too", async ({ page }) => {
@@ -64,6 +64,6 @@ test.describe("dashboard chrome", () => {
     await page.getByRole("button", { name: /E2E Admin|e2e-admin/i }).click();
     await page.getByRole("button", { name: /Sign Out/i }).click();
     await expect(page).toHaveURL(/\/$/);
-    await expect(page.getByRole("heading", { name: /Create a shipping label/i })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /where it needs to go/i })).toBeVisible();
   });
 });

@@ -106,6 +106,48 @@ export async function rerateAndMatch(
 }
 
 /**
+ * A fetch-and-parse against EasyPost that can never throw (labels PR1). A
+ * thrown fetch or a non-JSON body (CDN 502 page) used to escape the labels
+ * buy path to an outer catch — a bare 500 with the buyer charged and no
+ * refund. This returns a uniform result instead, so callers route failures
+ * through their ordinary error branches. `status: null` means "no HTTP
+ * response at all" (thrown), distinct from any real status code.
+ */
+export interface SafeJsonResult {
+    ok: boolean;
+    status: number | null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- parsed JSON body: same contract as Response.json(), and EasyPost payload shapes are heterogeneous
+    data: any;
+}
+
+export async function safeFetchJson(
+    url: string,
+    init: RequestInit,
+    fetchImpl: FetchLike = fetch,
+): Promise<SafeJsonResult> {
+    try {
+        const resp = await fetchImpl(url, init);
+        try {
+            return { ok: resp.ok, status: resp.status, data: await resp.json() };
+        } catch (jsonErr) {
+            const msg = jsonErr instanceof Error ? jsonErr.message : String(jsonErr);
+            return {
+                ok: false,
+                status: resp.status,
+                data: { error: { code: "NON_JSON_BODY", message: `Response body was not JSON (HTTP ${resp.status}): ${msg}` } },
+            };
+        }
+    } catch (fetchErr) {
+        const msg = fetchErr instanceof Error ? fetchErr.message : String(fetchErr);
+        return {
+            ok: false,
+            status: null,
+            data: { error: { code: "REQUEST_THREW", message: `Request failed before a response: ${msg}` } },
+        };
+    }
+}
+
+/**
  * The price ceiling a rerated rate must respect before we retry the buy.
  * Identical formula to the buy-time gate in labels/index.ts — a rerate that
  * comes back above what the customer's payment supports is a rate CHANGE, not

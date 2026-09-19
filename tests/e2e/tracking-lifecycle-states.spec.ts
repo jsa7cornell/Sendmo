@@ -124,6 +124,24 @@ test.describe("TrackingPage — lifecycle state rendering", () => {
     expect(helpHref).toMatch(/^mailto:support@sendmo\.co/);
   });
 
+  // ── F1-buyer: the seller-sale BUYER gets no print surface (PR9) ──────────
+
+  test("F1 with can_print:false — no Print/Download, no drop-off instructions (the label is the SELLER's)", async ({ page }) => {
+    // The server sends can_print:false for the token-holding buyer on a
+    // seller sale: the PDF carries the seller's home address, and the
+    // drop-off strip is instructions for a package the buyer isn't shipping.
+    await mockTrackingEndpoint(page, { status: "label_created", can_print: false } as never);
+    await page.goto("/t/TESTLC1");
+
+    await expect(page.getByText(/preparing your package/i)).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText(/ready to print/i)).toHaveCount(0);
+    await expect(page.getByRole("link", { name: /^print$/i })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /download/i })).toHaveCount(0);
+    await expect(page.getByText(/how to ship/i)).toHaveCount(0);
+    // The rest of the page stays: details card + help remain visible.
+    await expect(page.getByRole("link", { name: /need help/i })).toBeVisible();
+  });
+
   // ── F2: post-dropoff (status: in_transit) ────────────────────────────────
 
   test("F2 — in_transit: shows 'in transit' hero, lifecycle progress with at least one done dot", async ({ page }) => {

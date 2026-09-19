@@ -425,6 +425,12 @@ export async function buyLabel(
   if (res.status === 409 && data?.error === "rate_changed") {
     throw new BuyLabelRateChangedError(data);
   }
+  // Replay refusal (labels PR1): `error` is the machine token, the human copy
+  // (with the support reference, and whether this attempt was refunded) is in
+  // `message` — surface that, not the token.
+  if (res.status === 409 && data?.code === "SHIPMENT_ALREADY_PURCHASED") {
+    throw new Error(data.message || "This shipment has already been purchased.");
+  }
   if (!res.ok) {
     throw new Error(data.error || data.message || `API error ${res.status}`);
   }
@@ -572,6 +578,12 @@ export async function createSellerLink(
 }
 
 export interface LinkData {
+  /**
+   * Seller-link price band (PR10): "typically" numbers precomputed at link
+   * creation (+ daily sweep). NULL/absent = not computed — show nothing.
+   */
+  est_min_cents?: number | null;
+  est_max_cents?: number | null;
   id: string;
   short_code: string;
   link_type: string;
@@ -608,6 +620,11 @@ export interface LinkData {
   origin_city?: string | null;
   origin_state?: string | null;
   /**
+   * SELLER ONLY (2026-08-29). The seller's name (never the street) so the
+   * buyer landing can say who the shipment is from. Null otherwise.
+   */
+  seller_name?: string | null;
+  /**
    * FLEXIBLE ONLY (2026-08-18). The ship-from address the link creator already
    * knew, so the sender isn't asked to retype their own address. Null for
    * seller links — there the origin is the seller's and the reader is a
@@ -623,7 +640,7 @@ export interface LinkData {
     phone: string;
     verified: boolean;
   } | null;
-  /** FLEXIBLE ONLY. The parcel the creator specced, when they knew it. */
+  /** Flexible + seller links: the parcel the creator specced, when they knew it. */
   package_prefill?: {
     length_in: number;
     width_in: number;
@@ -691,12 +708,36 @@ export async function updateFlexLink(
   return data as UpdateLinkResult;
 }
 
+/**
+ * A link that exists but can no longer be used (HTTP 410). Carries what the
+ * server said so the UI can render the right STATE — for a sold seller link
+ * that's "This item has already sold", not an error card (PR3: on a public
+ * Marketplace post this is the most-visited state after the first sale).
+ */
+export class LinkGoneError extends Error {
+  linkStatus: string | null;
+  linkType: string | null;
+  constructor(message: string, linkStatus: string | null, linkType: string | null) {
+    super(message);
+    this.name = "LinkGoneError";
+    this.linkStatus = linkStatus;
+    this.linkType = linkType;
+  }
+}
+
 export async function fetchLink(shortCode: string): Promise<LinkData> {
   const res = await fetch(`${BASE_URL}/functions/v1/links?code=${encodeURIComponent(shortCode)}`, {
     method: "GET",
     headers: headers(),
   });
   const data = await res.json();
+  if (res.status === 410) {
+    throw new LinkGoneError(
+      data.error || "This link is no longer active",
+      data.status ?? null,
+      data.link_type ?? null,
+    );
+  }
   if (!res.ok) {
     throw new Error(data.error || `Link not found (${res.status})`);
   }
@@ -746,6 +787,27 @@ export async function rotateLinkUrl(linkId: string, accessToken: string): Promis
     throw new Error(data.error || `Rotate failed (${res.status})`);
   }
   return data as RotateLinkResult;
+}
+
+export interface CloseLinkResult {
+  id: string;
+  short_code: string;
+  status: "closed";
+}
+
+// Auth'd, seller links only (PR5). The seller's off switch: active → closed.
+// Idempotent on an already-closed link; 409 on any other state (a sold
+// single-use link is already unbuyable — nothing to close).
+export async function closeSellerLink(linkId: string, accessToken: string): Promise<CloseLinkResult> {
+  const res = await fetch(`${BASE_URL}/functions/v1/links/${encodeURIComponent(linkId)}/close`, {
+    method: "POST",
+    headers: { ...headers(), Authorization: `Bearer ${accessToken}` },
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || `Close failed (${res.status})`);
+  }
+  return data as CloseLinkResult;
 }
 
 export interface ActivateLinkResult {
@@ -926,6 +988,10 @@ export async function buyLabelSeller(params: {
   const data = await res.json();
   if (res.status === 409 && data?.error === "rate_changed") {
     throw new BuyLabelRateChangedError(data);
+  }
+  // Replay refusal (labels PR1) — surface the human copy, not the token.
+  if (res.status === 409 && data?.code === "SHIPMENT_ALREADY_PURCHASED") {
+    throw new Error(data.message || "This shipment has already been purchased.");
   }
   if (!res.ok) {
     throw new Error(data.error || data.message || `API error ${res.status}`);

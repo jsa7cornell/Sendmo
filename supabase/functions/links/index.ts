@@ -4,6 +4,8 @@ import { isUsablePhone } from "../_shared/phone.ts";
 import { resolveLiveMode } from "../_shared/mode.ts";
 import { checkLiveChargeAllowed } from "../_shared/allowlist.ts";
 import { log } from "../_shared/logger.ts";
+import { checkRateLimit, clientIpKey } from "../_shared/ratelimit.ts";
+import { computeSellerPriceBand } from "../_shared/price-band.ts";
 
 // ─── Short code generator ───────────────────────────────────
 const SAFE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
@@ -216,6 +218,93 @@ Deno.serve(async (req: Request) => {
         );
     }
 
+    // ── POST /links/:id/close — Authenticated: the seller's off switch ──
+    // PR5 (seller-link launch, Q1): with no inventory counting, an unlimited
+    // link never self-closes — the seller's hand on this switch IS the
+    // inventory control. Writes the dedicated 'closed' status (migration
+    // 048; disjoint from the webhook's 'completed' and rotate's 'cancelled').
+    // Buyer side needs nothing: GET-by-code already 410s any non-active
+    // seller link and the client renders "This item has already sold".
+    if (req.method === "POST" && pathLinkId && pathAction === "close") {
+        const authHeader = req.headers.get("Authorization") || "";
+        const token = authHeader.replace("Bearer ", "");
+        const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+        if (authError || !user) {
+            return new Response(
+                JSON.stringify({ error: "Unauthorized" }),
+                { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+        const { data: existing, error: linkErr } = await supabase
+            .from("sendmo_links")
+            .select("id, user_id, short_code, link_type, status")
+            .eq("id", pathLinkId)
+            .maybeSingle();
+        if (linkErr || !existing) {
+            return new Response(
+                JSON.stringify({ error: "Link not found" }),
+                { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+        if (existing.user_id !== user.id) {
+            return new Response(
+                JSON.stringify({ error: "Not your link" }),
+                { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+        if (existing.link_type !== "seller_link") {
+            return new Response(
+                JSON.stringify({ error: "Only seller links can be closed" }),
+                { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+        if (existing.status === "closed") {
+            // Idempotent — already closed, just acknowledge.
+            return new Response(
+                JSON.stringify({ id: existing.id, short_code: existing.short_code, status: "closed" }),
+                { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+        if (existing.status !== "active") {
+            // A sold single-use link sits at in_use/completed — nothing left
+            // to close, and overwriting those states would erase what the
+            // lifecycle writers recorded.
+            return new Response(
+                JSON.stringify({ error: `Cannot close a ${existing.status} link` }),
+                { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+        // Guarded UPDATE (active → closed only) so a concurrent buyer's
+        // single-use claim and this close can't clobber each other.
+        const { data: closedRow, error: closeErr } = await supabase
+            .from("sendmo_links")
+            // updated_at set explicitly — no trigger maintains it, and the
+            // Dashboard orders the Links tab by it (activate/PATCH do the same).
+            .update({ status: "closed", updated_at: new Date().toISOString() })
+            .eq("id", existing.id)
+            .eq("status", "active")
+            .select("id, short_code, status")
+            .maybeSingle();
+        if (closeErr || !closedRow) {
+            return new Response(
+                JSON.stringify({ error: "The link changed state while closing — refresh and try again" }),
+                { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+        log({
+            event_type: "link.closed",
+            session_id: req.headers.get("x-session-id") || "unknown",
+            severity: "info",
+            entity_type: "sendmo_link",
+            entity_id: existing.id,
+            properties: { short_code: existing.short_code },
+        });
+        return new Response(
+            JSON.stringify({ id: closedRow.id, short_code: closedRow.short_code, status: closedRow.status }),
+            { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+    }
+
     // ── POST /links/:id/activate — Authenticated: flip draft → active using
     // the user's existing default PM (no Stripe call needed; the PM is already
     // attached server-side from a prior SetupIntent). Used by FlexPaymentStep
@@ -332,6 +421,34 @@ Deno.serve(async (req: Request) => {
             );
         }
 
+        // Rate limit — SPEC §14 has specified 30/min/IP for GET-by-code since
+        // 2026-07-04; never implemented until PR2 (seller-link launch). The
+        // in-memory limiter is the right weight here (anonymous read, no
+        // money moves). TWO keys (review PR2-#4):
+        //
+        //   • viewer key (30/min) — x-sendmo-client-ip when present, else the
+        //     transport IP. The Vercel OG middleware calls this server-side
+        //     on EVERY /s/ page view, so keying only on transport IP would
+        //     pool all unfurl traffic into a few Vercel egress IPs (N2). The
+        //     header is an unauthenticated hint (the anon key is public, so
+        //     it cannot be signed) — which is why it is not the only key.
+        //
+        //   • transport key (600/min) — clientIpKey (LAST x-forwarded-for
+        //     hop, spoof-resistant). A single client randomizing the header
+        //     still hits this ceiling, so short-code enumeration cannot run
+        //     unlimited; the ceiling is high enough that a busy Vercel egress
+        //     IP relaying honest page views never touches it.
+        const viewerIp = req.headers.get("x-sendmo-client-ip")?.trim().slice(0, 64) || clientIpKey(req);
+        if (
+            checkRateLimit(`links-get:${viewerIp}`, { max: 30, windowMs: 60_000 }) ||
+            checkRateLimit(`links-get-transport:${clientIpKey(req)}`, { max: 600, windowMs: 60_000 })
+        ) {
+            return new Response(
+                JSON.stringify({ error: "Too many requests. Please wait a moment and try again." }),
+                { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+
         const { data: link, error } = await supabase
             .from("sendmo_links")
             .select(`
@@ -339,6 +456,7 @@ Deno.serve(async (req: Request) => {
                 max_price_cents, preferred_speed, preferred_carrier,
                 size_hint, weight_hint_oz, notes, expires_at,
                 length_in, width_in, height_in,
+                est_min_cents, est_max_cents,
                 created_at,
                 recipient_address:addresses!recipient_address_id (
                     name, street1, city, state, zip
@@ -357,19 +475,24 @@ Deno.serve(async (req: Request) => {
             );
         }
 
-        // Check link is usable
+        // Check link is usable. link_type rides on EVERY 410 body (PR3 review
+        // #2): the client and the OG unfurl decide how to render a gone link
+        // — encoding that decision in branch ordering here silently regressed
+        // the seller sold-out state for cancelled/expired statuses.
         if (link.status === "cancelled" || link.status === "expired") {
             return new Response(
-                JSON.stringify({ error: "This link is no longer active", status: link.status }),
+                JSON.stringify({ error: "This link is no longer active", status: link.status, link_type: link.link_type }),
                 { status: 410, headers: { ...corsHeaders, "Content-Type": "application/json" } }
             );
         }
 
         // Seller links: only 'active' is buyable. A single-use link that has sold
         // closes to 'in_use'/'completed'; a reusable link stays 'active'.
+        // link_type rides along (PR3) so the client can render "already sold"
+        // as a state instead of the generic that-link-didn't-work error.
         if (link.link_type === "seller_link" && link.status !== "active") {
             return new Response(
-                JSON.stringify({ error: "This item is no longer available", status: link.status }),
+                JSON.stringify({ error: "This item is no longer available", status: link.status, link_type: link.link_type }),
                 { status: 410, headers: { ...corsHeaders, "Content-Type": "application/json" } }
             );
         }
@@ -385,9 +508,15 @@ Deno.serve(async (req: Request) => {
 
         if (link.expires_at && new Date(link.expires_at) < new Date()) {
             // Auto-expire
-            await supabase.from("sendmo_links").update({ status: "expired" }).eq("id", link.id);
+            // Status-scoped (PR6 review #5): the auto-expire fires on a
+            // PUBLIC GET, so it must only retire links still open — never
+            // clobber in_use/completed/closed lifecycle states another
+            // writer owns.
+            await supabase.from("sendmo_links").update({ status: "expired" })
+                .eq("id", link.id)
+                .in("status", ["active", "draft"]);
             return new Response(
-                JSON.stringify({ error: "This link has expired", status: "expired" }),
+                JSON.stringify({ error: "This link has expired", status: "expired", link_type: link.link_type }),
                 { status: 410, headers: { ...corsHeaders, "Content-Type": "application/json" } }
             );
         }
@@ -462,6 +591,11 @@ Deno.serve(async (req: Request) => {
                 preferred_carrier: link.preferred_carrier,
                 size_hint: link.size_hint,
                 notes: link.notes,
+                // Price band (PR10) — precomputed "typically" numbers so the
+                // anonymous address step and the unfurl can show a price with
+                // zero per-viewer upstream cost. NULL = not computed.
+                est_min_cents: (link as { est_min_cents?: number | null }).est_min_cents ?? null,
+                est_max_cents: (link as { est_max_cents?: number | null }).est_max_cents ?? null,
                 recipient_city: link.recipient_address?.city ?? null,
                 recipient_state: link.recipient_address?.state ?? null,
                 recipient_zip: link.recipient_address?.zip ?? null,
@@ -471,6 +605,14 @@ Deno.serve(async (req: Request) => {
                 // + labels/ resolve the full origin server-side).
                 origin_city: (link.origin_address as unknown as { city?: string } | null)?.city ?? null,
                 origin_state: (link.origin_address as unknown as { state?: string } | null)?.state ?? null,
+                // Seller links: the seller's NAME (never the street) so the
+                // buyer landing can say who the shipment is from (2026-08-29
+                // buyer-view rework). The name already appears on the printed
+                // label's return address, so this exposes nothing new.
+                seller_name:
+                    link.link_type === "seller_link"
+                        ? ((link.origin_address as unknown as { name?: string } | null)?.name ?? null)
+                        : null,
                 // FLEXIBLE ONLY — the ship-from address the link creator already
                 // knew, so the sender doesn't retype their own address (and the
                 // creator's typing isn't discarded). Deliberately NOT sent for
@@ -495,9 +637,13 @@ Deno.serve(async (req: Request) => {
                               verified: (link.origin_address as unknown as { is_verified?: boolean }).is_verified === true,
                           }
                         : null,
-                // Package the creator specced, when they knew it. Same purpose.
+                // Package the creator specced, when they knew it. Flexible:
+                // same purpose as origin_prefill. Seller links too (2026-08-29
+                // buyer-view rework): the buyer landing shows the package
+                // details up front — dims/weight of a listed item are the
+                // listing, not a secret.
                 package_prefill:
-                    link.link_type === "flexible" && link.length_in && link.width_in
+                    (link.link_type === "flexible" || link.link_type === "seller_link") && link.length_in && link.width_in
                         ? {
                               length_in: Number(link.length_in),
                               width_in: Number(link.width_in),
@@ -652,7 +798,7 @@ Deno.serve(async (req: Request) => {
                     phone: origin_address.phone,
                     is_verified: origin_address.verified || false,
                 })
-                .select("id")
+                .select("id, street1, city, state, zip")
                 .single();
             if (originErr || !originAddr) {
                 console.error("Origin address insert error:", originErr);
@@ -679,7 +825,12 @@ Deno.serve(async (req: Request) => {
                 );
             }
 
-            const sPriceCap = typeof price_cap_dollars === "number" ? price_cap_dollars : 100;
+            // No price cap on seller links (PR4, decided): the buyer pays
+            // their own shipping on options they pick, so a cap protects
+            // nobody — and the old silent $100 default bound links whose
+            // builder promised "Buyer picks the carrier & speed". NULL falls
+            // back to the platform-wide MAX_DISPLAY_PRICE guard in rates/.
+            // (price_cap_dollars stays honored on the flex branches below.)
             const { data: sellerLink, error: sellerLinkErr } = await supabase
                 .from("sendmo_links")
                 .insert({
@@ -696,7 +847,7 @@ Deno.serve(async (req: Request) => {
                     height_in: dims[2],
                     weight_hint_oz: dims[3],      // weight reuses weight_hint_oz (migration 040)
                     max_shipments: Number(max_shipments) === 1 ? 1 : null,  // 1 = single-use, null = reusable
-                    max_price_cents: Math.round(sPriceCap * 100),
+                    max_price_cents: null,
                     preferred_speed: speed_preference || null,
                     preferred_carrier: preferred_carrier === "any" ? null : (preferred_carrier || null),
                     notes: notes || null,
@@ -709,6 +860,53 @@ Deno.serve(async (req: Request) => {
                     JSON.stringify({ error: "Failed to create seller link" }),
                     { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
                 );
+            }
+
+            // ── Price band (PR10) — best-effort, never fails creation ──
+            // Three representative-destination quotes, computed once here so
+            // the anonymous GET and the OG unfurl serve a number without any
+            // per-viewer upstream cost. On failure the band stays NULL (the
+            // UI simply doesn't show one) and the daily seller-band-sweep
+            // fills it in.
+            {
+                const bandKey = Deno.env.get(linkIsTest ? "EASYPOST_TEST_API_KEY" : "EASYPOST_API_KEY");
+                if (bandKey) {
+                    const band = await computeSellerPriceBand({
+                        apiKey: bandKey,
+                        origin: {
+                            city: originAddr.city,
+                            state: originAddr.state,
+                            zip: originAddr.zip,
+                            street1: originAddr.street1 ?? null,
+                        },
+                        parcel: { length: dims[0], width: dims[1], height: dims[2], weight_oz: dims[3] },
+                        linkId: sellerLink.id,
+                        // The buyer-visible constraints (review #2): the band
+                        // must be the cheapest option the buyer can PICK.
+                        preferredCarrier: preferred_carrier === "any" ? null : (preferred_carrier || null),
+                        preferredSpeed: speed_preference || null,
+                    });
+                    if (band) {
+                        const { error: bandErr } = await supabase
+                            .from("sendmo_links")
+                            .update({
+                                est_min_cents: band.minCents,
+                                est_max_cents: band.maxCents,
+                                est_computed_at: new Date().toISOString(),
+                            })
+                            .eq("id", sellerLink.id);
+                        if (bandErr) console.error("price band write error:", bandErr);
+                    } else {
+                        log({
+                            event_type: "link.band_compute_failed",
+                            session_id: req.headers.get("x-session-id") || "unknown",
+                            severity: "warn",
+                            entity_type: "sendmo_link",
+                            entity_id: sellerLink.id,
+                            properties: { short_code: sellerLink.short_code, at: "create" },
+                        });
+                    }
+                }
             }
 
             return new Response(
@@ -964,7 +1162,7 @@ Deno.serve(async (req: Request) => {
         const { data: existing, error: loadError } = await supabase
             .from("sendmo_links")
             .select(`
-                id, user_id, status, recipient_address_id,
+                id, user_id, status, link_type, recipient_address_id,
                 recipient_address:addresses!recipient_address_id (
                     id, name, street1, street2, city, state, zip, phone
                 )
@@ -986,6 +1184,20 @@ Deno.serve(async (req: Request) => {
             return new Response(
                 JSON.stringify({ error: "Link not found" }),
                 { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+        }
+
+        // Type guard (PR6): the PATCH editor is the FLEX editor. A comment
+        // below used to claim "this handler already rejects non-flexible
+        // links above" — it never did (the !== "flexible" guards belong to
+        // rotate and activate), so a prefs-only save on a seller link
+        // silently rewrote preferred_speed/preferred_carrier/max_price_cents
+        // — all of which bind what future buyers can pick and be charged.
+        // Seller links are immutable by decision (N7): close-and-recreate.
+        if (existing.link_type !== "flexible") {
+            return new Response(
+                JSON.stringify({ error: "Only flexible links can be edited", link_type: existing.link_type }),
+                { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
             );
         }
 
@@ -1038,7 +1250,10 @@ Deno.serve(async (req: Request) => {
             // destination" after a draft link had already stored an address.
             // Absent-vs-null matters — absent means "don't touch", null means
             // "remove". Migration 042 permits a recipient-less flexible link
-            // (this handler already rejects non-flexible links above).
+            // (the link_type guard near the top of this handler — added PR6,
+            // 2026-08-29 — makes the "flexible only" premise actually true;
+            // the previous version of this comment claimed a guard that
+            // didn't exist).
             if (existing.recipient_address_id !== null) {
                 previousAddressId = existing.recipient_address_id;
                 updates.recipient_address_id = null;

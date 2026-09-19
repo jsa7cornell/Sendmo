@@ -51,6 +51,8 @@ test("editing the parcel then returning re-fetches rates", async ({ page }) => {
   // Go back and change the parcel materially.
   await page.getByRole("button", { name: "Back", exact: true }).click();
   await expect(page).toHaveURL(/\/full-label\/package$/);
+  // A filled step renders as the summary card (2026-08-30) — Adjust opens the fields.
+  await page.getByRole("button", { name: /Adjust size, weight or packaging/i }).click();
   await page.getByRole("textbox", { name: "L", exact: true }).fill("30");
   await page.getByRole("textbox", { name: "lbs" }).fill("40");
   await page.getByRole("button", { name: /^Continue$/ }).click();

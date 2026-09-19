@@ -4,20 +4,20 @@ test.describe("Home page", () => {
   test("renders hero text and CTA button", async ({ page }) => {
     await page.goto("/");
 
-    // Hero heading
+    // Hero heading — the H1 is split across colored spans, so match a phrase
+    // that lives in a single text node.
     await expect(
-      page.getByRole("heading", { name: /Create a shipping label/i })
+      page.getByRole("heading", { name: /where it needs to go/i })
     ).toBeVisible();
 
-    // Tagline pill (appears in hero pill and footer — use first)
-    await expect(page.getByText("Prepaid shipping made easy").first()).toBeVisible();
-
-    // Primary door. Named for the job, not the artifact — and it no longer
-    // excludes the plain "I'm mailing something out" case.
+    // Primary door card + CTA. The card h2 and the button differ only in
+    // casing, so scope to the button role.
     await expect(
-      page.getByRole("button", { name: /Send or receive a package/i })
+      page.getByRole("button", { name: /Buy a shipping label/i })
     ).toBeVisible();
-    await expect(page.getByText("You pay for shipping")).toBeVisible();
+    await expect(
+      page.getByText("Buy a shipping label that you or someone else can fill out.")
+    ).toBeVisible();
 
     // "How SendMo works" section
     await expect(
@@ -27,7 +27,7 @@ test.describe("Home page", () => {
 
   test("the you-pay door navigates to onboarding", async ({ page }) => {
     await page.goto("/");
-    await page.getByRole("button", { name: /Send or receive a package/i }).click();
+    await page.getByRole("button", { name: /Buy a shipping label/i }).click();
     await expect(page).toHaveURL(/\/onboarding/);
   });
 });

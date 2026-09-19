@@ -1,7 +1,7 @@
 {
   "name": "SendMo",
   "short_name": "SendMo",
-  "description": "Prepaid shipping made easy.",
+  "description": "Shareable shipping labels and shipping links.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",

@@ -145,7 +145,7 @@ export default function Login() {
             <SendMoLogo className="w-8 h-8" />
             <span className="text-2xl font-bold text-foreground">SendMo</span>
           </Link>
-          <p className="text-sm text-muted-foreground mt-1">Prepaid shipping made easy</p>
+          <p className="text-sm text-muted-foreground mt-1">Getting stuff where it needs to go</p>
         </div>
 
         <div className="bg-card rounded-2xl border border-border shadow-sm p-6">

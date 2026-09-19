@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import { applyMargin, addInsurance, formatCents, isOverCap } from "@/lib/api";
 import {
   applyMarkup,
+  effectiveLinkCapCents,
+  PLATFORM_MAX_PRICE_CENTS,
   MARKUP_MULTIPLIER,
   MARKUP_FLAT_CENTS,
 } from "../../supabase/functions/_shared/pricing.ts";
@@ -88,12 +90,22 @@ describe("applyMarkup (seller-checkout server-derived amount)", () => {
     }
   });
 
-  // seller-checkout caps the charge at link.max_price_cents. The effective
-  // charge is min(applyMarkup(rate), cap); a buyer is never charged above the
-  // seller-set ceiling even if the live rate spikes past it.
-  it("cap composition: charge = min(applyMarkup(rate), max_price_cents)", () => {
-    const cap = 1500;
-    expect(Math.min(applyMarkup(10), cap)).toBe(1250); // under cap → full price
-    expect(Math.min(applyMarkup(20), cap)).toBe(1500); // $23.00 > cap → capped
+  // PR4: seller links carry NO cap (max_price_cents NULL). Every cap
+  // comparison must go through effectiveLinkCapCents — `x > null` coerces
+  // null to 0 and 403s every capless buy AFTER the buyer's card is charged
+  // (seller-checkout confirms the PI before labels/ runs). This is the
+  // regression table for that trap.
+  it("effectiveLinkCapCents: NULL cap → platform ceiling, real cap honored", () => {
+    // Capless (seller): a $150 display price passes, $250 is blocked.
+    expect(15000 > effectiveLinkCapCents(null)).toBe(false);
+    expect(25000 > effectiveLinkCapCents(null)).toBe(true);
+    expect(effectiveLinkCapCents(null)).toBe(PLATFORM_MAX_PRICE_CENTS);
+    expect(effectiveLinkCapCents(undefined)).toBe(PLATFORM_MAX_PRICE_CENTS);
+    // Recipient-pays links keep their own cap.
+    expect(effectiveLinkCapCents(1500)).toBe(1500);
+    expect(applyMarkup(20) > effectiveLinkCapCents(1500)).toBe(true);  // $23.00 over a $15 cap
+    expect(applyMarkup(10) > effectiveLinkCapCents(1500)).toBe(false); // $12.50 under it
+    // The raw comparison this helper replaces — the bug shape, pinned:
+    // (25 as any) > (null as any) === true because null coerces to 0.
   });
 });
