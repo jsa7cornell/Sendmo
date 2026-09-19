@@ -153,6 +153,20 @@ Three changes to the shared parcel question (`ParcelQuestion.tsx` — recipient,
 
 **Deliberately not done:** the handoff's segmented control for "Sender will fill this in" — that escape was already reworked into `SkipToSenderLink` + `DimmedWhenDeferred` in John's 2026-08-2x passes with dedicated spec coverage (skip-to-sender.spec, onboarding "named, visible choice" tests); layering the older suggestion over it would regress a newer decision. Step pips ("STEP n OF N") also deferred — that's a flow-container change across three flows, its own PR if John still wants it.
 
+### [2026-08-30] Seller builder — review-step shipping estimate + "Make a change" from the ready screen
+
+**Category:** ship
+**Cross-link:** John's asks 2026-08-30 (screenshots of review + ready). Band machinery: PR10 of `proposals/2026-08-28_seller-link-launch_reviewed-2026-08-28_decided-2026-08-29.md`; immutability: PR6 same proposal.
+
+**Browser-verified:** spec: `tests/e2e/seller-builder.spec.ts` (3 new tests, chromium against vite; backend routes mocked — the Deno endpoint itself deploys via the edge-functions workflow on merge) · variants-covered: band success (row + copy + request payload + no re-quote on step bounce), band failure (row hides, Create still enabled), Make-a-change (confirm dialog, decline keeps link, confirm closes old link → review intact → re-create mints new short code).
+
+**1. Review-step estimate ("What buyers will pay").** New authenticated `POST /links/band-quote` in the links function reuses `computeSellerPriceBand` (same three representative near/mid/far destinations + display filter as the stored PR10 band) against the seller's origin + this item's dims/weight, BEFORE the link exists — so a seller can bail on an item that costs more to ship than it's worth. Rate-limited 10/min per user + 60/min per IP; same test/live key derivation as creation (`resolveLiveMode`; allowlist downgrade deliberately skipped — nothing is charged, and it only affects which key a live-mode non-allowlisted customer quotes with). **Cost-model note:** this is per-review-view (3 EasyPost quote calls), a deliberate, authed exception to PR10's "bounded by links created, not traffic" rule — that rule targeted the anonymous crawler-amplified GET. Client caches the in-flight promise by inputs in a ref (StrictMode double-effect and step-bouncing share one quote — the naive state-key cache left the row stuck on the loading spinner because run 1 was cancelled and run 2 saw the key as already-fetched). Quote failure = row hides; a wrong number is worse than none.
+
+**2. "Make a change" on the ready screen.** The link already exists there and seller links are immutable (PR6), so Back = confirm dialog ("Your current link will stop working… you'll get a new link") → `closeSellerLink` invalidates the old link → re-enter review with the form intact → Create mints a fresh link + new URL (John's spec: are-you-sure first; old link invalidated). `LinkShareCard` already had `onBack`/`backLabel` — no share-card changes.
+
+
+**Merged 2026-09-18, after #144.** A pre-merge review found the band quote hard-coded `preferredCarrier: null`, so once #144 restored the carrier control, the estimate would quote carriers the seller had excluded. The client now sends the carrier constraint, `links/band-quote` passes it to `computeSellerPriceBand`, and the dedupe key includes it; a new e2e test pins it. Also: "Make a change" on a link that already sold now says so in plain words instead of showing the raw 409 ("Cannot close a in_use link").
+
 ---
 
 ### [2026-08-30] Shipping Link ready screen — snippet correctness fix, variant-aware share card, naming
