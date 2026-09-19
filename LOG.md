@@ -24,6 +24,23 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ---
 
+### [2026-08-31] Full E2E verification run — live seller-link money loop closed (§6 satisfied)
+
+**Category:** verify
+**Cross-link:** [`proposals/2026-08-29_seller-launch-runbook_PR14.md`](proposals/2026-08-29_seller-launch-runbook_PR14.md) §6 · seller-launch LOG entries 2026-08-29
+
+**Browser-verified:** mcp-session: John's Chrome on sendmo.co live, 2026-08-31 · variants-covered: homepage doors, dashboard shipments+links tabs (lane naming/who-pays chips), /sell stepped builder with Guestimator estimate path, buyer checkout (landing card, live rates, consolidated review), LIVE Stripe Payment Element (Link + saved card), post-pay /t/ page, cancel dialog + voided page, /onboarding full-label flow through the 17-rate table (manual parcel path), tracking page of a delivered test sale.
+
+- **Automated:** worktree at `origin/main` (559e240) — unit 818/818 green, mocked Playwright e2e 122 passed / 6 skipped (authed CI-only skips).
+- **Live loop (John-approved charge):** created live single-use checkout link `7kRDhXGhQj` ("Paperback book"), bought through it as buyer — $8.45 USPS GroundAdvantage, shipment `D7HTQJP`. Verified in prod DB: PR11 rebind to the real link, link `active→in_use`, cancel token + buyer_email set; ledger charge +845 / fee_stripe −55 / label_cost −648 on the same PI, all `mode=live`. Emails: seller "You made a sale", admin new-label notice, Stripe buyer receipt. Cancelled as admin: DB `cancelled/submitted/submitted`, voided tracking page renders, seller "don't ship" + buyer "refund on its way" both fired with correct "by our team" canceller lines. Buyer refund correctly pending on carrier-void confirmation (submitted-gated, no premature refund txn row).
+- **Ledger reconciliation (prod, read-only SQL):** every card-paid shipment's display price matches its charge txn by stripe_intent_id — zero mismatches; refunded cancels match to the cent; `not_applicable` cancels have no refund rows, as intended. Note: `charge`/`fee_stripe`/`refund` rows carry NULL shipment_id by design — reconcile via `stripe_intent_id`, not shipment_id.
+- **Findings:** (1) admin new-label email + event-log `flow:` label seller sales as "flexible link" — binary discriminator at labels/index.ts:2621 predates seller links (fixed — see "Label flow discriminator fixed to three-way" above); (2) buyer landing price band said $8.69–$10.35 but cheapest live rate was $8.45 — band floor slightly overshoots; (3) saved-address fill renders phone unformatted (`3333333333`) where typed input formats; (4) after a cancelled sale the single-use link stays `in_use` — seller can't resell through it without rotating (flagging as open question, may be intended). Fixtures `SELLE2E01`/`SELLTEST01`: §6 now verified — John can decide on deletion (RESTRICT FK requires removing their shipments first).
+- **Test residue in prod:** link `7kRDhXGhQj` (in_use, its one sale cancelled) + shipment `D7HTQJP` (cancelled, refund pending) — real ledger rows, left in place.
+- **Email bodies fact-checked (all four from the live run):** data correct everywhere — tracking code, USPS number, amounts, admin money block reconciles to the cent, canceller lines right. Copy issues found: (a) all transactional emails still sign off "Prepaid shipping made easy" — the #138 tagline sweep missed `supabase/functions/_shared/` email templates; (b) seller cancel email says "Your listing link isn't changed by this — nothing to do", which is false for a single-use link that stays `in_use` after a cancelled sale (copy-vs-behavior contradiction — either reopen the link on cancel or fix the line); (c) buyer refund email says the $8.45 refund request went "to the carrier" — the carrier request is SendMo's $6.48 label cost, the buyer's $8.45 returns via Stripe after the void confirms. Full-label confirmation email path NOT exercised this run.
+- **John's nit, resolved to existing work:** /t/ success page still shows "Back to SendMo" on prod — that removal is cec6aa9 on `feat/sender-intro-shipment-card`, committed but unmerged; merging the branch delivers it. The error-state link (TrackingPage.tsx:595) and the LabelPrintPage/LegacyTrackingRedirect/SenderPreview instances were deliberately left by that commit.
+
+---
+
 ### [2026-08-31] Homepage rev 6 — CSS shipping label in the hero, vertical rhythm halved
 
 **Category:** ship
@@ -104,6 +121,17 @@ Also in this change, both variants: button hierarchy reworked — "Copy link" is
 **Browser-verified:** mcp-session: Claude Browser pane, vite dev on worktree with `VITE_ENABLE_SELLER_LINK=true` + dummy Supabase env (hero is static; app boots logged-out) · variants-covered: desktop 1280 light, mobile 375 stacked; both cards render, green CTA live, single-card fallback is a className branch on the same flag.
 
 Hero on `Index.tsx` replaced wholesale with John's approved copy: H1 "Shareable shipping labels and shipping links for buying, selling, and just generally getting stuff where it needs to go." — "shipping labels" in `text-primary` (blue), "shipping links" in emerald, connective words dimmed to `text-muted-foreground`; the two cards repeat their color as a top rule, so the title's color coding is the wayfinding (comment in the JSX says so). Cards: "Buy a Shipping Label" (blue, /onboarding) and "Create a Shipping Checkout Link" (green, /sell). Removed: "Prepaid shipping made easy" badge, old H1/sub, who-pays helper lines, "Learn more" button. Seller launch gate untouched — `SELLER_LINK_VISIBLE/LIVE` wrap the green card exactly as before; flag off = single centered blue card. Tests updated to the new strings: `App.test.tsx` (exact-match moved to the muted span — the H1 is now split across spans, so exact-matching the full sentence fails), `IndexLanding.test.tsx`, `e2e/home.spec.ts`. Follow-ups deliberately NOT here: `index.html` meta title still says "Prepaid Shipping Made Easy"; lower homepage sections (How it works / Why SendMo) still describe the old link-first mental model; /sell header still says "Sell & Ship" vs. the card's "Create a Shipping Checkout Link". Prod needs `VITE_ENABLE_SELLER_LINK=true` in Vercel for the green card to render.
+
+---
+
+### [2026-08-29] Direction A design/copy handoff — reviewed against source, counter-proposal mocked
+
+**Category:** review
+**Cross-link:** John's handoff artifact `claude.ai/code/artifact/e24318ce-2ecb-42b8-8ac2-d8579b8f2a00` · response mockup artifact `claude.ai/code/artifact/4e4f5285-ab45-484f-bb7b-ae4b5756eb38`
+
+**Browser-verified:** n/a-category: `agent-internal` · n/a-reason: review + static mockup only — no product surface touched, nothing in src/ changed.
+
+Verified every claim in the Direction A homepage/flow handoff against source. **Accurate and cheap (accepted):** "I'm Feeling Lucky" (`MagicGuestimator.tsx:113`), duplicate description fields (`ParcelQuestion.tsx`), "Sender's name"/"origin address" (`RecipientStepOrigin.tsx`), the wrong-flow Marketplace snippet ("print the prepaid label" — `LinkShareCard.tsx` ×2 + `ogMeta.ts`; tells the buyer to print a label the seller prints), naming split (Index says "SendMo for Sellers", app says "Sell & Ship"). **Pushed back:** (1) the $3 re-weigh guarantee is a finance/liability decision with no supporting mechanism in code — use the neutral "we'll email you before any adjustment" line, and verify that email exists first; (2) trust-bar "refunded automatically" is false — refunds are admin-initiated (`refundService.ts`), auto-refund covers only failed label purchase; (3) the "Test/Live mode SHIP-BLOCKER" is not real — `AdminModeToolbar` self-gates on `isAdmin` (reviewer saw it because John is admin); (4) the "Your name (your name)" bug is not in source (stale screenshot); (5) Direction A homepage must honor the three-state `SELLER_LINK_MODE` gate the handoff doesn't know about; (6) link-validity copy blocked on knowing the real `expires_at` default — don't invent one. Proposed sequencing: PR1 snippet fix alone, PR2 string pass, PR3 homepage, PR4 estimator result-card + step pips (the only real UI work). Nothing implemented — mockup is the approval gate. NOTE: checkout was on `feat/sender-intro-shipment-card` with another session's uncommitted proposal edits; this entry deliberately left uncommitted alongside them.
 
 ---
 
