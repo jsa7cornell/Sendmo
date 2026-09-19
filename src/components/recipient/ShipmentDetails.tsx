@@ -1,6 +1,7 @@
 import { formatCents } from "@/lib/api";
 import { carrierDisplayName, serviceDisplayName, speedDisplayName } from "@/lib/utils";
 import ShipmentDetailsCard, { type DetailCell } from "@/components/shipment/ShipmentDetailsCard";
+import { formatParcelDims } from "@/components/shipment/parcelDraft";
 import type { RecipientFlowState } from "@/hooks/useRecipientFlow";
 
 // The creator's half of the shipment summary (2026-08-23).
@@ -47,10 +48,17 @@ export default function ShipmentDetails({
   const origin = state.originAddress;
   const destination = state.destinationAddress;
 
+  // Same height rule as both sender cards (formatParcelDims) — the three
+  // surfaces print one shipment and used to disagree about when to show it.
+  // The WEIGHT line below stays lb + oz here on purpose: it echoes the two
+  // boxes the creator typed into, which the sender never sees.
   const parcelDims = state.dimensions.length && state.dimensions.width
-    ? `${state.dimensions.length}×${state.dimensions.width}${
-        state.packagingType !== "envelope" && state.dimensions.height
-          ? `×${state.dimensions.height}` : ""} in`
+    ? formatParcelDims({
+        length: Number(state.dimensions.length),
+        width: Number(state.dimensions.width),
+        height: Number(state.dimensions.height),
+        packaging: state.packagingType,
+      })
     : "";
   const lbs = parseFloat(state.weight.lbs) || 0;
   const oz = parseFloat(state.weight.oz) || 0;
