@@ -591,6 +591,8 @@ export async function fetchSellerBandQuote(
   origin: { city: string; state: string; zip: string; street1?: string },
   parcel: { length: number; width: number; height: number; weight_oz: number },
   accessToken: string,
+  /** The link's carrier constraint ("usps,ups"); null/undefined = any. */
+  preferredCarrier?: string | null,
 ): Promise<SellerBandQuote> {
   const res = await fetch(`${BASE_URL}/functions/v1/links/band-quote`, {
     method: "POST",
@@ -598,7 +600,7 @@ export async function fetchSellerBandQuote(
       "Content-Type": "application/json",
       Authorization: `Bearer ${accessToken}`,
     },
-    body: JSON.stringify({ origin, parcel }),
+    body: JSON.stringify({ origin, parcel, preferred_carrier: preferredCarrier ?? undefined }),
   });
   const data = await res.json();
   if (!res.ok) {

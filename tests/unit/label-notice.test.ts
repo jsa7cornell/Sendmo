@@ -8,6 +8,9 @@
 import { describe, it, expect } from "vitest";
 import {
     buildLabelCreatedNoticeRows,
+    resolveLabelFlow,
+    LABEL_FLOW_NOTICE_NAMES,
+    parcelSummary,
     type LabelNoticeFacts,
 } from "../../supabase/functions/_shared/label-notice.ts";
 
@@ -143,6 +146,15 @@ describe("buildLabelCreatedNoticeRows", () => {
         expect(valueOf(rows, "Payment intent")).toBe("—");
     });
 
+    it("seller link: Mode row names the flow (not flexible link)", () => {
+        const rows = buildLabelCreatedNoticeRows({
+            ...LIVE,
+            flow: LABEL_FLOW_NOTICE_NAMES.seller_link,
+            linkShortCode: "SELL1234",
+        });
+        expect(valueOf(rows, "Mode")).toBe("live · seller link");
+    });
+
     it("flex: shows the price cap and link code", () => {
         const rows = buildLabelCreatedNoticeRows({
             ...LIVE,
@@ -175,5 +187,40 @@ describe("buildLabelCreatedNoticeRows", () => {
         expect(valueOf(rows, "Price cap")).toBe("—");
         // Carrier with empty service still renders the carrier alone.
         expect(valueOf(rows, "Carrier")).toBe("USPS");
+    });
+});
+
+describe("resolveLabelFlow", () => {
+    // The pre-2026-08-31 binary reported seller-link sales as flex in the
+    // admin notice and event-log telemetry (live repro: shipment D7HTQJP).
+    it("no link → full_label", () => {
+        expect(resolveLabelFlow(null)).toBe("full_label");
+    });
+
+    it("flexible link → flex", () => {
+        expect(resolveLabelFlow("flexible")).toBe("flex");
+    });
+
+    it("seller link → seller_link, never flex", () => {
+        expect(resolveLabelFlow("seller_link")).toBe("seller_link");
+    });
+
+    it("every flow has a notice display name", () => {
+        expect(LABEL_FLOW_NOTICE_NAMES.full_label).toBe("full prepaid");
+        expect(LABEL_FLOW_NOTICE_NAMES.flex).toBe("flexible link");
+        expect(LABEL_FLOW_NOTICE_NAMES.seller_link).toBe("seller link");
+    });
+});
+
+describe("parcelSummary", () => {
+    it("rounds to whole ounces before splitting into pounds — never '1 lb 16 oz'", () => {
+        expect(parcelSummary(10, 8, 4, 31.7)).toBe("2 lb · 10×8×4 in");
+        expect(parcelSummary(10, 8, 4, 15.6)).toBe("1 lb · 10×8×4 in");
+        expect(parcelSummary(10, 8, 4, 17)).toBe("1 lb 1 oz · 10×8×4 in");
+        expect(parcelSummary(10, 8, 4, 7)).toBe("7 oz · 10×8×4 in");
+    });
+
+    it("never prints '0 oz' for a sub-half-ounce parcel", () => {
+        expect(parcelSummary(0, 0, 0, 0.3)).toBe("1 oz");
     });
 });

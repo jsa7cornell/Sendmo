@@ -409,7 +409,7 @@ export default function SenderFlow() {
               <motion.div key="loading" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
                 className="text-center py-16 space-y-3">
                 <Loader2 className="w-8 h-8 text-primary animate-spin mx-auto" />
-                <p className="text-foreground font-medium">Loading shipping link…</p>
+                <p className="text-foreground font-medium">Loading your link…</p>
               </motion.div>
             )}
 

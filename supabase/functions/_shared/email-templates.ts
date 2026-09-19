@@ -3,6 +3,8 @@
  * All templates use inline styles for maximum email client compatibility.
  */
 
+import { normalizeCarrier } from "./rate-filters.ts";
+
 const BRAND_BLUE = "#2563EB";
 const GRAY_600 = "#4B5563";
 const GRAY_400 = "#9CA3AF";
@@ -40,7 +42,7 @@ function layout(content: string): string {
         </td></tr>
         <!-- Footer -->
         <tr><td style="padding:20px 32px;border-top:1px solid #e5e7eb;text-align:center;">
-          <p style="margin:0;font-size:12px;color:${GRAY_400};">SendMo — Prepaid shipping made easy</p>
+          <p style="margin:0;font-size:12px;color:${GRAY_400};">SendMo — Getting stuff where it needs to go</p>
           <p style="margin:4px 0 0;font-size:12px;color:${GRAY_400};">You received this email because it was requested at sendmo.co</p>
         </td></tr>
       </table>
@@ -74,6 +76,75 @@ export function otpEmail(code: string): { subject: string; html: string } {
 
 // ─── Label Confirmation Email ──────────────────────────────
 
+// One summary row. Module-scope since 2026-09-14 so senderLabelReadyEmail can
+// render the same shipment facts as labelConfirmationEmail instead of
+// hand-rolling a divergent set.
+function summaryRow(label: string, value: string): string {
+  return `
+    <tr>
+      <td style="padding:12px 16px;border-bottom:1px solid #e5e7eb;">
+        <span style="font-size:12px;color:${GRAY_400};text-transform:uppercase;letter-spacing:0.5px;">${label}</span><br/>
+        <span style="font-size:14px;font-weight:500;color:#111827;">${value}</span>
+      </td>
+    </tr>`;
+}
+
+/**
+ * The shipment facts every label email shares. Optional throughout: a row is
+ * omitted rather than rendered empty, so an older caller that passes none of
+ * them produces exactly the previous email.
+ */
+export interface ShipmentFacts {
+  /** "Austin, TX" — city/state only, never street. */
+  fromPlace?: string | null;
+  toPlace?: string | null;
+  /** Who the package is going to. On a seller sale this is the buyer. */
+  toName?: string | null;
+  /** EasyPost service id, e.g. "GroundAdvantage". */
+  service?: string | null;
+  /** "14 oz \u00b7 10\u00d78\u00d74 in" */
+  parcelSummary?: string | null;
+}
+
+/**
+ * Render the shared shipment rows. The route row is the important one: before
+ * 2026-09-14 these emails carried a lone "From: <name>" which, on a seller
+ * sale, showed the SELLER their own name and never said who bought the item or
+ * where it was going.
+ */
+function shipmentFactRows(
+  facts: ShipmentFacts,
+  opts: { sellerSale: boolean; readerIsRecipient?: boolean },
+): string {
+  const rows: string[] = [];
+  const route = facts.fromPlace && facts.toPlace
+    ? `${escapeEmailHtml(facts.fromPlace)} \u2192 ${escapeEmailHtml(facts.toPlace)}`
+    : null;
+  if (route) rows.push(summaryRow(opts.sellerSale ? "Shipping to" : "Route", route));
+  // Skip the name when the reader IS the recipient (the buyer's own email on a
+  // seller sale) — otherwise it tells them their own name.
+  if (facts.toName?.trim() && !opts.readerIsRecipient) {
+    rows.push(summaryRow(opts.sellerSale ? "Buyer" : "Recipient", escapeEmailHtml(facts.toName.trim())));
+  }
+  if (facts.service?.trim()) rows.push(summaryRow("Service", escapeEmailHtml(serviceLabel(facts.service.trim()))));
+  if (facts.parcelSummary?.trim()) rows.push(summaryRow("Package", escapeEmailHtml(facts.parcelSummary.trim())));
+  return rows.join("");
+}
+
+/**
+ * EasyPost returns carrier-ACCOUNT ids, so an unnormalised ${carrier} printed
+ * "UPSDAP #1Z..." in the first real seller's email. normalizeCarrier already
+ * maps these for rate filtering; reusing it keeps one definition rather than
+ * porting the client's CARRIER_NAMES map into _shared.
+ */
+function serviceLabel(raw: string): string {
+  return raw
+    .replace(/_/g, " ")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+    .trim();
+}
+
 export function labelConfirmationEmail(params: {
   publicCode: string;
   carrierTracking: string;
@@ -83,6 +154,8 @@ export function labelConfirmationEmail(params: {
   senderName?: string | null;
   itemDescription?: string | null;
   displayPriceCents?: number | null;
+  /** Route / recipient / service / parcel. Optional — omitted rows render nothing. */
+  facts?: ShipmentFacts;
   // Which creation flow produced this label. Decides the copy: a full-label
   // payer created the label themselves ("Your label is ready"); a flex link
   // owner had a label created via their prepaid link; a seller_link OWNER just
@@ -100,6 +173,7 @@ export function labelConfirmationEmail(params: {
     senderName,
     itemDescription,
     displayPriceCents,
+    facts,
     variant,
   } = params;
 
@@ -133,15 +207,14 @@ export function labelConfirmationEmail(params: {
     ? `$${(displayPriceCents / 100).toFixed(2)}`
     : null;
 
-  const summaryRow = (label: string, value: string) => `
-    <tr>
-      <td style="padding:12px 16px;border-bottom:1px solid #e5e7eb;">
-        <span style="font-size:12px;color:${GRAY_400};text-transform:uppercase;letter-spacing:0.5px;">${label}</span><br/>
-        <span style="font-size:14px;font-weight:500;color:#111827;">${value}</span>
-      </td>
-    </tr>`;
 
-  const fromRow = trimmedSender ? summaryRow("From", escapeEmailHtml(trimmedSender)) : "";
+  // On a seller sale `senderName` is the seller's OWN ship-from name — telling
+  // the reader their own name. The route row carries the useful direction
+  // instead, so the From row is suppressed there.
+  const fromRow = trimmedSender && variant !== "seller_link"
+    ? summaryRow("From", escapeEmailHtml(trimmedSender))
+    : "";
+  const factRows = shipmentFactRows(facts ?? {}, { sellerSale: variant === "seller_link" });
   const itemRow = itemDisplay ? summaryRow("Item", itemDisplay) : "";
   // On a seller_link the SELLER reads this email and did NOT pay — relabel so
   // "Amount" isn't misread as a charge to them; it's the shipping the buyer paid.
@@ -160,17 +233,30 @@ export function labelConfirmationEmail(params: {
         <tr>
           <td style="padding:12px 16px;border-bottom:1px solid #e5e7eb;">
             <span style="font-size:12px;color:${GRAY_400};text-transform:uppercase;letter-spacing:0.5px;">SendMo Tracking</span><br/>
-            <span style="font-size:22px;font-weight:700;color:${BRAND_BLUE};letter-spacing:1px;">${publicCode}</span><br/>
-            <span style="font-size:11px;color:${GRAY_400};">${carrier} #${carrierTracking}</span>
+            <span style="font-size:22px;font-weight:700;color:${BRAND_BLUE};letter-spacing:1px;">${publicCode}</span>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:12px 16px;border-bottom:1px solid #e5e7eb;">
+            <span style="font-size:12px;color:${GRAY_400};text-transform:uppercase;letter-spacing:0.5px;">${normalizeCarrier(carrier)} tracking number</span><br/>
+            <!-- Promoted from 11px grey under the SendMo code (2026-09-14).
+                 A marketplace seller has to paste THIS number into eBay to mark
+                 the order shipped and release payout, and no marketplace accepts
+                 the SendMo code. It is also the only place in the whole product
+                 where a seller can select it as text before the first carrier
+                 scan — the tracking page hides it until then. Monospace so the
+                 digits are readable and selectable. -->
+            <span style="font-size:16px;font-weight:600;color:#111827;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:0.3px;word-break:break-all;">${carrierTracking}</span>
           </td>
         </tr>
         ${fromRow}
+        ${factRows}
         ${itemRow}
         ${amountRow}
         <tr>
           <td style="padding:12px 16px;border-bottom:1px solid #e5e7eb;">
             <span style="font-size:12px;color:${GRAY_400};text-transform:uppercase;letter-spacing:0.5px;">Carrier</span><br/>
-            <span style="font-size:14px;font-weight:500;color:#111827;">${carrier}</span>
+            <span style="font-size:14px;font-weight:500;color:#111827;">${normalizeCarrier(carrier)}</span>
           </td>
         </tr>
         <tr>
@@ -226,8 +312,21 @@ export function senderLabelReadyEmail(params: {
   // unchanged — it's still the buyer's durable manage/cancel credential.
   sellerLink?: boolean;
   amountCents?: number | null;
+  /**
+   * Route / recipient / service / parcel — the same rows labelConfirmationEmail
+   * renders. NOTE for anyone editing this: on a seller link the `sender` contact
+   * this template serves is the BUYER, not the seller (see notifications.ts:34-40),
+   * so these facts reach the person who bought the item. That is deliberate and
+   * matches what BuyerFlow already shows them on screen — ships-from city/state
+   * and the package line. City/state only; no street address.
+   *
+   * Also note this function keys on a `sellerLink` boolean, not on
+   * labelConfirmationEmail's `variant` enum — there is no "seller variant" here
+   * to look for.
+   */
+  facts?: ShipmentFacts;
 }): { subject: string; html: string } {
-  const { publicCode, carrierTracking, carrier, eta, trackingUrl, cancelToken, itemDescription, sellerLink, amountCents } = params;
+  const { publicCode, carrierTracking, carrier, eta, trackingUrl, cancelToken, itemDescription, sellerLink, amountCents, facts } = params;
 
   // The cancel token authorizes change/cancel from the email — hence the CTA
   // links to the tokenized URL, not the bare tracking page.
@@ -285,10 +384,16 @@ export function senderLabelReadyEmail(params: {
         <tr>
           <td style="padding:12px 16px;border-bottom:1px solid #e5e7eb;">
             <span style="font-size:12px;color:${GRAY_400};text-transform:uppercase;letter-spacing:0.5px;">SendMo Tracking</span><br/>
-            <span style="font-size:22px;font-weight:700;color:${BRAND_BLUE};letter-spacing:1px;">${publicCode}</span><br/>
-            <span style="font-size:11px;color:${GRAY_400};">${carrier} #${carrierTracking}</span>
+            <span style="font-size:22px;font-weight:700;color:${BRAND_BLUE};letter-spacing:1px;">${publicCode}</span>
           </td>
         </tr>
+        <tr>
+          <td style="padding:12px 16px;border-bottom:1px solid #e5e7eb;">
+            <span style="font-size:12px;color:${GRAY_400};text-transform:uppercase;letter-spacing:0.5px;">${normalizeCarrier(carrier)} tracking number</span><br/>
+            <span style="font-size:16px;font-weight:600;color:#111827;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:0.3px;word-break:break-all;">${carrierTracking}</span>
+          </td>
+        </tr>
+        ${shipmentFactRows(facts ?? {}, { sellerSale: sellerLink === true, readerIsRecipient: sellerLink === true })}
         ${itemRow}
         ${paidRow}
         <tr>
@@ -393,7 +498,7 @@ export function trackingUpdateEmail(
     ? `<tr>
         <td style="padding:12px 16px;${!estimatedDelivery ? "" : "border-bottom:1px solid #e5e7eb;"}">
           <span style="font-size:12px;color:${GRAY_400};text-transform:uppercase;letter-spacing:0.5px;">Carrier</span><br/>
-          <span style="font-size:14px;font-weight:500;color:#111827;">${carrier}</span>
+          <span style="font-size:14px;font-weight:500;color:#111827;">${normalizeCarrier(carrier)}</span>
         </td>
       </tr>`
     : "";
@@ -660,6 +765,10 @@ export function sellerSaleCancelledEmail(params: {
   itemDescription: string | null;
   /** Who cancelled — drives the attribution line (review #3). */
   cancelledBy: "buyer" | "admin";
+  /** True when the listing is still taking orders (a reusable link stays
+   *  'active'). A sold single-use link stays sold after a cancel — no
+   *  auto-reopen (PR6) — so the seller has to relist by hand. */
+  listingStillOpen: boolean;
   trackingUrl: string;
 }): { subject: string; html: string } {
   // Subject is PLAIN TEXT (review #2): escaping there renders entities
@@ -673,6 +782,9 @@ export function sellerSaleCancelledEmail(params: {
   const whoLine = params.cancelledBy === "buyer"
     ? "The buyer cancelled this sale and their payment is being refunded."
     : "This sale was cancelled by our team and the buyer's payment is being refunded.";
+  const listingLine = params.listingStillOpen
+    ? "Your listing is still open, so nothing else to do."
+    : `Your listing link still shows this item as sold. To sell it again, create a new listing at <a href="https://sendmo.co/sell" style="color:${BRAND_BLUE};">sendmo.co/sell</a>.`;
   return {
     subject: itemRaw
       ? `Sale cancelled — don't ship "${itemRaw}"`
@@ -684,7 +796,7 @@ export function sellerSaleCancelledEmail(params: {
         ${itemHtml ? `<br/>Item: <strong>${itemHtml}</strong>` : ""}
       </p>
       <p style="margin:0 0 16px;font-size:14px;color:${GRAY_600};line-height:1.5;">
-        Your listing link isn't changed by this — if the item is still for sale, nothing to do.
+        ${listingLine}
       </p>
       <div style="text-align:center;margin:24px 0;">
         <a href="${params.trackingUrl}" style="display:inline-block;background-color:${BRAND_BLUE};color:#ffffff;font-size:14px;font-weight:600;text-decoration:none;padding:12px 32px;border-radius:8px;">View the cancelled sale</a>

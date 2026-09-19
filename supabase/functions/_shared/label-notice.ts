@@ -15,6 +15,26 @@
 // deps and is trivially unit-testable under vitest.
 import type { AdminAlertRow } from "./alert.ts";
 
+// Flow discriminator (2026-08-31). The old `resolvedLink ? flex : full_label`
+// binary predates seller links, so every seller-link sale was reported as a
+// flexible-link one — in this admin notice AND labels/'s event-log `flow:`
+// telemetry (verified live on shipment D7HTQJP). One derivation, keyed on the
+// link's link_type, feeds both. Keys match the values the event log already
+// uses at the flow-specific sites ("flex", not "flexible", for continuity).
+export type LabelFlow = "full_label" | "flex" | "seller_link";
+
+export function resolveLabelFlow(linkType: string | null): LabelFlow {
+    if (linkType === null) return "full_label";
+    return linkType === "seller_link" ? "seller_link" : "flex";
+}
+
+// Human names for the admin-notice "Mode" row.
+export const LABEL_FLOW_NOTICE_NAMES: Record<LabelFlow, string> = {
+    full_label: "full prepaid",
+    flex: "flexible link",
+    seller_link: "seller link",
+};
+
 export interface LabelNoticeAddress {
     name?: string | null;
     street1?: string | null;
@@ -29,7 +49,7 @@ export interface LabelNoticeAddress {
 export interface LabelNoticeFacts {
     // ── shipment ──────────────────────────────────────────────────────────
     mode: string;                       // "test" | "live" | "comp"
-    flow: string;                       // "full prepaid" | "flexible link"
+    flow: string;                       // LABEL_FLOW_NOTICE_NAMES value: "full prepaid" | "flexible link" | "seller link"
     carrier: string;
     service: string;
     eta?: string | null;                // promised delivery date or "N business days"
@@ -151,4 +171,46 @@ export function buildLabelCreatedNoticeRows(f: LabelNoticeFacts): AdminAlertRow[
     ];
 
     return rows;
+}
+
+/**
+ * "Austin, TX" — city/state only, the grade tracking/ emits to every viewer
+ * role (index.ts:782-785). Street addresses are never denormalized out of the
+ * label; email is a weaker channel than an authenticated page, so it gets the
+ * same grade rather than a looser one. Returns null when either half is
+ * missing, so callers can omit the row instead of printing a half-place.
+ */
+export function placeLabel(
+    city: string | null | undefined,
+    state: string | null | undefined,
+): string | null {
+    const c = (city ?? "").trim();
+    const st = (state ?? "").trim();
+    if (!c || !st) return null;
+    return `${c}, ${st}`;
+}
+
+/** "14 oz · 10×8×4 in" — the declared parcel, as the customer entered it. */
+export function parcelSummary(
+    lengthIn: number,
+    widthIn: number,
+    heightIn: number,
+    weightOz: number,
+): string | null {
+    const parts: string[] = [];
+    if (Number.isFinite(weightOz) && weightOz > 0) {
+        // Round to whole ounces FIRST, then split — flooring pounds before
+        // rounding the remainder printed 31.7oz as "1 lb 16 oz".
+        const totalOz = Math.round(weightOz);
+        const lbs = Math.floor(totalOz / 16);
+        const oz = totalOz % 16;
+        if (lbs && oz) parts.push(`${lbs} lb ${oz} oz`);
+        else if (lbs) parts.push(`${lbs} lb`);
+        else parts.push(`${Math.max(oz, 1)} oz`);
+    }
+    const dims = [lengthIn, widthIn, heightIn];
+    if (dims.every((d) => Number.isFinite(d) && d > 0)) {
+        parts.push(`${dims.map((d) => Math.round(d * 100) / 100).join("\u00d7")} in`);
+    }
+    return parts.length ? parts.join(" \u00b7 ") : null;
 }

@@ -22,50 +22,52 @@ function renderTab(link: Record<string, unknown>, onCloseLink = vi.fn(() => Prom
   return onCloseLink;
 }
 
-describe("LinksTab — Close listing", () => {
-  it("shows the control only on an ACTIVE seller link — badged 'Seller', not 'Flexible' (PR6)", () => {
+describe("LinksTab — Close link", () => {
+  it("shows the control only on an ACTIVE checkout link — chipped 'Buyer pays' (dashboard scrub)", () => {
     renderTab({ link_type: "seller_link", status: "active" });
-    expect(screen.getByRole("button", { name: /Close listing/i })).toBeInTheDocument();
-    // The old two-branch ternary rendered every seller link as "Flexible".
-    expect(screen.getByText("Seller")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Close link/i })).toBeInTheDocument();
+    // The who-pays chip replaced the schema-taxonomy badge (PR6's guarantee
+    // holds one level up: userLinkTypeLabel can't silently mislabel a type).
+    expect(screen.getByText("Buyer pays")).toBeInTheDocument();
+    expect(screen.getByText(/Checkout link/)).toBeInTheDocument();
     expect(screen.queryByText("Flexible")).toBeNull();
     // And no Manage — seller listings are immutable (close-and-recreate).
     expect(screen.queryByRole("link", { name: /Manage/i })).toBeNull();
   });
 
-  it("shows the listing's item text on the seller card (PR12)", () => {
+  it("titles the seller card by its item text (PR12 + dashboard scrub)", () => {
     renderTab({ link_type: "seller_link", status: "active", notes: "Vintage armchair" });
     expect(screen.getByText("Vintage armchair")).toBeInTheDocument();
   });
 
   it("hides it on flex links and non-active seller links", () => {
     renderTab({ link_type: "flexible", status: "active" });
-    expect(screen.queryByRole("button", { name: /Close listing/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Close link/i })).toBeNull();
   });
 
   it("hides it on a closed seller link, and labels the status Closed", () => {
     renderTab({ link_type: "seller_link", status: "closed" });
-    expect(screen.queryByRole("button", { name: /Close listing/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Close link/i })).toBeNull();
     expect(screen.getByText("Closed")).toBeInTheDocument();
   });
 
   it("closes only after the confirm dialog, then resolves", async () => {
     const onCloseLink = renderTab({ link_type: "seller_link", status: "active" });
-    fireEvent.click(screen.getByRole("button", { name: /Close listing/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Close link/i }));
     // Nothing called yet — the dialog is the gate. (Radix marks the page
     // behind the portal aria-hidden, so queries now resolve inside it.)
     expect(onCloseLink).not.toHaveBeenCalled();
-    const dialog = screen.getByRole("dialog", { name: /Close this listing\?/i });
-    fireEvent.click(within(dialog).getByRole("button", { name: /Close listing/i }));
+    const dialog = screen.getByRole("dialog", { name: /Close this link\?/i });
+    fireEvent.click(within(dialog).getByRole("button", { name: /Close link/i }));
     await waitFor(() => expect(onCloseLink).toHaveBeenCalledWith("l1"));
   });
 
   it("surfaces a rejection in the dialog instead of closing it", async () => {
     const failing = vi.fn(() => Promise.reject(new Error("The link changed state while closing")));
     renderTab({ link_type: "seller_link", status: "active" }, failing);
-    fireEvent.click(screen.getByRole("button", { name: /Close listing/i }));
-    const dialog = screen.getByRole("dialog", { name: /Close this listing\?/i });
-    fireEvent.click(within(dialog).getByRole("button", { name: /Close listing/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Close link/i }));
+    const dialog = screen.getByRole("dialog", { name: /Close this link\?/i });
+    fireEvent.click(within(dialog).getByRole("button", { name: /Close link/i }));
     await waitFor(() =>
       expect(screen.getByText(/changed state while closing/i)).toBeInTheDocument());
   });

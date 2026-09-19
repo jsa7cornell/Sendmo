@@ -170,7 +170,7 @@ export function injectOgTags(
     `<meta property="og:image" content="${OG_IMAGE_URL}" />`,
     `<meta property="og:image:width" content="1200" />`,
     `<meta property="og:image:height" content="630" />`,
-    `<meta property="og:image:alt" content="SendMo — prepaid shipping made easy" />`,
+    `<meta property="og:image:alt" content="SendMo — getting stuff where it needs to go" />`,
     `<meta property="og:site_name" content="SendMo" />`,
     `<meta name="twitter:card" content="summary_large_image" />`,
     `<meta name="twitter:title" content="${t}" />`,

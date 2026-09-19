@@ -215,7 +215,7 @@ export default function LinksEditor({ mode, initialValue, linkId, destinationDef
       {!isEdit && <StepIndicator activeStep="details" />}
       <div>
         <h1 className="text-2xl font-bold text-foreground">
-          {isEdit ? "Edit your shipping link" : "Create your shipping link"}
+          {isEdit ? "Edit your label link" : "Create your label link"}
         </h1>
         <p className="text-sm text-muted-foreground mt-1">
           {isEdit

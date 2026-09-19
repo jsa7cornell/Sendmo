@@ -71,6 +71,7 @@ Deno.serve(async (req: Request) => {
         let body: {
             origin?: { city?: string; state?: string; zip?: string; street1?: string };
             parcel?: { length?: number; width?: number; height?: number; weight_oz?: number };
+            preferred_carrier?: string | null;
         };
         try {
             body = await req.json();
@@ -129,7 +130,12 @@ Deno.serve(async (req: Request) => {
             },
             parcel: { length: quoteDims[0], width: quoteDims[1], height: quoteDims[2], weight_oz: quoteDims[3] },
             linkId: null,
-            preferredCarrier: null,
+            // Same constraint the created link will store, so the estimate
+            // matches the band buyers see (rate-filters parseCarriers reads
+            // the comma-separated form).
+            preferredCarrier: typeof body.preferred_carrier === "string" && body.preferred_carrier !== "any"
+                ? body.preferred_carrier
+                : null,
             preferredSpeed: null,
         });
         // band === null = quote failed upstream; the client just hides the row.

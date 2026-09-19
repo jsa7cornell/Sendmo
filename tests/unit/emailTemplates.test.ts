@@ -411,7 +411,7 @@ describe("seller-sale cancellation emails (PR13)", () => {
   it("tells the seller not to ship — HTML escaped, subject PLAIN (entities in a subject render literally)", () => {
     const tpl = _ssce({
       publicCode: "PC9", itemDescription: `<b>Vintage</b> & 12" armchair`,
-      cancelledBy: "buyer", trackingUrl: "https://sendmo.co/t/PC9",
+      cancelledBy: "buyer", listingStillOpen: true, trackingUrl: "https://sendmo.co/t/PC9",
     });
     expect(tpl.subject).toContain(`<b>Vintage</b> & 12" armchair`);
     expect(tpl.subject).not.toContain("&amp;");
@@ -425,9 +425,39 @@ describe("seller-sale cancellation emails (PR13)", () => {
   it("admin cancels say so to the seller", () => {
     const tpl = _ssce({
       publicCode: "PC9", itemDescription: null,
-      cancelledBy: "admin", trackingUrl: "https://sendmo.co/t/PC9",
+      cancelledBy: "admin", listingStillOpen: true, trackingUrl: "https://sendmo.co/t/PC9",
     });
     expect(tpl.html).toContain("cancelled by our team");
+  });
+
+  // A cancel never reopens a sold single-use listing (PR6), so the email must
+  // not tell that seller "nothing to do" — they have to relist by hand.
+  it("a sold single-use listing: says it stays sold and points at /sell", () => {
+    const tpl = _ssce({
+      publicCode: "PC9", itemDescription: null,
+      cancelledBy: "buyer", listingStillOpen: false, trackingUrl: "https://sendmo.co/t/PC9",
+    });
+    expect(tpl.html).toContain("still shows this item as sold");
+    expect(tpl.html).toContain('href="https://sendmo.co/sell"');
+    expect(tpl.html).not.toContain("nothing else to do");
+  });
+
+  it("a listing still taking orders: nothing else to do", () => {
+    const tpl = _ssce({
+      publicCode: "PC9", itemDescription: null,
+      cancelledBy: "buyer", listingStillOpen: true, trackingUrl: "https://sendmo.co/t/PC9",
+    });
+    expect(tpl.html).toContain("still open, so nothing else to do");
+    expect(tpl.html).not.toContain("sendmo.co/sell");
+  });
+
+  it("the shared footer carries the current tagline, not the retired one", () => {
+    const tpl = _ssce({
+      publicCode: "PC9", itemDescription: null,
+      cancelledBy: "buyer", listingStillOpen: true, trackingUrl: "https://sendmo.co/t/PC9",
+    });
+    expect(tpl.html).toContain("Getting stuff where it needs to go");
+    expect(tpl.html).not.toContain("Prepaid shipping made easy");
   });
 
   it("the buyer's refund email says 'cancelled by the seller' — never 'you cancelled' or link-user copy", () => {
@@ -438,5 +468,127 @@ describe("seller-sale cancellation emails (PR13)", () => {
     });
     expect(tpl.html).toContain("cancelled by the seller");
     expect(tpl.html).not.toContain("person using your shared link");
+  });
+});
+
+// ─── Shipment-record rows (2026-09-14, W3) ──────────────────────────────
+//
+// Jones Anderson, SendMo's first real marketplace seller, asked for "a copy of
+// my shipment to my email". He was already getting an email; it carried a
+// SendMo code, a carrier, an ETA, an amount, and a "From" row that showed him
+// his own name. These tests pin the rows that turn it into a record, and the
+// two things that were actively wrong.
+describe("labelConfirmationEmail — shipment record rows", () => {
+  const base = {
+    publicCode: "K1ZQ9FR",
+    carrierTracking: "1Z999AA10123456784",
+    carrier: "UPSDAP",
+    eta: "3 business days",
+    trackingUrl: "https://sendmo.co/t/K1ZQ9FR",
+    variant: "seller_link" as const,
+  };
+  const facts = {
+    fromPlace: "Austin, TX",
+    toPlace: "Portland, OR",
+    toName: "Dana Buyer",
+    service: "UPSGroundsaverLessThan1lb",
+    parcelSummary: "7 oz · 12×13×1 in",
+  };
+
+  it("seller variant no longer shows the seller their own name as 'From'", () => {
+    const html = labelConfirmationEmail({
+      ...base,
+      senderName: "Jones Anderson",
+      facts,
+    }).html;
+    // The route row replaces it; the bare From row must be gone.
+    expect(html).not.toContain(">From<");
+    expect(html).toContain("Shipping to");
+  });
+
+  it("names the buyer and the destination on a seller sale", () => {
+    const html = labelConfirmationEmail({ ...base, facts }).html;
+    expect(html).toContain("Dana Buyer");
+    expect(html).toContain("Portland, OR");
+    expect(html).toContain("Austin, TX");
+  });
+
+  it("carries the service level and the declared parcel", () => {
+    const html = labelConfirmationEmail({ ...base, facts }).html;
+    expect(html).toContain("UPS Groundsaver Less Than1lb");
+    expect(html).toContain("7 oz · 12×13×1 in");
+  });
+
+  it("shows the carrier's real name, not the EasyPost account id", () => {
+    const html = labelConfirmationEmail({ ...base, facts }).html;
+    expect(html).not.toContain("UPSDAP");
+    expect(html).toContain("UPS");
+  });
+
+  it("gives the carrier tracking number its own labelled row", () => {
+    // It is the only place in the product a seller can select this before the
+    // first scan, and pasting it into eBay is what releases their payout.
+    const html = labelConfirmationEmail({ ...base, facts }).html;
+    expect(html).toContain("UPS tracking number");
+    expect(html).toContain("1Z999AA10123456784");
+  });
+
+  it("never leaks a street address — city/state only", () => {
+    const html = labelConfirmationEmail({ ...base, facts }).html;
+    expect(html).not.toMatch(/\d+\s+\w+\s+(Street|St|Avenue|Ave|Road|Rd)\b/i);
+  });
+
+  it("omits every row when no facts are supplied (older callers unchanged)", () => {
+    const html = labelConfirmationEmail(base).html;
+    expect(html).not.toContain("Shipping to");
+    expect(html).not.toContain("Service");
+    expect(html).not.toContain("Package");
+  });
+
+  it("keeps the plain 'From' row on non-seller variants", () => {
+    const html = labelConfirmationEmail({
+      ...base,
+      variant: "full_label",
+      senderName: "Jones Anderson",
+    }).html;
+    expect(html).toContain("Jones Anderson");
+  });
+
+  it("labels the route 'Route' and the person 'Recipient' off the seller lane", () => {
+    // Name chosen so the negative assertion is about the ROW LABEL, not the
+    // person's name — "Dana Buyer" would make `not.toContain("Buyer")` fail on
+    // the value rather than the label.
+    const html = labelConfirmationEmail({
+      ...base,
+      variant: "flex",
+      facts: { ...facts, toName: "Dana Reyes" },
+    }).html;
+    expect(html).toContain("Route");
+    expect(html).toContain("Recipient");
+    expect(html).not.toContain("Buyer");
+    expect(html).not.toContain("Shipping to");
+  });
+
+  it("renders a half-known place as no row rather than a half place", () => {
+    const html = labelConfirmationEmail({
+      ...base,
+      facts: { ...facts, toPlace: null },
+    }).html;
+    expect(html).not.toContain("Shipping to");
+    expect(html).toContain("Dana Buyer"); // the other rows still render
+  });
+  it("the buyer's own email on a seller sale does not tell them their own name", () => {
+    const html = senderLabelReadyEmail({
+      publicCode: "K1ZQ9FR",
+      carrierTracking: "1Z999AA10123456784",
+      carrier: "UPSDAP",
+      eta: "3 business days",
+      trackingUrl: "https://sendmo.co/t/K1ZQ9FR",
+      cancelToken: "tok",
+      sellerLink: true,
+      facts,
+    }).html;
+    expect(html).not.toContain("Dana Buyer");
+    expect(html).toContain("Portland, OR"); // the route still renders
   });
 });

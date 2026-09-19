@@ -12,6 +12,147 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-09-18] Email copy — retired tagline out of the footer; seller cancel email stops promising "nothing to do"
+
+**Category:** fix | copy
+**Cross-link:** findings (b) and (a) in the 2026-08-31 "Full E2E verification run" entry below; the tagline sweep (2026-08-30) that missed the email templates
+
+- **Tagline:** the shared email footer (`supabase/functions/_shared/email-templates.ts`, `layout()`) still said "SendMo — Prepaid shipping made easy", so every transactional email carried it. It now uses the approved /login tagline, "Getting stuff where it needs to go". "Prepaid shipping made easy" no longer appears anywhere in `supabase/`.
+- **Seller cancel email:** the old line was "Your listing link isn't changed by this — if the item is still for sale, nothing to do." That is false for a single-use listing. A cancelled sale never reopens a sold single-use link (PR6: no auto-reopen; `cancel-label` Stage 4 revives `full_label` only), so the seller could not sell through it again. `sellerSaleCancelledEmail` now takes `listingStillOpen` (from `linkRow.status === "active"` in `cancel-label`). If the link is still open (a reusable listing), the line reads "Your listing is still open, so nothing else to do." If it is sold, the line reads "Your listing link still shows this item as sold. To sell it again, create a new listing at sendmo.co/sell."
+- **Not changed:** finding (c) is still open. The buyer's refund email says the refund request went "to the carrier", but the buyer's money comes back through Stripe.
+- **Tests:** 3 new cases in `tests/unit/emailTemplates.test.ts` (sold, open, footer tagline); unit 838/838. Deno type-check not run locally (no `deno`); the change adds one required param with one caller.
+
+### [2026-09-14] Jones's feedback built — W1/W2/W3/W4a/W4b/W5; two live bugs fixed, one privacy regression caught in self-review
+
+**Category:** ship
+**Cross-link:** decided proposal [2026-09-14_jones-seller-feedback_reviewed-2026-09-14_decided-2026-09-14.md](proposals/2026-09-14_jones-seller-feedback_reviewed-2026-09-14_decided-2026-09-14.md). Branch `claude/jones-feedback` — **pushed, no PR yet. Not merged, not deployed.**
+
+**Browser-verified:** mcp-session: measured the shipped `<style>` block from `LabelPrintPage.tsx` against four real prod label PNGs in a live browser · variants-covered: UPS 4×6, USPS 4×6, UPS half-sheet, UPS full-page. Old CSS measures **0.8571** vertical distortion on UPS; new measures **1.0000** on every preset. USPS still renders exactly 4.000×6.000in (no regression); the rotated half-sheet window reads 6.000×4.000in and crops exactly 1.00in off the tail, not the side. `/sell` and `/t/<code>` could NOT be browser-verified — this worktree has no `.env.local`, so the app does not boot, and both surfaces sit behind auth; covered by unit tests instead (see gaps below).
+
+**W1 — carrier constraint filtered out every UPS and FedEx rate.** `_shared/rate-filters.ts` compared EasyPost's carrier-ACCOUNT id (`UPSDAP`, `FedExDefault`) to the UI's plain name (`ups`, `fedex`). Only `usps` matched, by coincidence. Latent — the one ups-constrained link in prod is a draft and `rates/index.ts:150,206` only resolve active links. CI was green because **zero test files imported the module**. Added `normalizeCarrier` + `parseCarriers` + `carrierMatchesPreference`; `price-band.ts` and `seller-band-sweep` fixed transitively. New test file verified red-then-green.
+
+**W4b — every UPS label printed 14.3% vertically squashed.** The CSS pinned both axes at 4in×6in with no `object-fit`, so `fill` compressed anything not 4:6. Root cause was a false premise copied from decided proposal [2026-07-17_label-print-page.md](proposals/2026-07-17_label-print-page.md):36 — "1200×1800 = exactly 4×6, holds across carriers". Measured: USPS 1200×1800 @300dpi, UPSDAP 800×1400 @200dpi, FedEx SMART_POST 800×1200. The UPSDAP sample that proposal cited was *already* 800×1400 twelve days before it was written. **The real invariant is that every label is 4.00in WIDE**; height and DPI vary. Fix is geometry-only — width set, height auto, cropped by an `overflow:hidden` window. A content-derived trim is impossible in-browser: the label host sends no CORS headers so the canvas is tainted, and `crossOrigin="anonymous"` would fail the load outright into the error branch. Full-page preset also capped 1.667×→1.33× (it exceeded DMM 204's 0.021in **maximum**, a two-sided bound).
+
+**W4a — Download never downloaded.** `fetch()` against the no-CORS S3 URL always threw, so the catch fell through to `window.open` and dumped a raw 800×1400 PNG in a tab, which the browser scaled to fill the sheet. That is the "make lable easy to re size" complaint; the `a.download` branch was dead code for every real label. Now one button to the print page. Verified 2026-09-14: `curl -I` with `Origin: https://sendmo.co` returns 200 with **zero** `Access-Control-Allow-Origin`.
+
+**W3 — the label email became a shipment record and now carries the label.** The seller's "From" row showed him **his own name** (`labelCreatedCtx.sender_name` ← the seller's own ship-from), and the email never named the buyer or destination. Added route/buyer/service/parcel rows (city/state only, matching `tracking/index.ts:782-785`), promoted the carrier tracking number out of 11px grey into its own monospace row — it is the only place a seller can select that number before the first scan, and pasting it into eBay releases their payout — normalised `UPSDAP`→`UPS`, and attached the label file (`WISHLIST.md:77`, promised at the seller-link build, never shipped).
+
+**Self-review caught a privacy regression the attachment introduced.** On a seller sale the `sender` contact is the **buyer**, and they do get a `label_created` email. The attachment was gated only on event type, so it emailed them a label carrying the **seller's home address** — precisely what PR9 withholds via `can_print=false`. Gated and pinned by a regression test (verified red without the guard). Also renamed the Resend attachment MIME field to `content_type`; the camelCase key was silently ignored.
+
+**W5/W2 — carrier control restored to `/sell`.** Decided [2026-08-28](proposals/2026-08-28_seller-link-launch_reviewed-2026-08-28_decided-2026-08-29.md):245 said "the cap control leaves the seller builder entirely (**carrier and speed stay**)"; PR #131 (`735f070`) removed all three "for now" — drift on two axes, not one. Carrier restored as a **multi-select** (a single value can say USPS *or* UPS, never both); speed deliberately left out per John. The first plan pointed at `SellerBuilder.tsx:229`, a **display prop on the ready screen** — `handleCreate` never sent the field at all, so a picker wired there would have written nothing. Prod confirmed: all 7 seller links are NULL, not `"any"`. Re-estimated M→S (client-only).
+
+**Known gaps — not done.** e2e was **not run**: `tests/e2e/global-setup.ts:38` requires `VITE_SUPABASE_URL`/`ANON_KEY` from `.env.local`, which this worktree lacks and Rule 1 forbids reading from the main checkout. Selectors were re-anchored and verified statically against the rendered strings; CI's required e2e check is the real gate. Edge functions are **not typechecked** — Deno is not installed locally and CI has no `deno check` step. The physical print-and-scan acceptance (§6.4 of the proposal, plus the 2026-07-17 half-sheet debt at `LOG.md`) is still outstanding and needs a real printer.
+
+
+**Pre-merge review (2026-09-18):** two small fixes. (1) `parcelSummary` floored pounds before rounding the ounces, so a 31.7oz parcel printed "1 lb 16 oz"; it now rounds to whole ounces first. (2) The buyer's own label email on a seller sale showed "Buyer: <their own name>"; that row is now dropped when the reader is the recipient. Accepted as-is: the pre-scan carrier number also shows to *anonymous* viewers of a seller sale, not only the seller, because `can_print` is false only when the viewer holds the cancel token. The number is already in every viewer's tracking payload, so this adds no new exposure.
+
+---
+
+### [2026-09-14] Jones's seller feedback triaged — three of four asks already shipped; two live bugs found underneath
+
+**Category:** docs
+**Cross-link:** proposal [2026-09-14_jones-seller-feedback.md](proposals/2026-09-14_jones-seller-feedback.md) (in review). Prod ground truth: shipment `K1ZQ9FR`. Corrects a false dimensional claim in decided [2026-07-17_label-print-page.md](proposals/2026-07-17_label-print-page.md) §36.
+
+Jones Anderson made SendMo's first real marketplace sale (live, 2026-09-10, UPSDAP Ground Saver, Checkout Link, parcel 12x13x1in "DEFCON badge") and sent four requests. Triaged against prod + a worktree at origin/main.
+
+**Three of the four already exist; the seller lane never offered them.** The label size picker is live and unflagged but sits behind a button labelled only `Print` — prod has **4 `label.printed` events ever, none his**, so he never reached it (he almost certainly hit Download, whose `fetch()` fails on the no-CORS S3 URL and falls back to `window.open`, dumping a raw 800x1400 PNG in a tab). The seller-pays lane (`/onboarding`) is live and unflagged but its only exit from `/sell` is a back-arrow reading "Back to shipping options" (`SellerBuilder.tsx:310`). The carrier constraint is enforced server-side (`rates/index.ts:245`) but `SellerBuilder.tsx:229` hardcodes `"any"` since PR #131 (`735f070`) removed the control on 2026-08-29 — **12 days before he shipped**. Prod: 0/7 seller links carry a carrier vs 2/27 flexible.
+
+**Bug 1 — every UPS label prints 14.3% vertically squashed.** Measured, not inferred: Jones's label PNG decodes to 800x1400 @200dpi = 4.00 x 7.00in, ink ending at exactly row 1199 (6.00in) with exactly 200 blank rows. `LabelPrintPage.tsx:167` sets `width:4in; height:6in` with **no `object-fit` anywhere in `src/`**, so CSS default `fill` compresses non-uniformly. UPS carries a MaxiCode, a fixed-geometry 2D symbol with no distortion tolerance. ~Half of live labels are UPS (4 of 7). The decided 2026-07-17 proposal asserted "1200x1800 = exactly 4x6 ... holds across carriers (USPS GroundAdvantage and UPSDAP Ground samples)" — false when written; the UPSDAP sample it cites is 800x1400. Same false claim copied into the code comment at `LabelPrintPage.tsx:17-19`. **Not print-and-scan tested — no scan failure has been reported.**
+
+**Bug 2 — picking UPS or FedEx as a carrier constraint filters out every rate.** `_shared/rate-filters.ts:58` compares EasyPost's raw carrier string to the lowercase chip id. EasyPost returns `UPSDAP`/`FedExDefault`; chips are `ups`/`fedex`. Only `usps` matches, by coincidence. **Latent** — the one `ups` link in prod is `draft`, and `rates/index.ts:150,206` gate on `status === "active"`. CI is green because **zero test files import `rate-filters`**. Fix is to mirror `normalizeCarrier` (`src/components/sender/senderState.ts:124-131`), which already handles both via `.includes()`.
+
+**Two framings the adversarial passes killed** (recorded so they are not re-derived): his package was a 12x13 flat, so "label too big for the package" is false for this shipment; and trimming the UPS blank tail does **not** make the printed label smaller — the page already prints 4x6, so the fix makes it undistorted, not shorter.
+
+No code changed this session. Five workstreams proposed; W5 reverses a deliberate call and needs John's sign-off.
+
+---
+
+### [2026-08-31] Label flow discriminator fixed to three-way — seller sales no longer report as "flexible link"
+
+**Category:** fix
+**Cross-link:** live repro: shipment D7HTQJP (2026-08-31 seller-link sale whose "[SendMo] New label (live)" admin notice said "flexible link")
+**Deploy:** [#142](https://github.com/jsa7cornell/Sendmo/pull/142) squash-merged (`8c8679f`) 2026-08-31; `npx supabase functions deploy labels` ✓ (project fkxykvzsqdjzhurntgah). Live.
+
+**Browser-verified:** n/a-category: pure-logic · n/a-reason: change is a server-side string discriminator feeding the admin email + event-log properties — no rendered surface; contract verified by unit tests on the extracted pure helper (tests/unit/label-notice.test.ts, 15 passing).
+
+`labels/index.ts` classified every flow as `resolvedLink ? flex : full_label` — a binary that predates seller links, so every seller-link sale was mislabeled "flexible link" in the admin label notice and `flex` in the event-log `flow:` telemetry (four sites: buy_time_rate_unresolvable / _exceeded / _drift, rerate_impossible). Fix: new pure `resolveLabelFlow(linkType)` + `LABEL_FLOW_NOTICE_NAMES` in `_shared/label-notice.ts` — three-way `full_label / flex / seller_link` keyed on `resolvedLink.link_type` ("flex" kept over "flexible" for telemetry continuity with the flow-specific log sites that already emit it). All five sites now derive from one `labelFlow` const; the buyer-email `variant:` site (~line 3082), which already computed the same three-way inline, was consolidated onto it. Notice email now says "seller link". Unit tests added for the helper + a seller-link Mode-row case.
+
+---
+
+### [2026-08-31] Full E2E verification run — live seller-link money loop closed (§6 satisfied)
+
+**Category:** verify
+**Cross-link:** [`proposals/2026-08-29_seller-launch-runbook_PR14.md`](proposals/2026-08-29_seller-launch-runbook_PR14.md) §6 · seller-launch LOG entries 2026-08-29
+
+**Browser-verified:** mcp-session: John's Chrome on sendmo.co live, 2026-08-31 · variants-covered: homepage doors, dashboard shipments+links tabs (lane naming/who-pays chips), /sell stepped builder with Guestimator estimate path, buyer checkout (landing card, live rates, consolidated review), LIVE Stripe Payment Element (Link + saved card), post-pay /t/ page, cancel dialog + voided page, /onboarding full-label flow through the 17-rate table (manual parcel path), tracking page of a delivered test sale.
+
+- **Automated:** worktree at `origin/main` (559e240) — unit 818/818 green, mocked Playwright e2e 122 passed / 6 skipped (authed CI-only skips).
+- **Live loop (John-approved charge):** created live single-use checkout link `7kRDhXGhQj` ("Paperback book"), bought through it as buyer — $8.45 USPS GroundAdvantage, shipment `D7HTQJP`. Verified in prod DB: PR11 rebind to the real link, link `active→in_use`, cancel token + buyer_email set; ledger charge +845 / fee_stripe −55 / label_cost −648 on the same PI, all `mode=live`. Emails: seller "You made a sale", admin new-label notice, Stripe buyer receipt. Cancelled as admin: DB `cancelled/submitted/submitted`, voided tracking page renders, seller "don't ship" + buyer "refund on its way" both fired with correct "by our team" canceller lines. Buyer refund correctly pending on carrier-void confirmation (submitted-gated, no premature refund txn row).
+- **Ledger reconciliation (prod, read-only SQL):** every card-paid shipment's display price matches its charge txn by stripe_intent_id — zero mismatches; refunded cancels match to the cent; `not_applicable` cancels have no refund rows, as intended. Note: `charge`/`fee_stripe`/`refund` rows carry NULL shipment_id by design — reconcile via `stripe_intent_id`, not shipment_id.
+- **Findings:** (1) admin new-label email + event-log `flow:` label seller sales as "flexible link" — binary discriminator at labels/index.ts:2621 predates seller links (fixed — see "Label flow discriminator fixed to three-way" above); (2) buyer landing price band said $8.69–$10.35 but cheapest live rate was $8.45 — band floor slightly overshoots; (3) saved-address fill renders phone unformatted (`3333333333`) where typed input formats; (4) after a cancelled sale the single-use link stays `in_use` — seller can't resell through it without rotating (flagging as open question, may be intended). Fixtures `SELLE2E01`/`SELLTEST01`: §6 now verified — John can decide on deletion (RESTRICT FK requires removing their shipments first).
+- **Test residue in prod:** link `7kRDhXGhQj` (in_use, its one sale cancelled) + shipment `D7HTQJP` (cancelled, refund pending) — real ledger rows, left in place.
+- **Email bodies fact-checked (all four from the live run):** data correct everywhere — tracking code, USPS number, amounts, admin money block reconciles to the cent, canceller lines right. Copy issues found: (a) all transactional emails still sign off "Prepaid shipping made easy" — the #138 tagline sweep missed `supabase/functions/_shared/` email templates; (b) seller cancel email says "Your listing link isn't changed by this — nothing to do", which is false for a single-use link that stays `in_use` after a cancelled sale (copy-vs-behavior contradiction — either reopen the link on cancel or fix the line); (c) buyer refund email says the $8.45 refund request went "to the carrier" — the carrier request is SendMo's $6.48 label cost, the buyer's $8.45 returns via Stripe after the void confirms. Full-label confirmation email path NOT exercised this run.
+- **John's nit, resolved to existing work:** /t/ success page still shows "Back to SendMo" on prod — that removal is cec6aa9 on `feat/sender-intro-shipment-card`, committed but unmerged; merging the branch delivers it. The error-state link (TrackingPage.tsx:595) and the LabelPrintPage/LegacyTrackingRedirect/SenderPreview instances were deliberately left by that commit.
+
+---
+
+### [2026-08-31] Homepage rev 6 — CSS shipping label in the hero, vertical rhythm halved
+
+**Category:** ship
+**Cross-link:** Direction A review artifact §Homepage rev 6 (mock approved by John; his corrections: printer IS needed — no capability claims on the label; must be mobile-friendly and SEO-clean)
+
+**Browser-verified:** mcp-session: worktree vite, Browser pane fronted (screenshots real, not stale) · variants-covered: desktop 1280 (3-col hero: two cards + tilted label, How-it-works visible in first viewport), mobile 375 (label hidden, clean two-card stack, no horizontal scroll).
+
+New `HeroLabel.tsx`: a stylized USPS 4×6 drawn entirely in CSS — service banner, from/to, tracking barcode + mono number. No image asset, no CLS (fixed proportions), always white like a real label in both themes, `aria-hidden` (decorative; no text for crawlers to misread), hidden below lg. Deliberately carries NO capability copy — the earlier handoff's "scan at counter / no printer needed" claim was cut on John's correction (a printer is required; swept src/ and found no such claim shipped anywhere else). Spacing: sections `py-20`→`py-10`, header margins `mb-12`→`mb-6`, hero `pt-16 pb-20`→`pt-12 pb-10`, CTA card `p-10 sm:p-16`→`p-8 sm:p-10`; the fold now shows hero + the start of How-it-works. SEO unchanged-good: h1/h2 hierarchy intact, metas from #138, label invisible to assistive tech and crawlers.
+
+---
+
+### [2026-08-31] Dashboard copy scrub — rows titled by purpose, who-pays chips, lane names
+
+**Category:** ship
+**Cross-link:** Direction A review artifact `claude.ai/code/artifact/4e4f5285-ab45-484f-bb7b-ae4b5756eb38` §Dashboard scrub (proposal approved by John 2026-08-31) · NAMING LANE DECIDED: "Label link" (you pay) / "Checkout link" (buyer pays)
+
+**Browser-verified:** spec: tests/unit/LinksTabClose.test.tsx (rewritten to the new copy) + site-chrome/auth e2e green locally (15/15) · variants-covered: active checkout link (Close control, Buyer-pays chip, item-text title), flexible link (no Close, Manage), closed link, empty-shipments per type.
+
+The dashboard spoke five dialects for two products; this lands the decided lane. `LinksTab` rows are now titled by what the link is FOR (item text on checkout links, "For <name> · <city, state>" on label links) with the slug demoted to the meta line; the schema-taxonomy badge (Seller/Full label/Flexible) is replaced by the who-pays chip — new shared `WhoPaysChip.tsx` (green "Buyer pays" / blue "You pay") — plus `userLinkTypeLabel()` in linkTypeLabel.ts ("Checkout link"/"Label link"; the PR6 one-map principle holds, admin keeps the precise taxonomy). Wrong-audience bug fixed: a checkout link's empty state said "Share … with a sender" — the opener is a BUYER; now "No sales yet. Paste … into your listing." Header buttons align with the homepage doors: "Sell an item"→"Create a checkout link" (emerald), "Create a new shipment"→"Buy a shipping label". "Close listing"→"Close link" (dialog body kept — the "already sold" explanation stays). "Rotate URL"→"Get a new URL". Empty tab copy names both products. NOTE: SellerBuilder's inline Buyer-pays chip was already gone (John's 2026-08-29 "no badge" pass) — WhoPaysChip serves the dashboard now; use it for any future chip surface instead of re-inlining.
+
+### [2026-08-31] Lane-naming sweep — "Checkout Link" (buyer pays) / "Label link" (you pay)
+
+**Category:** ship
+**Cross-link:** dashboard scrub entry above (lane decided there); Direction A review artifact §Dashboard scrub
+
+**Browser-verified:** spec: seller-builder + phone-gate + onboarding + skip-to-sender + sender-questions e2e green locally (44 passed) with assertions updated to the new names · variants-covered: /sell header + sign-in gate, checkout-link ready heading, label-link editor create/edit headings, Label Link Details card, phone-gate server message.
+
+Applies the decided lane to every in-between surface: /sell h1 "Shipping Link"→"Checkout Link" (+ sign-in copy); LinkShareCard seller heading "Your checkout link is ready — send it to your buyer"; LinksEditor "Create/Edit your label link"; ShipmentDetails card "Label Link Details"; SenderFlow loading line goes name-free ("Loading your link…" — senders don't need product taxonomy). The `rates` edge function's phone-gate message drops the product name too ("This link's delivery address…") — note this PR touches supabase/functions/**, so the Deploy Edge Functions workflow runs on merge. Homepage hero untouched — John's verbatim copy ("shipping links" in the title reads generically and "Create a Shipping Checkout Link" contains the lane name). Remaining "shipping link" hits in src/ are code comments only.
+
+---
+
+### [2026-08-30] Old-tagline sweep — "Prepaid shipping made easy" retired everywhere
+
+**Category:** ship
+**Cross-link:** follows the Direction A homepage rebuild (#134); Direction A review artifact `claude.ai/code/artifact/4e4f5285-ab45-484f-bb7b-ae4b5756eb38`
+
+**Browser-verified:** mcp-session: Claude Browser pane, worktree vite with dummy Supabase env; full-page DOM read of `/` (title, hero, all four lower sections, footer) · variants-covered: logged-out desktop; plus home.spec + site-chrome.spec e2e green locally (13/13).
+
+"Prepaid shipping made easy" is at zero occurrences in src/, index.html, and public/. New copy, all drawn from John's approved hero voice: browser/OG/Twitter title "SendMo — Shareable Shipping Labels & Links"; meta/OG/Twitter description stitched verbatim from the two hero cards; footer + /login tagline "Getting stuff where it needs to go"; manifest description "Shareable shipping labels and shipping links."; ogMeta og:image:alt follows. Lower homepage sections rewritten off the link-first mental model: How-it-works steps are now "Buy a label or create a link / Share it / Print & ship"; "Recipient pays, sender ships" → "Either side can pay"; "Perfect for" gains a Marketplace sellers cell (grid 3→2×2) and its subhead reuses the hero's closing phrase; CTA line covers both artifacts ("Your first label or link…" — "No account required" kept, verified: /onboarding has no ProtectedRoute). Untouched on purpose: ogMeta link-unfurl copy ("You've been sent a prepaid shipping label" etc.) — that describes a PREPAID LINK, not the brand, and ogMeta.test pins it.
+
+---
+
+### [2026-08-30] Estimator screen — result card, benefit naming, truthful re-weigh footer
+
+**Category:** ship
+**Cross-link:** Direction A review artifact `claude.ai/code/artifact/4e4f5285-ab45-484f-bb7b-ae4b5756eb38` (mock approved by John) · supersedes the 2026-08-24 "reveal-the-fields is the confirmation" behavior in ParcelQuestion
+
+**Browser-verified:** spec: tests/e2e/onboarding.spec.ts Step-14 Guestimator tests + rate-refetch.spec.ts + seller-builder.spec.ts + sender-questions/phone-gate/url-step-routing (47 e2e green locally under full mocks) · variants-covered: estimate path (summary card renders, Adjust opens fields carrying values), manual path (fields open, no summary), returning to a filled step (summary, Adjust to edit), validation (showErrors still forces real fields open — a summary can't be pointed at by "Length is required").
+
+Three changes to the shared parcel question (`ParcelQuestion.tsx` — recipient, sender, and seller flows all render it):
+
+1. **"I'm Feeling Lucky" → "Estimate size & weight"** (`MagicGuestimator.tsx` default — all four surfaces). Borrowed-joke naming made the differentiator read as a gimmick.
+2. **Filled values render as a one-line summary card** ("Our estimate for <item>" / "Your package" · `L × W × H in · lb oz · packaging`) with "Adjust size, weight or packaging" opening the unchanged fields. This REVERSES the 2026-08-24 "NOT collapsible once there is something to see" rule, with John's approval via the Direction A mock; the old invariant survives as: every value is visible on the summary, and showErrors still forces the fields open. Guestimator card title → "Describe it in plain words / This also prints on the shipping label." — resolving the duplicate-ask complaint (post-estimate, the Item description input now lives behind Adjust).
+3. **The legal footer's fear sentence replaced with the true policy** in RecipientStepPackage/Origin/Shipping: "If the carrier re-weighs your package, we cover small differences — larger ones are charged to your card and confirmed by email." Fact-checked against `_shared/adjustments.ts` + PAYMENTS.md §11: ≤$1 absorbed, $1.01–$10 auto-recharged (+$1 handling) with `carrierAdjustmentEmail` fired AFTER the recharge succeeds, >$10 flagged for manual review. NOTE both handoff proposals were wrong on the facts — "$3 covered" (it's $1) and "email you BEFORE charging" (the email is after) — do not resurrect either wording.
+
+**Deliberately not done:** the handoff's segmented control for "Sender will fill this in" — that escape was already reworked into `SkipToSenderLink` + `DimmedWhenDeferred` in John's 2026-08-2x passes with dedicated spec coverage (skip-to-sender.spec, onboarding "named, visible choice" tests); layering the older suggestion over it would regress a newer decision. Step pips ("STEP n OF N") also deferred — that's a flow-container change across three flows, its own PR if John still wants it.
+
 ### [2026-08-30] Seller builder — review-step shipping estimate + "Make a change" from the ready screen
 
 **Category:** ship
@@ -22,6 +163,9 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 **1. Review-step estimate ("What buyers will pay").** New authenticated `POST /links/band-quote` in the links function reuses `computeSellerPriceBand` (same three representative near/mid/far destinations + display filter as the stored PR10 band) against the seller's origin + this item's dims/weight, BEFORE the link exists — so a seller can bail on an item that costs more to ship than it's worth. Rate-limited 10/min per user + 60/min per IP; same test/live key derivation as creation (`resolveLiveMode`; allowlist downgrade deliberately skipped — nothing is charged, and it only affects which key a live-mode non-allowlisted customer quotes with). **Cost-model note:** this is per-review-view (3 EasyPost quote calls), a deliberate, authed exception to PR10's "bounded by links created, not traffic" rule — that rule targeted the anonymous crawler-amplified GET. Client caches the in-flight promise by inputs in a ref (StrictMode double-effect and step-bouncing share one quote — the naive state-key cache left the row stuck on the loading spinner because run 1 was cancelled and run 2 saw the key as already-fetched). Quote failure = row hides; a wrong number is worse than none.
 
 **2. "Make a change" on the ready screen.** The link already exists there and seller links are immutable (PR6), so Back = confirm dialog ("Your current link will stop working… you'll get a new link") → `closeSellerLink` invalidates the old link → re-enter review with the form intact → Create mints a fresh link + new URL (John's spec: are-you-sure first; old link invalidated). `LinkShareCard` already had `onBack`/`backLabel` — no share-card changes.
+
+
+**Merged 2026-09-18, after #144.** A pre-merge review found the band quote hard-coded `preferredCarrier: null`, so once #144 restored the carrier control, the estimate would quote carriers the seller had excluded. The client now sends the carrier constraint, `links/band-quote` passes it to `computeSellerPriceBand`, and the dedupe key includes it; a new e2e test pins it. Also: "Make a change" on a link that already sold now says so in plain words instead of showing the raw 409 ("Cannot close a in_use link").
 
 ---
 
@@ -46,6 +190,17 @@ Also in this change, both variants: button hierarchy reworked — "Copy link" is
 **Browser-verified:** mcp-session: Claude Browser pane, vite dev on worktree with `VITE_ENABLE_SELLER_LINK=true` + dummy Supabase env (hero is static; app boots logged-out) · variants-covered: desktop 1280 light, mobile 375 stacked; both cards render, green CTA live, single-card fallback is a className branch on the same flag.
 
 Hero on `Index.tsx` replaced wholesale with John's approved copy: H1 "Shareable shipping labels and shipping links for buying, selling, and just generally getting stuff where it needs to go." — "shipping labels" in `text-primary` (blue), "shipping links" in emerald, connective words dimmed to `text-muted-foreground`; the two cards repeat their color as a top rule, so the title's color coding is the wayfinding (comment in the JSX says so). Cards: "Buy a Shipping Label" (blue, /onboarding) and "Create a Shipping Checkout Link" (green, /sell). Removed: "Prepaid shipping made easy" badge, old H1/sub, who-pays helper lines, "Learn more" button. Seller launch gate untouched — `SELLER_LINK_VISIBLE/LIVE` wrap the green card exactly as before; flag off = single centered blue card. Tests updated to the new strings: `App.test.tsx` (exact-match moved to the muted span — the H1 is now split across spans, so exact-matching the full sentence fails), `IndexLanding.test.tsx`, `e2e/home.spec.ts`. Follow-ups deliberately NOT here: `index.html` meta title still says "Prepaid Shipping Made Easy"; lower homepage sections (How it works / Why SendMo) still describe the old link-first mental model; /sell header still says "Sell & Ship" vs. the card's "Create a Shipping Checkout Link". Prod needs `VITE_ENABLE_SELLER_LINK=true` in Vercel for the green card to render.
+
+---
+
+### [2026-08-29] Direction A design/copy handoff — reviewed against source, counter-proposal mocked
+
+**Category:** review
+**Cross-link:** John's handoff artifact `claude.ai/code/artifact/e24318ce-2ecb-42b8-8ac2-d8579b8f2a00` · response mockup artifact `claude.ai/code/artifact/4e4f5285-ab45-484f-bb7b-ae4b5756eb38`
+
+**Browser-verified:** n/a-category: `agent-internal` · n/a-reason: review + static mockup only — no product surface touched, nothing in src/ changed.
+
+Verified every claim in the Direction A homepage/flow handoff against source. **Accurate and cheap (accepted):** "I'm Feeling Lucky" (`MagicGuestimator.tsx:113`), duplicate description fields (`ParcelQuestion.tsx`), "Sender's name"/"origin address" (`RecipientStepOrigin.tsx`), the wrong-flow Marketplace snippet ("print the prepaid label" — `LinkShareCard.tsx` ×2 + `ogMeta.ts`; tells the buyer to print a label the seller prints), naming split (Index says "SendMo for Sellers", app says "Sell & Ship"). **Pushed back:** (1) the $3 re-weigh guarantee is a finance/liability decision with no supporting mechanism in code — use the neutral "we'll email you before any adjustment" line, and verify that email exists first; (2) trust-bar "refunded automatically" is false — refunds are admin-initiated (`refundService.ts`), auto-refund covers only failed label purchase; (3) the "Test/Live mode SHIP-BLOCKER" is not real — `AdminModeToolbar` self-gates on `isAdmin` (reviewer saw it because John is admin); (4) the "Your name (your name)" bug is not in source (stale screenshot); (5) Direction A homepage must honor the three-state `SELLER_LINK_MODE` gate the handoff doesn't know about; (6) link-validity copy blocked on knowing the real `expires_at` default — don't invent one. Proposed sequencing: PR1 snippet fix alone, PR2 string pass, PR3 homepage, PR4 estimator result-card + step pips (the only real UI work). Nothing implemented — mockup is the approval gate. NOTE: checkout was on `feat/sender-intro-shipment-card` with another session's uncommitted proposal edits; this entry deliberately left uncommitted alongside them.
 
 ---
 
@@ -527,6 +682,98 @@ stale — `links/index.ts:1041` above is the sharp example. Verify against code,
 
 ---
 
+### [2026-08-26] Sender intro states the shipment; "Back to SendMo" off the shipment page
+
+**Category:** ship | fix
+**Cross-link:** [`previews/sender-intro-personalization-concepts.html`](previews/sender-intro-personalization-concepts.html) (three options, four preconfiguration levels; A shipped)
+
+**The sender intro shows the label instead of describing the flow.** `/s/<code>` used to open on a headline, a city,
+and a numbered list of the questions still to come — so everything the creator had already decided (the parcel, the
+ship-from address, the speed and the cap they were paying for) stayed invisible until the review step, five taps later.
+It now renders the shared `ShipmentDetailsCard`: same block the creator saw before they paid, same one the sender sees
+again on review, so the sender's first and last screen are one object. Half of it is blank on arrival and **the blanks
+are the questions** — the creator's copy says "Sender fills in", this one says "You'll add this", in the same italic.
+That is why the numbered list is gone: it named the same open questions, in the same order, a second time.
+
+Headline: **"{name} shared a prepaid shipping label with you"**, falling back to "You've been sent a prepaid shipping
+label" when the link carries no recipient name. The "Shipping to {city}, {state}" line under it went — the TO cell says
+it once.
+
+**The cap is now visible to the sender, deliberately.** A fifth full-width cell, `PREPAID UP TO $25.00`, on any link
+with `max_price_cents > 0`. This is a considered exception to Rule 7's sibling (the payer's money is not the sender's
+business): a cap is not what the recipient is *spending*, it is the budget they *granted*, and a sender who can see it
+can understand why an over-budget parcel gets turned away at the rates step. **Exact rates stay hidden** — the rates
+step still shows `$`-tiers, not prices. Rule 7 itself is untouched: the TO cell is city/state, never the street.
+
+**Two display helpers were wrong and are fixed** (`src/lib/utils.ts`), both surfaced by building the VIA cell:
+- `speedDisplayName`'s map was keyed `no_rush`, a value nothing has produced for a long time. The picker writes
+  `SpeedTier` (`economy | standard | express`), so **the economy tier rendered as the raw lowercase "economy"** — on
+  the creator's card too, not just the new one. `tests/unit/ShipmentDetails.test.tsx` had been pinning `no_rush`,
+  which is why nothing caught it.
+- `carrierDisplayName` matched `CARRIER_NAMES` exactly, so EasyPost's `"FedExDefault"` resolved but a link's
+  `preferred_carrier` — stored lowercase by the creator's picker as `"usps"` — missed every key and rendered raw.
+  Now falls back to a lowercased index.
+
+**"Back to SendMo" is gone from `/t/<public_code>`.** It sat outside all four lifecycle branches (families 1/2/3 and
+the unknown-status fallback), so one deletion covers every loaded shipment. The reader of that page is usually the
+sender — a stranger with no SendMo account — and the link pointed them at a marketing homepage that has nothing for
+them. The header wordmark and site footer remain. **Kept on the error state** (`TrackingPage.tsx:594`), where a
+"tracking not found" dead end genuinely needs an exit.
+
+**Designed, not built: "No options for this one" should say why.** The rates function already computes the reason and
+already returns half of it — `rates/index.ts:540` ships `messages` with the comment *"Surface carrier messages so the
+UI can explain 'no rates available'"*, and `RatesResponse` (`src/lib/api.ts:52`) doesn't declare the field, so
+`fetchSenderRates` drops it. One sentence therefore covers six causes: price cap, carrier filter, speed filter,
+platform cap, service denylist, and outright carrier rejection — which has nothing to do with the link at all. Worse,
+**"try adjusting the size or weight" is an instruction to misdescribe the package**: a sender who shaves a pound to
+get past the screen ships a mis-rated label, and the carrier's post-delivery adjustment lands on the payer's card.
+Proposed: `blocked_by` + `quoted_count` on the rates response, reason-specific copy, one action per screen
+(**Edit package details** — no "ask the recipient" button; decided 2026-08-26, it buys a rate-limiting problem and a
+privacy question for something two people who know each other sort out by text).
+
+**Code review found three real defects in the above; all fixed in the same PR.**
+
+1. **The cap cell printed the exact price on a `full_label` link.** `max_price_cents` is a ceiling the
+   recipient chose *only* on a flex link — on `full_label` it is the amount already charged (prod values include
+   `703`, a real USPS rate, not a round cap). Such links redirect to `/t/<public_code>` before the intro renders,
+   but that guard needs a `public_code`, and `links/index.ts:406` resolves it to `null` for a `full_label` link
+   with no shipment row — which then falls through every remaining guard in `SenderFlow` to `setStep("intro")`.
+   **Confirmed reachable against prod: 1 of 41 `full_label` rows currently has no bound shipment.** The cell is
+   now gated on `link_type === "flexible"`.
+2. **`carrierDisplayName` became non-total.** Adding the lowercase fallback meant calling `raw.toLowerCase()`
+   unguarded, where the old exact-match returned a null carrier harmlessly. `EtaBanner` types the field `string`
+   and `DetailsCard` types the same server field `string | null` and guards it — the codebase disagrees with
+   itself, and the throw would have landed inside the pre-dropoff tracking page's render. Guard restored.
+3. **The intro and the review still described one parcel two ways.** A prefill with `height_in: null` rendered
+   `12×9 in` on the intro while `SenderFlow:178` seeds the flow's parcel with `height_in ?? 1` and packaging
+   `"box"`, so review printed `12×9×1 in` — the exact failure the "first and last screen are one object"
+   argument exists to prevent. Root cause: parcel formatting written three times with three height rules.
+   `formatParcelDims` + `formatParcelWeightLb` now live in the existing `components/shipment/parcelDraft.ts`
+   (extending the shared parcel module rather than inventing one) and all three cards call them. The creator's
+   card keeps its `lb + oz` weight deliberately — it echoes the two boxes they typed.
+
+Also closed from the review: direct regression tests for both display helpers in `tests/unit/utils.test.ts`
+(which covered only `cn`, so both bugs had been invisible to the file they lived in), the two anti-regression
+assertions from 2026-08-24 that the test rewrite had dropped, and PLAYBOOK's Price Cap section. Left open and
+recorded rather than silently dropped: an unconstrained `preferred_speed` still renders raw (`"overnight or
+faster"` — verified no such rows exist in prod), the FROM cell shows a blank on a phone-less prefill the next
+screen fills in, the TO cell can print the literal words "the recipient", and the destination deferral is
+derived twice instead of coming from `planSenderSteps`.
+
+**Browser-verified:**
+```
+  mcp-session: scratchpad/intro-{L0,L1,L2,L3,nocap}.png — Playwright route-mocked link fixtures, 520px viewport
+  variants-covered: [L0 needs_destination + no recipient_name, L1 destination only, L2 destination+parcel, L3 destination+parcel+origin+carrier, no-cap (max_price_cents=0, economy speed)]
+```
+Plus `tests/e2e/tracking-lifecycle-states.spec.ts` for the tracking change
+(`[F1 label_created, F2 in_transit, F2 delivered, F2 out_for_delivery, F3 cancelled]`) and `/t/CVCGF4P` loaded in a
+real browser — no "Back to SendMo" in the DOM, footer nav intact.
+
+Post-review re-verified: `fix-{flex-cap,fulllabel-nocap,heightless}.png` — the cap holds on a flex link, is absent on a `full_label` link, and a heightless prefill prints `12×9×1 in`.
+
+Full suite after: **783/783 unit** (12 new), **108 passed / 5 skipped / 0 failed e2e**, `tsc -b --noEmit` and eslint clean.
+
+---
 
 ### [2026-08-25] PR #93 rebased down to what survived; #89 closed as superseded
 

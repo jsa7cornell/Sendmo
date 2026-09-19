@@ -259,7 +259,7 @@ test.describe("phone gate — dashboard /links/new (authed)", () => {
     // The editor heading confirms the seeded session worked — ProtectedRoute
     // did NOT bounce us to the login screen.
     await expect(
-      page.getByRole("heading", { name: /Create your shipping link/i }),
+      page.getByRole("heading", { name: /Create your label link/i }),
     ).toBeVisible({ timeout: 10000 });
 
     // Fill the destination, leaving the phone blank.
@@ -293,7 +293,7 @@ test.describe("phone gate — sender flow on a phoneless link", () => {
   // The exact link-aware message the rates fn returns when the delivery
   // address resolved from a link_short_code has no phone.
   const PHONE_MSG =
-    "This shipping link's delivery address doesn't have a phone number, " +
+    "This link's delivery address doesn't have a phone number, " +
     "which the carriers require. The person who created this link needs to " +
     "add one (from their SendMo dashboard) before you can ship.";
 

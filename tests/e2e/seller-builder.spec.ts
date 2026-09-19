@@ -45,7 +45,7 @@ async function openBuilder(page: Page): Promise<void> {
   );
   await page.goto("/sell");
   // First-paint-under-load convention (onboarding.spec.ts): 15s.
-  await expect(page.getByRole("heading", { name: "Shipping Link" })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole("heading", { name: "Checkout Link" })).toBeVisible({ timeout: 15_000 });
 }
 
 /** Step 1 → step 2 via the saved-address shortcut. */
@@ -81,7 +81,7 @@ test.describe("Seller builder — stepped rework", () => {
     const yOrigin = (await page.getByText("Where does it ship from?").boundingBox())?.y ?? NaN;
     expect(yQty).toBeLessThan(yOrigin);
     // The item step lives on its own screen.
-    await expect(page.getByText("Describe the product")).toHaveCount(0);
+    await expect(page.getByText("Describe it in plain words")).toHaveCount(0);
     await expect(page.getByRole("heading", { name: /What are you shipping\?/ })).toHaveCount(0);
   });
 
@@ -112,7 +112,7 @@ test.describe("Seller builder — stepped rework", () => {
     await completeSetupStep(page);
 
     // The shared step's signature: describe-first, manual reveal, lbs+oz.
-    await expect(page.getByText("Describe the product")).toBeVisible();
+    await expect(page.getByText("Describe it in plain words")).toBeVisible();
     await page.getByRole("button", { name: "or fill in manually" }).click();
     await expect(page.getByText("Packaging type")).toBeVisible();
 
@@ -176,6 +176,8 @@ test.describe("Seller builder — stepped rework", () => {
       origin: { city: "Ithaca", state: "NY", zip: "14850" },
       parcel: { length: 12, width: 9, height: 4, weight_oz: 32 },
     });
+    // All carriers selected = unconstrained → no carrier sent.
+    expect(quoteBodies[0]).not.toHaveProperty("preferred_carrier");
 
     // Bouncing back to the item step and returning doesn't re-quote.
     await page.getByRole("button", { name: "Back", exact: true }).click();
@@ -183,6 +185,27 @@ test.describe("Seller builder — stepped rework", () => {
     await expect(page.getByRole("heading", { name: /Everything look right\?/ })).toBeVisible();
     await expect(page.getByText("Typically $8.12–$14.40")).toBeVisible();
     expect(quoteBodies).toHaveLength(1);
+  });
+
+  test("the quote honours the seller's carrier limit", async ({ page }) => {
+    await openBuilder(page);
+    const quoteBodies: unknown[] = [];
+    await page.route(`${SUPABASE_URL}/functions/v1/links/band-quote`, async (route) => {
+      quoteBodies.push(route.request().postDataJSON());
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ band: { min_cents: 1100, max_cents: 1400 } }),
+      });
+    });
+    await page.getByRole("button", { name: /Which carriers can you drop off at\?/ }).click();
+    await page.getByRole("button", { name: "FedEx", exact: true }).click();
+    await completeSetupStep(page);
+    await completePackageStep(page);
+
+    await expect(page.getByText("Typically $11.00–$14.00")).toBeVisible();
+    expect(quoteBodies).toHaveLength(1);
+    expect(quoteBodies[0]).toMatchObject({ preferred_carrier: "usps,ups" });
   });
 
   test("quote failure hides the estimate row instead of blocking review", async ({ page }) => {
