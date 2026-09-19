@@ -2,7 +2,7 @@ import { useParams, useSearchParams, Link, useNavigate } from "react-router-dom"
 import AppHeader from "@/components/AppHeader";
 import SiteFooter from "@/components/SiteFooter";
 import { useState, useEffect } from "react";
-import { Package, Truck, CheckCircle2, AlertCircle, Clock, ArrowLeft, MapPin, ExternalLink, FlaskConical, Printer, Download, Check } from "lucide-react";
+import { Package, Truck, CheckCircle2, AlertCircle, Clock, ArrowLeft, MapPin, ExternalLink, FlaskConical, Printer, Check } from "lucide-react";
 import { carrierTrackingUrl } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase as supabaseClient } from "@/lib/supabase";
@@ -304,28 +304,6 @@ export default function TrackingPage() {
   // where the actual Print action happens. Returning here re-mounts and refetches,
   // so data.print_count reflects the server truth.
 
-  // Download the label as a true file download (cross-origin = the HTML5
-  // <a download> attribute is ignored by browsers, so we fetch the PDF as a
-  // blob and trigger download from a same-origin blob URL).
-  async function handleDownloadClick(labelUrl: string, publicCode: string) {
-    try {
-      const res = await fetch(labelUrl);
-      if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `sendmo-${publicCode}.png`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      // Fallback: open in a new tab so the user can save via browser menu.
-      window.open(labelUrl, "_blank", "noopener,noreferrer");
-    }
-  }
-
   async function handleCancelConfirm() {
     if (!data || !code) return;
     const reason: "user_cancel" | "user_change" = confirmMode === "change" ? "user_change" : "user_cancel";
@@ -419,6 +397,13 @@ export default function TrackingPage() {
       <div>
         <DetailsCard
           family={family}
+          /* Pre-dropoff carrier tracking number, seller's own view only
+             (decided 2026-09-14). `is_seller_sale` scopes this to the
+             marketplace lane, and `can_print !== false` is the server-derived
+             seller/buyer discriminator already used for the label action —
+             false means the token-holding BUYER, who must not get it. Buyers
+             and anonymous viewers keep the 2026-05-13 F2-only behaviour. */
+          showCarrierTracking={data.is_seller_sale === true && data.can_print !== false}
           data={{
             public_code: data.public_code,
             tracking_number: data.tracking_number,
@@ -451,13 +436,13 @@ export default function TrackingPage() {
     );
   }
 
-  // ── Action buttons row (Print + Download) — pre-dropoff only ─────────────
-  // Equal-width buttons, no chip inside the button.
+  // ── Label action — pre-dropoff only ──────────────────────────────────────
+  // One full-width button to the print page (W4a, 2026-09-14).
   // Print button gets soft-green tint when print_count > 0.
   // Count surfaces as a small line BELOW the row.
   function ActionButtonsRow() {
     if (!data || !data.label_url) return null;
-    // PR9: the token-holding buyer on a seller sale gets no Print/Download —
+    // PR9: the token-holding buyer on a seller sale gets no label action —
     // the PDF carries the seller's home address and the buyer isn't the one
     // shipping. Server-derived; absent (older payloads) means printable.
     if (data.can_print === false) return null;
@@ -465,36 +450,49 @@ export default function TrackingPage() {
     const printed = printCount > 0;
     return (
       <div className="space-y-2">
-        <div className="grid grid-cols-2 gap-2">
-          {/* Print button — now routes to the SendMo print page (presets +
-              printer tips + always-present raw-label link) instead of dumping
-              the raw label file into a tab. Proposal 2026-07-17_label-print-page.
-              Soft-green tint when already printed. */}
-          <Link to={`/t/${code}/print`} className="block">
-            <Button
-              className={`w-full rounded-xl py-5 text-sm font-semibold ${
-                printed
-                  ? "bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100"
-                  : ""
-              }`}
-              variant={printed ? "outline" : "default"}
-            >
-              <Printer className="w-4 h-4 mr-2" />
-              Print
-            </Button>
-          </Link>
+        {/* One door, not two (2026-09-14, W4a).
+            Download used to sit here as an equal-weight button, and it never
+            downloaded anything: the label lives on an S3 host that sends no
+            CORS headers, so `fetch` always threw and the catch fell through to
+            window.open — a raw 800x1400 PNG in a tab, which the browser then
+            scaled to fill the sheet when printed. That is the "make the label
+            easy to resize" complaint from SendMo's first real seller, and the
+            dead `a.download` branch above it never ran for any real label.
 
-          {/* Download button — fetches the label as a blob to force a download
-              (cross-origin <a download> is ignored by browsers). */}
+            The print page is where sizing already lives (three presets) and it
+            carries a raw-label link for anyone who wants the file, so both
+            halves of what Download promised are behind this one button. The
+            emailed copy now carries the label file itself, which is the other
+            half of "give me a file" — see the label-created email.
+
+            Deliberately NOT the download proxy: OQ5 of the decided
+            2026-07-17 proposal parked that as a fast-follow, and John kept it
+            parked on 2026-09-14. WISHLIST.md:23 (signed/expiring label URL)
+            and the ~6-month S3 object expiry are the two standing reasons to
+            revisit it.
+
+            Soft-green tint when already printed. */}
+        <Link to={`/t/${code}/print`} className="block">
           <Button
-            variant="outline"
-            className="w-full rounded-xl py-5 text-sm font-semibold"
-            onClick={() => data.label_url && code && handleDownloadClick(data.label_url, code)}
+            className={`w-full rounded-xl py-5 text-sm font-semibold ${
+              printed
+                ? "bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100"
+                : ""
+            }`}
+            variant={printed ? "outline" : "default"}
           >
-            <Download className="w-4 h-4 mr-2" />
-            Download
+            <Printer className="w-4 h-4 mr-2" />
+            Print or save label
           </Button>
-        </div>
+        </Link>
+
+        {/* The signpost half of W4a: name what is behind the button. The words
+            "size" and "paper" appeared nowhere on this page, so a seller had
+            no reason to expect a choice — Jones never opened the print page at
+            all (prod: the deployed print page has logged zero prints, ever). */}
+        <p className="text-center text-xs text-muted-foreground">
+          Choose a size — 4×6 label, half sheet, or full page
+        </p>
 
         {/* Print-count line below the row */}
         <p className={`text-center text-xs ${printed ? "text-emerald-600" : "text-muted-foreground"}`}>
@@ -775,7 +773,7 @@ export default function TrackingPage() {
                     service={data.service}
                   />
 
-                  {/* Action buttons row (Print + Download) + print-count line */}
+                  {/* Label action button + print-count line */}
                   <ActionButtonsRow />
 
                   {/* How to ship strip — hidden from the seller-sale buyer

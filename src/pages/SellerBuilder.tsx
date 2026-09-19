@@ -28,8 +28,11 @@ import { emptyAddress } from "@/lib/utils";
  *
  * A SELLER specs their ship-FROM origin + package (dims/weight) + single-use
  * vs reusable, then creates a shareable link. The BUYER later opens it, adds
- * their destination, and pays. The carrier/speed limit control was removed
- * 2026-08-29 ("for now" — the server still accepts the params if it returns).
+ * their destination, and pays. The CARRIER limit control returned 2026-09-14:
+ * the decided 2026-08-28 spec (§245) kept carrier and speed while dropping the
+ * price cap, but PR #131 removed all three "for now". Carrier is restored
+ * (a seller drops off at one counter); speed stays out by John's call, since
+ * the buyer is the one paying for it.
  *
  * Stepped like the sender flow (2026-08-29, John's second-pass feedback):
  *   1. setup  — link type + ship-from origin
@@ -43,6 +46,16 @@ import { emptyAddress } from "@/lib/utils";
  */
 
 type Step = "setup" | "item" | "review" | "ready";
+
+// The carriers a seller can constrain a Checkout Link to. Ids match the
+// values `links/` stores and `_shared/rate-filters.ts` normalises, and the
+// same three the flex form offers (FlexPreferencesForm CARRIERS, minus "any"
+// — here "any" is expressed by selecting all three).
+const SELLABLE_CARRIERS: { id: string; label: string }[] = [
+  { id: "usps", label: "USPS" },
+  { id: "ups", label: "UPS" },
+  { id: "fedex", label: "FedEx" },
+];
 
 const PACKAGING_LABELS: Record<PackagingType, string> = {
   box: "Box / Rigid",
@@ -97,6 +110,18 @@ export default function SellerBuilder() {
 
   const [singleUse, setSingleUse] = useState(true);
 
+  // Which carriers this seller can actually drop off at. Restores the carrier
+  // half of the decided 2026-08-28 spec (§245: "the cap control leaves the
+  // seller builder entirely — carrier and speed stay"); PR #131 removed all
+  // three "for now" while only the cap removal was authorised. Speed stays out
+  // by John's 2026-09-14 call: carrier is a hard constraint on the seller (they
+  // drive to one counter), speed is a preference the buyer is paying for.
+  //
+  // All-selected is the default and writes NULL — byte-identical to today's
+  // behaviour for a seller who ignores this.
+  const [carriers, setCarriers] = useState<string[]>(() => SELLABLE_CARRIERS.map((c) => c.id));
+  const [showCarriers, setShowCarriers] = useState(false);
+
   const [tried, setTried] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -117,6 +142,19 @@ export default function SellerBuilder() {
   function handleParcelSubmit(p: SenderParcel) {
     setParcel(p);
     setStep("review");
+  }
+
+  // All three selected = unconstrained, stored as NULL. Selecting none would
+  // quote nothing, so the control never lets the last one be cleared.
+  const carrierConstraint =
+    carriers.length === SELLABLE_CARRIERS.length ? null : carriers.join(",");
+
+  function toggleCarrier(id: string) {
+    setCarriers((prev) => {
+      if (!prev.includes(id)) return [...prev, id];
+      if (prev.length === 1) return prev; // never leave zero carriers
+      return prev.filter((c) => c !== id);
+    });
   }
 
   async function handleCreate() {
@@ -142,8 +180,13 @@ export default function SellerBuilder() {
       // single-use → closes after the first sale; reusable → omit (stays open).
       max_shipments: singleUse ? 1 : undefined,
       notes: parcel.description.trim() || undefined,
-      // No speed/carrier constraint and no price cap (PR4, decided): the buyer
-      // pays their own shipping on options they pick. The server writes
+      // Carrier constraint: omitted when the seller can use all three, so the
+      // server stores NULL and the buyer sees everything — unchanged from
+      // before this control existed. A subset stores a comma-separated list,
+      // which _shared/rate-filters.ts parseCarriers() reads.
+      preferred_carrier: carrierConstraint ?? undefined,
+      // No speed constraint and no price cap (PR4, decided): the buyer pays
+      // their own shipping on options they pick. The server writes
       // max_price_cents NULL; rates/ falls back to the platform-wide
       // MAX_DISPLAY_PRICE ($200) runaway guard.
     };
@@ -223,10 +266,12 @@ export default function SellerBuilder() {
           itemLabel={parcel?.description.trim() || undefined}
           singleUse={singleUse}
           value={{
-            // No constraint UI (removed 2026-08-29): the buyer picks freely.
-            // price_cap omitted — seller links carry no cap (PR4).
+            // Carrier restored 2026-09-14 (decided 2026-08-28 §245; PR #131
+            // removed it "for now"). Speed stays out by John's call, so this
+            // reports the server's own default rather than claiming a choice
+            // the seller never made. price_cap omitted — no cap (PR4).
             speed_preference: "standard",
-            preferred_carrier: "any",
+            preferred_carrier: carrierConstraint ?? "any",
             address: origin,
           }}
           onDone={() => navigate("/dashboard")}
@@ -262,7 +307,16 @@ export default function SellerBuilder() {
           </ReviewRow>
 
           <ReviewRow icon={SlidersHorizontal} label="Shipping options">
-            <div>Buyer picks the carrier &amp; speed</div>
+            {carrierConstraint === null ? (
+              <div>Buyer picks the carrier &amp; speed</div>
+            ) : (
+              <>
+                <div className="text-foreground font-medium">
+                  {carriers.map((id) => SELLABLE_CARRIERS.find((c) => c.id === id)?.label ?? id).join(" or ")} only
+                </div>
+                <div>Buyer picks the speed — you drop off at {carriers.length > 1 ? "either" : "this carrier"}</div>
+              </>
+            )}
           </ReviewRow>
         </div>
 
@@ -307,7 +361,7 @@ export default function SellerBuilder() {
         onClick={() => navigate("/onboarding")}
         className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
       >
-        <ArrowLeft className="w-4 h-4" /> Back to shipping options
+        <ArrowLeft className="w-4 h-4" /> I’d rather pay for shipping myself
       </button>
 
       <SellHeader />
@@ -345,6 +399,58 @@ export default function SellerBuilder() {
             <p className="text-xs text-muted-foreground">Shipping multiple identical items</p>
           </button>
         </div>
+      </div>
+
+      {/* Carrier constraint — collapsed by default so step 1 stays as short as
+          the 2026-08-29 trim left it. The decided 2026-07-17 seller-link
+          proposal (§195) already specified this as an "optional advanced"
+          control; this is that, scoped to carrier. Framed as the seller's
+          real-world limit ("can you drop off at") rather than a preference,
+          because that is what it is — they carry the box to one counter. */}
+      <div className="bg-card rounded-2xl border border-border shadow-sm p-5">
+        <button
+          type="button"
+          onClick={() => setShowCarriers((v) => !v)}
+          className="w-full flex items-center justify-between text-left"
+          aria-expanded={showCarriers}
+        >
+          <span className="text-sm font-semibold text-foreground">Which carriers can you drop off at?</span>
+          <span className="text-xs text-muted-foreground shrink-0 ml-3">
+            {carrierConstraint === null
+              ? "Any"
+              : carriers.map((id) => SELLABLE_CARRIERS.find((c) => c.id === id)?.label ?? id).join(", ")}
+          </span>
+        </button>
+        {showCarriers && (
+          <div className="mt-4">
+            <div className="flex gap-2 flex-wrap">
+              {SELLABLE_CARRIERS.map((c) => {
+                const on = carriers.includes(c.id);
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => toggleCarrier(c.id)}
+                    aria-pressed={on}
+                    className={
+                      "px-3 py-1.5 rounded-lg text-sm border transition-all " +
+                      (on
+                        ? "border-primary bg-primary/10 text-primary font-medium"
+                        : "border-border bg-card text-muted-foreground hover:border-muted-foreground/40")
+                    }
+                  >
+                    {c.label}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-xs text-muted-foreground mt-2">
+              Your buyer will only see options from the carriers you pick. Leave all three on
+              if you can drop off anywhere — that gives them the most choice and usually the
+              best price.
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Origin (ship-from) address */}

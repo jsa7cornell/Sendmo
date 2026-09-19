@@ -94,10 +94,20 @@ ${shortLink}`;
         .join(", ")
     : null;
 
-  const carrierLabel =
-    value.preferred_carrier && value.preferred_carrier !== "any"
-      ? value.preferred_carrier.toUpperCase()
-      : null;
+  // preferred_carrier may hold a comma-separated list ("usps,ups") since the
+  // seller builder gained a multi-carrier control — a bare toUpperCase() would
+  // render that as "USPS,UPS". Split so it reads as a sentence.
+  const carrierLabel = (() => {
+    const raw = value.preferred_carrier;
+    if (!raw || raw === "any") return null;
+    const names = raw
+      .split(",")
+      .map((c) => c.trim())
+      .filter((c) => c.length > 0 && c.toLowerCase() !== "any")
+      .map((c) => c.toUpperCase());
+    if (names.length === 0) return null;
+    return `${names.join(" or ")} only`;
+  })();
 
   return (
     <div className="space-y-4">

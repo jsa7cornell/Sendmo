@@ -14,17 +14,26 @@ const BASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
 // layout presets, printer-config tips, drop-off strip, and an always-present
 // raw-label fallback link that can't break.
 //
-// Verified fact the whole design rests on: the carrier label is a 4x6 PORTRAIT
-// PNG at 300dpi (image/png, 1200x1800), hosted on S3 with NO CORS. So we place
-// it in an <img> and size it with print CSS — no pdf.js, no fetch, no CORS.
+// The label is a PNG on S3 with NO CORS, so we place it in an <img> and size it
+// with print CSS — no pdf.js, no fetch, no canvas.
+//
+// CORRECTED 2026-09-14: this comment (and proposals/2026-07-17_label-print-page.md
+// :36) claimed every carrier label is 1200x1800 = 4x6 at 300dpi. The PNG half is
+// right; the dimensions half was never true. Measured from prod:
+//   USPS GroundAdvantage  1200x1800  4.00 x 6.00in @300dpi, ink edge to edge
+//   UPSDAP (Ground/Saver)  800x1400  4.00 x 7.00in @200dpi, ~1in blank tail
+//   FedEx SMART_POST       800x1200  4.00 x 6.00in @200dpi
+// The original claim was generalised from a USPS sample; the UPSDAP sample it
+// cited was already 800x1400 twelve days before it was written. Everything is
+// 4.00in WIDE — that is the invariant to rely on, not the height or the DPI.
 
 type Preset = "half" | "label4x6" | "full";
 
 const PRESET_KEY = "sendmo:printPreset";
 const PRESETS: { id: Preset; label: string; hint: string }[] = [
-  { id: "label4x6", label: "4×6 label", hint: "Native 4×6, top-left. The carrier label untouched — prints the same on any printer." },
-  { id: "half", label: "Half sheet", hint: "Label rotated onto the top half of a Letter page — fold or tear, save paper." },
-  { id: "full", label: "Full page", hint: "Enlarged to fill a Letter page — biggest and easiest to read." },
+  { id: "label4x6", label: "4×6 label", hint: "Actual size, top-left of the page. Cut it out and tape it on — fits most boxes and mailers." },
+  { id: "half", label: "Half sheet", hint: "Same size, turned sideways on the top half. Fold or tear along the line — saves paper." },
+  { id: "full", label: "Bigger", hint: "About a third larger, centred. Easier to read; still scans." },
 ];
 
 // Same sessionStorage key TrackingPage uses, so print-count logging carries the
@@ -44,6 +53,15 @@ interface PrintData {
   service: string | null;
   item_description?: string | null;
   is_test?: boolean;
+  /**
+   * PR9 gate, already computed by tracking/ (index.ts:714) and already in the
+   * response this page fetches — it just was never declared here, so the print
+   * page rendered a label the tracking page deliberately hides. False when the
+   * viewer is the token-holding BUYER on a seller sale: the label carries the
+   * seller's home address and the buyer is not the one shipping. Absent on
+   * older payloads → printable.
+   */
+  can_print?: boolean;
 }
 
 export default function LabelPrintPage() {
@@ -135,7 +153,9 @@ export default function LabelPrintPage() {
     window.print();
   }
 
-  const labelUrl = data?.label_url ?? null;
+  // Mirrors TrackingPage's gate: no label action for a viewer the server says
+  // cannot print, regardless of whether a label_url came back.
+  const labelUrl = data?.can_print === false ? null : (data?.label_url ?? null);
 
   return (
     <div className="min-h-screen bg-background">
@@ -163,17 +183,42 @@ export default function LabelPrintPage() {
           height: 11in;
         }
         .label-group { position: absolute; }
+
+        /* Every carrier label is 4.00in wide; the HEIGHT varies by carrier and
+           the old CSS pinned both axes, which non-uniformly squashed anything
+           that was not 4:6. Measured from prod: USPS is 1200x1800 (4x6 at
+           300dpi, ink edge to edge), UPS is 800x1400 (4x7 at 200dpi, with a
+           blank tail), FedEx SMART_POST is 800x1200. Forcing a UPS label into
+           4in x 6in gave x-scale 1.000 and y-scale 0.857 — 14.3% vertical
+           compression on a MaxiCode, a fixed-geometry symbol with no tolerance
+           for it.
+
+           Fix: set the width only and let height follow the aspect ratio, then
+           CROP to 6in with an overflow window. Pure geometry, no JS. Reading
+           the ink extent to trim exactly would need getImageData, and the S3
+           host sends no CORS headers, so the canvas is tainted; crossOrigin
+           ="anonymous" is not an escape either — it would make the image fail
+           to load outright and send every user to the onError branch below.
+
+           The crop costs almost nothing: it cuts at exactly 6.00in, which is
+           where Jones's UPS Groundsaver label's ink ends. UPS *Ground* labels
+           carry a cosmetic border rule at rows 1199-1201, so they lose ~0.010in
+           off a hairline. No barcode is touched. */
+        .label-window { width: 4in; height: 6in; overflow: hidden; }
+        .label-window img { width: 4in; height: auto; display: block; }
+
         .sheet-label4x6 .label-group { top: 0.5in; left: 0.5in; }
-        .sheet-label4x6 .label-group img { width: 4in; height: 6in; display: block; }
 
         .sheet-half .label-group { top: 0.5in; left: 0.5in; }
+        /* The rotation lives on the WINDOW, not the image. If it sat on the
+           image inside an unrotated window, the crop axis and the image axis
+           would be perpendicular and the window would slice 1in off the SIDE
+           of the label rather than its tail. */
         .sheet-half .rot-wrap {
           width: 6in; height: 4in;
           display: flex; align-items: center; justify-content: center;
         }
-        /* 4x6 portrait img rotated 90deg about its centre fills a 6x4 box —
-           no scaling, so the barcode stays at native size. */
-        .sheet-half .rot-wrap img { width: 4in; height: 6in; transform: rotate(90deg); display: block; }
+        .sheet-half .rot-wrap .label-window { transform: rotate(90deg); }
         .sheet-half .fold {
           position: absolute; top: 5.5in; left: 0.4in; right: 0.4in;
           border-top: 1px dashed #b0b0b0;
@@ -182,8 +227,17 @@ export default function LabelPrintPage() {
           position: absolute; top: -0.09in; right: 0; font-size: 8pt; color: #999; background: #fff; padding: 0 4px;
         }
 
+        /* Full page is CAPPED at 1.33x, not stretched to the sheet (2026-09-14).
+           USPS DMM 204 bounds the narrow bar element on BOTH sides — at least
+           0.013in and no more than 0.021in. The old 6.667in width is 1.667x,
+           which pushes a measured 0.015in module to 0.025in and a legal-minimum
+           0.013in one to 0.0217in: over the ceiling either way, and it blew up
+           UPS's fixed-size MaxiCode to ~1.85in against a ~1.11in nominal.
+           1.33x keeps a 0.015in module at 0.0200in, just inside the bound, and
+           still reads far larger than the native 4x6. */
         .sheet-full .label-group { inset: 0; display: flex; align-items: center; justify-content: center; }
-        .sheet-full .label-group img { width: 6.667in; height: 10in; display: block; }
+        .sheet-full .label-window { width: 5.333in; height: 8in; }
+        .sheet-full .label-window img { width: 5.333in; }
 
         /* Item description printed in the blank sheet area, never over the label.
            4x6: to the right of the label. Half-sheet: in the empty bottom half.
@@ -299,10 +353,14 @@ export default function LabelPrintPage() {
                   <div className="label-group">
                     {preset === "half" ? (
                       <div className="rot-wrap">
-                        <img src={labelUrl} alt="Shipping label" onError={() => setImgFailed(true)} />
+                        <div className="label-window">
+                          <img src={labelUrl} alt="Shipping label" onError={() => setImgFailed(true)} />
+                        </div>
                       </div>
                     ) : (
-                      <img src={labelUrl} alt="Shipping label" onError={() => setImgFailed(true)} />
+                      <div className="label-window">
+                        <img src={labelUrl} alt="Shipping label" onError={() => setImgFailed(true)} />
+                      </div>
                     )}
                   </div>
                   {preset === "half" && (
@@ -336,7 +394,7 @@ export default function LabelPrintPage() {
               <ul className="space-y-1.5 text-sm text-muted-foreground list-disc pl-5">
                 <li><span className="font-medium text-foreground">Scale: 100% / "Actual size"</span> — never "Fit to page." A shrunk barcode can fail to scan.</li>
                 <li>Turn <span className="font-medium text-foreground">off</span> headers &amp; footers (date/URL) in the print dialog.</li>
-                <li>Paper size <span className="font-medium text-foreground">Letter</span>, portrait. Any printer works — no label printer needed.</li>
+                <li>Paper size <span className="font-medium text-foreground">Letter</span>, portrait, and scale <span className="font-medium text-foreground">100%</span> — not &ldquo;fit to page&rdquo;, which resizes the barcode. Any ordinary printer works.</li>
                 <li>Black &amp; white is fine. Make sure the barcode prints crisp and unsmudged.</li>
               </ul>
             </div>
