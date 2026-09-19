@@ -12,6 +12,18 @@ Agents should read this alongside PLAYBOOK.md. Before ending any session, propos
 
 ## Decisions & Gotchas
 
+### [2026-09-18] Email copy — retired tagline out of the footer; seller cancel email stops promising "nothing to do"
+
+**Category:** fix | copy
+**Cross-link:** findings (b) and (a) in the 2026-08-31 "Full E2E verification run" entry below; the tagline sweep (2026-08-30) that missed the email templates
+
+- **Tagline:** the shared email footer (`supabase/functions/_shared/email-templates.ts`, `layout()`) still said "SendMo — Prepaid shipping made easy", so every transactional email carried it. It now uses the approved /login tagline, "Getting stuff where it needs to go". "Prepaid shipping made easy" no longer appears anywhere in `supabase/`.
+- **Seller cancel email:** the old line was "Your listing link isn't changed by this — if the item is still for sale, nothing to do." That is false for a single-use listing. A cancelled sale never reopens a sold single-use link (PR6: no auto-reopen; `cancel-label` Stage 4 revives `full_label` only), so the seller could not sell through it again. `sellerSaleCancelledEmail` now takes `listingStillOpen` (from `linkRow.status === "active"` in `cancel-label`). If the link is still open (a reusable listing), the line reads "Your listing is still open, so nothing else to do." If it is sold, the line reads "Your listing link still shows this item as sold. To sell it again, create a new listing at sendmo.co/sell."
+- **Not changed:** finding (c) is still open. The buyer's refund email says the refund request went "to the carrier", but the buyer's money comes back through Stripe.
+- **Tests:** 3 new cases in `tests/unit/emailTemplates.test.ts` (sold, open, footer tagline); unit 838/838. Deno type-check not run locally (no `deno`); the change adds one required param with one caller.
+
+---
+
 ### [2026-08-31] Label flow discriminator fixed to three-way — seller sales no longer report as "flexible link"
 
 **Category:** fix
